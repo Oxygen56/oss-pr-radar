@@ -45,6 +45,8 @@ def test_scheduled_workflow_uses_only_the_versioned_war_room_actionable_path():
 def test_health_workflow_is_read_only_and_cannot_repair_or_notify():
     workflow = (ROOT / ".github/workflows/health.yml").read_text(encoding="utf-8")
     assert "Check natural schedule freshness (read-only)" in workflow
+    assert "--max-effective-age-minutes 110" in workflow
+    assert "--max-effective-age-minutes 65" not in workflow
     assert "--repair" not in workflow
     assert "--notify" not in workflow
     assert "FEISHU_APP_ID" not in workflow

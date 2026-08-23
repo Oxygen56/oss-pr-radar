@@ -28,6 +28,8 @@ EVIDENCE_LEVELS = ("待补充", "有记录", "已核实", "外部记录")
 ACTION_KINDS = ("NONE", "MANAGED_TASK", "USER_DECISION")
 NOTIFICATION_STATUSES = ("NONE", "PENDING", "SENT", "FAILED", "RECONCILE_REQUIRED")
 NOTIFICATION_CHANNELS = ("feishu", "codex")
+BASE_INTENT_NON_CURRENT_STATUSES = frozenset({"SUPERSEDED", "REJECTED"})
+BASE_OPPORTUNITY_TERMINAL_STAGES = frozenset({"AUDIT_NO_GO", "MERGED", "CLOSED"})
 
 
 class ProjectionError(ValueError):
@@ -150,6 +152,45 @@ def _latest_rows(
         ).fetchall()
     }
     return {task_id: (tasks[task_id], results.get(task_id)) for task_id in tasks}, ci
+
+
+def _base_lifecycle_truth(
+    connection: sqlite3.Connection,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Read authoritative local lifecycle facts when the base tables coexist."""
+
+    tables = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('intents','opportunities')"
+        ).fetchall()
+    }
+    latest_intent_status: dict[str, str] = {}
+    if "intents" in tables:
+        for row in connection.execute(
+            """SELECT opportunity_key,status FROM intents
+               ORDER BY issued_at DESC,updated_at DESC,intent_id DESC"""
+        ).fetchall():
+            latest_intent_status.setdefault(str(row["opportunity_key"]), str(row["status"]))
+    opportunity_stage = (
+        {
+            str(row["key"]): str(row["stage"])
+            for row in connection.execute("SELECT key,stage FROM opportunities").fetchall()
+        }
+        if "opportunities" in tables
+        else {}
+    )
+    return latest_intent_status, opportunity_stage
+
+
+def _base_lifecycle_is_non_current(
+    *, task: sqlite3.Row | None, latest_intent_status: str, opportunity_stage: str
+) -> bool:
+    """Exclude only base facts that prove a managed projection row is historical."""
+
+    if task is None:
+        return latest_intent_status in BASE_INTENT_NON_CURRENT_STATUSES
+    return opportunity_stage in BASE_OPPORTUNITY_TERMINAL_STAGES
 
 
 def _display_fields(
@@ -331,6 +372,7 @@ def build_projection(path: Path, *, source_commit: str | None = None) -> dict[st
         by_opportunity: dict[str, list[sqlite3.Row]] = {}
         for task, _result in task_pairs.values():
             by_opportunity.setdefault(str(task["opportunity_key"]), []).append(task)
+        latest_intent_status, opportunity_stage = _base_lifecycle_truth(connection)
         items: list[dict[str, Any]] = []
         for key, opportunity in opportunities.items():
             tasks = sorted(
@@ -338,7 +380,32 @@ def build_projection(path: Path, *, source_commit: str | None = None) -> dict[st
                 key=lambda row: (str(row["observed_at"]), str(row["task_id"])),
             )
             task = tasks[-1] if tasks else None
+            if _base_lifecycle_is_non_current(
+                task=task,
+                latest_intent_status=latest_intent_status.get(key, ""),
+                opportunity_stage=opportunity_stage.get(key, ""),
+            ):
+                continue
+            opportunity_metadata = _json(opportunity["metadata_json"])
+            if (
+                task is None
+                and opportunity_metadata.get("originKind") == "LEGACY_HISTORY"
+            ):
+                # Migrated legacy rows are retained only as non-authorizing
+                # audit history.  They become current again only if a real
+                # managed task is later bound to the opportunity.
+                continue
             result = task_pairs.get(task["task_id"], (None, None))[1] if task else None
+            if (
+                str(opportunity["state"] or "") == "SUPERSEDED"
+                and task is not None
+                and str(task["source"] or "") == "scanner"
+                and result is not None
+                and str(result["worker_state"] or "") == "skipped"
+            ):
+                # Scanner outcome rows preserve the audit trail, but they are
+                # not live managed tasks and must not appear as "处理中".
+                continue
             pr_key = str(result["pr_key"]) if result is not None and result["pr_key"] else None
             pr = prs.get(pr_key) if pr_key else None
             ci = ci_rows.get((pr_key, str(result["head_sha"]))) if result and pr_key else None

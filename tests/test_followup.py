@@ -37,6 +37,9 @@ class Client:
             }
         ]
 
+    def comments(self, repo, number):
+        return []
+
     def pull_review_threads(self, repo, number):
         return []
 
@@ -64,6 +67,162 @@ def test_formal_maintainer_request_is_notified_once():
         now=datetime(2026, 8, 4, 1, tzinfo=UTC),
     )
     assert repeated["candidate_details"] == []
+
+
+def test_draft_pr_wakes_original_task_once():
+    class DraftClient(Client):
+        def pull_request(self, repo, number):
+            pull = super().pull_request(repo, number)
+            pull["draft"] = True
+            return pull
+
+        def pull_reviews(self, repo, number):
+            return []
+
+    state, report = collect_followup(
+        DraftClient(), author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
+
+    item = state["items"][0]
+    assert item["draft"] is True
+    assert item["taskFollowupRequired"] is True
+    assert item["taskActions"] == ["PR 处于草稿状态"]
+    assert report["candidate_details"][0]["why"] == "PR 处于草稿状态"
+
+    _, repeated = collect_followup(
+        DraftClient(),
+        author="Oxygen56",
+        existing=state,
+        now=datetime(2026, 8, 4, 1, tzinfo=UTC),
+    )
+    assert repeated["candidate_details"] == []
+
+
+def test_unanswered_top_level_maintainer_comment_wakes_until_author_replies():
+    class CommentClient(Client):
+        comment_values = [
+            {
+                "id": 101,
+                "user": {"login": "maintainer", "type": "User"},
+                "author_association": "MEMBER",
+                "created_at": "2026-08-04T00:01:00Z",
+                "html_url": "https://github.com/a/b/pull/9#issuecomment-101",
+                "body": "Please keep the English estimate close to its previous behavior.",
+            }
+        ]
+
+        def pull_reviews(self, repo, number):
+            return []
+
+        def comments(self, repo, number):
+            return list(self.comment_values)
+
+    client = CommentClient()
+    state, report = collect_followup(
+        client, author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
+
+    item = state["items"][0]
+    assert item["taskActions"] == ["存在未回复的维护者评论"]
+    comment = item["evidence"]["unansweredMaintainerComments"][0]
+    assert comment["actorLogin"] == "maintainer"
+    assert comment["eventType"] == "TOP_LEVEL_COMMENT"
+    assert report["candidate_details"][0]["why"] == "存在未回复的维护者评论"
+
+    client.comment_values.append(
+        {
+            "id": 102,
+            "user": {"login": "Oxygen56", "type": "User"},
+            "author_association": "CONTRIBUTOR",
+            "created_at": "2026-08-04T00:02:00Z",
+            "html_url": "https://github.com/a/b/pull/9#issuecomment-102",
+            "body": "Addressed in the latest revision.",
+        }
+    )
+    replied_state, replied_report = collect_followup(
+        client,
+        author="Oxygen56",
+        existing=state,
+        now=datetime(2026, 8, 4, 1, tzinfo=UTC),
+    )
+
+    replied_item = replied_state["items"][0]
+    assert replied_item["taskFollowupRequired"] is False
+    assert replied_item["evidence"]["unansweredMaintainerComments"] == []
+    assert replied_report["candidate_details"] == []
+
+
+def test_non_maintainer_top_level_comment_is_recorded_without_task_wake():
+    class ExternalCommentClient(Client):
+        def pull_reviews(self, repo, number):
+            return []
+
+        def comments(self, repo, number):
+            return [
+                {
+                    "id": 201,
+                    "user": {"login": "external-contributor", "type": "User"},
+                    "author_association": "NONE",
+                    "created_at": "2026-08-04T00:01:00Z",
+                    "html_url": "https://github.com/a/b/pull/9#issuecomment-201",
+                    "body": "This estimate may be too aggressive for English text.",
+                }
+            ]
+
+    state, report = collect_followup(
+        ExternalCommentClient(), author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
+
+    item = state["items"][0]
+    assert item["taskFollowupRequired"] is False
+    assert item["evidence"]["unansweredMaintainerComments"] == []
+    event = item["evidence"]["maintainerEvents"][0]
+    assert event["actorLogin"] == "external-contributor"
+    assert event["authorAssociation"] == "NONE"
+    assert event["eventType"] == "TOP_LEVEL_COMMENT"
+    assert report["candidate_details"] == []
+
+
+def test_transient_top_level_comment_failure_preserves_previous_action_without_repeat():
+    class MaintainerCommentClient(Client):
+        def pull_reviews(self, repo, number):
+            return []
+
+        def comments(self, repo, number):
+            return [
+                {
+                    "id": 301,
+                    "user": {"login": "maintainer", "type": "User"},
+                    "author_association": "OWNER",
+                    "created_at": "2026-08-04T00:01:00Z",
+                    "html_url": "https://github.com/a/b/pull/9#issuecomment-301",
+                    "body": "Please add the missing boundary case.",
+                }
+            ]
+
+    initial, _ = collect_followup(
+        MaintainerCommentClient(), author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
+
+    class FailingCommentClient(MaintainerCommentClient):
+        def comments(self, repo, number):
+            raise GitHubError("temporary comments failure")
+
+    repeated_state, report = collect_followup(
+        FailingCommentClient(),
+        author="Oxygen56",
+        existing=initial,
+        now=datetime(2026, 8, 4, 1, tzinfo=UTC),
+    )
+
+    assert report["scan_ok"] is False
+    assert report["candidate_details"] == []
+    assert "temporary comments failure" in report["errors"][0]
+    assert repeated_state["items"][0]["taskFollowupRequired"] is True
+    assert (
+        repeated_state["items"][0]["evidence"]["unansweredMaintainerComments"]
+        == initial["items"][0]["evidence"]["unansweredMaintainerComments"]
+    )
 
 
 def test_later_approval_clears_older_change_request():

@@ -193,6 +193,62 @@ def _latest_reviews_by_author(reviews: list[dict[str, Any]]) -> list[dict[str, A
     return list(latest.values())
 
 
+def _top_level_comment_evidence(
+    comments: list[dict[str, Any]], *, author: str, repo: str, number: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Record external PR comments and return only unanswered maintainer feedback."""
+
+    normalized: list[dict[str, Any]] = []
+    latest_author_reply = ""
+    for comment in comments:
+        actor = comment.get("user") or {}
+        login = str(actor.get("login") or "")
+        created_at = str(comment.get("created_at") or "")
+        if login.casefold() == author.casefold():
+            latest_author_reply = max(latest_author_reply, created_at)
+            continue
+        if not login:
+            continue
+        association = str(comment.get("author_association") or "").upper()
+        actor_type = str(actor.get("type") or actor.get("__typename") or "")
+        comment_id = str(comment.get("id") or "")
+        url = str(comment.get("html_url") or comment.get("url") or "")
+        event_identity = comment_id or sha256_json(
+            {
+                "repo": repo,
+                "number": number,
+                "login": login,
+                "createdAt": created_at,
+                "url": url,
+            }
+        )
+        normalized.append(
+            {
+                "eventId": f"github:top-level-comment:{repo}#{number}:{event_identity}",
+                "eventType": "TOP_LEVEL_COMMENT",
+                "actorLogin": login,
+                "actorType": actor_type,
+                "authorAssociation": association,
+                "targetRepo": repo,
+                "targetPrKey": f"{repo}#{number}",
+                "opportunityKey": f"{repo}#{number}",
+                "createdAt": created_at,
+                "url": url,
+                "summary": " ".join(str(comment.get("body") or "").split())[:400],
+            }
+        )
+
+    normalized.sort(key=lambda item: (str(item["createdAt"]), str(item["eventId"])))
+    unanswered = [
+        item
+        for item in normalized
+        if str(item.get("actorType") or "").casefold() == "user"
+        and str(item.get("authorAssociation") or "").upper() in MAINTAINER_ASSOCIATIONS
+        and str(item.get("createdAt") or "") > latest_author_reply
+    ]
+    return normalized, unanswered
+
+
 def _repo_from_url(value: str) -> str:
     marker = "https://api.github.com/repos/"
     if value.startswith(marker):
@@ -231,13 +287,15 @@ def collect_followup(
         list[dict[str, Any]],
         list[dict[str, Any]],
         list[dict[str, Any]] | None,
+        list[dict[str, Any]] | None,
+        str | None,
         str | None,
         str | None,
     ]:
         repo = _repo_from_url(str(hit.get("repository_url") or ""))
         number = int(hit.get("number") or 0)
         if not repo or not number:
-            return repo, number, {}, [], [], [], [], "invalid_pull_reference", None
+            return repo, number, {}, [], [], [], [], [], "invalid_pull_reference", None, None
         try:
             pull = client.pull_request(repo, number)
             base = pull.get("base") or {}
@@ -256,6 +314,13 @@ def collect_followup(
             }
             reviews = client.pull_reviews(repo, number)
             files = client.pull_files(repo, number)
+            comments: list[dict[str, Any]] | None
+            comment_error = None
+            try:
+                comments = client.comments(repo, number)
+            except GitHubError as exc:
+                comments = None
+                comment_error = str(exc)[:160]
             review_threads: list[dict[str, Any]] | None
             review_thread_error = None
             try:
@@ -289,12 +354,14 @@ def collect_followup(
                 reviews,
                 checks,
                 files,
+                comments,
                 review_threads,
                 None,
                 review_thread_error,
+                comment_error,
             )
         except GitHubError as exc:
-            return repo, number, {}, [], [], [], [], str(exc)[:160], None
+            return repo, number, {}, [], [], [], [], [], str(exc)[:160], None, None
 
     try:
         hits = client.open_pull_requests_by_author(author)[:limit]
@@ -320,7 +387,19 @@ def collect_followup(
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         fetched = list(executor.map(fetch, hits))
 
-    for repo, number, pull, reviews, checks, files, review_threads, error, thread_error in fetched:
+    for (
+        repo,
+        number,
+        pull,
+        reviews,
+        checks,
+        files,
+        comments,
+        review_threads,
+        error,
+        thread_error,
+        comment_error,
+    ) in fetched:
         if not repo or not number:
             continue
         key = f"{repo}#{number}"
@@ -361,6 +440,20 @@ def collect_followup(
             ci_status = "RUNNING"
         changed_files = {str(item.get("filename") or "") for item in files if item.get("filename")}
         previous_evidence = previous_item.get("evidence") or {}
+        if comments is None:
+            top_level_comment_events = [
+                item
+                for item in (previous_evidence.get("maintainerEvents") or [])
+                if isinstance(item, dict) and item.get("eventType") == "TOP_LEVEL_COMMENT"
+            ]
+            unanswered_maintainer_comments = (
+                previous_evidence.get("unansweredMaintainerComments") or []
+            )
+            errors.append(f"{key}:comments:{comment_error or 'unavailable'}")
+        else:
+            top_level_comment_events, unanswered_maintainer_comments = (
+                _top_level_comment_evidence(comments, author=author, repo=repo, number=number)
+            )
         if review_threads is None:
             unresolved_review_threads = previous_evidence.get("unresolvedReviewThreads") or []
             errors.append(f"{key}:review_threads:{thread_error or 'unavailable'}")
@@ -419,7 +512,7 @@ def collect_followup(
             ),
             key=lambda item: (str(item["reviewer"] or ""), str(item["submittedAt"] or "")),
         )
-        maintainer_events = []
+        maintainer_events = list(top_level_comment_events)
         for field, event_type in (
             ("requested_reviewers", "INVITATION"),
             ("assignees", "ASSIGNMENT"),
@@ -470,6 +563,11 @@ def collect_followup(
         actions: list[str] = []
         if maintainer_changes:
             actions.append("正式 review 要求修改")
+        if unanswered_maintainer_comments:
+            actions.append("存在未回复的维护者评论")
+        draft = bool(pull.get("draft"))
+        if draft:
+            actions.append("PR 处于草稿状态")
         if failing_checks:
             actions.append("CI 检查失败")
         if merge_conflict:
@@ -479,6 +577,10 @@ def collect_followup(
         task_actions: list[str] = []
         if maintainer_changes:
             task_actions.append("正式 review 要求修改")
+        if unanswered_maintainer_comments:
+            task_actions.append("存在未回复的维护者评论")
+        if draft:
+            task_actions.append("PR 处于草稿状态")
         if actionable_checks:
             task_actions.append("当前分支检查失败")
         if merge_conflict:
@@ -519,6 +621,7 @@ def collect_followup(
             "baseMergeBaseSha": base_merge_base_sha,
             "baseCompareError": base_compare_error,
             "unresolvedReviewThreads": unresolved_review_threads,
+            "unansweredMaintainerComments": unanswered_maintainer_comments,
         }
         action_evidence = {
             "mergeConflictHead": head if merge_conflict else None,
@@ -527,6 +630,12 @@ def collect_followup(
             "requestedChanges": requested_changes,
             "failingChecks": failing_check_evidence,
             "unresolvedReviewThreads": unresolved_review_threads,
+            **({"draft": True} if draft else {}),
+            **(
+                {"unansweredMaintainerComments": unanswered_maintainer_comments}
+                if unanswered_maintainer_comments
+                else {}
+            ),
         }
         digest = sha256_json(action_evidence)
         task_evidence = {
@@ -541,6 +650,12 @@ def collect_followup(
             "baseIntegrationBaseRefName": (base_ref_name if base_integration_required else None),
             "baseIntegrationBaseSha": base_sha if base_integration_required else None,
             "unresolvedReviewThreads": unresolved_review_threads,
+            **({"draft": True} if draft else {}),
+            **(
+                {"unansweredMaintainerComments": unanswered_maintainer_comments}
+                if unanswered_maintainer_comments
+                else {}
+            ),
         }
         task_digest = sha256_json(task_evidence)
         state_item = {
@@ -560,7 +675,7 @@ def collect_followup(
             "evidence": evidence,
             "mergeableState": mergeable_state,
             "mergeConflict": merge_conflict,
-            "draft": bool(pull.get("draft")),
+            "draft": draft,
             "ciStatus": ci_status,
             "checkedAt": iso_z(current),
         }

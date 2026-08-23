@@ -411,6 +411,7 @@ def test_sync_queue_superseded_revision_runs_independent_maintenance(monkeypatch
     assert recovery_calls == [db]
     assert result["taskContextRecovery"]["verified"] == 1
     assert result["prFollowup"]["status"] == "imported"
+    assert result["prFollowup"]["managedRecorded"] == 0
     assert _intent_statuses(db) == {"current-pending": "PENDING"}
 
 
@@ -805,6 +806,7 @@ def test_event_drain_pauses_when_active_task_hit_codex_usage_limit(monkeypatch, 
             ]
 
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "missing-codex-home"))
     monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
     monkeypatch.setattr(
         MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
@@ -842,6 +844,62 @@ def test_event_drain_pauses_when_active_task_hit_codex_usage_limit(monkeypatch, 
             "currentTitle": "[有价值] a/b#1",
         }
     ]
+
+
+def test_usage_limit_pause_clears_after_codex_auth_refresh(monkeypatch, tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_complete",
+                    "turn_id": "turn-usage-limit",
+                    "error": {
+                        "codex_error_info": "usage_limit_exceeded",
+                        "message": "You've hit your usage limit.",
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads ("
+            "id TEXT, archived INTEGER, title TEXT, updated_at INTEGER, rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?)",
+            ("thread-1", 0, "[有价值] a/b#1", 123, str(rollout)),
+        )
+
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    auth_path = codex_home / "auth.json"
+    auth_path.write_text("{}", encoding="utf-8")
+    os.utime(auth_path, (124, 124))
+
+    class Store:
+        def active_task_count(self, **_kwargs):
+            return 1
+
+        def task_context_candidates(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "intentStatus": "DISPATCHED",
+                    "threadId": "thread-1",
+                }
+            ]
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setattr(MODULE, "live_thread_turn_states", lambda _thread_ids: {})
+
+    assert MODULE._codex_usage_limit_pause(Store()) is None
 
 
 def test_root_task_create_passes_runtime_root_to_worker(monkeypatch, tmp_path):
@@ -2179,6 +2237,17 @@ def test_pr_lifecycle_prefers_merge_review_and_green_checks():
         )
         == "CI_GREEN"
     )
+    assert (
+        MODULE.pr_lifecycle_stage(
+            {
+                "state": "OPEN",
+                "isDraft": True,
+                "reviewDecision": "APPROVED",
+                "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+            }
+        )
+        == "PR_OPEN"
+    )
 
 
 @pytest.mark.parametrize("current", ["VALIDATION_PENDING", "FIX_READY"])
@@ -2198,6 +2267,12 @@ def test_remote_pr_lifecycle_only_advances_published_stage():
     assert MODULE.should_apply_pr_lifecycle_stage("PR_OPEN", "CI_GREEN") is True
     assert MODULE.should_apply_pr_lifecycle_stage("CI_GREEN", "MAINTAINER_ACCEPTED") is True
     assert MODULE.should_apply_pr_lifecycle_stage("MAINTAINER_ACCEPTED", "PR_OPEN") is False
+    assert (
+        MODULE.should_apply_pr_lifecycle_stage(
+            "MAINTAINER_ACCEPTED", "PR_OPEN", is_draft=True
+        )
+        is True
+    )
 
 
 def test_refresh_pull_requests_preserves_local_validation_stage(monkeypatch, tmp_path):
@@ -2227,6 +2302,45 @@ def test_refresh_pull_requests_preserves_local_validation_stage(monkeypatch, tmp
 
     assert result == {"ok": True, "updates": [], "errors": []}
     assert recorded == []
+
+
+def test_refresh_pull_requests_downgrades_green_pr_that_became_draft(monkeypatch, tmp_path):
+    recorded = []
+
+    class Store:
+        def tracked_pull_requests(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "pr_url": "https://github.com/a/b/pull/9",
+                    "stage": "CI_GREEN",
+                }
+            ]
+
+        def record_stage(self, *args, **kwargs):
+            recorded.append((args, kwargs))
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(
+        MODULE,
+        "command",
+        lambda *_args, **_kwargs: json.dumps(
+            {
+                "state": "OPEN",
+                "isDraft": True,
+                "statusCheckRollup": [{"conclusion": "SUCCESS"}],
+            }
+        ),
+    )
+
+    result = MODULE.refresh_pull_requests(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["updates"] == [
+        {"key": "a/b#1", "stage": "PR_OPEN", "prUrl": "https://github.com/a/b/pull/9"}
+    ]
+    assert recorded[0][0][:2] == ("a/b#1", "PR_OPEN")
+    assert recorded[0][1]["evidence"]["remote"]["isDraft"] is True
 
 
 def test_task_context_waits_for_live_handoff_receipt(monkeypatch, tmp_path):
@@ -10184,6 +10298,65 @@ def test_existing_fix_ready_result_accepts_later_controller_review(monkeypatch, 
     )
 
 
+def test_existing_fix_ready_result_reopens_validation_after_failed_review(monkeypatch, tmp_path):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    candidate = store.task_result_candidates()[0]
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate=candidate,
+        context=context,
+        value=value,
+        result_path=result_path,
+    )
+    finalized["quality"]["independent_review_passed"] = True
+    finalized["independentReview"] = {
+        "verdict": "PASS",
+        "summary": "The exact committed change has no blocking finding.",
+    }
+    result_path.write_text(json.dumps(finalized), encoding="utf-8")
+    _refresh_reproduction_certificate(result_path)
+    store.record_stage("a/b#1", "FIX_READY", evidence=finalized["quality"])
+    store.record_task_result_ingested("a/b#1", digest="previous-result", stage="FIX_READY")
+
+    failed_review = {
+        "verdict": "FAIL",
+        "summary": "The integration path still forwards the stale payload.",
+        "findings": [
+            {
+                "severity": "P1",
+                "file": "runtime.py",
+                "line": 1,
+                "message": "The caller ignores the mutation.",
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        MODULE, "controller_review_result", lambda _root, _value: failed_review
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["publicationRequests"] == []
+    assert result["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": ["independent_review_passed"],
+        }
+    ]
+    assert store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )["stage"] == "VALIDATION_PENDING"
+    assert MODULE.validation_followup_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
+    )["candidates"][0]["missing"] == ["independent_review_passed"]
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["quality"]["independent_review_passed"] is False
+    assert finalized["independentReview"] == failed_review
+
+
 def test_controller_policy_snapshot_satisfies_child_policy_quality(tmp_path):
     store, _worktree, result_path = _controller_commit_result(
         tmp_path,
@@ -14590,6 +14763,62 @@ def test_publication_queue_requires_bound_snapshot_for_task_result(monkeypatch, 
     assert controller_calls == [True]
     assert broker_calls == [True]
     assert executor_calls == []
+
+
+def test_strong_existing_pr_terminalizes_obsolete_publication_task(monkeypatch, tmp_path):
+    fixture = _legal_queue_publication_fixture(tmp_path)
+    recorded = []
+
+    class Store:
+        def publication_work_items(self):
+            return [{"request_id": "request-1", "request": fixture["request"]}]
+
+        def recover_failed_publication_preflight(self, *_args, **_kwargs):
+            return False
+
+        def prepare_ambiguous_publication_effect(self, *_args, **_kwargs):
+            return None
+
+        def prepare_post_push_reconciliation(self, *_args, **_kwargs):
+            return None
+
+        def record_stage(self, *args, **kwargs):
+            recorded.append((args, kwargs))
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda *_args: {"verdict": "PASS"})
+    monkeypatch.setattr(
+        MODULE,
+        "broker_publication_request",
+        lambda *_args: {
+            "granted": False,
+            "pending": False,
+            "audit": {
+                "reason": "STRONG_EXISTING_PR",
+                "evidence": {"existingPr": "https://github.com/a/b/pull/2"},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_executor",
+        lambda *_args, **_kwargs: pytest.fail("terminal duplicate must not publish"),
+    )
+
+    result = MODULE.run_publication_queue(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3")
+    )
+
+    assert result["ok"] is True
+    assert result["blocked"] == [
+        {
+            "requestId": "request-1",
+            "reason": "STRONG_EXISTING_PR",
+            "terminalized": True,
+        }
+    ]
+    assert recorded[0][0][:2] == ("a/b#1", "AUDIT_NO_GO")
+    assert recorded[0][1]["reason"] == "STRONG_EXISTING_PR"
 
 
 def test_publication_queue_blocks_legacy_request_without_private_review(monkeypatch, tmp_path):

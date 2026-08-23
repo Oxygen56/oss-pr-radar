@@ -107,7 +107,7 @@ def test_legacy_history_is_sanitized_and_idempotent(tmp_path, monkeypatch):
     assert "sk-secret" not in encoded
     assert "/Users/oxygen" not in encoded
     projection = build_projection(target, source_commit="stage6-test")
-    assert len(projection["items"]) == 1
+    assert projection["items"] == []
     assert set(projection["buckets"]) == {
         "DECISION_REQUIRED",
         "SYSTEM_PROCESSING",

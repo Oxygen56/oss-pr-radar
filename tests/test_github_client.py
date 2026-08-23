@@ -1,5 +1,7 @@
 import subprocess
 
+import pytest
+
 from oss_pr_radar import github_client
 from oss_pr_radar.github_client import GitHubClient, GitHubError, is_transient_github_error
 
@@ -153,6 +155,65 @@ def test_pull_review_threads_uses_graphql_and_returns_nodes():
     assert "owner=a" in calls[0][0]
     assert "name=b" in calls[0][0]
     assert "number=9" in calls[0][0]
+
+
+@pytest.mark.parametrize(
+    "first",
+    [
+        GitHubError("unexpected EOF while reading"),
+        '{"data":{"repository":',
+    ],
+)
+def test_pull_review_threads_retries_transient_or_truncated_response(first):
+    calls = []
+    delays = []
+
+    def runner(_args, _timeout):
+        calls.append(True)
+        if len(calls) == 1:
+            if isinstance(first, Exception):
+                raise first
+            return first
+        return '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}'
+
+    client = GitHubClient(runner=runner, retry_delays=(0.01,), sleeper=delays.append)
+
+    assert client.pull_review_threads("a/b", 9) == []
+    assert len(calls) == 2
+    assert delays == [0.01]
+
+
+def test_pull_review_threads_retries_share_one_total_timeout(monkeypatch):
+    current = [0.0]
+    timeouts = []
+    delays = []
+
+    def monotonic():
+        return current[0]
+
+    def runner(_args, timeout):
+        timeouts.append(timeout)
+        current[0] += 4.0
+        raise GitHubError("unexpected EOF while reading")
+
+    def sleeper(delay):
+        delays.append(delay)
+        current[0] += delay
+
+    monkeypatch.setattr(github_client.time, "monotonic", monotonic)
+    client = GitHubClient(
+        runner=runner,
+        timeout=5,
+        retry_delays=(2.0, 2.0),
+        sleeper=sleeper,
+    )
+
+    with pytest.raises(GitHubError, match="EOF"):
+        client.pull_review_threads("a/b", 9)
+
+    assert timeouts == [5.0]
+    assert delays == [1.0]
+    assert current[0] == 5.0
 
 
 def test_branch_reads_the_live_branch_head(monkeypatch):

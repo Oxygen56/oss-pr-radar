@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -89,6 +90,57 @@ def add_user_decision(
     )
 
 
+def add_base_lifecycle(
+    path: Path,
+    *,
+    key: str,
+    intent_status: str,
+    opportunity_stage: str,
+    intent_id: str = "base-intent",
+    issued_at: str = "2026-08-19T00:00:00Z",
+    updated_at: str = "2026-08-19T00:00:00Z",
+) -> None:
+    owner_repo, number = key.rsplit("#", 1)
+    issue_url = f"https://github.com/{owner_repo}/issues/{number}"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """INSERT INTO opportunities
+               (key,repo,issue_number,issue_url,title,stage,first_seen,updated_at,
+                decision_digest,metadata_json)
+               VALUES (?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(key) DO UPDATE SET
+                 stage=excluded.stage,updated_at=excluded.updated_at""",
+            (
+                key,
+                owner_repo,
+                int(number),
+                issue_url,
+                "Base opportunity",
+                opportunity_stage,
+                updated_at,
+                updated_at,
+                intent_id,
+                "{}",
+            ),
+        )
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                payload_json,updated_at)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                intent_id,
+                key,
+                intent_id,
+                intent_status,
+                issued_at,
+                "2099-01-01T00:00:00Z",
+                "{}",
+                updated_at,
+            ),
+        )
+
+
 def test_four_buckets_are_exhaustive_and_missing_task_is_not_actionable(tmp_path: Path):
     path = managed_db(tmp_path)
     ledger = ManagedLedger(path)
@@ -104,6 +156,145 @@ def test_four_buckets_are_exhaustive_and_missing_task_is_not_actionable(tmp_path
     assert item["bucket"] == "DECISION_REQUIRED"
     validate_projection(artifact)
     assert build_outbox(artifact, channel="feishu")["events"] == []
+
+
+def test_legacy_history_without_task_is_hidden_until_real_task_takes_over(tmp_path: Path):
+    path = managed_db(tmp_path)
+    ledger = ManagedLedger(path)
+    ledger.upsert_opportunity(
+        opportunity_key="owner/repo#6",
+        owner="owner",
+        repo="repo",
+        issue_number=6,
+        issue_url="https://github.com/owner/repo/issues/6",
+        state="SYSTEM_PROCESSING",
+        source="production",
+        provenance={"originKind": "LEGACY_HISTORY"},
+        metadata={
+            "originKind": "LEGACY_HISTORY",
+            "authorization": "NON_AUTHORIZING_HISTORY_ONLY",
+        },
+    )
+
+    assert build_projection(path)["items"] == []
+
+    ledger.bind_task(
+        task_id="task-6",
+        opportunity_key="owner/repo#6",
+        thread_id="thread-6",
+        worktree_path=None,
+    )
+
+    item = build_projection(path)["items"][0]
+    assert item["candidateKey"] == "owner/repo#6"
+    assert item["taskId"] == "task-6"
+
+
+def test_ordinary_user_decision_without_task_is_not_hidden_as_legacy(tmp_path: Path):
+    path = managed_db(tmp_path)
+    add_user_decision(ManagedLedger(path), key="owner/repo#9")
+
+    item = build_projection(path)["items"][0]
+
+    assert item["candidateKey"] == "owner/repo#9"
+    assert item["taskId"] is None
+    assert item["actionKind"] == "USER_DECISION"
+
+
+@pytest.mark.parametrize(
+    ("intent_status", "opportunity_stage", "with_task", "visible"),
+    [
+        ("SUPERSEDED", "QUALIFIED", False, False),
+        ("REJECTED", "AUDIT_NO_GO", False, False),
+        ("REJECTED", "AUDIT_NO_GO", True, False),
+        ("COMPLETED", "MERGED", True, False),
+        ("COMPLETED", "CLOSED", True, False),
+        ("COMPLETED", "FIX_READY", True, True),
+        ("REJECTED", "FIX_READY", True, True),
+    ],
+)
+def test_base_lifecycle_truth_hides_only_historical_managed_rows(
+    tmp_path: Path,
+    intent_status: str,
+    opportunity_stage: str,
+    with_task: bool,
+    visible: bool,
+):
+    path = managed_db(tmp_path)
+    key = "owner/repo#10"
+    add_base_lifecycle(
+        path,
+        key=key,
+        intent_status=intent_status,
+        opportunity_stage=opportunity_stage,
+    )
+    ledger = ManagedLedger(path)
+    ledger.upsert_opportunity(
+        opportunity_key=key,
+        owner="owner",
+        repo="repo",
+        issue_number=10,
+        issue_url="https://github.com/owner/repo/issues/10",
+        state="PENDING_PREFLIGHT",
+        source="dispatch",
+        provenance={"intentId": "base-intent"},
+        metadata={},
+    )
+    if with_task:
+        ledger.bind_task(
+            task_id="base-intent",
+            opportunity_key=key,
+            thread_id="thread-10",
+            worktree_path=None,
+            state="REPRODUCTION_REQUIRED",
+            source="dispatch-thread-bind",
+        )
+
+    items = build_projection(path)["items"]
+
+    assert bool(items) is visible
+    if visible:
+        assert items[0]["candidateKey"] == key
+        assert items[0]["taskId"] == ("base-intent" if with_task else None)
+
+
+def test_base_lifecycle_truth_uses_newest_issued_intent(tmp_path: Path):
+    path = managed_db(tmp_path)
+    key = "owner/repo#11"
+    add_base_lifecycle(
+        path,
+        key=key,
+        intent_status="SUPERSEDED",
+        opportunity_stage="QUALIFIED",
+        intent_id="older-terminal",
+        issued_at="2026-08-19T00:00:00Z",
+        updated_at="2026-08-19T02:00:00Z",
+    )
+    add_base_lifecycle(
+        path,
+        key=key,
+        intent_status="PENDING",
+        opportunity_stage="QUALIFIED",
+        intent_id="newer-pending",
+        issued_at="2026-08-19T01:00:00Z",
+        updated_at="2026-08-19T01:00:00Z",
+    )
+    ManagedLedger(path).upsert_opportunity(
+        opportunity_key=key,
+        owner="owner",
+        repo="repo",
+        issue_number=11,
+        issue_url="https://github.com/owner/repo/issues/11",
+        state="PENDING_PREFLIGHT",
+        source="dispatch",
+        provenance={"intentId": "newer-pending"},
+        metadata={},
+    )
+
+    item = build_projection(path)["items"][0]
+
+    assert item["candidateKey"] == key
+    assert item["taskId"] is None
 
 
 def test_canonical_url_and_key_share_projection_authorization(tmp_path: Path, monkeypatch):

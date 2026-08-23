@@ -422,6 +422,74 @@ def test_feishu_sent_keeps_mastra_in_next_codex_round_with_second_candidate(
     assert canonical_event_digest(retained_mastra) == canonical_event_digest(mastra_event)
 
 
+def test_scan_outcome_cannot_drop_pending_codex_user_decision(tmp_path: Path):
+    ledger_path = tmp_path / "state" / "pending-codex-ledger.sqlite3"
+    adapter = ManagedAdapter(tmp_path, ledger_path)
+    candidate = _review_candidate(
+        repo="deepset-ai/haystack",
+        number=12436,
+        digest="e" * 64,
+        title="需要确认 AI 使用披露方式",
+    )
+    first_report = {
+        "run_id": "decision-round",
+        "now": "2026-08-23T00:00:00Z",
+        "candidate_details": [candidate],
+    }
+    adapter.record_scan_report(first_report)
+    first_projection = export_projection(ledger_path)
+    first_event = build_outbox(first_projection, channel="codex")["events"][0]
+    adapter.record_user_decision_delivery(
+        candidate_key="deepset-ai/haystack#12436",
+        notification_digest="e" * 64,
+        channel="feishu",
+        status="SENT",
+        receipt_id="feishu-receipt",
+        source_artifact_digest=first_projection["artifactDigest"],
+        message_id="om_haystack",
+    )
+
+    second_report = {
+        "run_id": "outcome-round",
+        "now": "2026-08-23T01:00:00Z",
+        "candidate_details": [],
+        "issue_outcomes": {
+            "deepset-ai/haystack#12436": {
+                "status": "rejected",
+                "reason": "seen_recently",
+            }
+        },
+    }
+    result = adapter.record_scan_report(second_report)
+    second_projection = export_projection(ledger_path)
+    second_item = second_projection["items"][0]
+    second_event = build_outbox(second_projection, channel="codex")["events"][0]
+
+    assert result["outcomesRecorded"] == 1
+    assert second_item["actionKind"] == "USER_DECISION"
+    assert second_item["taskId"] is None
+    assert second_item["notificationStatusByChannel"] == {
+        "feishu": "SENT",
+        "codex": "PENDING",
+    }
+    assert second_event["eventId"] == first_event["eventId"]
+    assert canonical_event_digest(second_event) == canonical_event_digest(first_event)
+
+    revoking_report = {
+        "run_id": "revoking-round",
+        "now": "2026-08-23T02:00:00Z",
+        "candidate_details": [],
+        "issue_outcomes": {
+            "deepset-ai/haystack#12436": {
+                "status": "rejected",
+                "reason": "score_low",
+            }
+        },
+    }
+    adapter.record_scan_report(revoking_report)
+    assert export_projection(ledger_path)["items"] == []
+
+
 def test_user_decision_failed_receipt_retries_same_event(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "delivery-user-decision-key" * 2)
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "delivery-current")

@@ -141,6 +141,10 @@ TRANSIENT_PUBLICATION_AUDIT_REASONS = {
     "REPOSITORY_METADATA_UNAVAILABLE",
     "TARGET_BASE_UNAVAILABLE",
 }
+TERMINAL_PUBLICATION_BLOCK_REASONS = {
+    "ACTIVE_OR_CONDITIONAL_CLAIM",
+    "STRONG_EXISTING_PR",
+}
 
 PLAIN_LANGUAGE_STATUS_PROMPT = (
     "用户可见回复必须像普通进度通知，不要求用户理解 Git、CI 或项目内部实现。"
@@ -2488,10 +2492,19 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
                     "suspended": suspended,
                 }
             else:
+                managed_followup = ManagedAdapter(ROOT, path).record_followup(
+                    followup,
+                    {
+                        "run_id": (
+                            f"cloud-pr-followup:{followup.get('digest') or generated_at}"
+                        )
+                    },
+                )
                 followup_import = {
                     "status": "imported",
                     "generatedAt": generated_at,
                     "ageMinutes": age_minutes,
+                    "managedRecorded": managed_followup.get("recorded", 0),
                 } | store.import_pr_followups(followup)
         else:
             followup_import = {"status": "awaiting_v3", "version": followup.get("version")}
@@ -3240,6 +3253,22 @@ def _thread_bound_issue_tasks(store: Any) -> list[dict[str, Any]]:
     ]
 
 
+def _codex_auth_refreshed_after(thread_updated_at: int) -> bool:
+    """Return whether Codex credentials changed after a failed task turn.
+
+    A usage-limit failure is a snapshot of the account state at that turn.  Once
+    credentials are refreshed, keeping the old failure as a global pause would
+    prevent the normal recovery path from ever testing the refreshed account.
+    """
+
+    codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
+    try:
+        metadata = (codex_home / "auth.json").stat()
+    except OSError:
+        return False
+    return stat.S_ISREG(metadata.st_mode) and metadata.st_mtime > thread_updated_at
+
+
 def _codex_usage_limit_pause(store: Any) -> dict[str, Any] | None:
     tasks = _thread_bound_issue_tasks(store)
     thread_ids = sorted({str(item.get("threadId") or "") for item in tasks if item.get("threadId")})
@@ -3286,6 +3315,8 @@ def _codex_usage_limit_pause(store: Any) -> dict[str, Any] | None:
             continue
         state = persisted_states.get(thread_id) or live_states.get(thread_id)
         if not _is_codex_usage_limit_state(state):
+            continue
+        if _codex_auth_refreshed_after(row[2]):
             continue
         message = str((state or {}).get("message") or "")
         resume_after = resume_after or _codex_usage_limit_resume_after(message)
@@ -12313,57 +12344,56 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     and set(assessment.missing) == {"policy_verified"}
                 ):
                     publication_blocked = "REPOSITORY_POLICY_EVIDENCE_REQUIRED"
-                if candidate["stage"] != "FIX_READY" or controller_policy_recoverable:
-                    local_policy_only = bool(
-                        publication_blocked and set(assessment.missing) == {"policy_verified"}
+                local_policy_only = bool(
+                    publication_blocked and set(assessment.missing) == {"policy_verified"}
+                )
+                if not assessment.ready and not local_policy_only:
+                    missing = list(assessment.missing)
+                    managed_adapter.record_task_result(
+                        candidate=managed_candidate, value=value, result_digest=digest
                     )
-                    if not assessment.ready and not local_policy_only:
-                        missing = list(assessment.missing)
-                        managed_adapter.record_task_result(
-                            candidate=managed_candidate, value=value, result_digest=digest
-                        )
-                        store.record_validation_deferred(
+                    store.record_validation_deferred(
+                        candidate["key"],
+                        thread_id=candidate["threadId"],
+                        result_digest=digest,
+                        missing=missing,
+                        progress_marker=_validation_progress_marker(value),
+                    )
+                    store.record_stage(
+                        candidate["key"],
+                        "VALIDATION_PENDING",
+                        evidence={
+                            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+                            "missing": missing,
+                            "resultDigest": digest,
+                        },
+                        dedupe_key=digest,
+                    )
+                    validation_deferred.append(
+                        {
+                            "key": candidate["key"],
+                            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+                            "missing": missing,
+                        }
+                    )
+                    store.record_task_result_ingested(
+                        candidate["key"], digest=digest, stage="VALIDATION_PENDING"
+                    )
+                    ingested.append(
+                        {
+                            "key": candidate["key"],
+                            "stage": "VALIDATION_PENDING",
+                            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+                        }
+                    )
+                    if current_wake_digest:
+                        store.record_followup_result(
                             candidate["key"],
-                            thread_id=candidate["threadId"],
+                            wake_digest=current_wake_digest,
                             result_digest=digest,
-                            missing=missing,
-                            progress_marker=_validation_progress_marker(value),
+                            stage="VALIDATION_PENDING",
                         )
-                        store.record_stage(
-                            candidate["key"],
-                            "VALIDATION_PENDING",
-                            evidence={
-                                "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
-                                "missing": missing,
-                                "resultDigest": digest,
-                            },
-                            dedupe_key=digest,
-                        )
-                        validation_deferred.append(
-                            {
-                                "key": candidate["key"],
-                                "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
-                                "missing": missing,
-                            }
-                        )
-                        store.record_task_result_ingested(
-                            candidate["key"], digest=digest, stage="VALIDATION_PENDING"
-                        )
-                        ingested.append(
-                            {
-                                "key": candidate["key"],
-                                "stage": "VALIDATION_PENDING",
-                                "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
-                            }
-                        )
-                        if current_wake_digest:
-                            store.record_followup_result(
-                                candidate["key"],
-                                wake_digest=current_wake_digest,
-                                result_digest=digest,
-                                stage="VALIDATION_PENDING",
-                            )
-                        continue
+                    continue
                 if publication_blocked:
                     managed_adapter.record_task_result(
                         candidate=managed_candidate, value=value, result_digest=digest
@@ -12680,10 +12710,25 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     continue
                 if not broker.get("granted"):
+                    audit = broker.get("audit") or {}
+                    reason = str(audit.get("reason") or "")
+                    terminalized = bool(
+                        request.get("publicationKind", "PR_CREATE") == "PR_CREATE"
+                        and reason in TERMINAL_PUBLICATION_BLOCK_REASONS
+                    )
+                    if terminalized:
+                        store.record_stage(
+                            str(request["opportunityKey"]),
+                            "AUDIT_NO_GO",
+                            evidence={"publicationAudit": audit},
+                            reason=reason,
+                            dedupe_key=f"publication-terminal:{request_id}:{reason}",
+                        )
                     blocked.append(
                         {
                             "requestId": request_id,
-                            "reason": (broker.get("audit") or {}).get("reason"),
+                            "reason": reason,
+                            **({"terminalized": True} if terminalized else {}),
                         }
                     )
                     continue
@@ -13511,6 +13556,8 @@ def pr_lifecycle_stage(value: dict[str, Any]) -> str:
         return "MERGED"
     if str(value.get("state") or "").upper() == "CLOSED":
         return "CLOSED"
+    if value.get("isDraft") is True:
+        return "PR_OPEN"
     if str(value.get("reviewDecision") or "").upper() == "APPROVED":
         return "MAINTAINER_ACCEPTED"
     checks = [item for item in value.get("statusCheckRollup") or [] if isinstance(item, dict)]
@@ -13523,12 +13570,16 @@ def pr_lifecycle_stage(value: dict[str, Any]) -> str:
     return "PR_OPEN"
 
 
-def should_apply_pr_lifecycle_stage(current: str, remote: str) -> bool:
+def should_apply_pr_lifecycle_stage(
+    current: str, remote: str, *, is_draft: bool = False
+) -> bool:
     """Keep local validation/update work authoritative until the PR is terminal."""
     if remote in TERMINAL_PR_STAGES:
         return current != remote
     if current in LOCAL_PR_ACTION_STAGES:
         return False
+    if is_draft and remote == "PR_OPEN":
+        return current in {"CI_GREEN", "MAINTAINER_ACCEPTED"}
     return PR_STAGE_PRIORITY[remote] > PR_STAGE_PRIORITY.get(current, -1)
 
 
@@ -13546,7 +13597,7 @@ def refresh_pull_requests(args: argparse.Namespace) -> dict[str, Any]:
                         "view",
                         item["pr_url"],
                         "--json",
-                        "state,mergedAt,reviewDecision,statusCheckRollup,url",
+                        "state,isDraft,mergedAt,reviewDecision,statusCheckRollup,url",
                     ],
                     timeout=45,
                 )
@@ -13555,7 +13606,9 @@ def refresh_pull_requests(args: argparse.Namespace) -> dict[str, Any]:
             errors.append({"key": item["key"], "error": str(exc)[:200]})
             continue
         stage = pr_lifecycle_stage(value)
-        if should_apply_pr_lifecycle_stage(str(item["stage"]), stage):
+        if should_apply_pr_lifecycle_stage(
+            str(item["stage"]), stage, is_draft=value.get("isDraft") is True
+        ):
             store.record_stage(
                 item["key"],
                 stage,

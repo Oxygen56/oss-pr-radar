@@ -112,6 +112,72 @@ def test_controller_reingests_an_independently_reviewed_result(tmp_path):
     assert calls.index("resultIngestionAfterReview") < calls.index("publication")
 
 
+def test_controller_finishes_terminal_publication_lifecycle_in_same_cycle(tmp_path):
+    calls: list[str] = []
+
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        calls.append(stage)
+        if stage == "publication":
+            return {
+                "ok": True,
+                "blocked": [
+                    {
+                        "requestId": "request-1",
+                        "reason": "STRONG_EXISTING_PR",
+                        "terminalized": True,
+                    }
+                ],
+            }
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path, code_root=DEV_CODE_ROOT, allow_unreleased_code=True, runner=runner, notify=False
+    )
+
+    assert result["ok"] is True
+    ordered = [
+        "publication",
+        "contextSync",
+        "terminalFeedbackAfterPublication",
+        "titleReconcileAfterPublication",
+        "cleanupReconcileAfterPublication",
+        "drain",
+    ]
+    assert [calls.index(stage) for stage in ordered] == sorted(
+        calls.index(stage) for stage in ordered
+    )
+
+
+def test_controller_skips_post_publication_cleanup_without_terminal_block(tmp_path):
+    calls: list[str] = []
+
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        calls.append(stage)
+        if stage == "publication":
+            return {
+                "ok": True,
+                "blocked": [
+                    {
+                        "requestId": "request-1",
+                        "reason": "CONTROLLER_INDEPENDENT_REVIEW_REQUIRED",
+                    }
+                ],
+            }
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path, code_root=DEV_CODE_ROOT, allow_unreleased_code=True, runner=runner, notify=False
+    )
+
+    assert result["ok"] is True
+    assert "terminalFeedbackAfterPublication" not in calls
+    assert "titleReconcileAfterPublication" not in calls
+    assert "cleanupReconcileAfterPublication" not in calls
+    assert result["stages"]["terminalFeedbackAfterPublication"]["skipped"] is True
+    assert result["stages"]["titleReconcileAfterPublication"]["skipped"] is True
+    assert result["stages"]["cleanupReconcileAfterPublication"]["skipped"] is True
+
+
 def test_controller_cycle_fails_closed_when_context_recovery_fails(tmp_path):
     calls: list[str] = []
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .dispatch import DispatchSigner, verify_queue
+from .dispatch import DispatchSigner, rejection_revokes, verify_queue
 from .github_client import GitHubClient
 from .managed_lifecycle import (
     ManagedLedger,
@@ -310,6 +310,27 @@ class ManagedAdapter:
             task_id = f"scan:{opportunity_key}"
             result_digest = sha256_json({"opportunity": opportunity_key, "outcome": outcome})
             result_type = _scan_outcome_result_type(outcome)
+            with ledger._connection() as connection:
+                existing = connection.execute(
+                    "SELECT state FROM managed_opportunities WHERE opportunity_key=?",
+                    (opportunity_key,),
+                ).fetchone()
+            if existing is not None and not rejection_revokes(outcome):
+                ledger.record_event(
+                    event_type="SCAN_OUTCOME_DEFERRED_EXISTING_STATE",
+                    idempotency_key=(
+                        f"defer-existing:{report.get('run_id') or report.get('now')}:"
+                        f"{opportunity_key}"
+                    ),
+                    opportunity_key=opportunity_key,
+                    state=str(existing["state"] or ""),
+                    source="scanner",
+                    provenance={"outcomeDigest": result_digest},
+                    observed_at=str(report.get("now") or "") or None,
+                    payload={"outcome": outcome},
+                )
+                outcomes_recorded += 1
+                continue
             ledger.upsert_opportunity(
                 opportunity_key=opportunity_key,
                 owner=owner,

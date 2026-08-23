@@ -222,8 +222,20 @@ def controller_cycle(
             "--min-age-minutes",
             "30",
         )
-        bridge("publication", "publication-run", timeout=1800)
+        publication = bridge("publication", "publication-run", timeout=1800)
         bridge("contextSync", "context-sync")
+        publication_terminalized = any(
+            isinstance(item, dict) and item.get("terminalized") is True
+            for item in (publication.get("blocked") or [])
+        )
+        if publication_terminalized:
+            bridge("terminalFeedbackAfterPublication", "publish-terminal-feedback")
+            bridge("titleReconcileAfterPublication", "title-reconcile")
+            bridge("cleanupReconcileAfterPublication", "cleanup-reconcile")
+        else:
+            stages["terminalFeedbackAfterPublication"] = {"ok": True, "skipped": True}
+            stages["titleReconcileAfterPublication"] = {"ok": True, "skipped": True}
+            stages["cleanupReconcileAfterPublication"] = {"ok": True, "skipped": True}
         drain = bridge(
             "drain",
             "drain-once",

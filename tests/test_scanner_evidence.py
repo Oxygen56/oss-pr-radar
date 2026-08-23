@@ -147,6 +147,43 @@ def test_gh_honors_full_timeout_without_proxy(monkeypatch):
     assert captured["timeout"] == 37
 
 
+@pytest.mark.parametrize(
+    "first",
+    [
+        subprocess.CompletedProcess([], 1, stdout="", stderr="unexpected EOF"),
+        subprocess.CompletedProcess([], 0, stdout='{"items":', stderr=""),
+    ],
+)
+def test_gh_retries_eof_and_truncated_json(monkeypatch, first):
+    for name in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    calls = []
+    delays = []
+
+    def fake_run(args, **_kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            return first
+        return subprocess.CompletedProcess(args, 0, stdout='{"items":[]}', stderr="")
+
+    monkeypatch.setattr(scanner.subprocess, "run", fake_run)
+    monkeypatch.setattr(scanner.time, "sleep", delays.append)
+
+    data, error = scanner.gh(["api", "search/issues"], timeout=30)
+
+    assert error is None
+    assert data == {"items": []}
+    assert len(calls) == 2
+    assert delays == [0.25]
+
+
 def test_single_page_collection_does_not_enable_pagination(monkeypatch):
     captured = {}
 

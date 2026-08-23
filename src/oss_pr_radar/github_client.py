@@ -291,11 +291,41 @@ class GitHubClient:
             "-F",
             f"number={number}",
         ]
-        raw = self.runner(args, self.timeout)
+        value: Any = None
+        started = time.monotonic()
+        last_error: BaseException | None = None
+        for attempt in range(len(self.retry_delays) + 1):
+            remaining = float(self.timeout) - (time.monotonic() - started)
+            if remaining <= 0:
+                if isinstance(last_error, json.JSONDecodeError):
+                    raise GitHubError("GitHub review threads response is invalid") from last_error
+                if last_error is not None:
+                    raise last_error
+                raise GitHubError("GitHub review threads request timed out")
+            try:
+                raw = self.runner(args, remaining)
+                value = json.loads(raw)
+                break
+            except json.JSONDecodeError as exc:
+                last_error = exc
+                if attempt >= len(self.retry_delays):
+                    raise GitHubError("GitHub review threads response is invalid") from exc
+            except (GitHubError, subprocess.TimeoutExpired) as exc:
+                last_error = exc
+                if attempt >= len(self.retry_delays) or not is_transient_github_error(exc):
+                    raise
+            remaining = float(self.timeout) - (time.monotonic() - started)
+            delay = min(self.retry_delays[attempt], max(0.0, remaining))
+            if delay <= 0:
+                if isinstance(last_error, json.JSONDecodeError):
+                    raise GitHubError("GitHub review threads response is invalid") from last_error
+                if last_error is not None:
+                    raise last_error
+                raise GitHubError("GitHub review threads request timed out")
+            self.sleeper(delay)
         try:
-            value = json.loads(raw)
             nodes = value["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
-        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        except (KeyError, TypeError) as exc:
             raise GitHubError("GitHub review threads response is invalid") from exc
         if not isinstance(nodes, list):
             raise GitHubError("GitHub review threads response is incomplete")

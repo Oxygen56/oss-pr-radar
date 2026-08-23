@@ -1733,50 +1733,73 @@ def gh(args: list[str], timeout: int = 18) -> tuple[Any | None, str | None]:
             "all_proxy",
         )
     )
-    direct_timeout = float(timeout) if not proxy_configured else min(float(timeout), 10.0)
-    try:
-        proc = invoke(direct_env, direct_timeout)
-    except subprocess.TimeoutExpired:
-        if not proxy_configured:
-            return None, "timeout"
+    transient_re = re.compile(
+        r"(?:unexpected\s+)?eof(?:\s+while\s+reading)?|ssl_error_syscall|"
+        r"tls handshake timeout|connection (?:refused|reset)|network is unreachable|"
+        r"i/o timeout|context deadline exceeded|no route to host|"
+        r"temporarily unavailable|http\s+(?:408|429|5\d\d)",
+        re.I,
+    )
+    retry_delays = (0.25, 1.0)
+    last_error = ""
+    for attempt in range(len(retry_delays) + 1):
         remaining = timeout - (time.monotonic() - started)
         if remaining <= 1.0:
-            return None, "timeout"
-        try:
-            proc = invoke(os.environ.copy(), remaining)
-        except subprocess.TimeoutExpired:
-            return None, "timeout"
-        except Exception as exc:  # pragma: no cover - operational fallback
-            return None, str(exc)[:200]
-    except Exception as exc:  # pragma: no cover - operational fallback
-        return None, str(exc)[:200]
-
-    error_text = (proc.stderr or proc.stdout or "").strip()
-    connectivity_failure = bool(
-        proc.returncode
-        and re.search(
-            r"tls handshake timeout|connection (?:refused|reset)|network is unreachable|"
-            r"i/o timeout|context deadline exceeded|no route to host",
-            error_text,
-            re.I,
+            return None, last_error or "timeout"
+        direct_timeout = (
+            float(timeout)
+            if not proxy_configured and attempt == 0
+            else remaining
+            if not proxy_configured
+            else min(remaining, 10.0)
         )
-    )
-    if connectivity_failure and proxy_configured:
-        remaining = timeout - (time.monotonic() - started)
-        if remaining > 1.0:
-            try:
-                proc = invoke(os.environ.copy(), remaining)
-            except subprocess.TimeoutExpired:
-                return None, "timeout"
-            except Exception as exc:  # pragma: no cover - operational fallback
-                return None, str(exc)[:200]
+        try:
+            proc = invoke(direct_env, direct_timeout)
+        except subprocess.TimeoutExpired:
+            last_error = "timeout"
+            proc = None
+        except Exception as exc:  # pragma: no cover - operational fallback
+            last_error = str(exc)[:200]
+            proc = None
 
-    if proc.returncode:
-        return None, (proc.stderr or proc.stdout or "").strip()[:250]
-    try:
-        return json.loads(proc.stdout or "{}"), None
-    except json.JSONDecodeError as exc:
-        return None, f"json_decode:{exc}"
+        error_text = (
+            (proc.stderr or proc.stdout or "").strip() if proc is not None else last_error
+        )
+        connectivity_failure = proc is None or bool(
+            proc.returncode and transient_re.search(error_text)
+        )
+        if connectivity_failure and proxy_configured:
+            remaining = timeout - (time.monotonic() - started)
+            if remaining > 1.0:
+                try:
+                    proc = invoke(os.environ.copy(), remaining)
+                    error_text = (proc.stderr or proc.stdout or "").strip()
+                except subprocess.TimeoutExpired:
+                    last_error = "timeout"
+                    proc = None
+                except Exception as exc:  # pragma: no cover - operational fallback
+                    last_error = str(exc)[:200]
+                    proc = None
+
+        if proc is None:
+            retryable = True
+        elif proc.returncode:
+            last_error = (proc.stderr or proc.stdout or "").strip()[:250]
+            retryable = bool(transient_re.search(last_error))
+        else:
+            try:
+                return json.loads(proc.stdout or "{}"), None
+            except json.JSONDecodeError as exc:
+                last_error = f"json_decode:{exc}"
+                retryable = True
+        if not retryable or attempt >= len(retry_delays):
+            return None, last_error
+        remaining = timeout - (time.monotonic() - started)
+        delay = min(retry_delays[attempt], max(0.0, remaining - 1.0))
+        if delay <= 0:
+            return None, last_error or "timeout"
+        time.sleep(delay)
+    return None, last_error or "timeout"
 
 
 def gh_paginated(
