@@ -5504,6 +5504,30 @@ def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
     raise RuntimeError("root task creation result is unknown; orphan reconciliation required")
 
 
+def _validated_agentscope_event_outcome(
+    path: Path, *, allowed_dir: Path, event_id: str, public_key: str
+) -> dict[str, Any]:
+    """Read the handler-authored outcome with fail-closed identity and TTL checks."""
+    if path.resolve().parent != allowed_dir.resolve():
+        return {"error": "OUTCOME_PATH_INVALID"}
+    value = read_json(path, missing={})
+    if not isinstance(value, dict) or value.get("schemaVersion") != "agentscope_event_outcome_v1":
+        return {"error": "OUTCOME_MISSING_OR_INVALID"}
+    if value.get("eventId") != event_id or value.get("publicKey") != public_key:
+        return {"error": "OUTCOME_IDENTITY_MISMATCH"}
+    if value.get("state") not in {"no_action", "claimed_or_pr", "design_wait"}:
+        return {"error": "OUTCOME_STATE_INVALID"}
+    if value.get("state") == "design_wait":
+        try:
+            started = datetime.fromisoformat(str(value["waitStartedAt"]).replace("Z", "+00:00"))
+            until = datetime.fromisoformat(str(value["waitUntil"]).replace("Z", "+00:00"))
+            if until < started or until - started > timedelta(hours=24):
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            return {"error": "OUTCOME_WAIT_INVALID"}
+    return value
+
+
 def _agentscope_event_worker(args: argparse.Namespace) -> dict[str, Any]:
     """Run one detached AgentScope turn and receipt it before waiting for terminal state."""
     request = read_json(Path(args.request), missing={})
@@ -5512,8 +5536,12 @@ def _agentscope_event_worker(args: argparse.Namespace) -> dict[str, Any]:
     event_id = str(request.get("eventId") or "")
     event_key = str(request.get("eventKey") or "")
     prompt = str(request.get("prompt") or "")
+    outcome_path = Path(str(request.get("outcomePath") or "")).resolve()
     if not event_id or not event_key or not prompt:
         raise RuntimeError("AgentScope event request is incomplete")
+    allowed_outcome_dir = Path(args.receipt).resolve().parent.parent / "agentscope_event_outcomes"
+    if outcome_path.parent != allowed_outcome_dir:
+        raise RuntimeError("AgentScope outcome path is outside the private outcome directory")
     thread_id = str(request.get("threadId") or "")
     executable = shutil.which("codex")
     if not executable:
@@ -5634,7 +5662,15 @@ def _agentscope_event_worker(args: argparse.Namespace) -> dict[str, Any]:
         )
         if terminal:
             current = read_json(Path(args.receipt), missing={})
-            _atomic_json(Path(args.receipt), current | {"turnStatus": terminal["status"]})
+            outcome = _validated_agentscope_event_outcome(
+                outcome_path, allowed_dir=allowed_outcome_dir,
+                event_id=event_id, public_key=event_key,
+            )
+            _atomic_json(
+                Path(args.receipt),
+                current | {"turnStatus": terminal["status"], "outcome": outcome,
+                           "outcomePath": str(outcome_path)},
+            )
         return read_json(Path(args.receipt), missing={})
     except Exception as exc:
         receipt = Path(args.receipt)
@@ -5694,6 +5730,9 @@ def agentscope_event_create(args: argparse.Namespace) -> dict[str, Any]:
             "clientUserMessageId": args.client_user_message_id,
             "cwd": str(args.cwd or GITHUB_ROOT),
             "prompt": args.prompt,
+            "designWaitUntil": getattr(args, "design_wait_until", ""),
+            "designWaitStartedAt": getattr(args, "design_wait_started_at", ""),
+            "outcomePath": str(getattr(args, "outcome_receipt", "")),
         },
     )
     receipt.unlink(missing_ok=True)
@@ -16499,6 +16538,9 @@ def main() -> int:
     agentscope_event_parser.add_argument("--cwd", type=Path, default=GITHUB_ROOT)
     agentscope_event_parser.add_argument("--prompt", required=True)
     agentscope_event_parser.add_argument("--receipt", required=True)
+    agentscope_event_parser.add_argument("--design-wait-until", default="")
+    agentscope_event_parser.add_argument("--design-wait-started-at", default="")
+    agentscope_event_parser.add_argument("--outcome-receipt", default="")
     agentscope_event_worker_parser = subparsers.add_parser("agentscope-event-worker")
     agentscope_event_worker_parser.add_argument("--request", required=True)
     agentscope_event_worker_parser.add_argument("--receipt", required=True)

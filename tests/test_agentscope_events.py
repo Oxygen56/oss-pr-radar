@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -210,3 +212,128 @@ def test_unmapped_event_uses_explicit_independent_release_bridge(tmp_path, monke
     assert calls[0][2]["inactive_release"] is True
     assert calls[0][2]["code_root"] == worker.ROOT
     assert lane.handler_thread("agentscope-ai/agentscope#10")["thread_id"] == "thread-new"
+
+
+def test_pr_detail_failure_does_not_emit_shrunken_snapshot(tmp_path):
+    item = {
+        "number": 12, "updated_at": "2026-08-22T00:00:00Z", "title": "implementation",
+        "state": "open", "user": {"login": "Oxygen56"},
+        "pull_request": {"url": "https://api.github.com/repos/agentscope-ai/agentscope/pulls/12"},
+        "labels": [],
+    }
+    fail_details = True
+
+    def transport(url, headers):
+        if "direction=desc" in url and "issues?" in url:
+            if headers.get("If-None-Match"):
+                return 304, {"ETag": "gate"}, None
+            return 200, {"ETag": "gate"}, [item]
+        if fail_details:
+            return 503, {}, None
+        if url.endswith("/pulls/12"):
+            return 200, {}, {"head": {"sha": "sha12"}}
+        if "/check-runs" in url:
+            return 200, {}, {"check_runs": []}
+        return 200, {}, []
+
+    poller = GitHubIssuePoller(tmp_path / "poll.json", transport=transport)
+    assert poller.poll().status == "baseline"
+    assert not poller.poll().events
+    fail_details = False
+    result = poller.poll()
+    assert len(result.events) == 1
+    assert set(result.events[0]["prDetails"]) == {"pull", "reviews", "comments", "checks"}
+
+
+def test_full_reconcile_first_pass_is_baseline_and_second_pass_is_idempotent(tmp_path):
+    changed = False
+
+    def transport(url, headers):
+        if "direction=desc" in url:
+            return 200, {"ETag": "gate"}, [_issue(1, "2026-08-22T00:00:00Z")]
+        title = "changed" if changed else "item 1"
+        return 200, {}, [_issue(1, "2026-08-22T00:00:00Z") | {"title": title}]
+
+    poller = GitHubIssuePoller(tmp_path / "poll.json", transport=transport)
+    poller.poll()
+    first = poller.full_reconcile()
+    assert not first.events
+    second = poller.full_reconcile()
+    assert not second.events
+    changed = True
+    third = poller.full_reconcile()
+    assert len(third.events) == 1
+
+
+def test_pr_number_maps_to_underlying_opportunity_even_when_followup_not_required(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+
+    class FakeDb:
+        def execute(self, _query, _params):
+            class Rows:
+                def fetchall(self):
+                    return [{"key": "agentscope-ai/agentscope#2385", "pr_url": "https://github.com/agentscope-ai/agentscope/pull/2397", "thread_id": "thread-2385"}]
+
+            return Rows()
+
+    class FakeStore:
+        def __init__(self, _path):
+            pass
+
+        def pr_followup_candidates(self):
+            return []
+
+        def unresolved_pr_followups(self):
+            return []
+
+        def connect(self):
+            class Context:
+                def __enter__(self):
+                    return FakeDb()
+
+                def __exit__(self, *_args):
+                    return False
+
+            return Context()
+
+    monkeypatch.setattr(worker, "RadarLedger", FakeStore)
+    target = worker._resolve_event_target(tmp_path, {
+        "repo": "agentscope-ai/agentscope", "number": 2397, "kind": "pr_update",
+        "issue": {"number": 2397, "pull_request": {"html_url": "https://github.com/agentscope-ai/agentscope/pull/2397"}},
+    })
+    assert target["kind"] == "pr_followup"
+    assert target["key"] == "agentscope-ai/agentscope#2385"
+    assert target["threadId"] == "thread-2385"
+
+
+def test_public_work_seed_is_imported_once_and_outcome_can_replace_it(tmp_path):
+    worker = _event_worker_module()
+    seed = tmp_path / "state" / "agentscope-public-work.json"
+    seed.parent.mkdir()
+    seed.write_text(json.dumps({"items": [{"key": "agentscope-ai/agentscope#2364", "status": "design_wait", "designWaitUntil": "2099-01-01T00:00:00Z"}]}))
+    lane = EventLane(tmp_path / "state" / "events.db")
+    assert worker._sync_public_work_seed(tmp_path, lane) == 1
+    assert lane.public_status("agentscope-ai/agentscope#2364") == "design_wait"
+    seed.write_text(json.dumps({"items": [{"key": "agentscope-ai/agentscope#2364", "status": "active"}]}))
+    assert worker._sync_public_work_seed(tmp_path, lane) == 0
+    lane.register_public_work("agentscope-ai/agentscope#2364", status="watch_only")
+    assert lane.public_status("agentscope-ai/agentscope#2364") == "watch_only"
+
+
+def test_invalid_outcome_creates_durable_recovery_event(tmp_path):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    event_id = "event-invalid"
+    lane.append({"eventId": event_id, "repo": "agentscope-ai/agentscope", "number": 1})
+    lane.reserve_handler_turn("agentscope-ai/agentscope#1", event_id, "client:event-invalid")
+    lane.bind_handler_turn("agentscope-ai/agentscope#1", event_id, "thread-1", "turn-1", {}, status="started")
+    receipt = tmp_path / "state" / "agentscope_event_receipts" / (hashlib.sha256(event_id.encode()).hexdigest() + ".json")
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(json.dumps({"ok": True, "turnStatus": "completed", "threadId": "thread-1", "turnId": "turn-1", "outcome": {"error": "OUTCOME_MISSING_OR_INVALID"}}))
+    assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
+    with lane.connect() as db:
+        row = db.execute("SELECT payload_json FROM event_lane_events WHERE event_id LIKE 'outcome-reconcile:%'").fetchone()
+    assert json.loads(row["payload_json"])["kind"] == "outcome_reconcile"
+    delivered = []
+    assert dispatch_once(lane, delivered.append, limit=1)["delivered"] == 1
+    assert delivered[0]["kind"] == "outcome_reconcile"

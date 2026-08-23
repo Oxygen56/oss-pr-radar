@@ -56,6 +56,28 @@ V50_SUPERSEDED_REVISION = "oss_pr_radar_v50_material_contradictions"
 V51_SUPERSEDED_REVISION = "oss_pr_radar_v51_bounded_wait_evidence"
 
 
+def test_agentscope_outcome_validation_is_fail_closed(tmp_path):
+    allowed = tmp_path / "outcomes"
+    allowed.mkdir()
+    path = allowed / "event.json"
+    path.write_text(json.dumps({
+        "schemaVersion": "agentscope_event_outcome_v1",
+        "eventId": "e1", "publicKey": "agentscope-ai/agentscope#1",
+        "state": "design_wait", "waitStartedAt": "2026-08-23T00:00:00Z",
+        "waitUntil": "2026-08-24T00:00:01Z",
+    }))
+    assert MODULE._validated_agentscope_event_outcome(
+        path, allowed_dir=allowed, event_id="e1", public_key="agentscope-ai/agentscope#1"
+    )["error"] == "OUTCOME_WAIT_INVALID"
+    path.write_text(json.dumps({
+        "schemaVersion": "agentscope_event_outcome_v1", "eventId": "wrong",
+        "publicKey": "agentscope-ai/agentscope#1", "state": "no_action",
+    }))
+    assert MODULE._validated_agentscope_event_outcome(
+        path, allowed_dir=allowed, event_id="e1", public_key="agentscope-ai/agentscope#1"
+    )["error"] == "OUTCOME_IDENTITY_MISMATCH"
+
+
 @pytest.fixture(autouse=True)
 def hermetic_bridge_shared_root(monkeypatch, tmp_path):
     """Keep the dynamically loaded bridge module out of the host shared root."""
