@@ -20,6 +20,7 @@ from scripts.host_radar_watcher import (
     IN_UNMOUNT,
     WATCHER_SCRIPT,
     _inotify_failure,
+    _write_marker,
     parse_inotify_events,
 )
 
@@ -98,6 +99,28 @@ def _finish_watcher(watcher: subprocess.Popen, expected_codes=(-15, 2)) -> str:
         f"stderr={stderr.decode('utf-8', 'replace')[-4000:]!r}"
     )
     return stderr.decode("utf-8", "replace")
+
+
+def test_marker_is_published_only_after_its_payload_is_complete(tmp_path, monkeypatch):
+    marker = tmp_path / "flag"
+    payload = b"complete marker payload"
+    original_link = os.link
+    observed_publish = False
+
+    def checking_link(source, destination, *args, **kwargs):
+        nonlocal observed_publish
+        assert Path(source).read_bytes() == payload
+        assert not Path(destination).exists()
+        observed_publish = True
+        return original_link(source, destination, *args, **kwargs)
+
+    monkeypatch.setattr(os, "link", checking_link)
+    _write_marker(marker, payload)
+
+    assert observed_publish
+    assert marker.read_bytes() == payload
+    assert marker.stat().st_mode & 0o777 == 0o600
+    assert not tuple(tmp_path.glob(".flag.*.tmp"))
 
 
 def test_missing_baseline_detects_empty_directory(tmp_path):

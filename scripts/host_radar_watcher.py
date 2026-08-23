@@ -127,12 +127,25 @@ def _inventory(path: Path) -> str:
 
 
 def _write_marker(path: Path, payload: bytes) -> None:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    staged = path.with_name(f".{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
+    created = False
     try:
-        os.write(fd, payload)
-        os.fsync(fd)
+        fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        created = True
+        try:
+            remaining = memoryview(payload)
+            while remaining:
+                written = os.write(fd, remaining)
+                if written <= 0:
+                    raise OSError("marker payload write made no progress")
+                remaining = remaining[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.link(staged, path)
     finally:
-        os.close(fd)
+        if created:
+            staged.unlink(missing_ok=True)
 
 
 def _fail_closed(flag: Path, message: str) -> None:
