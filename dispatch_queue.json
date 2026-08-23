@@ -1,8 +1,8 @@
 {
   "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
   "decisionContractDigest": "bea3254376f7aced8aef5e8a7d060fa881c49ffefdc92fe1a0f5ba16740e04db",
-  "generatedAt": "2026-08-23T02:06:29.536694Z",
-  "intentCount": 2,
+  "generatedAt": "2026-08-23T03:21:28.670227Z",
+  "intentCount": 3,
   "intents": [
     {
       "actionabilityEvidence": {
@@ -46,7 +46,7 @@
       "decisionDigest": "38678a8d158a688a23300e2336da09f02f0a7699dc6ef4d0b3e0ab2892743c9a",
       "defaultBranch": "litellm_internal_staging",
       "evidenceDigest": "17eb4aebe97a6c627cb2196a531b60725b2670a117045168ec969875d925843f",
-      "expiresAt": "2026-08-23T04:06:29.536694Z",
+      "expiresAt": "2026-08-23T05:21:28.670227Z",
       "intentId": "7758546fb9cdc05790f2474fae58914ca00532cf10c403a54676de021e413c11",
       "issueNumber": 37925,
       "issueUpdatedAt": "2026-08-22T11:31:43Z",
@@ -261,14 +261,14 @@
       "promptDigest": "a047d3f0e0e1f07729249f1956aa3a3e7c88bdd12a79f37ca32a83b9220c6fa1",
       "publicSubmissionAllowed": true,
       "publicationMode": "canary",
-      "renewedAt": "2026-08-23T02:06:29.536694Z",
+      "renewedAt": "2026-08-23T03:21:28.670227Z",
       "repo": "BerriAI/litellm",
       "runId": "scan-20260822T185200Z-b326b417c69a",
       "scanGate": "ALLOW_TO_WORK",
       "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
       "score": 11,
       "selectedBaseSha": "490c9f9f3faa0ba88b600f57abfb73f9f83b48ff",
-      "signature": "68accddf557188376ee53421d9db3575a11f42330c3d9d76f45e7a134ae8de15",
+      "signature": "48496eac816c06374e0984371a0b71f03da4461d4f4b223c5816b7a21c0754e3",
       "snapshotId": "3a08036686dcf7321894c68a6d595830d89baf2db15ec70f1e172c5b8e07679f",
       "sourceSha": "6bc53389d97eb630b24d84cb7fd93d20a440ffca",
       "status": "PENDING",
@@ -282,9 +282,10 @@
       "actionabilityEvidence": {
         "algorithm_wait_evidence": false,
         "code_anchors": [
-          "wait-for-user.ts",
-          "`wait_for_user`",
-          "scheduler resumes"
+          "packages/core/src/core/openaiContentGenerator/provider/deepseek.ts",
+          "deepseek.ts",
+          "`high`",
+          "`generationConfig.samplingParams.temperature`"
         ],
         "dependency_confirmation": false,
         "dependency_pr_numbers": [],
@@ -296,10 +297,8 @@
         "needs_confirmation": false,
         "ownership_confirmation": false,
         "probe_ready": true,
-        "public_repro_signals": 1,
-        "reproduction_evidence": [
-          "ordered_steps"
-        ],
+        "public_repro_signals": 0,
+        "reproduction_evidence": [],
         "root_cause_signal": true,
         "usage_confirmation": false,
         "wait_reasons": []
@@ -311,16 +310,16 @@
       "category": "NEW_CLEAN_CANDIDATE",
       "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
       "decisionContractDigest": "bea3254376f7aced8aef5e8a7d060fa881c49ffefdc92fe1a0f5ba16740e04db",
-      "decisionDigest": "f45bef7f9d85843dbadf578b8a88206981af7bfbf6c11a8075b1366df52abbb3",
-      "defaultBranch": "master",
-      "evidenceDigest": "d5f7097b996eb8381e4978319c1d52c8347d1c17922695cf6ec83daf381f6c95",
-      "expiresAt": "2026-08-23T04:06:29.536694Z",
-      "intentId": "ffa5d549e7136a636b58775c12784b8a11e2068a448b07dc8a4e8070d800890d",
-      "issueNumber": 1000,
-      "issueUpdatedAt": "2026-08-22T23:32:10Z",
-      "issueUrl": "https://github.com/alvinunreal/oh-my-opencode-slim/issues/1000",
-      "issuedAt": "2026-08-22T23:42:27.126221Z",
-      "key": "alvinunreal/oh-my-opencode-slim#1000",
+      "decisionDigest": "a5f4209042caee28029d47d91642f405475450c11772d00156f06ee3cce8fbb4",
+      "defaultBranch": "main",
+      "evidenceDigest": "825eb408ecd1668e78c3dde57bedc6ce56810fdbb046289b6601800fd3a26ab9",
+      "expiresAt": "2026-08-23T05:21:28.670227Z",
+      "intentId": "a0d7bde6f6273064ffce90b883ff15a186fba10e1a506d717d442d9b96f519aa",
+      "issueNumber": 9765,
+      "issueUpdatedAt": "2026-08-23T02:19:08Z",
+      "issueUrl": "https://github.com/QwenLM/qwen-code/issues/9765",
+      "issuedAt": "2026-08-23T03:21:28.670227Z",
+      "key": "QwenLM/qwen-code#9765",
       "llmReview": {
         "confidence": 0.85,
         "decision": "NEW_CLEAN_CANDIDATE",
@@ -331,165 +330,34 @@
       },
       "maturity": "mature",
       "mode": "canary",
-      "nonce": "ad1a9e4d20e9d713a30449a4eedef05e",
+      "nonce": "f8ddaafc0582011a79ddc1ee1b7334c4",
       "notify": true,
-      "policyDigest": "100505e48cf28476e2697b683e0cc99e51b6bd88b93c007a2bbd5aa4454ea55e",
+      "policyDigest": "96676eec1e3ad3e1cb8668126f3e5ead529ba48bf91d471740a06c3be23ede77",
       "preTaskEvidence": {
         "aiDisclosureConflict": false,
         "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "assignmentRequired": false,
         "baseLookupStatus": "ok",
-        "baseSha": "f47b1c2ff342281c76e1660c0a2c72d5229f8f02",
+        "baseSha": "cf3e8ad7c02da70d1bd492733041aab3eb8c52f7",
         "codePathsPlan": [
-          "wait-for-user.ts",
-          "src/tools/wait-for-user.ts"
+          "packages/core/src/core/openaiContentGenerator/provider/deepseek.ts",
+          "deepseek.ts",
+          "packages/core/src/providers/presets/deepseek.ts"
         ],
-        "defaultBranch": "master",
+        "defaultBranch": "main",
         "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
         "duplicate": {
-          "prs": [
-            {
-              "additions": 24,
-              "age_days": 11,
-              "author_association": "CONTRIBUTOR",
-              "changed_files": 5,
-              "ci_competition_weight": 0,
-              "deletions": 4,
-              "gaps": [
-                "未明确 closing/reference 目标 issue"
-              ],
-              "ignored_nontechnical_failed_checks": [],
-              "is_draft": false,
-              "issue_body_link": false,
-              "issue_body_link_relation": "",
-              "maintainer_owned": false,
-              "material_competition_gaps": [],
-              "number": 1001,
-              "overlapping_paths": [
-                "src/tools/wait-for-user.ts"
-              ],
-              "reference_relation": "REFERENCE",
-              "references_issue": false,
-              "root_cause_coverage": false,
-              "rule_closed": false,
-              "score": 38,
-              "semantic_distinctive_overlap": [
-                "wait_for_user"
-              ],
-              "semantic_overlap": true,
-              "semantic_overlap_count": 8,
-              "state": "MERGED",
-              "strengths": [
-                "包含测试文件 2 个",
-                "已有成功 CI/check",
-                "标题/正文与 issue 关键词匹配",
-                "改动文件与 issue 代码路径重合"
-              ],
-              "technical_complete": false,
-              "technical_failed_checks": [],
-              "test_files": 2,
-              "title": "fix(orchestrator): prevent wait_for_user loop for background tasks",
-              "url": "https://github.com/alvinunreal/oh-my-opencode-slim/pull/1001"
-            },
-            {
-              "additions": 581,
-              "age_days": 19,
-              "author_association": "CONTRIBUTOR",
-              "changed_files": 5,
-              "ci_competition_weight": 0,
-              "deletions": 44,
-              "gaps": [
-                "未明确 closing/reference 目标 issue",
-                "超过 14 天未更新"
-              ],
-              "ignored_nontechnical_failed_checks": [],
-              "is_draft": false,
-              "issue_body_link": false,
-              "issue_body_link_relation": "",
-              "maintainer_owned": false,
-              "material_competition_gaps": [],
-              "number": 925,
-              "overlapping_paths": [],
-              "reference_relation": "REFERENCE",
-              "references_issue": false,
-              "root_cause_coverage": false,
-              "rule_closed": false,
-              "score": 20,
-              "semantic_distinctive_overlap": [
-                "wait_for_user"
-              ],
-              "semantic_overlap": false,
-              "semantic_overlap_count": 6,
-              "state": "MERGED",
-              "strengths": [
-                "包含测试文件 1 个",
-                "已有成功 CI/check",
-                "标题/正文与 issue 关键词匹配"
-              ],
-              "technical_complete": false,
-              "technical_failed_checks": [],
-              "test_files": 1,
-              "title": "fix(task-session-manager): reconcile terminal jobs on next request instead of idle-only",
-              "url": "https://github.com/alvinunreal/oh-my-opencode-slim/pull/925"
-            },
-            {
-              "additions": 913,
-              "age_days": 32,
-              "author_association": "CONTRIBUTOR",
-              "changed_files": 22,
-              "ci_competition_weight": 0,
-              "deletions": 32,
-              "gaps": [
-                "未明确 closing/reference 目标 issue",
-                "超过 30 天未更新",
-                "改动面偏大"
-              ],
-              "ignored_nontechnical_failed_checks": [],
-              "is_draft": false,
-              "issue_body_link": false,
-              "issue_body_link_relation": "",
-              "maintainer_owned": false,
-              "material_competition_gaps": [
-                "超过 30 天未更新"
-              ],
-              "number": 861,
-              "overlapping_paths": [
-                "src/tools/wait-for-user.ts"
-              ],
-              "reference_relation": "REFERENCE",
-              "references_issue": false,
-              "root_cause_coverage": false,
-              "rule_closed": false,
-              "score": 6,
-              "semantic_distinctive_overlap": [
-                "wait_for_user"
-              ],
-              "semantic_overlap": true,
-              "semantic_overlap_count": 4,
-              "state": "MERGED",
-              "strengths": [
-                "包含测试文件 8 个",
-                "已有成功 CI/check",
-                "标题/正文与 issue 关键词匹配",
-                "改动文件与 issue 代码路径重合"
-              ],
-              "technical_complete": false,
-              "technical_failed_checks": [],
-              "test_files": 8,
-              "title": "fix: add explicit wait_for_user for text-only HITL",
-              "url": "https://github.com/alvinunreal/oh-my-opencode-slim/pull/861"
-            }
-          ],
+          "prs": [],
           "status": "none",
-          "summary": "未发现相关 open PR；仅发现未直接关联 issue 的历史 PR"
+          "summary": "未发现相关 open PR"
         },
-        "duplicateDigest": "f0cb9d608cc77b0030795e863a758f30754fd561c2cff49e7c8d721611425d4f",
+        "duplicateDigest": "28a3bb38f5cdb345d3caf4fb83167265745af501b1cb9362fcce3ffee2995fc8",
         "duplicateStatus": "none",
         "issue": {
           "assignees": [],
           "state": "open"
         },
-        "issueDigest": "6d65807a6c09448a5b8627d259d4abba3e400ae01eb48f7c3a181023cc11ed64",
+        "issueDigest": "3cf8f08d8f3aa70af98b72d6692a2c8294de7ccbdd476fea6ad31da18e09d9bb",
         "matureRepository": true,
         "policy": {
           "status": "normal"
@@ -499,12 +367,12 @@
         "schema": "pre_task_evidence_v1",
         "validationPathPlan": true
       },
-      "preTaskEvidenceDigest": "55c1d98f3c3dddc2fc08d1c47b5f7a64884f86943269ef03a9a9ae83d27ce490",
+      "preTaskEvidenceDigest": "10ce7541604bcccea8b395bc27b6b6d9966d39c8a47f38f86b1187995ced8426",
       "preTaskGate": {
         "allowed": true,
-        "baseSha": "f47b1c2ff342281c76e1660c0a2c72d5229f8f02",
+        "baseSha": "cf3e8ad7c02da70d1bd492733041aab3eb8c52f7",
         "classification": null,
-        "evidenceDigest": "55c1d98f3c3dddc2fc08d1c47b5f7a64884f86943269ef03a9a9ae83d27ce490",
+        "evidenceDigest": "10ce7541604bcccea8b395bc27b6b6d9966d39c8a47f38f86b1187995ced8426",
         "expected": {
           "assigneeDigest": "",
           "baseSha": "",
@@ -519,32 +387,295 @@
       "probeLevel": "PENDING",
       "probeProfile": null,
       "probeRequired": true,
-      "promptDigest": "927585851a69967e3dbb8429d1877ad309fdef167b884b019170740fea378982",
+      "promptDigest": "8003db3c1c217e49b2943bf0c26b9655c5e9e2c36129f14b9d5c280ee260779d",
       "publicSubmissionAllowed": true,
       "publicationMode": "canary",
-      "renewedAt": "2026-08-23T02:06:29.536694Z",
-      "repo": "alvinunreal/oh-my-opencode-slim",
-      "runId": "scan-20260822T233855Z-cbfd4e86f697",
+      "repo": "QwenLM/qwen-code",
+      "runId": "scan-20260823T031830Z-bb0aded65e07",
       "scanGate": "ALLOW_TO_WORK",
       "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
-      "score": 10,
-      "selectedBaseSha": "f47b1c2ff342281c76e1660c0a2c72d5229f8f02",
-      "signature": "3afb099c23f6c4f675a1d863623e690b42e32e8500d48e04c8a1383c609455da",
-      "snapshotId": "147159579445f995c47c8e24d4c016c1e19c0130c9c1f04af10141e851f250c7",
+      "score": 11,
+      "selectedBaseSha": "cf3e8ad7c02da70d1bd492733041aab3eb8c52f7",
+      "signature": "8446d9d55f41f9998dfed8c0f8c9d8ed8fc82cb680034dff9f6b578f2a201d45",
+      "snapshotId": "bed0e12cbab774aa1a25ef9acdc403eef5693e27f99636bf899b645d7a1ac720",
       "sourceSha": "575c8e22f816f8f164046ead746ea6c5a453869d",
       "status": "PENDING",
       "submissionPolicy": "normal",
       "taskStage": "PREFLIGHT",
-      "title": "[Bug]: Endless `wait_for_user` loop after spawning background tasks",
+      "title": "bug(core): DeepSeek provider forces temperature 0, causing reasoning models (deepseek-v4-flash) to loop in thinking",
+      "track": "agent_ai_infra",
+      "version": "dispatch_intent_v7"
+    },
+    {
+      "actionabilityEvidence": {
+        "algorithm_wait_evidence": false,
+        "code_anchors": [
+          "packages/cloud/shared/src/lib/services/eliza-sandbox.ts",
+          "packages/cloud/shared/src/lib/services/eliza-sandbox-snapshot-authority.pglite.test.ts",
+          "packages/cloud/shared/src/lib/services/eliza-sandbox.test.ts",
+          "packages/cloud/shared/src/db/repositories/agent-sandboxes.ts",
+          "packages/cloud/shared/src/db/repositories/agent-sandboxes.test.ts",
+          "packages/cloud/shared/src/lib/services/eliza-sandbox-restore-authority.pglite.test.ts",
+          "eliza-sandbox.ts",
+          "provisioning-jobs.ts"
+        ],
+        "dependency_confirmation": false,
+        "dependency_pr_numbers": [],
+        "design_confirmation": false,
+        "help_wanted": false,
+        "maintainer_active_investigation": false,
+        "maintainer_approved": true,
+        "maintainer_revalidation_requested": false,
+        "needs_confirmation": false,
+        "ownership_confirmation": false,
+        "probe_ready": true,
+        "public_repro_signals": 0,
+        "reproduction_evidence": [],
+        "root_cause_signal": false,
+        "usage_confirmation": false,
+        "wait_reasons": []
+      },
+      "algorithmEvidence": null,
+      "authorizationSource": "signed_live_revalidation_required",
+      "autoSpawn": true,
+      "autoSubmitAuthorized": false,
+      "category": "LOCAL_FIX_ONLY",
+      "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
+      "decisionContractDigest": "bea3254376f7aced8aef5e8a7d060fa881c49ffefdc92fe1a0f5ba16740e04db",
+      "decisionDigest": "9e057958c592a0226edc4f19010bade79e895a90ee439082e9f63b8cfb3ea4e7",
+      "defaultBranch": "develop",
+      "evidenceDigest": "847a3c3fa747acfce4f4d50ae39ac4a37ccf4304cb8073683dfa109acfc19c29",
+      "expiresAt": "2026-08-23T05:21:28.670227Z",
+      "intentId": "8723139c36738c1c425fcf666c0f6349907cc0cd1354cf5f7c745cf069f5bc14",
+      "issueNumber": 22947,
+      "issueUpdatedAt": "2026-08-23T03:14:03Z",
+      "issueUrl": "https://github.com/elizaOS/eliza/issues/22947",
+      "issuedAt": "2026-08-23T03:21:28.670227Z",
+      "key": "elizaOS/eliza#22947",
+      "llmReview": {
+        "confidence": 0.85,
+        "decision": "NEW_CLEAN_CANDIDATE",
+        "model": "deepseek-v4-flash",
+        "semanticSignal": "NO_OBJECTION",
+        "status": "ok",
+        "waitReason": null
+      },
+      "maturity": "mature",
+      "mode": "canary",
+      "nonce": "7fba8a85fa135ce1e879b56bdd6394b3",
+      "notify": true,
+      "policyDigest": "ea8ad6969d4fc04e63ff922db56fbb23bb5c048bfb727666709b0f5d3d9d260e",
+      "preTaskEvidence": {
+        "aiDisclosureConflict": true,
+        "assigneeDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "assignmentRequired": false,
+        "baseLookupStatus": "ok",
+        "baseSha": "c770eb4aad53eca4b28be01ae09623f3f389f9e9",
+        "codePathsPlan": [
+          "packages/cloud/shared/src/lib/services/eliza-sandbox.ts",
+          "packages/cloud/shared/src/lib/services/eliza-sandbox-snapshot-authority.pglite.test.ts",
+          "packages/cloud/shared/src/lib/services/eliza-sandbox.test.ts",
+          "packages/cloud/shared/src/db/repositories/agent-sandboxes.ts",
+          "packages/cloud/shared/src/db/repositories/agent-sandboxes.test.ts",
+          "packages/cloud/shared/src/lib/services/eliza-sandbox-restore-authority.pglite.test.ts",
+          "eliza-sandbox.ts",
+          "provisioning-jobs.ts"
+        ],
+        "defaultBranch": "develop",
+        "designDigest": "014c0ea27901d742664d033c73aba507178bb901e8ce7a485534e7669fe19240",
+        "duplicate": {
+          "prs": [
+            {
+              "additions": 154,
+              "age_days": 0,
+              "author_association": "COLLABORATOR",
+              "changed_files": 3,
+              "ci_competition_weight": 0,
+              "deletions": 42,
+              "gaps": [
+                "未明确 closing/reference 目标 issue"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": false,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": true,
+              "material_competition_gaps": [],
+              "number": 24195,
+              "overlapping_paths": [],
+              "reference_relation": "REFERENCE",
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": 62,
+              "semantic_distinctive_overlap": [],
+              "semantic_overlap": false,
+              "semantic_overlap_count": 5,
+              "state": "MERGED",
+              "strengths": [
+                "包含测试文件 2 个",
+                "CI 失败待归因，不作为竞争依据",
+                "已有 review approval",
+                "由仓库维护者或协作者提交"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [
+                "All Tests Passed"
+              ],
+              "test_files": 2,
+              "title": "fix(cloud): fence agent compute billing authority",
+              "url": "https://github.com/elizaOS/eliza/pull/24195"
+            },
+            {
+              "additions": 317,
+              "age_days": 0,
+              "author_association": "COLLABORATOR",
+              "changed_files": 3,
+              "ci_competition_weight": 0,
+              "deletions": 53,
+              "gaps": [
+                "未明确 closing/reference 目标 issue"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": false,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": true,
+              "material_competition_gaps": [],
+              "number": 24203,
+              "overlapping_paths": [],
+              "reference_relation": "REFERENCE",
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": 62,
+              "semantic_distinctive_overlap": [],
+              "semantic_overlap": false,
+              "semantic_overlap_count": 5,
+              "state": "MERGED",
+              "strengths": [
+                "包含测试文件 2 个",
+                "CI 失败待归因，不作为竞争依据",
+                "已有 review approval",
+                "由仓库维护者或协作者提交"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [
+                "Quality",
+                "Tests (scripts)",
+                "Tests (server)"
+              ],
+              "test_files": 2,
+              "title": "fix(cloud): fence active billing cancellation authority",
+              "url": "https://github.com/elizaOS/eliza/pull/24203"
+            },
+            {
+              "additions": 2157,
+              "age_days": 0,
+              "author_association": "MEMBER",
+              "changed_files": 22,
+              "ci_competition_weight": 0,
+              "deletions": 2,
+              "gaps": [
+                "未明确 closing/reference 目标 issue",
+                "改动面偏大"
+              ],
+              "ignored_nontechnical_failed_checks": [],
+              "is_draft": false,
+              "issue_body_link": false,
+              "issue_body_link_relation": "",
+              "maintainer_owned": true,
+              "material_competition_gaps": [],
+              "number": 24204,
+              "overlapping_paths": [],
+              "reference_relation": "REFERENCE",
+              "references_issue": false,
+              "root_cause_coverage": false,
+              "rule_closed": false,
+              "score": 32,
+              "semantic_distinctive_overlap": [],
+              "semantic_overlap": false,
+              "semantic_overlap_count": 3,
+              "state": "MERGED",
+              "strengths": [
+                "包含测试文件 6 个",
+                "CI 失败待归因，不作为竞争依据",
+                "由仓库维护者或协作者提交",
+                "近期仍活跃"
+              ],
+              "technical_complete": false,
+              "technical_failed_checks": [
+                "All Tests Passed"
+              ],
+              "test_files": 6,
+              "title": "feat(testing): add cross-process synthetic namespace leases",
+              "url": "https://github.com/elizaOS/eliza/pull/24204"
+            }
+          ],
+          "status": "none",
+          "summary": "未发现相关 open PR；仅发现未直接关联 issue 的历史 PR"
+        },
+        "duplicateDigest": "363d859b389b0cc174a7d279a307f26da67af267fe9b3a55a16f879b0034bdd8",
+        "duplicateStatus": "none",
+        "issue": {
+          "assignees": [],
+          "state": "open"
+        },
+        "issueDigest": "81fbcb497b61be1950d700e7705f0044a27acdae87f914c5fa9aff8932ca5c67",
+        "matureRepository": true,
+        "policy": {
+          "status": "ai_disclosure_conflict"
+        },
+        "probeRequired": true,
+        "reproductionPathPlan": true,
+        "schema": "pre_task_evidence_v1",
+        "validationPathPlan": true
+      },
+      "preTaskEvidenceDigest": "82fedbc0d231deac160c29db95e13763d84fbec53dcc30d3130219574a8f2e57",
+      "preTaskGate": {
+        "allowed": true,
+        "baseSha": "c770eb4aad53eca4b28be01ae09623f3f389f9e9",
+        "classification": null,
+        "evidenceDigest": "82fedbc0d231deac160c29db95e13763d84fbec53dcc30d3130219574a8f2e57",
+        "expected": {
+          "assigneeDigest": "",
+          "baseSha": "",
+          "designDigest": "",
+          "duplicateDigest": "",
+          "issueDigest": ""
+        },
+        "reason": "PRE_TASK_EVIDENCE_PASSED",
+        "reasons": [],
+        "schema": "pre_task_evidence_v1"
+      },
+      "probeLevel": "PENDING",
+      "probeProfile": null,
+      "probeRequired": true,
+      "promptDigest": "7abd48585624380ef3f68c10ca72faee354eb94087d46f4ed6dafe86dbcaac3b",
+      "publicSubmissionAllowed": false,
+      "publicationMode": "canary",
+      "repo": "elizaOS/eliza",
+      "runId": "scan-20260823T031830Z-bb0aded65e07",
+      "scanGate": "ALLOW_PRIVATE_WORK",
+      "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
+      "score": 9,
+      "selectedBaseSha": "c770eb4aad53eca4b28be01ae09623f3f389f9e9",
+      "signature": "ba31eb6ccc34dfe760a28e5b54144257a6f2bdeae7e49257ac59e26178c5afd8",
+      "snapshotId": "bed0e12cbab774aa1a25ef9acdc403eef5693e27f99636bf899b645d7a1ac720",
+      "sourceSha": "575c8e22f816f8f164046ead746ea6c5a453869d",
+      "status": "PENDING",
+      "submissionPolicy": "ai_disclosure_conflict",
+      "taskStage": "PREFLIGHT",
+      "title": "[agent] fix Shared-tier provisioning authority and mutation barriers",
       "track": "agent_ai_infra",
       "version": "dispatch_intent_v7"
     }
   ],
   "mode": "canary",
-  "newIntentCount": 0,
-  "runId": "scan-20260823T020309Z-c30b2e3e015f",
+  "newIntentCount": 2,
+  "runId": "scan-20260823T031830Z-bb0aded65e07",
   "scannerVersion": "oss_pr_radar_v52_recheck_pr_validation",
-  "signature": "444b614e1ca27addd70bc1239f911274f8e30ab147fd0f69ab01eff75491b15b",
+  "signature": "c8a1bd8ed9a76e51977b1d359394c70eb3e998f67d25fbd95b5d29b0c8912b96",
   "sourceSha": "575c8e22f816f8f164046ead746ea6c5a453869d",
   "version": "dispatch_intents_v7"
 }
