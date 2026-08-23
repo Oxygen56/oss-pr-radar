@@ -186,6 +186,79 @@ def test_production_queue_snapshot_imports_pr_followup_once(tmp_path, monkeypatc
     assert len(delivered) == 1
 
 
+def _write_bootstrap_seed(root: Path, boundary: str) -> None:
+    state = root / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "agentscope-public-work.json").write_text(
+        json.dumps({"baselineThrough": boundary, "items": []}) + "\n", encoding="utf-8"
+    )
+
+
+def _github_event(number: int, updated: str) -> dict:
+    return {
+        "eventId": f"github:agentscope-ai/agentscope:{number}:issue_update:{updated}",
+        "repo": "agentscope-ai/agentscope",
+        "number": number,
+        "kind": "issue_update",
+        "updatedAt": updated,
+        "issue": {"number": number, "updated_at": updated, "state": "open", "labels": [{"name": "bug"}]},
+    }
+
+
+def test_bootstrap_suppresses_stale_catchup_without_wake_or_pending(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    boundary = "2026-08-23T12:49:07Z"
+    _write_bootstrap_seed(tmp_path, boundary)
+    stale = _github_event(2364, "2026-08-22T17:08:35Z")
+    monkeypatch.setattr(worker.GitHubIssuePoller, "poll", lambda _self: type("Poll", (), {
+        "events": (stale,), "status": "ok"
+    })())
+    delivered = []
+    result = worker.run_once(tmp_path, deliver=delivered.append)
+    assert result["eventsInserted"] == 0
+    assert result["codexWake"] is False
+    assert result["drain"]["pending"] == 0
+    assert delivered == []
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    with lane.connect() as db:
+        assert db.execute("SELECT status FROM event_lane_events WHERE event_id=?", (stale["eventId"],)).fetchone()[0] == "baseline"
+
+
+def test_bootstrap_terminalizes_existing_leased_stale_event(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    boundary = "2026-08-23T12:49:07Z"
+    _write_bootstrap_seed(tmp_path, boundary)
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    stale = _github_event(2364, "2026-08-22T17:08:35Z")
+    lane.append(stale, now=1)
+    assert lane.claim(owner="old-listener", now=1)
+    monkeypatch.setattr(worker.GitHubIssuePoller, "poll", lambda _self: type("Poll", (), {
+        "events": (), "status": "not_modified"
+    })())
+    result = worker.run_once(tmp_path, deliver=lambda _event: (_ for _ in ()).throw(AssertionError("stale event delivered")))
+    assert result["bootstrapApplied"] is True
+    assert result["bootstrapTerminalized"] == 1
+    assert result["drain"]["pending"] == 0
+    with lane.connect() as db:
+        assert db.execute("SELECT status FROM event_lane_events WHERE event_id=?", (stale["eventId"],)).fetchone()[0] == "baseline"
+
+
+def test_post_bootstrap_event_dispatches_once(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    boundary = "2026-08-23T12:49:07Z"
+    _write_bootstrap_seed(tmp_path, boundary)
+    fresh = _github_event(2400, "2026-08-23T12:49:08Z")
+    polls = iter([type("Poll", (), {"events": (fresh,), "status": "ok"})(),
+                  type("Poll", (), {"events": (), "status": "not_modified"})()])
+    monkeypatch.setattr(worker.GitHubIssuePoller, "poll", lambda _self: next(polls))
+    delivered = []
+    first = worker.run_once(tmp_path, deliver=delivered.append)
+    second = worker.run_once(tmp_path, deliver=delivered.append)
+    assert first["eventsInserted"] == 1 and first["drain"]["delivered"] == 1
+    assert second["eventsInserted"] == 0 and second["codexWake"] is False
+    assert [event["eventId"] for event in delivered] == [fresh["eventId"]]
+
+
 def test_unmapped_event_uses_explicit_independent_release_bridge(tmp_path, monkeypatch):
     worker = _event_worker_module()
     calls = []

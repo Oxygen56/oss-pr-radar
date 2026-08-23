@@ -597,6 +597,72 @@ class EventLane:
         with self.connect() as db:
             return int(db.execute("SELECT count(*) FROM event_lane_events WHERE status IN ('pending','leased')").fetchone()[0])
 
+    def terminalize_github_events_before(
+        self, boundary: datetime, *, now: float | None = None
+    ) -> list[dict[str, str]]:
+        """Audit and terminalize pre-bootstrap GitHub events without delivery.
+
+        This is intentionally limited to the first bootstrap boundary. Queue
+        imports and events without a trustworthy GitHub update timestamp are
+        left eligible for normal dispatch.
+        """
+        boundary = boundary.astimezone(UTC)
+        current = time.time() if now is None else now
+        terminalized: list[dict[str, str]] = []
+        with self.writer() as db:
+            rows = db.execute(
+                "SELECT event_id,payload_json FROM event_lane_events "
+                "WHERE status IN ('pending','leased')"
+            ).fetchall()
+            for row in rows:
+                try:
+                    payload = json.loads(row["payload_json"])
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                event_id = str(payload.get("eventId") or row["event_id"])
+                if not event_id.startswith("github:"):
+                    continue
+                issue = payload.get("issue") if isinstance(payload.get("issue"), dict) else {}
+                raw_updated = payload.get("updatedAt") or issue.get("updated_at")
+                updated = _parse_time(str(raw_updated or ""))
+                if updated is None or updated > boundary:
+                    continue
+                db.execute(
+                    "UPDATE event_lane_events SET status='baseline',delivered_at=?,"
+                    "lease_until=NULL,lease_owner=NULL,lease_token=NULL WHERE event_id=?",
+                    (current, row["event_id"]),
+                )
+                terminalized.append({"eventId": event_id, "updatedAt": updated.isoformat().replace("+00:00", "Z")})
+        return terminalized
+
+    def record_baseline_event(self, event: dict[str, Any], *, now: float | None = None) -> dict[str, str]:
+        """Persist a fetched pre-bootstrap GitHub event as terminal baseline."""
+        event_id = str(event.get("eventId") or _digest(event))
+        payload = dict(event)
+        payload["eventId"] = event_id
+        current = time.time() if now is None else now
+        issue = payload.get("issue") if isinstance(payload.get("issue"), dict) else {}
+        updated = _parse_time(str(payload.get("updatedAt") or issue.get("updated_at") or ""))
+        if updated is None:
+            raise ValueError("baseline GitHub event has no valid updatedAt")
+        with self.writer() as db:
+            row = db.execute(
+                "SELECT status FROM event_lane_events WHERE event_id=?", (event_id,)
+            ).fetchone()
+            if row is None:
+                db.execute(
+                    "INSERT INTO event_lane_events(event_id,payload_json,status,created_at,delivered_at) "
+                    "VALUES(?,?, 'baseline', ?, ?)",
+                    (event_id, json.dumps(payload, sort_keys=True), current, current),
+                )
+            elif str(row["status"]) in {"pending", "leased"}:
+                db.execute(
+                    "UPDATE event_lane_events SET status='baseline',delivered_at=?,lease_until=NULL,"
+                    "lease_owner=NULL,lease_token=NULL WHERE event_id=?",
+                    (current, event_id),
+                )
+        return {"eventId": event_id, "updatedAt": updated.isoformat().replace("+00:00", "Z")}
+
     def handler_thread(self, event_key: str) -> dict[str, Any] | None:
         with self.connect() as db:
             row = db.execute("SELECT * FROM event_lane_threads WHERE event_key=?", (event_key,)).fetchone()

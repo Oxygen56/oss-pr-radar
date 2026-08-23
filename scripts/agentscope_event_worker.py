@@ -364,6 +364,15 @@ def _load_json(path: Path) -> dict:
         return {}
 
 
+def _parse_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError:
+        return None
+
+
 def _save_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -399,6 +408,56 @@ def _sync_public_work_seed(root: Path, lane: EventLane) -> int:
     return synced
 
 
+BOOTSTRAP_BOUNDARY_STATE_KEY = "github_event_bootstrap_boundary_v1"
+
+
+def _bootstrap_boundary(root: Path, lane: EventLane) -> tuple[datetime | None, dict[str, object]]:
+    """Apply the durable listener activation boundary once.
+
+    The boundary is configuration, not a guessed overlap window. Existing
+    GitHub rows at or before it are audited as baseline; queue rows are never
+    touched. A changed boundary after first application fails closed.
+    """
+    seed = _load_json(root / "state" / "agentscope-public-work.json")
+    raw = seed.get("baselineThrough")
+    if not raw:
+        return None, {"applied": False, "terminalized": []}
+    boundary = _parse_time(str(raw))
+    if boundary is None:
+        raise RuntimeError("invalid public-work baselineThrough")
+    canonical = boundary.isoformat().replace("+00:00", "Z")
+    existing = lane.state_value(BOOTSTRAP_BOUNDARY_STATE_KEY)
+    if existing is not None:
+        if not isinstance(existing, dict):
+            raise RuntimeError("invalid persisted GitHub event bootstrap state")
+        if str(existing.get("baselineThrough") or "") != canonical:
+            raise RuntimeError("public-work baselineThrough changed after bootstrap")
+        return boundary, {"applied": False, "terminalized": existing.get("terminalized") or []}
+    terminalized = lane.terminalize_github_events_before(boundary)
+    audit = {
+        "schemaVersion": "agentscope_event_bootstrap_v1",
+        "baselineThrough": canonical,
+        "appliedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "terminalized": terminalized,
+    }
+    lane.set_state_value(BOOTSTRAP_BOUNDARY_STATE_KEY, audit)
+    return boundary, {"applied": True, "terminalized": terminalized}
+
+
+def _event_updated_at(event: dict) -> datetime | None:
+    issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
+    raw = event.get("updatedAt") or issue.get("updated_at")
+    return _parse_time(str(raw or ""))
+
+
+def _is_bootstrap_baseline(event: dict, boundary: datetime | None) -> bool:
+    """Suppress only timestamped GitHub events at/before the boundary."""
+    if boundary is None or not str(event.get("eventId") or "").startswith("github:"):
+        return False
+    updated = _event_updated_at(event)
+    return updated is not None and updated <= boundary
+
+
 def run_once(
     root: Path,
     *,
@@ -410,6 +469,7 @@ def run_once(
     state = root / "state"
     lane = EventLane(state / "agentscope-events.sqlite3")
     seed_items = _sync_public_work_seed(root, lane)
+    bootstrap_boundary, bootstrap = _bootstrap_boundary(root, lane)
     receipts_reconciled = reconcile_detached_receipts(root, lane)
     current = (now or datetime.now(UTC)).astimezone(UTC)
     expired = lane.expire_claims(now=current.timestamp())
@@ -448,6 +508,11 @@ def run_once(
     if full_result is not None:
         events.extend(full_result.events)
     for event in events:
+        if _is_bootstrap_baseline(event, bootstrap_boundary):
+            baseline_record = lane.record_baseline_event(event)
+            if baseline_record not in bootstrap["terminalized"]:
+                bootstrap["terminalized"].append(baseline_record)
+            continue
         event_key = str(event.get("eventKey") or event.get("targetKey") or "")
         if not event_key and event.get("repo") and event.get("number") is not None:
             event_key = f"{event['repo']}#{event['number']}"
@@ -464,6 +529,12 @@ def run_once(
                     watch_until=datetime.fromisoformat(str(wait_until).replace("Z", "+00:00")).timestamp(),
                     source="github-maintainer-reply",
                 )
+    if bootstrap_boundary is not None and bootstrap["terminalized"]:
+        audit = lane.state_value(BOOTSTRAP_BOUNDARY_STATE_KEY)
+        if not isinstance(audit, dict):
+            raise RuntimeError("invalid persisted GitHub event bootstrap state")
+        audit["terminalized"] = bootstrap["terminalized"]
+        lane.set_state_value(BOOTSTRAP_BOUNDARY_STATE_KEY, audit)
     drained = {"claimed": 0, "delivered": 0, "pending": lane.pending()}
     if deliver is None:
         def deliver(event):
@@ -484,6 +555,9 @@ def run_once(
         "fullReconciliation": bool(full_result is not None),
         "fullReconciliationEvents": len(full_result.events) if full_result is not None else 0,
         "publicWorkSeedItems": seed_items,
+        "bootstrapBoundary": bootstrap_boundary.isoformat().replace("+00:00", "Z") if bootstrap_boundary else None,
+        "bootstrapApplied": bool(bootstrap["applied"]),
+        "bootstrapTerminalized": len(bootstrap["terminalized"]),
     }
 
 
