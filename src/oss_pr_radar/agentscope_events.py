@@ -8,6 +8,7 @@ delay work; it cannot duplicate a task.
 from __future__ import annotations
 
 import base64
+import fcntl
 import hashlib
 import json
 import os
@@ -16,6 +17,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -60,6 +62,7 @@ class GitHubIssuePoller:
         *,
         repo: str = REPO,
         transport: Callable[[str, dict[str, str]], tuple[int, dict[str, str], Any]] | None = None,
+        details_transport: Callable[[str, dict[str, str]], tuple[int, dict[str, str], Any]] | None = None,
         overlap_seconds: int = 120,
         per_page: int = 100,
     ) -> None:
@@ -67,6 +70,7 @@ class GitHubIssuePoller:
         self.repo = repo
         self.auth_required = transport is None
         self.transport = transport or self._http_transport
+        self.details_transport = details_transport or self.transport
         self.overlap_seconds = max(0, overlap_seconds)
         self.per_page = max(1, min(per_page, 100))
 
@@ -107,10 +111,19 @@ class GitHubIssuePoller:
             if status != 200 or not isinstance(payload, list):
                 raise RuntimeError(f"GitHub issues baseline failed: HTTP {status}")
             latest = max((_parse_time(str(item.get("updated_at") or "")) for item in payload if isinstance(item, dict)), default=None)
+            active_prs = [
+                dict(item)
+                for item in payload
+                if isinstance(item, dict)
+                and item.get("pull_request")
+                and str((item.get("user") or {}).get("login") or "").casefold() == "oxygen56"
+                and str(item.get("state") or "open").casefold() == "open"
+            ]
             watermark = (latest or current).isoformat().replace("+00:00", "Z")
             self._save({"schemaVersion": "agentscope_poll_v1", "watermark": watermark,
                         "gateEtag": response_headers.get("ETag"),
                         "gateLastModified": response_headers.get("Last-Modified"),
+                        "activePullRequests": active_prs,
                         "updatedAt": current.isoformat().replace("+00:00", "Z")})
             return PollResult("baseline", pages=1, next_since=watermark,
                               etag=response_headers.get("ETag"), last_modified=response_headers.get("Last-Modified"))
@@ -120,10 +133,19 @@ class GitHubIssuePoller:
             self._headers(state, conditional=True, require_auth=self.auth_required),
         )
         if gate_status == 304:
-            return PollResult("not_modified", pages=1, etag=state.get("gateEtag"), last_modified=state.get("gateLastModified"))
+            cached = [item for item in state.get("activePullRequests") or [] if isinstance(item, dict)]
+            events = self._active_pull_events(cached, state)
+            return PollResult(
+                "ok" if events else "not_modified",
+                tuple(events),
+                pages=1,
+                etag=state.get("gateEtag"),
+                last_modified=state.get("gateLastModified"),
+            )
         if gate_status != 200:
             raise RuntimeError(f"GitHub issues gate failed: HTTP {gate_status}")
         events: list[dict[str, Any]] = []
+        active_prs_seen: list[dict[str, Any]] = []
         page = 1
         max_updated = previous
         final_headers: dict[str, str] = {"ETag": gate_headers.get("ETag", ""), "Last-Modified": gate_headers.get("Last-Modified", "")}
@@ -142,6 +164,13 @@ class GitHubIssuePoller:
             for item in payload:
                 if not isinstance(item, dict):
                     continue
+                if (
+                    item.get("pull_request")
+                    and str((item.get("user") or {}).get("login") or "").casefold() == "oxygen56"
+                    and str(item.get("state") or "open").casefold() == "open"
+                ):
+                    active_prs_seen.append(dict(item))
+                item = self._enrich_pull_request(item, state)
                 updated = _parse_time(str(item.get("updated_at") or ""))
                 if updated and (max_updated is None or updated > max_updated):
                     max_updated = updated
@@ -155,7 +184,17 @@ class GitHubIssuePoller:
                     "updatedAt": item.get("updated_at"),
                     "issue": item,
                 }
-                event["eventId"] = f"github:{self.repo}:{item.get('number')}:{event['kind']}:{item.get('updated_at')}"
+                if item.get("pull_request"):
+                    event["prDetails"] = item.get("agentscopeDetails") or {}
+                detail_suffix = (
+                    f":{_digest(item.get('agentscopeDetails'))[:16]}"
+                    if item.get("agentscopeDetails")
+                    else ""
+                )
+                event["eventId"] = (
+                    f"github:{self.repo}:{item.get('number')}:{event['kind']}:{item.get('updated_at')}"
+                    f"{detail_suffix}"
+                )
                 events.append(event)
             if len(payload) < self.per_page:
                 break
@@ -167,10 +206,79 @@ class GitHubIssuePoller:
             "gateEtag": final_headers.get("ETag") or state.get("gateEtag"),
             "gateLastModified": final_headers.get("Last-Modified") or state.get("gateLastModified"),
             "updatedAt": current.isoformat().replace("+00:00", "Z"),
+            "activePullRequests": active_prs_seen,
         })
         return PollResult("ok", tuple(events), page, watermark,
                           final_headers.get("ETag") or state.get("gateEtag"),
                           final_headers.get("Last-Modified") or state.get("gateLastModified"))
+
+    def _active_pull_events(
+        self, cached: list[dict[str, Any]], state: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        for original in cached:
+            item = self._enrich_pull_request(dict(original), state)
+            if not self._is_relevant(item):
+                continue
+            number = item.get("number")
+            kind = "pr_update"
+            details = item.get("agentscopeDetails") or {}
+            suffix = f":{_digest(details)[:16]}" if details else ""
+            events.append(
+                {
+                    "version": EVENT_VERSION,
+                    "repo": self.repo,
+                    "number": number,
+                    "kind": kind,
+                    "updatedAt": item.get("updated_at"),
+                    "issue": item,
+                    "prDetails": details,
+                    "eventId": f"github:{self.repo}:{number}:{kind}:{item.get('updated_at')}{suffix}",
+                }
+            )
+        return events
+
+    def _enrich_pull_request(self, item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+        """Fetch review/comment/check state for active Oxygen56 PRs incrementally."""
+        if not item.get("pull_request"):
+            return item
+        author = str((item.get("user") or {}).get("login") or "").casefold()
+        if author != "oxygen56" or str(item.get("state") or "open").casefold() != "open":
+            return item
+        number = item.get("number")
+        if number is None:
+            return item
+        headers = self._headers(state, conditional=False, require_auth=self.auth_required)
+        base = f"https://api.github.com/repos/{self.repo}"
+        details: dict[str, Any] = {}
+        requests = {
+            "pull": f"{base}/pulls/{number}",
+            "reviews": f"{base}/pulls/{number}/reviews?per_page=100&page=1",
+            "comments": f"{base}/issues/{number}/comments?per_page=100&page=1",
+        }
+        for key, url in requests.items():
+            try:
+                status, _response_headers, body = self.details_transport(url, headers)
+            except (OSError, RuntimeError, urllib.error.URLError):
+                continue
+            if status == 200:
+                details[key] = body
+        if isinstance(details.get("pull"), dict):
+            for key in ("mergeable_state", "mergeable", "rebaseable", "comments", "review_comments"):
+                if key in details["pull"]:
+                    item[key] = details["pull"][key]
+            head_sha = str((details["pull"].get("head") or {}).get("sha") or "")
+            if head_sha:
+                try:
+                    status, _response_headers, body = self.details_transport(
+                        f"{base}/commits/{head_sha}/check-runs?per_page=100&page=1", headers
+                    )
+                except (OSError, RuntimeError, urllib.error.URLError):
+                    status, body = 0, None
+                if status == 200:
+                    details["checks"] = body
+        item["agentscopeDetails"] = details
+        return item
 
     @staticmethod
     def _headers(state: dict[str, Any], *, conditional: bool, require_auth: bool) -> dict[str, str]:
@@ -205,7 +313,25 @@ class GitHubIssuePoller:
         labels = {str(label.get("name") or "").lower() for label in item.get("labels") or [] if isinstance(label, dict)}
         if item.get("pull_request"):
             author = str((item.get("user") or {}).get("login") or "").lower()
-            return author == "oxygen56" or any(token in title for token in ("ci", "review", "conflict"))
+            state = str(item.get("state") or "open").lower()
+            merge_state = str(item.get("mergeable_state") or "").lower()
+            try:
+                comments = int(item.get("comments") or 0)
+            except (TypeError, ValueError):
+                comments = 0
+            try:
+                review_comments = int(item.get("review_comments") or 0)
+            except (TypeError, ValueError):
+                review_comments = 0
+            return author == "oxygen56" or (
+                state == "open"
+                and (
+                    any(token in title for token in ("ci", "review", "conflict"))
+                    or comments > 0
+                    or review_comments > 0
+                    or merge_state in {"dirty", "blocked", "unknown"}
+                )
+            )
         if any(token in title or token in body for token in ("documentation", "docs:", "dependency", "bump ")):
             return False
         return bool({"bug", "feature", "enhancement", "help wanted", "good first issue", "code"} & labels) or any(
@@ -227,16 +353,30 @@ class EventLane:
                     event_id TEXT PRIMARY KEY, payload_json TEXT NOT NULL,
                     priority INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending',
                     attempts INTEGER NOT NULL DEFAULT 0, lease_until REAL, created_at REAL NOT NULL,
-                    delivered_at REAL
+                    delivered_at REAL, lease_owner TEXT, lease_token TEXT
                 );
                 CREATE TABLE IF NOT EXISTS event_lane_state (
                     key TEXT PRIMARY KEY, value_json TEXT NOT NULL
                 );
-                CREATE TABLE IF NOT EXISTS event_lane_threads (
+            CREATE TABLE IF NOT EXISTS event_lane_threads (
                     event_key TEXT PRIMARY KEY, thread_id TEXT NOT NULL,
                     turn_id TEXT, status TEXT NOT NULL, receipt_json TEXT NOT NULL DEFAULT '{}'
                 );
+                CREATE TABLE IF NOT EXISTS event_lane_turns (
+                    event_id TEXT PRIMARY KEY, event_key TEXT NOT NULL,
+                    thread_id TEXT NOT NULL DEFAULT '',
+                    client_user_message_id TEXT NOT NULL,
+                    turn_id TEXT, status TEXT NOT NULL DEFAULT 'reserved',
+                    receipt_json TEXT NOT NULL DEFAULT '{}', created_at REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS event_lane_turns_key
+                    ON event_lane_turns(event_key, created_at);
             """)
+            columns = {str(row[1]) for row in db.execute("PRAGMA table_info(event_lane_events)")}
+            if "lease_owner" not in columns:
+                db.execute("ALTER TABLE event_lane_events ADD COLUMN lease_owner TEXT")
+            if "lease_token" not in columns:
+                db.execute("ALTER TABLE event_lane_events ADD COLUMN lease_token TEXT")
 
     def connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30, isolation_level=None)
@@ -283,34 +423,55 @@ class EventLane:
             if "locked" not in str(exc).lower() or handoff_path is None:
                 raise
             handoff_path.parent.mkdir(parents=True, exist_ok=True)
-            with handoff_path.open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps({"priority": priority, "event": event}, sort_keys=True) + "\n")
+            lock_path = handoff_path.with_suffix(handoff_path.suffix + ".lock")
+            with lock_path.open("a+", encoding="utf-8") as lock:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+                with handoff_path.open("a", encoding="utf-8") as stream:
+                    stream.write(
+                        json.dumps({"priority": priority, "event": event}, sort_keys=True) + "\n"
+                    )
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
             return "handoff"
 
     def drain_handoff(self, handoff_path: Path) -> int:
         """Import a handoff exactly once; malformed lines remain for inspection."""
-        try:
-            lines = handoff_path.read_text(encoding="utf-8").splitlines()
-        except FileNotFoundError:
-            return 0
-        imported = 0
-        remaining: list[str] = []
-        for line in lines:
+        lock_path = handoff_path.with_suffix(handoff_path.suffix + ".lock")
+        with lock_path.open("a+", encoding="utf-8") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             try:
-                value = json.loads(line)
-                event = value["event"]
-                priority = int(value.get("priority") or 0)
-                self.append(event, priority=priority)
-                imported += 1
-            except (KeyError, TypeError, ValueError, json.JSONDecodeError, sqlite3.OperationalError):
-                remaining.append(line)
-        if remaining:
-            handoff_path.write_text("\n".join(remaining) + "\n", encoding="utf-8")
-        else:
-            handoff_path.unlink(missing_ok=True)
-        return imported
+                handoff_path.replace(handoff_path.with_suffix(handoff_path.suffix + ".draining"))
+            except FileNotFoundError:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+                return 0
+            draining = handoff_path.with_suffix(handoff_path.suffix + ".draining")
+            try:
+                lines = draining.read_text(encoding="utf-8").splitlines()
+            except (FileNotFoundError, OSError):
+                lines = []
+            imported = 0
+            remaining: list[str] = []
+            for line in lines:
+                try:
+                    value = json.loads(line)
+                    event = value["event"]
+                    priority = int(value.get("priority") or 0)
+                    self.append(event, priority=priority)
+                    imported += 1
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError, sqlite3.OperationalError):
+                    remaining.append(line)
+            if remaining:
+                temporary = handoff_path.with_suffix(handoff_path.suffix + ".tmp")
+                temporary.write_text("\n".join(remaining) + "\n", encoding="utf-8")
+                os.replace(temporary, handoff_path)
+            else:
+                handoff_path.unlink(missing_ok=True)
+            draining.unlink(missing_ok=True)
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+            return imported
 
-    def claim(self, *, limit: int = 3, now: float | None = None) -> list[dict[str, Any]]:
+    def claim(
+        self, *, limit: int = 3, owner: str = "event-lane", now: float | None = None
+    ) -> list[dict[str, Any]]:
         current = time.time() if now is None else now
         with self.writer() as db:
             rows = db.execute(
@@ -320,15 +481,28 @@ class EventLane:
             result = []
             until = current + self.lease_seconds
             for row in rows:
-                db.execute("UPDATE event_lane_events SET status='leased',attempts=attempts+1,lease_until=? WHERE event_id=?", (until, row["event_id"]))
+                token = uuid.uuid4().hex
+                db.execute(
+                    "UPDATE event_lane_events SET status='leased',attempts=attempts+1,lease_until=?,"
+                    "lease_owner=?,lease_token=? WHERE event_id=?",
+                    (until, str(owner), token, row["event_id"]),
+                )
                 item = json.loads(row["payload_json"])
                 item["attempts"] = row["attempts"] + 1
+                item["leaseOwner"] = str(owner)
+                item["leaseToken"] = token
                 result.append(item)
             return result
 
-    def ack(self, event_id: str) -> None:
+    def ack(self, event_id: str, *, lease_token: str, owner: str = "event-lane") -> bool:
         with self.writer() as db:
-            db.execute("UPDATE event_lane_events SET status='delivered',delivered_at=?,lease_until=NULL WHERE event_id=?", (time.time(), event_id))
+            result = db.execute(
+                "UPDATE event_lane_events SET status='delivered',delivered_at=?,lease_until=NULL,"
+                "lease_owner=NULL,lease_token=NULL WHERE event_id=? AND status='leased' "
+                "AND lease_owner=? AND lease_token=?",
+                (time.time(), event_id, str(owner), str(lease_token)),
+            )
+            return result.rowcount == 1
 
     def pending(self) -> int:
         with self.connect() as db:
@@ -338,6 +512,73 @@ class EventLane:
         with self.connect() as db:
             row = db.execute("SELECT * FROM event_lane_threads WHERE event_key=?", (event_key,)).fetchone()
         return dict(row) if row else None
+
+    def handler_turn(self, event_id: str) -> dict[str, Any] | None:
+        """Return the durable turn reservation for one event, if any."""
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM event_lane_turns WHERE event_id=?", (str(event_id),)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def reserve_handler_turn(
+        self, event_key: str, event_id: str, client_user_message_id: str
+    ) -> dict[str, Any]:
+        """Reserve one independent turn idempotently before spawning a worker."""
+        with self.writer() as db:
+            row = db.execute(
+                "SELECT * FROM event_lane_turns WHERE event_id=?", (str(event_id),)
+            ).fetchone()
+            if row:
+                return dict(row)
+            db.execute(
+                "INSERT INTO event_lane_turns(event_id,event_key,client_user_message_id,created_at) "
+                "VALUES(?,?,?,?)",
+                (str(event_id), str(event_key), str(client_user_message_id), time.time()),
+            )
+            row = db.execute(
+                "SELECT * FROM event_lane_turns WHERE event_id=?", (str(event_id),)
+            ).fetchone()
+        assert row is not None
+        return dict(row)
+
+    def bind_handler_turn(
+        self,
+        event_key: str,
+        event_id: str,
+        thread_id: str,
+        turn_id: str,
+        receipt: dict[str, Any],
+        *,
+        status: str = "started",
+    ) -> None:
+        """Bind a real thread/turn receipt without changing another event's turn."""
+        with self.writer() as db:
+            db.execute(
+                "UPDATE event_lane_turns SET event_key=?,thread_id=?,turn_id=?,status=?,receipt_json=? "
+                "WHERE event_id=?",
+                (
+                    str(event_key),
+                    str(thread_id),
+                    str(turn_id),
+                    str(status),
+                    json.dumps(receipt, sort_keys=True),
+                    str(event_id),
+                ),
+            )
+            db.execute(
+                "INSERT INTO event_lane_threads(event_key,thread_id,turn_id,status,receipt_json) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(event_key) DO UPDATE SET "
+                "thread_id=excluded.thread_id,turn_id=excluded.turn_id,status=excluded.status,"
+                "receipt_json=excluded.receipt_json",
+                (
+                    str(event_key),
+                    str(thread_id),
+                    str(turn_id),
+                    str(status),
+                    json.dumps(receipt, sort_keys=True),
+                ),
+            )
 
     def bind_handler_thread(self, event_key: str, thread_id: str, turn_id: str, receipt: dict[str, Any], *, status: str = "started") -> None:
         with self.writer() as db:
@@ -377,16 +618,21 @@ def dispatch_once(
     deliver: Callable[[dict[str, Any]], Any],
     *,
     limit: int = 3,
+    owner: str = "event-lane",
     now: float | None = None,
 ) -> dict[str, int]:
     """Drain exactly once per event; failed delivery remains retryable."""
-    claimed = lane.claim(limit=limit, now=now)
+    claimed = lane.claim(limit=limit, owner=owner, now=now)
     delivered = 0
     for event in claimed:
         try:
             deliver(event)
         except Exception:
             continue
-        lane.ack(str(event["eventId"]))
-        delivered += 1
+        if lane.ack(
+            str(event["eventId"]),
+            lease_token=str(event.get("leaseToken") or ""),
+            owner=owner,
+        ):
+            delivered += 1
     return {"claimed": len(claimed), "delivered": delivered, "pending": lane.pending()}

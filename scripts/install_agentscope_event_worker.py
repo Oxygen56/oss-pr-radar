@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import plistlib
@@ -14,17 +15,25 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from oss_pr_radar.runtime_audit import active_release_evidence  # noqa: E402
-
 LABEL = "com.oss-pr-radar.agentscope-events"
 
 
-def spec(runtime_root: Path, *, home: Path | None = None) -> dict[str, object]:
+def spec(
+    runtime_root: Path,
+    *,
+    code_root: Path,
+    manifest_sha256: str | None = None,
+    home: Path | None = None,
+) -> dict[str, object]:
     runtime_root = runtime_root.resolve()
-    release = active_release_evidence(runtime_root)
-    if release.get("valid") is not True:
-        raise RuntimeError(f"active release rejected: {release.get('error', 'invalid')}")
-    code_root = Path(str(release["path"])).resolve()
+    code_root = code_root.resolve()
+    manifest = code_root / "release-manifest.json"
+    if not manifest.is_file() or manifest.is_symlink():
+        raise RuntimeError("independent event release manifest is unavailable")
+    if manifest_sha256:
+        observed = hashlib.sha256(manifest.read_bytes()).hexdigest()
+        if observed != manifest_sha256:
+            raise RuntimeError("independent event release manifest digest mismatch")
     script = code_root / "scripts" / "agentscope_event_worker.py"
     if not script.is_file() or script.is_symlink():
         raise RuntimeError("event worker is not present in the immutable active release")
@@ -43,13 +52,20 @@ def spec(runtime_root: Path, *, home: Path | None = None) -> dict[str, object]:
     }
 
 
-def install(runtime_root: Path, *, home: Path | None = None, load: bool = True) -> dict[str, object]:
+def install(
+    runtime_root: Path,
+    *,
+    code_root: Path,
+    manifest_sha256: str | None = None,
+    home: Path | None = None,
+    load: bool = True,
+) -> dict[str, object]:
     home = (home or Path.home()).resolve()
     launch_dir = home / "Library" / "LaunchAgents"
     launch_dir.mkdir(parents=True, exist_ok=True)
     logs = home / "Library" / "Logs" / "oss-pr-radar"
     logs.mkdir(parents=True, exist_ok=True)
-    value = spec(runtime_root, home=home)
+    value = spec(runtime_root, code_root=code_root, manifest_sha256=manifest_sha256, home=home)
     path = launch_dir / f"{LABEL}.plist"
     temporary = path.with_suffix(".plist.tmp")
     temporary.write_bytes(plistlib.dumps(value, fmt=plistlib.FMT_XML, sort_keys=False))
@@ -66,10 +82,16 @@ def install(runtime_root: Path, *, home: Path | None = None, load: bool = True) 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--runtime-root", type=Path, required=True)
+    parser.add_argument("--code-root", type=Path, required=True)
+    parser.add_argument("--manifest-sha256")
     parser.add_argument("--print-spec", action="store_true")
     args = parser.parse_args()
     try:
-        result = {"ok": True, "spec": spec(args.runtime_root)} if args.print_spec else install(args.runtime_root)
+        result = (
+            {"ok": True, "spec": spec(args.runtime_root, code_root=args.code_root, manifest_sha256=args.manifest_sha256)}
+            if args.print_spec
+            else install(args.runtime_root, code_root=args.code_root, manifest_sha256=args.manifest_sha256)
+        )
         print(json.dumps(result, sort_keys=True))
         return 0
     except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:

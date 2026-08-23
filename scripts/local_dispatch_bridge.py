@@ -5504,6 +5504,236 @@ def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
     raise RuntimeError("root task creation result is unknown; orphan reconciliation required")
 
 
+def _agentscope_event_worker(args: argparse.Namespace) -> dict[str, Any]:
+    """Run one detached AgentScope turn and receipt it before waiting for terminal state."""
+    request = read_json(Path(args.request), missing={})
+    if not isinstance(request, dict):
+        raise RuntimeError("AgentScope event request is unavailable")
+    event_id = str(request.get("eventId") or "")
+    event_key = str(request.get("eventKey") or "")
+    prompt = str(request.get("prompt") or "")
+    if not event_id or not event_key or not prompt:
+        raise RuntimeError("AgentScope event request is incomplete")
+    thread_id = str(request.get("threadId") or "")
+    executable = shutil.which("codex")
+    if not executable:
+        raise RuntimeError("codex executable is unavailable")
+    store = ledger(args.ledger)
+    process = None
+    selector = selectors.DefaultSelector()
+    buffer = b""
+    turn_id = ""
+    client_message_id = str(
+        request.get("clientUserMessageId") or f"oss-pr-radar:agentscope-event:{event_id}"
+    )
+    try:
+        with _app_server_action_session(
+            store,
+            opportunity_key=event_key,
+            argv=[
+                executable,
+                "app-server",
+                "--disable",
+                "recommended_plugins",
+                "--disable",
+                "remote_plugin",
+                "--disable",
+                "multi_agent",
+                "--disable",
+                "multi_agent_v2",
+                "--stdio",
+            ],
+            cwd=GITHUB_ROOT,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0,
+        ) as started_process:
+            process = started_process
+            if process.stdin is None or process.stdout is None:
+                raise RuntimeError("app server pipes are unavailable")
+            selector.register(process.stdout, selectors.EVENT_READ)
+            start_method = "thread/resume" if thread_id else "thread/start"
+            start_params: dict[str, Any] = (
+                {"threadId": thread_id}
+                if thread_id
+                else {
+                    "cwd": str(Path(str(request.get("cwd") or GITHUB_ROOT)).resolve()),
+                    "sandbox": "danger-full-access",
+                    "approvalPolicy": "never",
+                    "threadSource": "appServer",
+                }
+            )
+            process.stdin.write(
+                (
+                    json.dumps(
+                        {
+                            "id": 1,
+                            "method": "initialize",
+                            "params": {
+                                "clientInfo": {"name": "oss-pr-radar-agentscope", "version": "1"},
+                                "capabilities": {"experimentalApi": True},
+                            },
+                        }
+                    )
+                    + "\n"
+                    + json.dumps({"id": 2, "method": start_method, "params": start_params})
+                    + "\n"
+                ).encode("utf-8")
+            )
+            process.stdin.flush()
+            buffer, _ = _read_app_server_response(
+                process, selector, buffer, response_id=1, timeout=30, action="initialize"
+            )
+            buffer, start_message = _read_app_server_response(
+                process, selector, buffer, response_id=2, timeout=30, action=start_method
+            )
+            if not thread_id:
+                thread_id = str(((start_message.get("result") or {}).get("thread") or {}).get("id") or "")
+            if not thread_id:
+                raise RuntimeError("app server did not return a thread receipt")
+            params = {
+                "threadId": thread_id,
+                "cwd": str(Path(str(request.get("cwd") or GITHUB_ROOT)).resolve()),
+                "input": [{"type": "text", "text": prompt, "text_elements": []}],
+                "approvalPolicy": "never",
+                "sandboxPolicy": {"type": "dangerFullAccess"},
+                "summary": "auto",
+                "clientUserMessageId": client_message_id,
+            }
+            process.stdin.write(
+                (json.dumps({"id": 3, "method": "turn/start", "params": params}) + "\n").encode(
+                    "utf-8"
+                )
+            )
+            process.stdin.flush()
+            buffer, turn_message = _read_app_server_response(
+                process, selector, buffer, response_id=3, timeout=45, action="turn/start"
+            )
+            turn_id = str(((turn_message.get("result") or {}).get("turn") or {}).get("id") or "")
+            if not turn_id:
+                raise RuntimeError("app server did not return a turn receipt")
+            _atomic_json(
+                Path(args.receipt),
+                {
+                    "ok": True,
+                    "eventId": event_id,
+                    "eventKey": event_key,
+                    "threadId": thread_id,
+                    "turnId": turn_id,
+                    "clientUserMessageId": client_message_id,
+                    "turnStarted": True,
+                },
+            )
+        terminal = _wait_for_app_server_terminal_turn(
+            process,
+            selector,
+            buffer,
+            thread_id=thread_id,
+            turn_id=turn_id,
+        )
+        if terminal:
+            current = read_json(Path(args.receipt), missing={})
+            _atomic_json(Path(args.receipt), current | {"turnStatus": terminal["status"]})
+        return read_json(Path(args.receipt), missing={})
+    except Exception as exc:
+        receipt = Path(args.receipt)
+        if not receipt.exists():
+            _atomic_json(
+                receipt,
+                {
+                    "ok": False,
+                    "eventId": event_id,
+                    "eventKey": event_key,
+                    "turnStarted": bool(turn_id),
+                    "turnId": turn_id or None,
+                    "retryable": "DESKTOP_ACTIVE_WRITER" in str(exc),
+                    "error": f"{type(exc).__name__}:{str(exc)[:300]}",
+                },
+            )
+        raise
+    finally:
+        selector.close()
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+
+
+def agentscope_event_create(args: argparse.Namespace) -> dict[str, Any]:
+    """Start or resume an AgentScope event worker and return its start receipt."""
+    receipt_root = STATE / "agentscope_event_receipts"
+    receipt_root.mkdir(parents=True, exist_ok=True)
+    receipt = Path(args.receipt).resolve()
+    launch = receipt.with_suffix(".launch.json")
+    request = receipt.with_suffix(".request.json")
+    existing = read_json(receipt, missing={})
+    launch_state = read_json(launch, missing={})
+    worker_pid = int(launch_state.get("pid") or 0)
+    if worker_pid and _pid_is_alive(worker_pid):
+        return existing | {"ok": True, "pending": True, "workerPid": worker_pid, "receipt": str(receipt)}
+    if (
+        existing.get("ok")
+        and existing.get("turnId")
+        and existing.get("turnStatus") in {"completed", "failed", "interrupted"}
+    ):
+        return existing
+    # A start receipt without a live worker is recoverable: resume the same
+    # thread with the same client id instead of acknowledging a dead turn.
+    if existing.get("threadId") and not args.thread_id:
+        args.thread_id = str(existing["threadId"])
+    _atomic_json(
+        request,
+        {
+            "eventId": args.event_id,
+            "eventKey": args.event_key,
+            "threadId": args.thread_id or "",
+            "clientUserMessageId": args.client_user_message_id,
+            "cwd": str(args.cwd or GITHUB_ROOT),
+            "prompt": args.prompt,
+        },
+    )
+    receipt.unlink(missing_ok=True)
+    launch.unlink(missing_ok=True)
+    log = receipt.with_suffix(".log")
+    with log.open("ab") as handle:
+        worker = subprocess.Popen(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--ledger",
+                str(args.ledger),
+                "--runtime-root",
+                str(args.runtime_root),
+                "agentscope-event-worker",
+                "--request",
+                str(request),
+                "--receipt",
+                str(receipt),
+            ],
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    _atomic_json(launch, {"pid": worker.pid, "startedAt": iso_z(datetime.now(UTC))})
+    deadline = monotonic() + 60
+    while monotonic() < deadline:
+        if receipt.exists():
+            result = read_json(receipt, missing={})
+            if result.get("ok") or result.get("retryable"):
+                return result | {"workerPid": worker.pid}
+            raise RuntimeError(str(result.get("error") or "AgentScope event worker failed"))
+        if worker.poll() is not None:
+            break
+        sleep(0.25)
+    return {"ok": True, "pending": True, "workerPid": worker.pid, "receipt": str(receipt)}
+
+
 def _codex_decision_prompt(event: dict[str, Any]) -> str:
     issue_url = _issue_url_from_key(str(event.get("candidateKey") or ""))
     return "\n".join(
@@ -16261,6 +16491,17 @@ def main() -> int:
     root_task_worker_parser.add_argument("--worktree", required=True)
     root_task_worker_parser.add_argument("--title-time", required=True)
     root_task_worker_parser.add_argument("--receipt", required=True)
+    agentscope_event_parser = subparsers.add_parser("agentscope-event-create")
+    agentscope_event_parser.add_argument("--event-id", required=True)
+    agentscope_event_parser.add_argument("--event-key", required=True)
+    agentscope_event_parser.add_argument("--thread-id", default="")
+    agentscope_event_parser.add_argument("--client-user-message-id", required=True)
+    agentscope_event_parser.add_argument("--cwd", type=Path, default=GITHUB_ROOT)
+    agentscope_event_parser.add_argument("--prompt", required=True)
+    agentscope_event_parser.add_argument("--receipt", required=True)
+    agentscope_event_worker_parser = subparsers.add_parser("agentscope-event-worker")
+    agentscope_event_worker_parser.add_argument("--request", required=True)
+    agentscope_event_worker_parser.add_argument("--receipt", required=True)
     orphan_list_parser = subparsers.add_parser("orphan-list")
     orphan_list_parser.add_argument(
         "--min-age-minutes", type=int, default=ORPHAN_ABANDON_MIN_AGE_MINUTES
@@ -16520,6 +16761,10 @@ def main() -> int:
         result = root_task_create(args)
     elif args.operation == "root-task-worker":
         result = _app_server_request_worker(args)
+    elif args.operation == "agentscope-event-create":
+        result = agentscope_event_create(args)
+    elif args.operation == "agentscope-event-worker":
+        result = _agentscope_event_worker(args)
     elif args.operation == "orphan-list":
         result = orphan_list(args)
     elif args.operation == "orphan-reconcile":

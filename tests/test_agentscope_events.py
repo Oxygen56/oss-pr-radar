@@ -81,3 +81,74 @@ def test_ttl_marks_stale_pending_watch_only(tmp_path):
     lane.append({"eventId": "old", "designWait": True}, now=0)
     assert lane.expire_claims(now=11) == 1
     assert lane.pending() == 0
+
+
+def test_lease_owner_and_token_condition_ack(tmp_path):
+    lane = EventLane(tmp_path / "events.db", lease_seconds=5)
+    lane.append({"eventId": "e1"}, now=0)
+    claimed = lane.claim(owner="worker-a", now=0)
+    assert claimed[0]["leaseOwner"] == "worker-a"
+    assert lane.ack("e1", lease_token=claimed[0]["leaseToken"], owner="worker-b") is False
+    assert lane.pending() == 1
+    assert lane.ack("e1", lease_token=claimed[0]["leaseToken"], owner="worker-a") is True
+    assert lane.pending() == 0
+
+
+def test_same_event_is_idempotent_but_new_event_resumes_same_thread(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    first = lane.reserve_handler_turn("agentscope-ai/agentscope#1", "e1", "client:e1")
+    again = lane.reserve_handler_turn("agentscope-ai/agentscope#1", "e1", "client:e1")
+    assert first["event_id"] == again["event_id"] == "e1"
+    lane.bind_handler_turn("agentscope-ai/agentscope#1", "e1", "thread-1", "turn-1", {"ok": True})
+    lane.reserve_handler_turn("agentscope-ai/agentscope#1", "e2", "client:e2")
+    lane.bind_handler_turn("agentscope-ai/agentscope#1", "e2", "thread-1", "turn-2", {"ok": True})
+    assert lane.handler_turn("e1")["turn_id"] == "turn-1"
+    assert lane.handler_turn("e2")["thread_id"] == "thread-1"
+
+
+def test_handoff_drain_uses_atomic_claim_file(tmp_path, monkeypatch):
+    lane = EventLane(tmp_path / "events.db")
+    handoff = tmp_path / "handoff.jsonl"
+    original = lane.append
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    import sqlite3
+
+    monkeypatch.setattr(lane, "append", locked)
+    assert lane.append_or_handoff({"eventId": "e1"}, handoff_path=handoff) == "handoff"
+    monkeypatch.setattr(lane, "append", original)
+    assert lane.drain_handoff(handoff) == 1
+    assert not handoff.exists()
+
+
+def test_active_oxygen_pr_details_are_polled_even_when_issue_gate_is_304(tmp_path):
+    item = {
+        "number": 9,
+        "updated_at": "2026-08-22T00:00:00Z",
+        "title": "implementation",
+        "state": "open",
+        "user": {"login": "Oxygen56"},
+        "pull_request": {"url": "https://api.github.com/repos/agentscope-ai/agentscope/pulls/9"},
+        "labels": [],
+    }
+    calls = []
+
+    def transport(url, headers):
+        calls.append(url)
+        if len(calls) == 1:
+            return 200, {"ETag": "gate"}, [item]
+        if "/issues?" in url and "direction=desc" in url:
+            return 304, {"ETag": "gate"}, None
+        if url.endswith("/pulls/9"):
+            return 200, {}, {"head": {"sha": "sha9"}, "mergeable_state": "clean"}
+        if "/check-runs" in url:
+            return 200, {}, {"check_runs": [{"name": "ci", "status": "completed"}]}
+        return 200, {}, []
+
+    poller = GitHubIssuePoller(tmp_path / "poll.json", transport=transport)
+    assert poller.poll().status == "baseline"
+    result = poller.poll()
+    assert result.status == "ok"
+    assert result.events[0]["prDetails"]["checks"]["check_runs"]

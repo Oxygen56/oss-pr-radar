@@ -151,6 +151,7 @@ def run_bridge(
     timeout: int = 900,
     code_root: Path | None = None,
     allow_unreleased_code: bool = False,
+    extra_args: list[str] | None = None,
 ) -> dict[str, Any]:
     binding = bind_runtime(
         root,
@@ -166,6 +167,8 @@ def run_bridge(
         str(runtime_ledger_path(root)),
         operation,
     ]
+    if extra_args:
+        argv.extend(str(item) for item in extra_args)
     process = subprocess.Popen(
         argv,
         cwd=root,
@@ -494,6 +497,20 @@ def queue_import_once(
             else:
                 result = runner(root, "queue-import")
             if result.get("ok"):
+                if isinstance(result.get("queue"), dict):
+                    queue = result["queue"]
+                    try:
+                        from .agentscope_events import EventLane
+
+                        imported = EventLane(
+                            root / "state" / "agentscope-events.sqlite3"
+                        ).import_queue(queue)
+                        write_json(root / "state" / "agentscope-event-queue.json", queue)
+                        result["agentscopeWake"] = {**imported, "available": True}
+                    except (OSError, RuntimeError, ValueError, TypeError):
+                        result["agentscopeWake"] = {"imported": 0, "woken": 0, "available": False}
+                else:
+                    result["agentscopeWake"] = _wake_agentscope_event_lane(root)
                 write_json(
                     root / "state" / "queue-import-state.json",
                     {
@@ -535,6 +552,33 @@ def queue_import_once(
             failure_field="queueConsecutiveFailures",
         )
         return {"ok": False, "error": f"{type(exc).__name__}:{str(exc)[:400]}"}
+
+
+def _wake_agentscope_event_lane(root: Path) -> dict[str, Any]:
+    """Persist queue records for the 60-second listener and wake them once."""
+    ledger_path = root / "state" / "radar_ledger.sqlite3"
+    if not ledger_path.exists():
+        return {"imported": 0, "woken": 0, "available": False}
+    try:
+        from .agentscope_events import EventLane
+        from .ledger import RadarLedger
+
+        store = RadarLedger(ledger_path)
+        queue: dict[str, Any] = {
+            "intents": store.pending(),
+            "prFollowups": store.pr_followup_candidates(),
+            "followups": store.implementation_followup_candidates(),
+        }
+        slow_path = root / "state" / SLOW_REQUEST_STATE
+        slow = read_json(slow_path, {})
+        if isinstance(slow, dict) and slow.get("reasons"):
+            queue["slowWorkRequests"] = [slow]
+        lane = EventLane(root / "state" / "agentscope-events.sqlite3")
+        imported = lane.import_queue(queue)
+        write_json(root / "state" / "agentscope-event-queue.json", queue)
+        return {**imported, "available": True}
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return {"imported": 0, "woken": 0, "available": False}
 
 
 def slow_advance_once(
@@ -673,6 +717,13 @@ def slow_advance_once(
                     "slowWorkerDiagnostic": _slow_worker_diagnostic(root),
                 }
             ok = bool(result.get("ok"))
+            if ok:
+                slow_request = read_json(root / "state" / SLOW_REQUEST_STATE, {})
+                if isinstance(slow_request, dict) and slow_request.get("reasons"):
+                    write_json(
+                        root / "state" / SLOW_REQUEST_STATE,
+                        slow_request | {"consumedAt": utc_now(), "consumedBy": "slow-worker"},
+                    )
             completed_retry = time.time() if ok else time.time() + delay
             write_json(
                 backoff_path,
