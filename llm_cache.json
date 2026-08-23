@@ -11138,6 +11138,43 @@
     ],
     "why": "The issue clearly identifies a root cause: Server.call_tool() discards structured jsonschema.ValidationError fields, leaving only a free-text message. The suggested fix is concrete and actionable: forward e.validator, e.schema_path, and e.json_path into a structured data field in the error result. This is a local fix in the SDK's error handling, with a clear validation path via unit tests and a provided repro offer."
   },
+  "43d647f60c1ef3bd1d6a5bc9e68863926ed661397aa99738e281999ad80aaf99": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Initial report claimed priority scheduling caused zero hits, but later comments show it was load-dependent fragmentation, not the policy.",
+      "The issue title mentions priority policy, but the root cause is the speculative decoding back-off, not the scheduler policy."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py",
+      "Mamba align-mode chunk carving logic",
+      "Speculative decoding back-off handling"
+    ],
+    "risks": [
+      "Changing the carve policy may trade latency for cacheability, potentially increasing scheduler steps for small-block align models.",
+      "The fix may need to be adaptive to avoid performance regressions in high-marker-count scenarios.",
+      "The one-block back-off may be intentional for correctness; removing it could introduce subtle issues with Eagle pruning."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test in tests/v1/core/test_scheduler.py that reproduces the knife-edge zero-hit case (sibling sharing exactly one block with MTP enabled) and verifies the fix yields expected hits.",
+      "Run the existing test_mamba_align_split_partial_tail_schedule tests and update expectations for the new carve sequence.",
+      "Perform a GPU end-to-end test with a hybrid GDN model (e.g., Qwen3.5-0.8B) comparing hit rates with and without speculative config."
+    ],
+    "unknowns": [
+      "Whether the maintainers will accept the proposed fix direction (dense boundary stops) or prefer an alternative.",
+      "The exact performance impact of the fix on production workloads with varying concurrency and block sizes.",
+      "Whether the fix should also address the first-repeat-never-hits behavior observed by jschmied."
+    ],
+    "why": "The issue identifies a concrete LLM algorithm bug: align-mode prefix caching in hybrid GDN models with speculative decoding (MTP/EAGLE) loses cacheable states due to the one-block back-off in _mamba_block_aligned_split, causing zero or reduced cache hits. The root cause is confirmed by multiple contributors with code-level analysis and CPU/GPU reproductions, and a fix direction (dense boundary stops) is proposed and measured."
+  },
   "449fdde3b0c5d7f226516460f4e888e7b2bd478490903a5049911142539c6a64": {
     "confidence": 0.6,
     "contradictions": [],
@@ -36218,6 +36255,42 @@
     ],
     "why": "Issue clearly identifies a real bug in native Anthropic provider token accounting with a concrete reproduction and suggested fix. However, an open PR #6770 already addresses the same code path and semantics, and a duplicate issue #6768 exists. The deterministic gate requires HUMAN_REVIEW, and the existing PR may already cover the fix, so starting new work without maintainer confirmation risks duplication."
   },
+  "d2ca199cc4bc4bca5e2dfc84c592b0243dac5d6e8c4a3acdf90cf814a51597d8": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cloud/shared/src/db/repositories/docker-nodes.ts",
+      "packages/agent/src/api/tx-service.test.ts",
+      "eliza-sandbox.ts",
+      "provisioning-jobs.ts",
+      "warm-pool and lifecycle-CAS paths"
+    ],
+    "risks": [
+      "Potential conflict with existing migration/journal PRs; need to coordinate migration numbering.",
+      "Large scope may require careful slicing to avoid unintended behavior changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for selector permutations (newer Shared, older Dedicated, equal timestamps) to ensure deterministic target selection.",
+      "Test that Shared rows produce zero provision job/provider mutation across enqueue, worker, service re-entry, and provider placement boundaries.",
+      "Run focused Bun 1.3.14 tests and affected package typecheck."
+    ],
+    "unknowns": [
+      "Exact migration number allocation and current migration stack status."
+    ],
+    "why": "Issue clearly identifies a root cause: provisioning reader uses newest-created ordering instead of execution-tier authority, and mutation chain lacks fail-closed Shared-tier boundaries. Concrete acceptance criteria and evidence plan are provided. No duplicate open PRs; related PRs are merged and do not close this issue. Maintainer-approved and actionable."
+  },
   "d2f0f43ac554b864a88479cf019f2bdec194278a8629e65f470a6a943efa35a9": {
     "confidence": 0.7,
     "contradictions": [
@@ -38762,6 +38835,34 @@
     ],
     "why": "Issue #692 reports a clear bug: MEMORY_FILE_PATH env var is ignored, causing data loss in npx temp dir. Root cause is likely env var not forwarded through npx or path resolution issue. Existing PR #4327 is open but stale (>30 days) and lacks strong evidence, leaving room for a better PR with comprehensive fix and tests."
   },
+  "df2d9eeed189b4e20bd8d7e96e11a2ef3e1c55c6629e94904428fda2931771f8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "tool adapter/routing for Ox Alpha free model",
+      "zen/v1 and zen/go/v1 chat completions tool handling"
+    ],
+    "risks": [
+      "Potential maintainer design preference on adapter implementation",
+      "Risk of affecting other models if routing changes are too broad"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl repro with tools against both routes and assert successful tool_calls",
+      "Run existing tool-related tests in the relevant packages to ensure no regression"
+    ],
+    "unknowns": [
+      "Exact code location of the tool adapter for Ox Alpha free model"
+    ],
+    "why": "Issue provides a minimal curl repro, control models, and consistent failure across routes, clearly isolating the Ox Alpha free model's tool path as the root cause. The expected fix is to restore the tool adapter for that model on both zen/v1 and zen/go/v1, with a concrete validation path via the provided curl command."
+  },
   "df2e1b0c53e546c0693e76a70bbed1d980a2af664f02ee8cf9557a36d8583f56": {
     "confidence": 0.7,
     "contradictions": [],
@@ -39064,6 +39165,40 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides a clear root cause and reproducible bug, but an existing PR (#51397) directly addresses the same problem with a fail-safe approach and is already closed. The issue itself suggests a minimal fix that overlaps with that PR, so a new PR would be redundant unless the existing PR is inadequate. Maintainer review of the existing PR is needed before starting new work."
+  },
+  "e00433ffa87a5d108842ac720c7da8fec52475bb746c6dc351ace8338927e27c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "Dockerfile.ci: add ENV LD_LIBRARY_PATH=\"\" or strip conflicting CUDA paths",
+      "Possibly documentation of workaround"
+    ],
+    "risks": [
+      "Changing LD_LIBRARY_PATH may affect other CUDA-dependent components in the container",
+      "The fix might not fully resolve all cuBLAS version mismatch issues for other models or configurations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the CUBLAS_STATUS_INVALID_VALUE error by running vllm serve with BAGEL-7B-MoT and --quantization fp8 in the current Docker image",
+      "Apply the Dockerfile fix and rebuild the image",
+      "Run the same serve command and verify successful profiling and generation",
+      "Add a smoke test that runs the model with FP8 quantization in CI to prevent regression"
+    ],
+    "unknowns": [
+      "Exact Dockerfile content and whether the fix has been tested in the current image",
+      "Whether the upstream vLLM issue has been resolved and if a similar fix is already merged upstream"
+    ],
+    "why": "The issue provides a clear root cause (LD_LIBRARY_PATH conflict shadowing PyTorch's bundled cuBLAS) and a concrete validation path (reproduce with BAGEL-7B-MoT FP8, apply minimal Dockerfile fix, run smoke test). The fix is a one-line Dockerfile change, but it addresses a real numerical/quantization failure in an LLM serving context. The evidence includes maintainer agreement and a proposed minimal fix, making it actionable."
   },
   "e01628ab58bb0d628299db50bfcaef9068c99770b9fe7720c365de4f74920dc2": {
     "confidence": 0.8,
@@ -44246,6 +44381,40 @@
     ],
     "why": "Issue describes a real session-breaking bug, but maintainer comment indicates the serializer fix is already in place and the remaining root cause is a capability-default policy decision for unknown models. User comments confirm a workaround exists via per-model input config. No open PR or related issue, but design confirmation is required before implementation."
   },
+  "f9e05840ed1a155c549de69776338b67af7fd36e130e97f66a9280b6f51adfe0": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "MoE backend selection logic",
+      "FlashInfer TRTLLM kernel implementation",
+      "FP8 block-scale MoE handling"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #49636 which adds opt-in FlashInfer moe_ep backend",
+      "Need to distinguish numerical bug from floating-point variance",
+      "Hardware requirements (GB200) may limit test availability"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided curl command and compare logprobs between default and deep_gemm backends",
+      "Add regression test for perplexity on DeepSeek-V4-Pro-Base with default backend",
+      "Unit test for FP8 block-scale MoE numerical correctness"
+    ],
+    "unknowns": [
+      "Exact root cause within FlashInfer TRTLLM kernel not identified",
+      "Whether PR #49636 already addresses the issue"
+    ],
+    "why": "The issue provides a concrete, reproducible bug in MoE backend selection causing incorrect logprobs and output, with clear evidence of root cause (FlashInfer TRTLLM backend vs deep_gemm) and a validation path via perplexity comparison and curl commands. The track is llm_algorithm and the issue involves kernel algorithm and numerical correctness, satisfying the requirement for a concrete validation path."
+  },
   "fa305ff418acef9c18d32e0df855b28371a6048a99bbfff1a0c4886a02f66414": {
     "confidence": 0.85,
     "contradictions": [],
@@ -44956,6 +45125,33 @@
       "Whether maintainers prefer a broader fix covering Databricks and other stores, but this does not block the Weaviate-specific fix."
     ],
     "why": "The issue provides a precise root cause: Weaviate read paths hard-code return_properties without expiration_date, so the Python expiry gate never sees it. Reproduction steps and expected/actual output are concrete, and the fix is localized to adding the missing property. The existing PR #6290 is stale and does not cover the Python read whitelist, so the contribution remains actionable."
+  },
+  "fd422176e691f8c3623930ae9f6e203e0de80dc675fc98c7c6d35d14c7783223": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "CLI permission decision logic in dist/index.js",
+      "Error handling or denial reason for missing callback"
+    ],
+    "risks": [
+      "Potential behavior change in permission handling may affect existing workflows",
+      "Need to ensure fix aligns with maintainer design preferences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that simulates an ask-tier tool call without onToolPermissionRequest and asserts a prompt is shown or a non-user denial reason is returned",
+      "Run existing CLI permission tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix approach (e.g., error vs. warning vs. denial reason change)"
+    ],
+    "why": "Issue provides a clear root cause in the CLI permission flow: the ask policy silently denies when onToolPermissionRequest callback is missing, mislabeling denial as user rejection. Concrete reproduction steps and code anchors are supplied, making the fix actionable."
   },
   "fd47108caeda7314532797a09655a868ff9cb7e4c7f7a2cc8922ebb520281895": {
     "confidence": 0.7,
