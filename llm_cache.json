@@ -4223,6 +4223,31 @@
     ],
     "why": "Issue provides a precise root cause (relative signed URL bypassing apiUrl() in Tauri) with code references and a one-line fix mirroring an existing RAG fix. High user impact, clear reproduction steps, and no competing PR."
   },
+  "1cd537608bc5112ca1fa9b24ef89d344ea7992c0bbd5c20c3e6798b6d9ec63c3": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm backend router request forwarding",
+      "model name handling in vllm.py or related router code"
+    ],
+    "risks": [
+      "Potential impact on existing users who rely on the current naming convention; need to ensure backward compatibility or update documentation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by loading a custom VLM via vLLM backend and sending a chat completion; verify the request reaches vLLM with the correct model name and returns a valid response. Add a regression test that checks the forwarded model name matches the served model name."
+    ],
+    "unknowns": [
+      "Exact code location where the model name is forwarded; whether the fix should be in the router or the vLLM backend configuration."
+    ],
+    "why": "The issue provides a clear root cause: a model name mismatch between the vLLM subprocess (launched with --served-model-name user.<model>) and the lemonade router forwarding requests with the bare model name, causing vLLM to return 404 and lemonade to mask it as HTTP 200. Multiple users confirm the same mismatch across versions and models, with logs and reproduction steps. The fix is straightforward: align the forwarded model name with the served name or strip the prefix consistently. This is a concrete, actionable bug with a clear validation path."
+  },
   "1cd9cbc557bfef030dcbcb72faa76e44f298916cc68213cacd84c63f82847b3a": {
     "confidence": 0.85,
     "contradictions": [],
@@ -16241,6 +16266,33 @@
     ],
     "why": "Issue reports a concrete bug with clear reproduction and controls, but root cause is not identified and likely involves model packaging/chat-template specifics. No maintainer confirmation or design direction. Potential duplicate issue #17656 exists, and an open PR #17679 is unrelated. Actionability is limited without maintainer guidance."
   },
+  "5f6d16a9a85fab552d345aecacc994a06baf5c8d3402e0f09237b8cad829ea3f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "deploy/inference-gateway/ext-proc/src/server.rs",
+      "crates/agentgateway/src/http/ext_proc.rs"
+    ],
+    "risks": [
+      "Blanket relaxation could reintroduce silent deadlocks for gateways that actually wait; must implement opt-in compatibility mode or upstream fix."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Set up agentgateway v1.4.1 with inferenceExtension.enabled=true and Rust EPP standalone; send request and verify no ProtocolConfiguration mismatch.",
+      "Add unit test for validate_protocol_config with FULL_DUPLEX_STREAMED and flag false to ensure fast failure remains for real Envoy."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer upstream agentgateway fix or Rust EPP compatibility mode; no maintainer approval yet."
+    ],
+    "why": "Issue provides a clear root cause (agentgateway omits send_body_without_waiting_for_header_response) and a concrete validation path (reproduce with agentgateway v1.4.1 and Rust EPP). The contributor comment confirms the strict check's deadlock rationale and suggests safe fixes (upstream fix or opt-in escape hatch), making the work actionable."
+  },
   "5f6db578cb2705ef667fbf10317f0504acece5256cad2ae1b5e59c0eb5ae92b3": {
     "confidence": 0.85,
     "contradictions": [],
@@ -17605,6 +17657,40 @@
       "Whether in-container vLLM upgrades are a supported workflow; maintainer decision pending."
     ],
     "why": "Issue clearly identifies a version-skew root cause between baked flashinfer-jit-cache and in-container vLLM upgrades, with a concrete repro and verified workaround. Maintainer triage confirms engagement and asks for a contract decision, but the structural hazard remains latent. The suggested fix is actionable (couple packages or document unsupported workflow)."
+  },
+  "658294d2319b6e846614e6739d360a3e02b854bd29ce4a5ae93340e3b06c62f5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue body says plugin fetch and tarball packaging succeed, but the 500 occurs at conversation/plugin-load time; draft PR claims to fix by resolving before conversation creation, which aligns with root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "plugin-preset runner in OpenHands/automation",
+      "plugin source resolution and validation before conversation creation",
+      "error handling for invalid/unreachable plugin sources"
+    ],
+    "risks": [
+      "Potential overlap with existing draft PR automation#339; need to coordinate or build on it",
+      "Changes to plugin loading may affect other automation paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided minimal plugin preset and verify it completes without 500",
+      "Add regression test for plugin preset with no-op plugin",
+      "Test invalid/unreachable plugin source returns clear validation error"
+    ],
+    "unknowns": [
+      "Whether the draft PR automation#339 will be merged or needs further work",
+      "Exact in-sandbox agent-server exception behind the 500 is not yet captured"
+    ],
+    "why": "Issue provides a clear, reproducible bug with a minimal A/B test isolating the plugin-loading path, a concrete 500 error on the conversation/events endpoint, and acceptance criteria. The root cause is identified as plugin source resolution/validation occurring too late, with an existing draft PR (automation#339) targeting the same fix. The contribution is actionable and technically valuable."
   },
   "65df70baa60bb014fa5d15be411e3b5a5cab4e541a456a00eaf51e692ebef185": {
     "confidence": 0.7,
@@ -31280,6 +31366,39 @@
     ],
     "why": "The issue identifies a concrete, reproducible bug in the OAuth client flow: expired client secrets are never invalidated, causing permanent lockout. The root cause is clearly traced to missing checks in the client code, with a deterministic reproduction provided. No competing PR or issue exists, and the fix is well-scoped."
   },
+  "b918697abefb1c8ad12dea4d247d5686a38d77d5d20805ce8277423436ee800a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Initial report claimed priority policy causes zero hits, but later comments show it is load-dependent fragmentation and MTP back-off, not the policy itself."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "scheduler.py",
+      "kv_cache_utils.py",
+      "prefix caching logic"
+    ],
+    "risks": [
+      "Changing the carve policy may affect latency or hit rates for workloads with partially-shared prefixes; need to ensure no regression in other geometries.",
+      "The fix may require updating existing unit tests that pin the current carve sequence."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test for align-mode prefix caching with MTP enabled, verifying that a shared prefix crossing multiple block boundaries yields hits at all cacheable boundaries.",
+      "Run the existing scheduler unit tests (test_mamba_align_split_partial_tail_schedule) and update expectations for the new carve sequence.",
+      "Perform a GPU end-to-end test with a hybrid GDN model and MTP, comparing hit rates with and without the fix."
+    ],
+    "unknowns": [
+      "Exact behavior of the final-chunk rule when a prompt ends exactly on a block boundary, as noted in jschmied's comment."
+    ],
+    "why": "The issue identifies a concrete LLM algorithm bug in align-mode prefix caching with MTP speculative decoding, backed by reproducible measurements and a code-level root cause (Eagle one-block back-off in _mamba_block_aligned_split). The discussion confirms the mechanism and proposes a fix direction with a clear validation path."
+  },
   "b91eb255b4a20a338286d1445bcf9696518206eb85ca8ee7fceba0bb9f837a20": {
     "confidence": 0.6,
     "contradictions": [],
@@ -42210,6 +42329,39 @@
       "Maintainer's preferred cross-channel delivery policy"
     ],
     "why": "Issue is a real user-facing bug with fresh live repro evidence, but the deterministic gate requires HUMAN_REVIEW and maintainer decision on cross-channel delivery policy is unresolved. Existing PRs are closed/unmerged and do not settle the policy."
+  },
+  "f0f22ed3ccd669198baf1e395c962b4925f45f0f0355c072f0664334a3e33103": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #2684 claims technical completeness but root_cause_coverage is false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "ToolCallingAgent.process_tool_calls()",
+      "ID normalization logic for tool calls",
+      "Regression tests for missing/duplicate IDs"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach",
+      "Risk of overlapping with existing PR #2684 if it is updated with root-cause coverage"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script to confirm the bug",
+      "Add unit tests covering empty IDs, duplicate IDs, and mixed valid/invalid IDs",
+      "Run targeted tests for ToolCallingAgent and related memory serialization"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for ID normalization",
+      "Exact scope of changes in PR #2684 and its current state"
+    ],
+    "why": "Issue provides a clear root cause (dictionary keyed by provider tool_call.id drops calls with missing/duplicate IDs), a minimal reproduction with expected/actual output, and a concrete fix direction (normalize to unique fallback IDs). Existing PR #2684 is open but lacks root-cause coverage evidence, leaving room for a competitive contribution."
   },
   "f12184ed0c1dff31b5a5e9040dd52966949b6ed91fce7c660d53667dbed5a8e0": {
     "confidence": 0.8,
