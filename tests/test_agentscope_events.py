@@ -182,3 +182,31 @@ def test_production_queue_snapshot_imports_pr_followup_once(tmp_path, monkeypatc
     assert first["drain"]["delivered"] == 1
     assert second["queueImported"] == 0
     assert len(delivered) == 1
+
+
+def test_unmapped_event_uses_explicit_independent_release_bridge(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    calls = []
+
+    def fake_bridge(root, operation, **kwargs):
+        calls.append((root, operation, kwargs))
+        return {
+            "ok": True,
+            "threadId": "thread-new",
+            "turnId": "turn-new",
+            "turnStarted": True,
+        }
+
+    monkeypatch.setattr(worker, "run_bridge", fake_bridge)
+    lane = EventLane(tmp_path / "events.db")
+    event = {
+        "eventId": "github:agentscope-ai/agentscope:10:issue_update:now",
+        "repo": "agentscope-ai/agentscope",
+        "number": 10,
+        "issue": {"html_url": "https://github.com/agentscope-ai/agentscope/issues/10"},
+    }
+    worker.issue_handler_delivery(tmp_path, lane, event)
+    assert calls[0][1] == "agentscope-event-create"
+    assert calls[0][2]["inactive_release"] is True
+    assert calls[0][2]["code_root"] == worker.ROOT
+    assert lane.handler_thread("agentscope-ai/agentscope#10")["thread_id"] == "thread-new"
