@@ -11201,6 +11201,73 @@ def test_validation_followup_delivery_rechecks_result_before_starting_worker(mon
     assert list((tmp_path / "state" / "task_turn_receipts").glob("*.launch.json")) == []
 
 
+def test_validation_snapshot_failure_cancels_unstarted_reservation(monkeypatch, tmp_path):
+    store, worktree, _result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    candidate = store.validation_followup_candidates()[0]
+    MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text("", encoding="utf-8")
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads ("
+            "id TEXT, cwd TEXT, archived INTEGER, first_user_message TEXT, "
+            "rollout_path TEXT, git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?)",
+            (
+                candidate["threadId"],
+                str(worktree),
+                0,
+                MODULE.issue_prompt(candidate["issueUrl"]),
+                str(rollout),
+                "https://github.com/a/b.git",
+            ),
+        )
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path)
+    bind_validation_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE,
+        "_ensure_validation_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("snapshot unavailable")),
+    )
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("an invalid snapshot must not start a worker"),
+    )
+
+    result = MODULE.validation_followup_deliver(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+        )
+    )
+
+    assert result["deferred"] is True
+    assert result["reason"] == "VALIDATION_SNAPSHOT_INVALID"
+    assert store.unresolved_validation_followups() == []
+    assert store.validation_followup_candidates()[0]["resultDigest"] == candidate["resultDigest"]
+    assert store.active_task_count() == 0
+
+
 class _FakeTaskTurnStdin:
     def __init__(self):
         self.writes: list[bytes] = []
@@ -12695,7 +12762,7 @@ def test_validation_snapshot_root_symlink_is_rejected(monkeypatch, tmp_path):
     assert list(outside.iterdir()) == []
 
 
-def test_validation_snapshot_state_parent_must_match_root(monkeypatch, tmp_path):
+def test_validation_snapshot_uses_runtime_state_when_code_root_is_separate(monkeypatch, tmp_path):
     worktree = tmp_path / "worktree"
     result_path = worktree / MODULE.TASK_PRIVATE_DIR / "result.json"
     result_path.parent.mkdir(parents=True)
@@ -12705,15 +12772,20 @@ def test_validation_snapshot_state_parent_must_match_root(monkeypatch, tmp_path)
         "worktreePath": str(worktree),
         "resultDigest": hashlib.sha256(raw).hexdigest(),
     }
+    code_root = tmp_path / "releases" / "immutable-release"
+    code_root.mkdir(parents=True)
     runtime = tmp_path / "runtime"
     runtime.mkdir()
-    monkeypatch.setattr(MODULE, "ROOT", runtime)
-    detached_state = tmp_path / "detached-state"
-    monkeypatch.setattr(MODULE, "STATE", detached_state)
+    monkeypatch.setattr(MODULE, "ROOT", code_root)
+    monkeypatch.setattr(MODULE, "STATE", runtime / "state")
 
-    with pytest.raises(RuntimeError, match="not bound to ROOT"):
-        MODULE._ensure_validation_snapshot(candidate, reservation_digest="1" * 64)
-    assert not detached_state.exists()
+    binding = MODULE._ensure_validation_snapshot(candidate, reservation_digest="1" * 64)
+
+    snapshot = runtime / "state" / "validation-inputs" / f"{'1' * 64}.json"
+    assert snapshot.is_file()
+    assert snapshot.read_bytes() == raw
+    assert binding["snapshotPath"] == f"validation-inputs/{'1' * 64}.json"
+    assert not (code_root / "state").exists()
 
 
 @pytest.mark.parametrize("replacement_kind", ["symlink", "different-inode"])
@@ -13311,6 +13383,8 @@ def test_negative_validation_receipt_rearms_the_same_result(monkeypatch, tmp_pat
     reservation_digest = "b" * 64
 
     class Store:
+        path = tmp_path / "ledger.sqlite3"
+
         def unresolved_pr_followups(self):
             return []
 
@@ -13376,6 +13450,129 @@ def test_negative_validation_receipt_rearms_the_same_result(monkeypatch, tmp_pat
     assert not receipt.exists()
     assert not launch.exists()
     assert not log.exists()
+
+
+def test_unstarted_validation_reservation_rearms_without_a_receipt(monkeypatch, tmp_path):
+    reserved_at = iso_z(datetime.now(UTC) - timedelta(minutes=2))
+    calls = []
+    reservation_digest = "b" * 64
+
+    class Store:
+        path = tmp_path / "ledger.sqlite3"
+
+        def unresolved_pr_followups(self):
+            return []
+
+        def unresolved_validation_followups(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "resultDigest": "a" * 64,
+                    "reservationDigest": reservation_digest,
+                    "reservedAt": reserved_at,
+                }
+            ]
+
+        def validation_followup_delivery_binding(self, **_kwargs):
+            return None
+
+        def cancel_validation_followup_reservation(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(MODULE, "STATE", tmp_path / "state")
+
+    rearmed = MODULE._rearm_negative_followup_deliveries(Store())
+
+    assert rearmed == [
+        {
+            "kind": "validation-followup",
+            "key": "a/b#1",
+            "threadId": "thread-1",
+            "resultDigest": "a" * 64,
+            "reason": "DELIVERY_NOT_STARTED",
+        }
+    ]
+    assert calls == [
+        {
+            "thread_id": "thread-1",
+            "result_digest": "a" * 64,
+            "reservation_digest": reservation_digest,
+            "reason": "DELIVERY_NOT_STARTED",
+        }
+    ]
+
+
+def test_unstarted_validation_rearm_waits_for_delivery_authorization(monkeypatch, tmp_path):
+    reservation_digest = "b" * 64
+    guard_entered = threading.Event()
+    release_guard = threading.Event()
+    binding_read = threading.Event()
+    cancelled = []
+    errors = []
+
+    class Store:
+        path = tmp_path / "ledger.sqlite3"
+        binding = None
+
+        def unresolved_pr_followups(self):
+            return []
+
+        def unresolved_validation_followups(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "resultDigest": "a" * 64,
+                    "reservationDigest": reservation_digest,
+                    "reservedAt": iso_z(datetime.now(UTC) - timedelta(minutes=2)),
+                }
+            ]
+
+        def validation_followup_delivery_binding(self, **_kwargs):
+            binding_read.set()
+            return self.binding
+
+        def cancel_validation_followup_reservation(self, **kwargs):
+            cancelled.append(kwargs)
+
+    store = Store()
+    guard_root = MODULE.ledger_action_guard_root(store.path)
+
+    def authorize_delivery():
+        try:
+            with MODULE.opportunity_action_guard(guard_root, "a/b#1"):
+                guard_entered.set()
+                assert release_guard.wait(2)
+                store.binding = {"reservationDigest": reservation_digest}
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    result = []
+
+    def reconcile():
+        try:
+            result.extend(MODULE._rearm_negative_followup_deliveries(store))
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    monkeypatch.setattr(MODULE, "STATE", tmp_path / "state")
+    monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _thread_id: None)
+    monkeypatch.setattr(MODULE, "_reserved_task_turn_materialized", lambda *args, **kwargs: False)
+    delivery_thread = threading.Thread(target=authorize_delivery)
+    delivery_thread.start()
+    assert guard_entered.wait(2)
+    rearm_thread = threading.Thread(target=reconcile)
+    rearm_thread.start()
+    assert not binding_read.wait(0.1)
+    release_guard.set()
+    delivery_thread.join(timeout=2)
+    rearm_thread.join(timeout=2)
+
+    assert errors == []
+    assert binding_read.is_set()
+    assert cancelled == []
+    assert result == []
 
 
 def test_active_writer_receipt_waits_for_desktop_handoff_instead_of_rearming(monkeypatch, tmp_path):

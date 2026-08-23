@@ -47,7 +47,7 @@ from oss_pr_radar.independent_review import (  # noqa: E402
     controller_review_result,
     review_once,
 )
-from oss_pr_radar.ledger import RadarLedger  # noqa: E402
+from oss_pr_radar.ledger import LedgerError, RadarLedger  # noqa: E402
 from oss_pr_radar.managed_adapter import (  # noqa: E402
     GitHubAbsenceQueries,
     ManagedAdapter,
@@ -6392,6 +6392,7 @@ def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, An
     for item in store.unresolved_validation_followups():
         thread_id = str(item.get("threadId") or "")
         token = str(item.get("resultDigest") or "")
+        reservation_digest = str(item.get("reservationDigest") or "")
         if _reserved_task_turn_materialized(
             delivery_kind="validation-followup",
             candidate=item,
@@ -6419,11 +6420,56 @@ def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, An
                 }
             )
             continue
+        binding_reader = getattr(store, "validation_followup_delivery_binding", None)
+        if callable(binding_reader):
+            with opportunity_action_guard(
+                ledger_action_guard_root(store.path), str(item.get("key") or "")
+            ):
+                if active_task_turn_worker(thread_id) is not None:
+                    continue
+                delivery_started = bool(
+                    binding_reader(
+                        thread_id=thread_id,
+                        result_digest=token,
+                        reservation_digest=reservation_digest,
+                    )
+                )
+                if (
+                    delivery_started
+                    or parse_time(str(item["reservedAt"])) + timedelta(minutes=1) > now
+                ):
+                    pass
+                else:
+                    try:
+                        store.cancel_validation_followup_reservation(
+                            thread_id=thread_id,
+                            result_digest=token,
+                            reservation_digest=reservation_digest,
+                            reason="DELIVERY_NOT_STARTED",
+                        )
+                    except LedgerError:
+                        continue
+                    _discard_negative_task_turn_receipt(
+                        delivery_kind="validation-followup",
+                        thread_id=thread_id,
+                        delivery_token=token,
+                        validation_reservation_digest=reservation_digest,
+                    )
+                    rearmed.append(
+                        {
+                            "kind": "validation-followup",
+                            "key": item.get("key"),
+                            "threadId": thread_id,
+                            "resultDigest": token,
+                            "reason": "DELIVERY_NOT_STARTED",
+                        }
+                    )
+                    continue
         retry = retryable_negative_task_turn_receipt(
             delivery_kind="validation-followup",
             thread_id=thread_id,
             delivery_token=token,
-            validation_reservation_digest=str(item["reservationDigest"]),
+            validation_reservation_digest=reservation_digest,
         )
         if retry and retry.get("desktopHandoffRequired"):
             continue
@@ -6841,6 +6887,18 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
                         "VALIDATION_RESULT_CHANGED_BEFORE_SNAPSHOT", exc
                     )
                 except (OSError, RuntimeError, ValueError):
+                    store.cancel_validation_followup_reservation(
+                        thread_id=args.thread_id,
+                        result_digest=args.delivery_token,
+                        reservation_digest=str(candidate["reservationDigest"]),
+                        reason="VALIDATION_SNAPSHOT_INVALID",
+                    )
+                    _discard_negative_task_turn_receipt(
+                        delivery_kind="validation-followup",
+                        thread_id=args.thread_id,
+                        delivery_token=args.delivery_token,
+                        validation_reservation_digest=str(candidate["reservationDigest"]),
+                    )
                     return validation_delivery_deferred("VALIDATION_SNAPSHOT_INVALID", None)
             store.authorize_task_turn_delivery(
                 delivery_kind=args.delivery_kind,
@@ -7669,9 +7727,9 @@ def _open_directory_child(
 def _open_validation_snapshot_state(*, create: bool) -> tuple[Path, int, Path, int]:
     if STATE.name in {"", ".", ".."} or "/" in STATE.name:
         raise RuntimeError("validation snapshot state directory name is invalid")
-    runtime_root = _lexical_absolute(ROOT)
-    if _lexical_absolute(STATE.parent) != runtime_root or STATE.name != "state":
-        raise RuntimeError("validation snapshot state directory is not bound to ROOT")
+    runtime_root = _lexical_absolute(STATE.parent)
+    if STATE.name != "state":
+        raise RuntimeError("validation snapshot state directory is not bound to runtime root")
     root_fd, root_path = open_directory_handle(
         runtime_root,
         label="validation snapshot runtime root",
