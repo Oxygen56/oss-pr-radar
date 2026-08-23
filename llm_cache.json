@@ -2189,6 +2189,34 @@
     ],
     "why": "Issue reports intermittent missing reasoning in multi-turn tool calls for DeepSeek-V4-Flash-0731, but root cause is unclear: could be chat-template handling, reasoning parser, or model behavior. No maintainer confirmation or design direction. The supplied algorithm evidence is inflated by keyword matches (block size, fp8, tensor parallel) that are not central to the reported bug. The issue is a usage/bug report without a concrete algorithm mechanism or validation path."
   },
+  "0ece16811b1509f9708230bdd19388ed10d96eeb8d4db3300f4c888859eadfcb": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "PrefillRouter::generate context linking",
+      "SGLang cancellation monitor to handle pre-registration cancellation",
+      "request cancellation propagation and lifecycle handling"
+    ],
+    "risks": [
+      "Potential race conditions in request registration and cancellation timing",
+      "Changes may affect PD protocol cleanup and KV-transfer resource draining"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided steps: cold streaming request with long prompt, disconnect before first token, then send short request and measure latency; verify short request is not delayed.",
+      "Add a regression test that simulates client disconnect during Prefill and asserts abort_request is called after registration."
+    ],
+    "unknowns": [
+      "Exact code changes required in the SGLang cancellation monitor and context linking are not specified in detail."
+    ],
+    "why": "Issue provides a clear user-visible bug with detailed reproduction steps, expected vs actual behavior, and a specific root cause: cancellation state is not propagated from the original HTTP context to the remote Prefill context, and the SGLang cancellation monitor cannot abort before the first output. The proposed lifecycle fix is concrete and testable."
+  },
   "0f3d1f5102ea8fde2428e32a4807062b069511a426173083d5ad88051c0741d5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -7728,6 +7756,37 @@
       "Whether the maintainers prefer a different fix (e.g., enabling Spec in Prefill worker) over the dummy tensor approach."
     ],
     "why": "Issue provides a detailed root cause, a concrete code patch, and a clear reproduction command. The proposed fix is a minimal change to a distributed-training path (EAGLE + DP attention) with a specific mechanism (NCCL all_gather buffer mismatch) and a validation path (warmup completion)."
+  },
+  "31a855545576f0b1bc79e080ab5b378669049581b4686c38b24f1c8442a64536": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue body states the bug is frontend-only, but the readiness check comment notes missing labels; this does not affect technical actionability."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Agent Canvas sidebar token panel",
+      "frontend token usage accumulation logic"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different data source or UI design; avoid changing API behavior beyond the sidebar display."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that mocks backend stats with nonzero cache_read_tokens and verifies the sidebar displays the same value as the Usage Tab.",
+      "Run the provided curl command to confirm backend data is correct before and after the fix."
+    ],
+    "unknowns": [
+      "Exact frontend code location and whether the sidebar uses streaming stats events or a different data path; however, the issue provides sufficient direction for a minimal fix."
+    ],
+    "why": "The issue provides a clear frontend-only bug with a concrete root cause: the sidebar reads from the null 'metrics' field instead of the populated 'stats.usage_to_metrics' path. It includes a reproducible command, expected vs actual behavior, and acceptance criteria with a regression test requirement. No competing open PRs or duplicates were found."
   },
   "32150a03a57d47438635e97b5147769aabe46dc5d47fe6392eea7a3ac2dab65e": {
     "confidence": 0.85,
@@ -17283,6 +17342,37 @@
       "Maintainer preference on cache configuration design"
     ],
     "why": "Issue provides a clear, reproducible bug with exact code path (router.py L454-487) and expected behavior. No competing PR addresses this. The fix is localized and testable."
+  },
+  "6451e3d83425adb5ae5f05b17ba4c154d15e48038fb2a9c1ce8fff9e527c22fa": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "ToolCallingAgent.process_tool_calls()",
+      "ID normalization logic for tool calls"
+    ],
+    "risks": [
+      "Potential behavior change in tool call correlation",
+      "Need to ensure compatibility with existing provider adapters"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script to confirm the bug",
+      "Add regression tests for missing and duplicate tool_call IDs",
+      "Run existing test suite for smolagents.agents"
+    ],
+    "unknowns": [
+      "Exact implementation details of the fix",
+      "Maintainer preference for handling ID normalization"
+    ],
+    "why": "The issue provides a clear root cause (dictionary keyed by tool_call.id causing overwrites for missing/duplicate IDs), a minimal reproduction script with expected vs actual output, and a concrete fix direction (normalize IDs). The candidate is actionable and technically valuable."
   },
   "64589d857c8cea3d36c0cea4d7fa2d30fd6b9a954f96aeb8ec35a6a3e9cea16f": {
     "confidence": 0.7,
