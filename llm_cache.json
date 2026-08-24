@@ -5701,6 +5701,34 @@
     ],
     "why": "The issue reports a crash and unusable edit_existing_file tool, but lacks a minimal reproduction and clear root cause. A comment suggests the problem may be invalid tool calls from the local model, not a code defect. Potential duplicate issue #13137 exists, and open PRs may partially address the problem. Evidence is insufficient to confirm actionability."
   },
+  "212c66fd26439b4d2abd7f35e844d72cb2f9e1454800ca771239a708f9ab663e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #35645 claims to fix the issue but lacks tests and root-cause coverage, while the issue provides a clear root cause."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Scheduler.get_new_batch_prefill()",
+      "PrefillAdder budget check logic"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #35645; need to coordinate or ensure distinct improvements."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sets Scheduler.chunked_req to consume all remaining chunk budget, places a waiting request, and asserts that the waiting request is not processed for cache matching or load-back."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific implementation approach or have already accepted PR #35645."
+    ],
+    "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to re-check the chunk budget before scanning the waiting queue, causing unnecessary cache matching and host-cache load-back. Reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR #35645 addresses the same issue, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
   "21496647c773b13d6bb60fe8d8e5b309f7da0197175f637887b2320f1d3abe4e": {
     "confidence": 0.6,
     "contradictions": [],
@@ -12818,6 +12846,41 @@
       "Related issue audit incomplete due to timeout"
     ],
     "why": "Issue provides a precise, reproducible bug with clear root cause in the streaming path of the ollama/ provider, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
+  },
+  "47b13e4fa9c2bc7d7ed39b450586655bbe1d08e1cc94957346946e0bb16b33e9": {
+    "confidence": 0.85,
+    "contradictions": [
+      "One comment reports failure at the known-good commit on a different node, contradicting the issue's claim that the known-good commit works. This suggests the root cause may be broader or environment-dependent."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "fabric_firmware_initializer.cpp",
+      "active_erisc-crt0.cc",
+      "tt_metal/hw/toolchain/main.ld",
+      "jit_build/build.cpp"
+    ],
+    "risks": [
+      "The root cause is not fully confirmed; the contributor's analysis is marked as not 100% sure. The fix might need to be coordinated with PR #53968 to avoid regressing the cold-link bug.",
+      "Hardware dependency: validation requires access to a Blackhole galaxy, which may not be available to all contributors."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided 5-line repro (ttml open_device_mesh) on a Blackhole galaxy with the fix; expect 'OPENED OK' and no fabric router sync timeout.",
+      "Add a regression test that builds the active_erisc router ELF and asserts no gp-relative instructions when gp is not initialized, or that the local handshake completes on a 32-device mesh."
+    ],
+    "unknowns": [
+      "Whether the gp-relative relaxation is indeed the sole cause; the issue notes it could not be isolated cleanly.",
+      "Whether the fix should be in active_erisc-crt0.cc or by reverting the unconditional definition in main.ld.",
+      "The exact commit range and whether other changes in the regression range contribute."
+    ],
+    "why": "Issue provides a concrete regression with a minimal repro, a bisected regression range, and a detailed root-cause hypothesis (gp-relative relaxation due to unconditional __global_pointer$ definition) that is corroborated by a contributor's analysis. The fix is actionable: initialize gp in active_erisc-crt0.cc or otherwise prevent relaxation, with a clear validation path via the provided repro script."
   },
   "47ccaf9462a48b0500a84ef12be206055d47446a55183aaa7624286ea517ca4b": {
     "confidence": 0.85,
@@ -25177,6 +25240,41 @@
     ],
     "why": "Issue clearly describes a real bug with root cause and reproduction, but a related PR #25387 exists with overlapping changes and CI failures, and the deterministic gate requires human review. The PR is closed and lacks tests, so a better PR may be possible, but maintainer confirmation is needed."
   },
+  "82499e44d89c399d413a6727de7e806665cc6c3af9c77f11d503d374e1dfcda6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Streaming logic in python/sglang/srt/models/deepseek.py or related parser",
+      "Tool call parser handling for deepseekv4",
+      "Streaming buffer flush before tool_calls delta"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #36154 or #34244; need to differentiate by root cause coverage and test completeness.",
+      "The bug may be model-specific or dependent on speculative decoding settings, requiring careful environment setup."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided curl command and model setup, capture streamed chunks, assert that all content deltas are emitted before tool_calls delta and finish_reason.",
+      "Add a regression test that simulates a response with both content and tool_calls, verifying no truncation."
+    ],
+    "unknowns": [
+      "Exact root cause in code (whether it's in parser, streaming buffer, or finish_reason handling) is not yet pinpointed.",
+      "Whether the existing PR #36154 fully fixes the issue or only partially; need to compare implementations."
+    ],
+    "why": "The issue provides a clear reproduction with expected vs actual streaming output, identifying a concrete bug in the streaming logic when both content and tool_calls are present. The root cause is likely in the parser or streaming buffer handling, and the suggested fix is actionable. Although the track is llm_algorithm, the issue involves model architecture and kernel algorithm aspects (DeepSeek-V4, FP4 experts, speculative decoding), and the validation path is concrete: reproduce with the provided curl command and verify complete content delivery. Existing PRs are incomplete or lack root cause coverage, leaving room for a competitive contribution."
+  },
   "827f1ee28e5e928b93426437b4ac29e5cc72dc250ae029f42c574ef741417ee3": {
     "confidence": 0.85,
     "contradictions": [],
@@ -30445,6 +30543,43 @@
       "Root cause of T2VA quality gap (keyframe vs clip length)"
     ],
     "why": "Issue provides empirical evidence that default residual_diff_threshold is inert and documents quality gaps, but root cause is not isolated (model/content dependent) and requires design confirmation. Existing PR #34148 overlaps semantically but does not reference the issue; manual comparison is needed before creating a new task."
+  },
+  "a103f7537c1265ef7be1a7516de273b8f7bc47075e11eb145be7e53cd270f9cc": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue initially suspected the connector-conditional lookup branch, but recent comments show corruption persists even when that branch is bypassed, indicating the root cause is broader."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py",
+      "vllm/v1/core/kv_cache_manager.py",
+      "vllm/v1/core/kv_connector/...",
+      "tests/v1/core/prefix_cache/test_partial_prefix_cache_hits.py",
+      "tests/v1/core/test_scheduler.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #53479, #50457, #52244 that may already address parts of the issue; need to compare implementation boundaries.",
+      "The root cause may involve subtle interactions between connector lifecycle and speculative decoding rollback, requiring careful instrumentation to isolate."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the corruption using the issue's experiment matrix (DFlash2 with 7 spec tokens, LMCacheMPConnector attached, long agent sessions with shared prefix).",
+      "Run targeted unit tests: pytest tests/v1/core/prefix_cache/test_partial_prefix_cache_hits.py tests/v1/core/test_scheduler.py -q -k 'connector_without_divergent or capable_connector or hybrid_per_group_hit_divergence or hybrid_fa_deeper_hit_respects_connector_lookup_policy'",
+      "Add a regression test that simulates connector presence with zero token transfer and verifies mamba state alignment under speculative decoding."
+    ],
+    "unknowns": [
+      "Whether the corruption reproduces on the latest main branch after the #50344 fix, as the reporter has not yet tested a recent nightly.",
+      "Whether any of the overlapping PRs (#53479, #50457, #52244) already fix the root cause, requiring manual comparison."
+    ],
+    "why": "The issue provides a detailed experiment matrix isolating the corruption to speculative decoding with a KV connector attached, even with zero token transfer, and identifies a suspected code path. Recent comments confirm the corruption persists after applying the suggested fix, narrowing the root cause to connector presence interacting with mamba spec-verify rollback. The evidence includes concrete reproduction steps and a clear validation path via targeted tests."
   },
   "a1516340c6f844f7b2607e4153e633939178ca9061145ac91d185d606326cb8e": {
     "confidence": 0.8,
@@ -39870,6 +40005,35 @@
       "Whether PR #6811 will be updated with tests"
     ],
     "why": "Issue clearly identifies a root cause: importlib.metadata.version('mem0ai') fails without installed distribution, breaking source-tree imports and pytest. Existing PR #6811 directly addresses this but lacks regression tests, leaving room for a materially better PR with tests and robust fallback."
+  },
+  "d37647e9fae63e21d3e2a9a629575219621b5b12d7bd5f3b0e715309e70323e5": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/multimodal_gen/configs/models/encoders/qwen3.py",
+      "python/sglang/multimodal_gen/runtime/models/encoders/qwen3.py",
+      "python/sglang/kernels/aot/csrc/cpu/model/qwen3.cpp"
+    ],
+    "risks": [
+      "Root cause may be in a shared sampling/logits path affecting other models; fix must avoid broad behavior changes.",
+      "NVFP4 quantization may be involved; need to verify fix works with and without quantization."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl command with the specified model and flags to reproduce the token loop on 0.5.17; assert output is not repetitive and finish_reason is stop.",
+      "Add a regression test that runs the same chat request on the Qwen3.5-arch model and checks for non-repetitive output."
+    ],
+    "unknowns": [
+      "Exact root cause (sampling vs logits vs model code) not yet identified; maintainer preference for fix approach unknown."
+    ],
+    "why": "Issue provides a clear regression: 0.5.17 breaks generation for Qwen3.5-arch model, while 0.5.6.dev works. Detailed repro steps and isolation (with/without DFLASH, parser, tools) confirm a generation-level bug independent of speculative decoding. Code anchors point to qwen3 model files. Actionable fix path: add failing test and debug logits/sampling path."
   },
   "d3943dd9d9136a25c506cd10e06699af7511947b89b3e64728e7608c1a025883": {
     "confidence": 0.85,
