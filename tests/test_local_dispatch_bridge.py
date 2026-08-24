@@ -6843,6 +6843,8 @@ def test_recovery_delivery_preserves_validation_followup_prompt():
     assert "修改已完成，正在创建 PR" in prompt
     assert "不要等待或轮询系统复核、发布" in prompt
     assert "只有在本轮结束后才能继续" in prompt
+    assert "删除输入里的 reproductionReceipt、probeReceipt 和 resultDigest" in prompt
+    assert "由系统重新生成" in prompt
 
 
 def test_policy_recovery_delivery_keeps_the_exact_issue_identity(monkeypatch, tmp_path):
@@ -6909,6 +6911,8 @@ def test_validation_followup_prompt_translates_internal_gaps_for_the_user():
     assert f"`{worktree_input_path}`" in prompt
     assert "本轮输入只能只读工作区相对路径" in prompt
     assert "不要读取当前 `.oss-pr-radar/result.json` 作为本轮输入" in prompt
+    assert "不得沿用输入中的 reproductionReceipt、probeReceipt 或 resultDigest" in prompt
+    assert "由系统依据本轮完整结果重新生成" in prompt
     assert "原子替换为新输出" in prompt
     assert str(MODULE.STATE) not in prompt
 
@@ -10880,6 +10884,239 @@ def test_published_pr_followup_validation_preserves_public_lifecycle(tmp_path):
                ORDER BY id DESC LIMIT 1"""
         ).fetchone()
     assert json.loads(preserved["payload_json"])["requestedStage"] == "VALIDATION_PENDING"
+
+
+def _stale_published_validation_result(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+    )
+    _managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+        degrade_stage=False,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    previous_head = str(value["commitSha"])
+    (worktree / "runtime.py").write_text("value = 3\nassert value == 3\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: address runtime follow-up")
+    followup_head = run_git(worktree, "rev-parse", "HEAD")
+    value.update(
+        {
+            "commitSha": followup_head,
+            "headSha": followup_head,
+            "previousCommitSha": previous_head,
+            "commitMessage": "fix: address runtime follow-up",
+            "controllerCommitChangedFiles": ["runtime.py"],
+            "changedFiles": ["runtime.py"],
+        }
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    _sign_reproduction_certificate(
+        value,
+        result_path=result_path,
+        base_sha=str(value["selectedBaseSha"]),
+        head_sha=followup_head,
+        commit_sha=followup_head,
+        store=store,
+    )
+    from oss_pr_radar.repo_probe import rebind_probe_receipt
+
+    value["reproductionReceipt"] = rebind_probe_receipt(
+        value["reproductionReceipt"],
+        repo="a/b",
+        base_sha=str(value["selectedBaseSha"]),
+        code_paths=list(value["codePaths"]),
+        issue_url=str(value["issueUrl"]),
+        task_id=str(value["taskId"]),
+        thread_id=str(value["threadId"]),
+        head_sha=followup_head,
+        commit_sha=followup_head,
+        result_digest=str(value["resultDigest"]),
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert first["ok"] is True, first["errors"]
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "PR_OPEN"
+    )
+
+    bind_validation_runtime(monkeypatch, tmp_path)
+    candidate = store.validation_followup_candidates()[0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+    candidate = next(
+        item
+        for item in store.unresolved_validation_followups()
+        if item["reservationDigest"] == reserved["reservationDigest"]
+    )
+    reservation_digest = str(candidate["reservationDigest"])
+    snapshot = MODULE._ensure_validation_snapshot(candidate, reservation_digest=reservation_digest)
+    binding = {
+        "reservationDigest": reservation_digest,
+        "snapshotId": str(snapshot["snapshotId"]),
+        "snapshotPath": str(snapshot["snapshotPath"]),
+        "snapshotDigest": str(snapshot["snapshotDigest"]),
+        **MODULE._validation_worktree_input_binding(
+            candidate=candidate,
+            reservation_digest=reservation_digest,
+            snapshot_digest=str(snapshot["snapshotDigest"]),
+        ),
+        "resultDigest": str(candidate["resultDigest"]),
+    }
+    store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id=str(candidate["threadId"]),
+        delivery_token=str(candidate["resultDigest"]),
+        reservation_digest=reservation_digest,
+        snapshot_id=binding["snapshotId"],
+        snapshot_path=binding["snapshotPath"],
+        snapshot_digest=binding["snapshotDigest"],
+        worktree_input_path=binding["worktreeInputPath"],
+        worktree_input_digest=binding["worktreeInputDigest"],
+    )
+    MODULE._ensure_validation_worktree_input(
+        candidate=candidate | binding,
+        reservation_digest=reservation_digest,
+        snapshot_id=binding["snapshotId"],
+        snapshot_path=binding["snapshotPath"],
+        snapshot_digest=binding["snapshotDigest"],
+        worktree_input_path=binding["worktreeInputPath"],
+        worktree_input_digest=binding["worktreeInputDigest"],
+    )
+    source = json.loads((worktree / binding["worktreeInputPath"]).read_text(encoding="utf-8"))
+    source_receipt = dict(source["reproductionReceipt"])
+
+    source_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    followup = source_context["prFollowup"]
+    latest_context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+            prepared_followup_head=followup["headSha"],
+        ).read_text(encoding="utf-8")
+    )
+    assert latest_context["contextDigest"] != source["contextDigest"]
+    assert latest_context["prFollowup"]["wakeDigest"] == source["followupDigest"]
+
+    stale = dict(source)
+    stale.pop("resultDigest")
+    stale["validationInput"] = binding["worktreeInputPath"]
+    stale["tests"] = [{"command": "focused validation rerun", "exitCode": 0}]
+    stale["validatedAt"] = iso_z(datetime.now(UTC))
+    result_path.write_text(json.dumps(stale), encoding="utf-8")
+    return store, result_path, latest_context, source_receipt, pr_url, binding
+
+
+def test_published_validation_rebinds_exact_expired_source_receipt(monkeypatch, tmp_path):
+    import oss_pr_radar.repo_probe as repo_probe
+
+    store, result_path, context, source_receipt, pr_url, _binding = (
+        _stale_published_validation_result(monkeypatch, tmp_path)
+    )
+    real_datetime = datetime
+
+    class FutureDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime.now(UTC) + timedelta(hours=2)
+
+    monkeypatch.setattr(repo_probe, "datetime", FutureDateTime)
+    assert not repo_probe.verify_probe_receipt(
+        source_receipt,
+        repo="a/b",
+        base_sha=source_receipt["baseSha"],
+        code_paths=list(source_receipt["codePaths"]),
+        issue_url=source_receipt["issueUrl"],
+        task_id="intent-1",
+        thread_id="thread-1",
+        head_sha=source_receipt["headSha"],
+        commit_sha=source_receipt["commitSha"],
+        result_digest=source_receipt["resultDigest"],
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["contextDigest"] == context["contextDigest"]
+    assert finalized["resultDigest"] != source_receipt["resultDigest"]
+    assert finalized["reproductionReceipt"]["resultDigest"] == finalized["resultDigest"]
+    assert finalized["reproductionReceipt"]["receiptDigest"] != source_receipt["receiptDigest"]
+    restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert restored["stage"] == "PR_OPEN"
+    assert restored["publicationReceipt"]["prUrl"] == pr_url
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["top_result_digest", "task_id", "commit", "validation_input"],
+)
+def test_published_validation_stale_receipt_rebind_rejects_mismatched_binding(
+    monkeypatch, tmp_path, tamper
+):
+    store, result_path, _context, source_receipt, pr_url, binding = (
+        _stale_published_validation_result(monkeypatch, tmp_path)
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    if tamper == "top_result_digest":
+        value["resultDigest"] = source_receipt["resultDigest"]
+    elif tamper == "task_id":
+        value["taskId"] = "tampered-task"
+    elif tamper == "commit":
+        value["commitSha"] = "f" * 40
+        value["headSha"] = "f" * 40
+    else:
+        value["validationInput"] = f".oss-pr-radar/validation-inputs/{'f' * 64}.json"
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    rejected_bytes = result_path.read_bytes()
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is False
+    assert result["errors"]
+    assert result_path.read_bytes() == rejected_bytes
+    restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert restored["stage"] == "PR_OPEN"
+    assert restored["publicationReceipt"]["prUrl"] == pr_url
+    if tamper == "validation_input":
+        assert binding["worktreeInputPath"] != value["validationInput"]
+
+
+def test_published_validation_stale_receipt_with_wrong_wake_is_ignored(monkeypatch, tmp_path):
+    store, result_path, _context, _source_receipt, pr_url, _binding = (
+        _stale_published_validation_result(monkeypatch, tmp_path)
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["followupDigest"] = "f" * 64
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    stale_bytes = result_path.read_bytes()
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True
+    assert result["ingested"] == []
+    assert result["ignored"] == [{"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}]
+    assert result_path.read_bytes() == stale_bytes
+    restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert restored["stage"] == "PR_OPEN"
+    assert restored["publicationReceipt"]["prUrl"] == pr_url
 
 
 @pytest.mark.parametrize(

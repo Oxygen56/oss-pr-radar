@@ -377,6 +377,8 @@ def benign_policy_recovery_prompt(issue_url: str) -> str:
 VALIDATION_RECOVERY_PROMPT = (
     "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。"
     "读取当前任务文件，只补仍缺少的验证；未完成的检查重新运行，不恢复旧进程。"
+    "生成新结果时删除输入里的 reproductionReceipt、probeReceipt 和 resultDigest，"
+    "这些签名字段由系统重新生成。"
     "保持离线，不安装依赖，不请求权限，也不执行任何 GitHub 公开操作。"
     + END_RESULT_TURN_PROMPT
     + PLAIN_LANGUAGE_STATUS_PROMPT
@@ -12013,6 +12015,8 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         + "按已加载的受控任务规则更新结果：核心回归必须证明修复前失败、修复后通过；"
         "广泛检查、可选依赖或 GPU/模型检查只有在核心检查完整通过时才可明确交给远端 CI。"
         "任何真实失败、缺少生成产物或已知分支问题仍会阻止发布。自动复核结论只能由系统写入。"
+        "新输出不得沿用输入中的 reproductionReceipt、probeReceipt 或 resultDigest；"
+        "这些签名字段会由系统依据本轮完整结果重新生成。"
         "写结果前必须同步更新准备发布的 PR 描述：验证段落只保留本轮最新事实，"
         "删除已经被新结果推翻的‘未运行’‘无法启动’或‘交给在线检查’说法。"
         f"把最新规则版本 {VALIDATION_POLICY_REVISION} 记录进结果文件。保持离线，不安装依赖，"
@@ -12237,6 +12241,181 @@ def _unsigned_final_task_result_digest(value: dict[str, Any]) -> str:
             quality["policy_verified"] = True
             unsigned["quality"] = quality
     return sha256_json(unsigned)
+
+
+def _validation_followup_result_requires_receipt_rebind(
+    *,
+    store: RadarLedger,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+) -> bool:
+    """Recognize one exact legacy validation result that needs controller re-signing.
+
+    Older validation turns correctly removed their top-level result digest after
+    changing the result, but accidentally copied the now-stale implementation
+    receipt from the immutable input. Accept that shape only when the signed
+    source result and the exact validation delivery are both still provable.
+    """
+
+    receipt = value.get("reproductionReceipt")
+    if (
+        candidate.get("stage") not in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+        or value.get("stage") != "FIX_READY"
+        or value.get("handoffMode") != "controller_commit_complete"
+        or "resultDigest" in value
+        or not isinstance(receipt, dict)
+        or value.get("probeReceipt") is not None
+        or receipt.get("bindingPurpose") != "implementation-result-v1"
+    ):
+        return False
+
+    source_result_digest = str(receipt.get("resultDigest") or "")
+    validation_input_path = str(value.get("validationInput") or "")
+    input_match = re.fullmatch(
+        rf"{re.escape(_VALIDATION_WORKTREE_INPUT_RELATIVE_PREFIX)}/([0-9a-f]{{64}})\.json",
+        validation_input_path,
+    )
+    if not _VALIDATION_SNAPSHOT_ID.fullmatch(source_result_digest) or input_match is None:
+        return False
+    reservation_digest = input_match.group(1)
+
+    binding_reader = getattr(store, "validation_followup_delivery_binding", None)
+    if not callable(binding_reader):
+        return False
+    binding = binding_reader(
+        thread_id=str(candidate["threadId"]),
+        result_digest=source_result_digest,
+        reservation_digest=reservation_digest,
+    )
+    if not isinstance(binding, dict):
+        raise RuntimeError("validation follow-up result delivery binding is unavailable")
+    snapshot_id = str(binding.get("snapshotId") or "")
+    snapshot_path = str(binding.get("snapshotPath") or "")
+    snapshot_digest = str(binding.get("snapshotDigest") or "")
+    worktree_input_digest = str(binding.get("worktreeInputDigest") or "")
+    if (
+        binding.get("reservationDigest") != reservation_digest
+        or binding.get("resultDigest") != source_result_digest
+        or binding.get("worktreeInputPath") != validation_input_path
+        or snapshot_id != reservation_digest
+        or snapshot_path != f"{_VALIDATION_SNAPSHOT_RELATIVE_PREFIX}/{reservation_digest}.json"
+        or not _VALIDATION_SNAPSHOT_ID.fullmatch(snapshot_digest)
+        or not _VALIDATION_SNAPSHOT_ID.fullmatch(worktree_input_digest)
+        or snapshot_digest != worktree_input_digest
+    ):
+        raise RuntimeError("validation follow-up result delivery binding mismatch")
+    source_candidate = candidate | {"resultDigest": source_result_digest}
+    snapshot_raw = _validation_snapshot_bytes(
+        candidate=source_candidate,
+        reservation_digest=reservation_digest,
+        snapshot_id=snapshot_id,
+        snapshot_path=snapshot_path,
+        snapshot_digest=snapshot_digest,
+    )
+    source_raw = _validation_worktree_input_bytes(
+        candidate=source_candidate,
+        reservation_digest=reservation_digest,
+        worktree_input_path=validation_input_path,
+        worktree_input_digest=worktree_input_digest,
+    )
+    if source_raw != snapshot_raw:
+        raise RuntimeError("validation follow-up result input projection mismatch")
+    source_value = json.loads(source_raw)
+    if (
+        not isinstance(source_value, dict)
+        or source_value.get("reproductionReceipt") != receipt
+        or source_value.get("probeReceipt") is not None
+        or source_value.get("resultDigest") != source_result_digest
+        or any(
+            source_value.get(key) != value.get(key)
+            for key in (
+                "schemaVersion",
+                "key",
+                "issueUrl",
+                "threadId",
+                "worktreePath",
+                "taskId",
+                "stage",
+                "handoffMode",
+                "commitSha",
+                "headSha",
+                "previousCommitSha",
+                "selectedBaseSha",
+                "codePaths",
+                "branch",
+                "commitMessage",
+                "controllerCommitChangedFiles",
+                "changedFiles",
+                "publication",
+                "targetBase",
+                "controllerPolicyVerification",
+            )
+        )
+    ):
+        raise RuntimeError("validation follow-up result source binding mismatch")
+
+    issue_url = str(candidate["issueUrl"])
+    issue_match = ISSUE_URL.fullmatch(issue_url)
+    task_id = str(candidate.get("intentId") or "")
+    selected_base = str(
+        value.get("selectedBaseSha")
+        or context.get("selectedBaseSha")
+        or candidate.get("selectedBaseSha")
+        or ""
+    )
+    code_paths = [
+        str(path)
+        for path in (value.get("codePaths") or context.get("codePaths") or [])
+        if str(path).strip()
+    ]
+    commit_sha = str(value.get("commitSha") or "")
+    head_sha = str(value.get("headSha") or "")
+    if (
+        issue_match is None
+        or not task_id
+        or value.get("taskId") != task_id
+        or context.get("intentId") != task_id
+        or context.get("issueUrl") != issue_url
+        or context.get("threadId") != candidate["threadId"]
+        or context.get("worktreePath") != candidate["worktreePath"]
+        or context.get("stage") not in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+        or not selected_base
+        or not code_paths
+        or not re.fullmatch(r"[0-9a-f]{40}", commit_sha)
+        or head_sha != commit_sha
+    ):
+        return False
+
+    followup = context.get("prFollowup")
+    if not isinstance(followup, dict):
+        return False
+    wake_digest = str(followup.get("wakeDigest") or "")
+    expected_parent = str(followup.get("preparedHeadSha") or followup.get("headSha") or "")
+    if (
+        not wake_digest
+        or source_value.get("followupDigest") != wake_digest
+        or value.get("followupDigest") != wake_digest
+        or not re.fullmatch(r"[0-9a-f]{40}", expected_parent)
+        or source_value.get("previousCommitSha") != expected_parent
+        or value.get("previousCommitSha") != expected_parent
+    ):
+        return False
+
+    return verify_probe_receipt(
+        receipt,
+        repo=issue_match.group(1),
+        base_sha=selected_base,
+        code_paths=code_paths,
+        required_level=REPRODUCED_VALIDATED,
+        issue_url=issue_url,
+        task_id=task_id,
+        thread_id=str(candidate["threadId"]),
+        head_sha=commit_sha,
+        commit_sha=commit_sha,
+        result_digest=source_result_digest,
+        enforce_freshness=False,
+    )
 
 
 def _bind_final_reproduction_receipt(
@@ -12713,7 +12892,25 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 or managed_candidate.get("taskStage")
                 or "REPRODUCTION_REQUIRED"
             )
-            if (
+            validation_receipt_rebound = _validation_followup_result_requires_receipt_rebind(
+                store=store,
+                candidate=candidate,
+                context=context,
+                value=value,
+            )
+            if validation_receipt_rebound:
+                value = dict(value)
+                value["contextDigest"] = context.get("contextDigest")
+                value, raw = _bind_final_reproduction_receipt(
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    result_access=result_access,
+                    managed_ledger=managed_ledger,
+                )
+                receipt = value["reproductionReceipt"]
+                initial_digest = _task_result_digest(value, raw)
+            elif (
                 value.get("handoffMode") == "controller_commit_required"
                 and isinstance(receipt, dict)
                 and receipt.get("resultDigest")
