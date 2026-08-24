@@ -306,6 +306,10 @@ class ValidationResultChanged(RuntimeError):
         self.observed = observed
 
 
+class PublishedValidationResultChanged(RuntimeError):
+    """A published validation result changed after recovery read its bytes."""
+
+
 class MissingValidationResult(RuntimeError):
     """The validated task private directory exists but result.json does not."""
 
@@ -2278,6 +2282,28 @@ def _recoverable_published_result(
     try:
         result_digest = _task_result_digest(value, raw)
     except RuntimeError as exc:
+        if store is not None:
+            try:
+                repaired = _repair_exact_published_validation_result(
+                    store=store,
+                    context=context,
+                    value=value,
+                    raw=raw,
+                )
+            except PublishedValidationResultChanged:
+                # Ordinary ingestion may normalize this mutable result under a
+                # different controller lock. Defer this observation; a stable
+                # invalid result will fail authentication on the next cycle.
+                return None
+            except (OSError, RuntimeError, ValueError, sqlite3.Error) as repair_exc:
+                raise RuntimeError(
+                    "published task result authentication is invalid"
+                ) from repair_exc
+            if repaired:
+                # The repaired result has not passed normal quality ingestion
+                # yet.  Leave it unseen so the same slow cycle processes it
+                # through the ordinary result path after context recovery.
+                return None
         raise RuntimeError("published task result authentication is invalid") from exc
     stage = str(value.get("stage") or "")
     if value.get("contextDigest") != context.get("contextDigest") and stage != "FIX_READY":
@@ -2292,6 +2318,13 @@ def _recoverable_published_result(
         ):
             return None
         raise RuntimeError("published task result mismatch: contextDigest")
+
+    if stage == "FIX_READY" and value.get("validationInput"):
+        # A published-task validation result still requires ordinary quality
+        # ingestion. Context recovery can run more than once in the same
+        # controller cycle, so never convert this authenticated handoff into
+        # an already-consumed recovery receipt.
+        return None
 
     commit_sha = str(receipt.get("commitSha") or "")
     if command(["git", "status", "--porcelain"], cwd=worktree):
@@ -6144,34 +6177,38 @@ def _bound_legacy_managed_task_project_root(
     project_id: str | None,
     worktree: Path,
 ) -> Path | None:
-    """Validate the one historical project root used by managed issue tasks.
+    """Validate an exact historical cwd used by managed issue tasks.
 
-    Older managed tasks were created in the Radar project itself before new
-    tasks moved to the shared GitHub project.  Accept that exact root only
-    when the authenticated task context still binds the issue, task, thread,
-    and deterministic managed worktree.  This is deliberately a resume-only
-    compatibility check; it does not broaden new-task or receipt creation.
+    Older managed tasks were created either in the Radar project itself or in
+    their exact managed worktree before new tasks moved to the shared GitHub
+    project.  Accept either historical cwd only when the authenticated task
+    context still binds the issue, task, thread, and deterministic managed
+    worktree.  This is deliberately a resume-only compatibility check; it does
+    not broaden new-task or receipt creation.
     """
 
     legacy_root = GITHUB_ROOT / "oss-pr-radar"
     raw_cwd = Path(raw_thread_cwd)
+    historical_root = (
+        legacy_root if raw_cwd == legacy_root else worktree if raw_cwd == worktree else None
+    )
     if (
         not raw_cwd.is_absolute()
-        or raw_cwd != legacy_root
+        or historical_root is None
         or thread_source != "appServer"
         or project_id not in {None, "", DEFAULT_TASK_PROJECT_ID}
     ):
         return None
     try:
-        legacy_fd, opened_legacy_root = open_directory_handle(
-            legacy_root,
-            label="legacy managed task project root",
+        historical_fd, opened_historical_root = open_directory_handle(
+            historical_root,
+            label="historical managed task cwd",
         )
     except RuntimeError:
         return None
     else:
-        os.close(legacy_fd)
-    if opened_legacy_root != legacy_root:
+        os.close(historical_fd)
+    if opened_historical_root != historical_root:
         return None
 
     issue_url = str(candidate.get("issueUrl") or "")
@@ -6202,7 +6239,7 @@ def _bound_legacy_managed_task_project_root(
         context.get(key) != value for key, value in expected_context.items()
     ):
         return None
-    return opened_legacy_root
+    return opened_historical_root
 
 
 def _validated_task_turn_thread(candidate: dict[str, Any]) -> tuple[Path, str | None]:
@@ -12416,6 +12453,214 @@ def _validation_followup_result_requires_receipt_rebind(
         result_digest=source_result_digest,
         enforce_freshness=False,
     )
+
+
+def _already_repaired_published_validation_result_digest(
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    source_value: dict[str, Any],
+    current_raw: bytes,
+) -> str | None:
+    """Validate the exact output of a concurrent receipt rebind."""
+
+    try:
+        current_value = json.loads(current_raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(current_value, dict):
+        return None
+
+    issue_url = str(candidate.get("issueUrl") or "")
+    issue_match = ISSUE_URL.fullmatch(issue_url)
+    commit_sha = str(source_value.get("commitSha") or "")
+    selected_base = str(
+        source_value.get("selectedBaseSha")
+        or context.get("selectedBaseSha")
+        or candidate.get("selectedBaseSha")
+        or ""
+    )
+    code_paths = [
+        str(path)
+        for path in (source_value.get("codePaths") or context.get("codePaths") or [])
+        if str(path).strip()
+    ]
+    task_id = str(
+        source_value.get("taskId")
+        or source_value.get("intentId")
+        or candidate.get("intentId")
+        or candidate.get("threadId")
+        or ""
+    )
+    if (
+        issue_match is None
+        or not re.fullmatch(r"[0-9a-f]{40}", commit_sha)
+        or not selected_base
+        or not code_paths
+        or not task_id
+    ):
+        return None
+
+    expected = dict(source_value)
+    expected.update(
+        {
+            "contextDigest": context.get("contextDigest"),
+            "headSha": commit_sha,
+            "selectedBaseSha": selected_base,
+            "taskId": task_id,
+            "codePaths": code_paths,
+        }
+    )
+    actual = dict(current_value)
+    for payload in (expected, actual):
+        payload.pop("reproductionReceipt", None)
+        payload.pop("probeReceipt", None)
+        payload.pop("resultDigest", None)
+    if actual != expected:
+        return None
+
+    try:
+        result_digest = _task_result_digest(current_value, current_raw)
+    except RuntimeError:
+        return None
+    receipt = current_value.get("reproductionReceipt")
+    if (
+        current_value.get("resultDigest") != result_digest
+        or not isinstance(receipt, dict)
+        or current_value.get("probeReceipt") is not None
+        or not verify_probe_receipt(
+            receipt,
+            repo=issue_match.group(1),
+            base_sha=selected_base,
+            code_paths=code_paths,
+            required_level=REPRODUCED_VALIDATED,
+            issue_url=issue_url,
+            task_id=task_id,
+            thread_id=str(candidate["threadId"]),
+            head_sha=commit_sha,
+            commit_sha=commit_sha,
+            result_digest=result_digest,
+        )
+    ):
+        return None
+    return result_digest
+
+
+def _repair_exact_published_validation_result(
+    *,
+    store: RadarLedger,
+    context: dict[str, Any],
+    value: dict[str, Any],
+    raw: bytes,
+) -> bool:
+    """Repair the one authenticated validation result blocked before ingestion."""
+
+    candidate = {
+        "key": context.get("key"),
+        "issueUrl": context.get("issueUrl"),
+        "intentId": context.get("intentId"),
+        "threadId": context.get("threadId"),
+        "worktreePath": context.get("worktreePath"),
+        "stage": context.get("stage"),
+        "selectedBaseSha": context.get("selectedBaseSha"),
+    }
+    if not _validation_followup_result_requires_receipt_rebind(
+        store=store,
+        candidate=candidate,
+        context=context,
+        value=value,
+    ):
+        return False
+
+    key = str(candidate["key"] or "")
+    issue_url = str(candidate["issueUrl"] or "")
+    with opportunity_action_guard(ledger_action_guard_root(store.path), key):
+        with _task_worktree_private_descriptor(candidate) as result_access:
+            current_raw = _read_task_result_bytes_from_private(result_access)
+            if current_raw != raw:
+                result_digest = _already_repaired_published_validation_result_digest(
+                    candidate=candidate,
+                    context=context,
+                    source_value=value,
+                    current_raw=current_raw,
+                )
+                if result_digest is None:
+                    raise PublishedValidationResultChanged(
+                        "published validation result changed before repair"
+                    )
+            else:
+                if not _validation_followup_result_requires_receipt_rebind(
+                    store=store,
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                ):
+                    raise RuntimeError("published validation result repair binding changed")
+                normalized = dict(value)
+                normalized["contextDigest"] = context.get("contextDigest")
+                normalized, normalized_raw = _bind_final_reproduction_receipt(
+                    candidate=candidate,
+                    context=context,
+                    value=normalized,
+                    result_access=result_access,
+                    managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+                )
+                result_digest = _task_result_digest(normalized, normalized_raw)
+
+        active = store.single_active_task_quarantine(key)
+        if active is None or active.get("reason") != "SHARED_CONTEXT_INVALID":
+            return True
+        payload = active.get("payload")
+        if not isinstance(payload, dict) or payload.get("error") != (
+            "published task result authentication is invalid"
+        ):
+            return True
+
+        context_raw, context_stat, context_path = _read_shared_context_file(
+            shared_context_path(issue_url)
+        )
+        source_digest = hashlib.sha256(context_raw).hexdigest()
+        if (
+            json.loads(context_raw) != context
+            or payload.get("originalPath") != str(context_path)
+            or payload.get("originalBytesSha256") != source_digest
+        ):
+            raise RuntimeError("validation repair quarantine context binding changed")
+        artifact_identity = sha256_json(
+            {
+                "key": key,
+                "reason": "SHARED_CONTEXT_INVALID",
+                "originalPath": str(context_path),
+                "originalBytesSha256": source_digest,
+            }
+        )
+        artifact_path = shared_context_quarantine_root() / f"q-{artifact_identity}.json"
+        if payload.get("artifactPath") != str(artifact_path) or not artifact_path.is_file():
+            raise RuntimeError("validation repair quarantine artifact binding changed")
+        _ensure_context_quarantine_artifact(
+            artifact_path,
+            key=key,
+            issue_url=issue_url,
+            reason="SHARED_CONTEXT_INVALID",
+            source_path=context_path,
+            raw=context_raw,
+            source_digest=source_digest,
+            source_mode=context_stat.st_mode & 0o777,
+            error="published task result authentication is invalid",
+        )
+        store.clear_task_quarantine_exact(
+            key,
+            reason="SHARED_CONTEXT_INVALID",
+            dedupe_key=str(active["dedupeKey"]),
+            evidence={
+                "revalidated": True,
+                "repair": "VALIDATION_RECEIPT_REBOUND",
+                "resultDigest": result_digest,
+                "originalBytesSha256": source_digest,
+                "artifactPath": str(artifact_path),
+            },
+        )
+    return True
 
 
 def _bind_final_reproduction_receipt(

@@ -4950,3 +4950,90 @@ def test_task_quarantine_blocks_pending_publication_until_cleared(tmp_path):
     )
     assert store.active_task_quarantine("a/b#1") is None
     assert [item["request_id"] for item in store.publication_work_items()] == ["request-1"]
+
+
+def test_exact_task_quarantine_clear_requires_one_matching_active_gate(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    from oss_pr_radar.task_quarantine import record
+
+    with store.transaction() as connection:
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="SHARED_CONTEXT_INVALID",
+            dedupe_key="invalid-1",
+            payload={"error": "published task result authentication is invalid"},
+            created_at=now,
+        )
+
+    assert store.single_active_task_quarantine("a/b#1") == {
+        "reason": "SHARED_CONTEXT_INVALID",
+        "dedupeKey": "invalid-1",
+        "payload": {"error": "published task result authentication is invalid"},
+        "createdAt": now,
+    }
+
+    with store.transaction() as connection:
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="PR_FOLLOWUP_REBIND_REQUIRED",
+            dedupe_key="rebind-1",
+            payload={"requiresRebind": True},
+            created_at=now,
+        )
+
+    assert store.single_active_task_quarantine("a/b#1") is None
+    with pytest.raises(LedgerError, match="sole active gate"):
+        store.clear_task_quarantine_exact(
+            "a/b#1",
+            reason="SHARED_CONTEXT_INVALID",
+            dedupe_key="invalid-1",
+            evidence={"revalidated": True},
+        )
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM task_quarantines WHERE opportunity_key=? AND status='ACTIVE'",
+                ("a/b#1",),
+            ).fetchone()[0]
+            == 2
+        )
+
+
+def test_exact_task_quarantine_clear_clears_only_the_bound_row(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    from oss_pr_radar.task_quarantine import record
+
+    with store.transaction() as connection:
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="SHARED_CONTEXT_INVALID",
+            dedupe_key="invalid-1",
+            payload={"error": "published task result authentication is invalid"},
+            created_at=now,
+        )
+
+    store.clear_task_quarantine_exact(
+        "a/b#1",
+        reason="SHARED_CONTEXT_INVALID",
+        dedupe_key="invalid-1",
+        evidence={"revalidated": True, "resultDigest": "result-1"},
+    )
+
+    assert store.single_active_task_quarantine("a/b#1") is None
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT status,clear_payload_json FROM task_quarantines WHERE opportunity_key=?",
+            ("a/b#1",),
+        ).fetchone()
+    assert row["status"] == "CLEARED"
+    assert json.loads(row["clear_payload_json"]) == {
+        "resultDigest": "result-1",
+        "revalidated": True,
+    }

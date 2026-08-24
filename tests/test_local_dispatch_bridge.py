@@ -7765,6 +7765,27 @@ def test_task_turn_thread_allows_exact_bound_historical_managed_project_root(mon
     assert verified_paths == [MODULE.shared_context_path(candidate["issueUrl"])]
 
 
+def test_task_turn_thread_allows_exact_bound_historical_managed_worktree(monkeypatch, tmp_path):
+    candidate, context, thread_db, _legacy_root, worktree, rollout = (
+        _historical_managed_task_turn_fixture(monkeypatch, tmp_path)
+    )
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("UPDATE threads SET cwd=? WHERE id='thread-1'", (str(worktree),))
+    verified_paths = []
+
+    def verified_context(path):
+        verified_paths.append(path)
+        return context, "2026-08-24T00:00:00Z"
+
+    monkeypatch.setattr(MODULE, "_verified_shared_task_context", verified_context)
+
+    cwd, rollout_path = MODULE._validated_task_turn_thread(candidate)
+
+    assert cwd == worktree.resolve()
+    assert rollout_path == str(rollout)
+    assert verified_paths == [MODULE.shared_context_path(candidate["issueUrl"])]
+
+
 def test_task_turn_thread_rejects_historical_root_aliases_and_nearby_paths(monkeypatch, tmp_path):
     candidate, context, thread_db, legacy_root, _worktree, _rollout = (
         _historical_managed_task_turn_fixture(monkeypatch, tmp_path)
@@ -7783,6 +7804,33 @@ def test_task_turn_thread_rejects_historical_root_aliases_and_nearby_paths(monke
     )
 
     for invalid_cwd in (sibling, descendant, alias):
+        with sqlite3.connect(thread_db) as connection:
+            connection.execute("UPDATE threads SET cwd=? WHERE id='thread-1'", (str(invalid_cwd),))
+        with pytest.raises(RuntimeError, match="project root mismatch"):
+            MODULE._validated_task_turn_thread(candidate)
+
+    assert verified_paths == []
+
+
+def test_task_turn_thread_rejects_historical_worktree_aliases_and_nearby_paths(
+    monkeypatch, tmp_path
+):
+    candidate, context, thread_db, _legacy_root, worktree, _rollout = (
+        _historical_managed_task_turn_fixture(monkeypatch, tmp_path)
+    )
+    parent = worktree.parent
+    descendant = worktree / "child"
+    descendant.mkdir()
+    alias = worktree.parent / "agentscope-alias"
+    alias.symlink_to(worktree, target_is_directory=True)
+    verified_paths = []
+    monkeypatch.setattr(
+        MODULE,
+        "_verified_shared_task_context",
+        lambda path: (verified_paths.append(path), (context, "unused"))[1],
+    )
+
+    for invalid_cwd in (parent, descendant, alias):
         with sqlite3.connect(thread_db) as connection:
             connection.execute("UPDATE threads SET cwd=? WHERE id='thread-1'", (str(invalid_cwd),))
         with pytest.raises(RuntimeError, match="project root mismatch"):
@@ -10246,11 +10294,12 @@ def _controller_commit_result(
     dco_required: bool = False,
     base_branch: str = "main",
     authenticated: bool = True,
+    worktree: Path | None = None,
 ) -> tuple[RadarLedger, Path, Path]:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
     MODULE.ROOT = tmp_path
-    store, worktree = registered_store(tmp_path)
+    store, worktree = registered_store(tmp_path, worktree=worktree)
     run_git(worktree, "config", "user.name", "Test Contributor")
     run_git(worktree, "config", "user.email", "test@example.com")
     source = worktree / "runtime.py"
@@ -10886,10 +10935,12 @@ def test_published_pr_followup_validation_preserves_public_lifecycle(tmp_path):
     assert json.loads(preserved["payload_json"])["requestedStage"] == "VALIDATION_PENDING"
 
 
-def _stale_published_validation_result(monkeypatch, tmp_path):
+def _stale_published_validation_result(monkeypatch, tmp_path, *, managed_worktree=False):
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b") if managed_worktree else None
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
         missing_quality=("relevant_tests_green",),
+        worktree=worktree,
     )
     _managed, _context, pr_url = _bind_published_pr_authority_fixture(
         store,
@@ -11022,6 +11073,134 @@ def _stale_published_validation_result(monkeypatch, tmp_path):
     stale["validatedAt"] = iso_z(datetime.now(UTC))
     result_path.write_text(json.dumps(stale), encoding="utf-8")
     return store, result_path, latest_context, source_receipt, pr_url, binding
+
+
+def test_context_recovery_repairs_exact_published_validation_before_quarantine(
+    monkeypatch, tmp_path
+):
+    store, result_path, context, source_receipt, pr_url, _binding = (
+        _stale_published_validation_result(monkeypatch, tmp_path, managed_worktree=True)
+    )
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    assert store.active_task_quarantine("a/b#1") is None
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["contextDigest"] == context["contextDigest"]
+    assert finalized["resultDigest"] != source_receipt["resultDigest"]
+    assert finalized["reproductionReceipt"]["resultDigest"] == finalized["resultDigest"]
+
+    repeated = MODULE.recover_shared_task_contexts(store)
+
+    assert repeated["errors"] == []
+    assert repeated["resultReceiptsRestored"] == 0
+    assert not store.task_result_digest_seen("a/b#1", finalized["resultDigest"])
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert restored["stage"] == "PR_OPEN"
+    assert restored["publicationReceipt"]["prUrl"] == pr_url
+
+
+def test_context_recovery_clears_only_exact_validation_auth_quarantine(monkeypatch, tmp_path):
+    store, result_path, context, source_receipt, pr_url, _binding = (
+        _stale_published_validation_result(monkeypatch, tmp_path, managed_worktree=True)
+    )
+    context_path = MODULE.shared_context_path(context["issueUrl"])
+    context_raw = context_path.read_bytes()
+    quarantined = MODULE._quarantine_shared_context(
+        store,
+        context_path,
+        RuntimeError("published task result authentication is invalid"),
+        raw=context_raw,
+        source_stat=context_path.stat(),
+    )
+    assert quarantined is not None
+    assert store.active_task_quarantine("a/b#1")["reason"] == "SHARED_CONTEXT_INVALID"
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    assert store.active_task_quarantine("a/b#1") is None
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["contextDigest"] == context["contextDigest"]
+    assert finalized["resultDigest"] != source_receipt["resultDigest"]
+    assert finalized["reproductionReceipt"]["resultDigest"] == finalized["resultDigest"]
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert restored["stage"] == "PR_OPEN"
+    assert restored["publicationReceipt"]["prUrl"] == pr_url
+
+
+def test_published_validation_repair_is_idempotent_when_locked_writer_wins_race(
+    monkeypatch, tmp_path
+):
+    store, result_path, context, _source_receipt, _pr_url, _binding = (
+        _stale_published_validation_result(monkeypatch, tmp_path)
+    )
+    stale_raw = result_path.read_bytes()
+    stale_value = json.loads(stale_raw)
+
+    assert MODULE._recoverable_published_result(context, store=store) is None
+    repaired_raw = result_path.read_bytes()
+    assert repaired_raw != stale_raw
+
+    assert MODULE._repair_exact_published_validation_result(
+        store=store,
+        context=context,
+        value=stale_value,
+        raw=stale_raw,
+    )
+    assert result_path.read_bytes() == repaired_raw
+
+    tampered = json.loads(repaired_raw)
+    tampered["tests"] = [{"command": "different concurrent result", "exitCode": 0}]
+    result_path.write_text(json.dumps(tampered), encoding="utf-8")
+    with pytest.raises(MODULE.PublishedValidationResultChanged, match="changed before repair"):
+        MODULE._repair_exact_published_validation_result(
+            store=store,
+            context=context,
+            value=stale_value,
+            raw=stale_raw,
+        )
+    with pytest.raises(RuntimeError, match="authentication is invalid"):
+        MODULE._recoverable_published_result(context, store=store)
+
+
+def test_published_validation_repair_defers_when_normal_ingestion_wins_race(monkeypatch, tmp_path):
+    store, result_path, context, _source_receipt, pr_url, _binding = (
+        _stale_published_validation_result(monkeypatch, tmp_path)
+    )
+    stale_raw = result_path.read_bytes()
+    stale_value = json.loads(stale_raw)
+
+    assert MODULE._recoverable_published_result(context, store=store) is None
+    repaired_raw = result_path.read_bytes()
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    normalized_raw = result_path.read_bytes()
+    assert normalized_raw != stale_raw
+    assert normalized_raw != repaired_raw
+    with pytest.raises(MODULE.PublishedValidationResultChanged):
+        MODULE._repair_exact_published_validation_result(
+            store=store,
+            context=context,
+            value=stale_value,
+            raw=stale_raw,
+        )
+    assert store.active_task_quarantine("a/b#1") is None
+    restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert restored["stage"] == "PR_OPEN"
+    assert restored["publicationReceipt"]["prUrl"] == pr_url
 
 
 def test_published_validation_rebinds_exact_expired_source_receipt(monkeypatch, tmp_path):

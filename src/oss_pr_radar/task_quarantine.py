@@ -207,6 +207,35 @@ def clear(
     return int(cursor.rowcount)
 
 
+def clear_exact(
+    connection: sqlite3.Connection,
+    *,
+    opportunity_key: str,
+    reason: str,
+    dedupe_key: str,
+    evidence: dict[str, Any],
+    cleared_at: str,
+) -> int:
+    """Clear one specifically rebound quarantine without widening by reason."""
+
+    if (
+        not reason
+        or not dedupe_key
+        or not isinstance(evidence, dict)
+        or evidence.get("revalidated") is not True
+    ):
+        raise ValueError("exact task quarantine clear requires revalidated evidence")
+    ensure_schema(connection)
+    payload = canonical_json(evidence)
+    cursor = connection.execute(
+        """UPDATE task_quarantines
+           SET status='CLEARED', cleared_at=?, clear_payload_json=?
+           WHERE opportunity_key=? AND reason=? AND dedupe_key=? AND status='ACTIVE'""",
+        (cleared_at, payload, opportunity_key, reason, dedupe_key),
+    )
+    return int(cursor.rowcount)
+
+
 def attach_artifact(
     connection: sqlite3.Connection,
     *,
