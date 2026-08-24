@@ -7496,6 +7496,38 @@
     ],
     "why": "The issue clearly identifies a cannot-FAIL defect in a runtime guard, with a concrete reproduction and architectural analysis. However, the fix direction is explicitly left open between two honest options, requiring maintainer design confirmation. The issue is not assigned and no maintainer has approved or commented, so work should wait for direction."
   },
+  "29cd9bcc6762beceb89373a1d376f3e2fca0f0f36a72cb46470f774886ee5cba": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #27713 is reported as green and mergeable, but the issue comments note that the head changed and prior approvals are stale, requiring re-review."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cloud/api/eliza-app/webhook/_telegram-edge.ts",
+      "packages/cloud/services/gateway-webhook/src/webhook-handler.ts",
+      "packages/cloud/api/__tests__/personal-telegram-edge.test.ts"
+    ],
+    "risks": [
+      "PR #27713 may not fully cover the original secure association journey (lane 2), so additional work may be needed.",
+      "Maintainer review is pending; design preferences could alter the implementation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the focused Telegram edge test suite (11+ tests) to verify connectorAccountId derivation and token-rotation stability.",
+      "Run full repository verify (bun run verify) to ensure no regressions."
+    ],
+    "unknowns": [
+      "Whether PR #27713 fully addresses the original issue's acceptance criteria, especially the secure identity linking and negative E2E cases."
+    ],
+    "why": "Issue provides a clear root cause (missing connectorAccountId in Telegram edge producer) and a concrete reproduction path (DM bot, observe onboarding failure). A collaborator has claimed the fix and opened PR #27713 with tests and CI green, but the PR is not yet merged and the issue remains open. The evidence supports actionable code work."
+  },
   "2a04319a1bf88140a0e8e0bb4211629f530d2ed8f0d755ee9b3ada78bc19fe9b": {
     "confidence": 0.85,
     "contradictions": [],
@@ -11814,6 +11846,35 @@
     "wait_reason": null,
     "why": "Issue reports a concrete streaming protocol bug on the Zen gateway: missing finish_reason and [DONE] for muse models, causing strict OpenAI clients to retry. Multiple user confirmations and related issues strengthen the case. The fix is actionable: ensure final chunk and [DONE] are emitted, possibly synthesizing stop reason. No competing PR found."
   },
+  "420efb0ac4f902974b717c49db734190521734d9024d52dc2343bd85a496e1b9": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py",
+      "python/sglang/srt/dllm/mixin/scheduler.py",
+      "python/sglang/multimodal_gen/runtime/managers/scheduler.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #35645; need to ensure fix is complementary and includes regression tests."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that sets Scheduler.chunked_req to consume all remaining chunk budget, places a request in waiting_queue, runs get_new_batch_prefill(), and asserts that waiting-queue scan is skipped and no cache matching occurs."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific implementation approach; whether PR #35645 will be merged or updated with tests."
+    ],
+    "why": "Issue provides a clear root cause: scheduler fails to check chunk budget after resuming a chunked request, causing unnecessary waiting-queue scans and potential host-cache load-back. Reproduction steps are concrete and deterministic at scheduler level, and code anchors are provided. Existing PR #35645 attempts a fix but lacks tests, leaving room for a more complete contribution."
+  },
   "424899631d80208034e39c85ad19d3383780c6dbf4a291c55b94bf74b2a8b44c": {
     "confidence": 0.7,
     "contradictions": [
@@ -13529,6 +13590,40 @@
       "Whether a related PR or issue already exists (lookup timed out)"
     ],
     "why": "Issue reports a user-visible bug loading MiniMaxH3 with sglang, but lacks a clear root cause and the provided reproduction is incomplete (no error message text, only an image). The deterministic gate requires HUMAN_REVIEW, and related issue/open PR lookups timed out, so duplicate work cannot be excluded."
+  },
+  "4b6ace56abf94950a4dadd478214b14243ec718b8c173058cbdca405780cde6d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue bisects to torch 2.11, but maintainer A/B on fixed vLLM commit shows torch 2.11 is faster",
+      "Issue reports regression on v0.21.0 and v0.27.1, but maintainer reports current main is within 4% of baseline"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "pooling entrypoint executor configuration",
+      "renderer worker pool sizing",
+      "postprocessing offload logic"
+    ],
+    "risks": [
+      "Root cause not empirically confirmed; the proposed mechanism is based on code reading and prior art, not direct measurement",
+      "Potential overlap with existing PRs (#48290, #53464) that may already address the issue"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run /v1/embeddings benchmark with --renderer-num-workers > 1 on a single build to see if throughput recovers",
+      "Reproduce on current main to check if regression is already fixed"
+    ],
+    "unknowns": [
+      "Whether --renderer-num-workers > 1 recovers the gap on /v1/embeddings",
+      "Whether the regression reproduces on current main after MRV2 migration and #53464"
+    ],
+    "why": "The issue provides a clear performance regression with bisection to torch 2.11, but maintainer A/B testing on a fixed vLLM commit shows torch 2.11 is faster, and a contributor identifies a plausible vLLM-side root cause (#39763) with a concrete mechanism and a one-flag test. The evidence supports a concrete validation path and actionable code work."
   },
   "4b7f3b1940b0c5b8ad71bba6a334577deea18b175a1c4f0c5f586c4ec08e2368": {
     "confidence": 0.85,
@@ -16201,6 +16296,40 @@
       "Status of PR #50908 and whether its failing CI is resolved."
     ],
     "why": "The issue provides a clear root cause (AOT cache key ignores limit_mm_per_prompt/multimodal_config) and a reproducible crash, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#50908) already attempts a fix with failing CI. Maintainer direction is needed to avoid duplicate or conflicting work."
+  },
+  "57d4e12a1a18b49e8f2297df335444d87c4cd234f6e82d575d611cb6a7e4d587": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Streaming logic in SGLang server to flush pending content deltas before emitting tool_calls",
+      "Possibly adjust parser handling for DeepSeek-V4 to preserve text after tool calls"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #34244 and #36154; need to ensure distinct root-cause coverage",
+      "The bug may be model-specific; test with multiple models to confirm general applicability"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided curl command and model, assert that all content chunks are streamed before tool_calls delta",
+      "Add a regression test that simulates streaming with both content and tool_calls, verifying no truncation"
+    ],
+    "unknowns": [
+      "Exact root cause in code (e.g., buffer flush logic) not yet identified",
+      "Whether existing PRs fully fix the issue; need to verify their coverage"
+    ],
+    "why": "The issue provides a clear reproduction with expected vs actual streaming chunks, identifies the bug as truncation of content when tool_calls are present, and suggests a concrete fix (flush pending text before tool call sequence). The evidence includes executable commands and code anchors, making the root cause actionable. Although there are existing PRs, they lack complete root-cause coverage, leaving room for a competitive contribution."
   },
   "57e7c375409988c010097720b7bef606e4eb4d1c343d0cde3c3ed327622ae0fd": {
     "confidence": 0.8,
@@ -22829,6 +22958,33 @@
       "Whether a fix is already in progress"
     ],
     "why": "Issue reports a significant throughput regression between vLLM versions but lacks root cause evidence; no maintainer confirmation or design direction; requires maintainer investigation to identify the responsible change."
+  },
+  "775f616cb8fcd45864b43fa0fe595d59b07991efb2cee637dd619d62dd2d77a5": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/google/adk/sessions/in_memory_session_service.py",
+      "tests/unittests/sessions/_conformance.py",
+      "tests/unittests/sessions/test_session_service.py"
+    ],
+    "risks": [
+      "Scope decision: whether to also fix database/redis normalization or park as divergences; maintainer may prefer rejecting padded ids instead of trimming."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the two proposed contract tests to the shared conformance suite and run against all backends; verify the in_memory fix makes them pass while documenting database/redis divergences."
+    ],
+    "unknowns": [
+      "Maintainer preference on normalization vs rejection; whether database/redis fixes are in scope."
+    ],
+    "why": "The issue provides a precise root cause (duplicate check before trimming in InMemorySessionService), a minimal repro, and a concrete fix with tests. The behavior is a data-loss bug on a critical path, and the proposed contract tests are actionable."
   },
   "776e5cdbcf96ef1c0401e0a7c2b551ab64f45dffd6e0586b8e6f48b2c827fb17": {
     "confidence": 0.85,
@@ -33891,6 +34047,36 @@
     "wait_reason": null,
     "why": "Issue describes a concrete functional gap: extension skills are loaded under flat global names, breaking the advertised `extension:skill` qualified invocation and causing name collisions. The expected behavior is clearly specified with upstream prior art, and the fix is localized to skill resolution/namespacing. No competing PR or issue found, and the triage bot allows work. However, root cause is not yet confirmed in code, and maintainer design preference is unknown."
   },
+  "b79ef695377ab2c4600a33d3f2b28fd3cb9acb826ab95a977c59c556708b901b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #7130 semantic overlap with issue but different feature; not a true duplicate"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/models/cohere.py: add provider_response_id=response.id in _process_response",
+      "tests/models/test_cohere.py: update VCR snapshots to include provider_response_id"
+    ],
+    "risks": [
+      "Potential maintainer preference for naming or placement of provider_response_id",
+      "Snapshot updates may require exact UUID values from cassettes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproducer script to confirm failure before fix and pass after",
+      "Run focused Cohere tests (tests/models/test_cohere.py) and update snapshots to assert the recorded UUIDs"
+    ],
+    "unknowns": [
+      "Whether maintainers will accept the proposed one-line fix without design changes"
+    ],
+    "why": "Issue provides a precise root cause (missing provider_response_id assignment in CohereModel._process_response), a minimal source-level reproducer with expected vs actual output, and cross-adapter parity evidence. A contributor has reproduced on main and offered a narrow fix. The open PR #7130 overlaps in file paths but targets a different feature (thinking setting), so it does not cover this defect."
+  },
   "b7c004e699feba973f3134a58a452542e9042d9c616ce4100284750d34d8a1c8": {
     "confidence": 0.8,
     "contradictions": [],
@@ -35192,6 +35378,44 @@
       "Whether existing PRs are considered valid or will be superseded."
     ],
     "why": "The issue clearly identifies a bug where completion_model overrides client-specified model, with root cause in the 'or' chain. However, the deterministic gate requires HUMAN_REVIEW, and there are existing PRs (#21578, #21652, #21903) that attempt to fix this issue but are closed with CI failures and lack tests. The maintainer has not confirmed intended behavior; a comment suggests docs were corrected to match current implementation, indicating possible design change. Thus, maintainer input is needed to decide between fallback vs override semantics."
+  },
+  "be8b34113f1572c076a3048964280f20e18886815ac1b18e0ffb2305d29e146e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found; comments consistently report progress and no conflicting facts"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Replace organization-wide `[0]` provisioning selectors with deterministic non-Shared, non-pool, non-deleted target selectors including tie-break",
+      "Retire `ensureElizaAppProvisioning()` and make legacy app provisioning POST observation-only",
+      "Add explicit non-Shared execution tier to retained route/service/warm-pool creates; Shared paths create no compute job",
+      "Enforce billing-exempt for pool rows and reject Shared rows in lifecycle, enqueue, worker, service re-entry, CAS, and provider placement",
+      "Add regression tests at reader, route/service, enqueue, worker, warm-pool, lifecycle-CAS, payment, billing, and provider boundaries"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #27465, #27210, #27567, #27905; must avoid rebuilding already-delivered slices",
+      "Requires careful handling of warm-pool billing exemption to avoid unintended billing changes",
+      "Maintainer design preferences may differ; but issue is well-specified and maintainer-approved"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create deterministic mixed-tier repository fixtures covering selector permutations (newer Shared, older Dedicated, inverse order, soft-deleted/pool rows, equal timestamps) and assert the same intended Dedicated target or none",
+      "Run focused Bun 1.3.14 tests for each boundary (reader, route/service, enqueue, worker, warm-pool, lifecycle-CAS, payment, billing, provider) and affected package typecheck",
+      "Verify Shared rows produce zero provision job/provider mutation and pool rows remain billing-exempt through creation, classification, selection/claim, and cancellation",
+      "Run the repository attribution validator and CI dispatch after a reviewable branch exists"
+    ],
+    "unknowns": [
+      "Exact current state of the codebase after recent PRs; but issue and comments provide sufficient context for actionability"
+    ],
+    "why": "The issue precisely identifies a root cause: the provisioning reader's `[0]` selector returns newest-created rows instead of execution-tier authority, and the mutation chain lacks fail-closed Shared-tier barriers. It provides concrete acceptance criteria, a bounded scope, and a clear validation path via focused Bun tests and typecheck. The maintainer has already delivered multiple related PRs (#27465, #27210, #27567, #27905) with green CI and independent reviews, confirming actionability. The remaining work is well-defined and not blocked by missing facts."
   },
   "be9eabe02ae0ca7abe69fb620bd5f870a4d7625658e3b717cb725a19994c97e2": {
     "confidence": 0.9,
@@ -39922,6 +40146,36 @@
     ],
     "why": "Issue clearly identifies a concrete correctness bug in Honcho backend config validation: non-positive message_char_limit causes silent data corruption via Python slicing. Root cause is missing validation in from_backend_config(). No competing PR or issue found. The fix is localized and testable."
   },
+  "d555f037327ae5930fc7e93574077ebb2df2abf10c16b198e1b970f1ad3eb78f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/multimodal_gen/configs/models/encoders/qwen3.py",
+      "python/sglang/multimodal_gen/runtime/models/encoders/qwen3.py",
+      "python/sglang/kernels/aot/csrc/cpu/model/qwen3.cpp"
+    ],
+    "risks": [
+      "Root cause may be in a shared sampling/logits path affecting other models; fix must avoid broad behavior changes.",
+      "NVFP4 quantization and DFLASH interactions may complicate reproduction on standard hardware."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl command to reproduce the token loop on 0.5.17 and verify clean output on 0.5.6.dev9196.",
+      "Add a regression test that runs the same prompt and asserts no repetitive token loops and correct finish_reason."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; maintainer may have design preferences for the fix."
+    ],
+    "why": "Issue provides a clear user-visible regression with a concrete reproduction command and version comparison, indicating a generation-level bug in the Qwen3.5 architecture. Although root cause is not identified, the evidence is sufficient to start a targeted investigation and write a failing test."
+  },
   "d55ae2f0cf05a73a3fc051b912efa9403e6e25fb5fc43e24311b76c8ed7791e8": {
     "confidence": 0.7,
     "contradictions": [
@@ -43088,6 +43342,34 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "The issue is a well-specified design with maintainer approval and a concrete regression test plan, but the repository requires assignment before implementation and the candidate has not been assigned. The design is actionable and technically sound, but the assignment gate blocks work start."
+  },
+  "e27d10ec7383a03462ba53c8ab9f8eb6880787db7165e8fd63f848b7e172959d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Existing PR #31962 is merged but root cause coverage is false, suggesting incomplete fix."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "RadixCache eviction logic in retract path",
+      "flush_cache behavior during paused generation"
+    ],
+    "risks": [
+      "Potential conflict with existing PRs; maintainer preference for separate flush semantics."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that pauses generation with retract, verifies KV cache is fully released, and ensures no prefix match after weight update."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer self-contained retract release or separate flush; exact test environment for reproduction."
+    ],
+    "why": "The issue provides a detailed root cause analysis with code-level anchors and measured impact, making it actionable. Although there are existing PRs, they lack tests or are drafts, leaving room for a complete fix with regression tests."
   },
   "e29d8c9cea5577e1eeab5a533673e8069891f767a32d654aa4d9fa750dc2adab": {
     "confidence": 0.85,
