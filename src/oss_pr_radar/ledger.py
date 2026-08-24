@@ -2124,19 +2124,59 @@ class RadarLedger:
             ).fetchone()
             if row is None:
                 raise LedgerError("opportunity not found")
-            if stage == "AUDIT_NO_GO" and row["stage"] in PUBLISHED_STAGES:
+            if (
+                dedupe_key
+                and connection.execute(
+                    """SELECT 1 FROM events
+                   WHERE opportunity_key=? AND event_type=? AND dedupe_key=?""",
+                    (key, stage, dedupe_key),
+                ).fetchone()
+            ):
+                # A stage receipt is an idempotency boundary, not merely an
+                # event de-duplication hint.  Replaying an older result after a
+                # later result advanced the lifecycle must not apply the old
+                # stage mutation again.
+                return
+            if row["stage"] in PUBLISHED_STAGES and stage not in PUBLISHED_STAGES:
+                event_type = (
+                    "POST_PUBLICATION_AUDIT_NO_GO"
+                    if stage == "AUDIT_NO_GO"
+                    else "POST_PUBLICATION_STAGE_PRESERVED"
+                )
                 self._event(
                     connection,
                     key,
-                    "POST_PUBLICATION_AUDIT_NO_GO",
-                    dedupe_key or f"POST_PUBLICATION_AUDIT_NO_GO:{now}",
+                    event_type,
+                    dedupe_key or f"{event_type}:{stage}:{now}",
                     {
                         "preservedStage": row["stage"],
+                        "requestedStage": stage,
                         "reason": reason,
                         "evidence": evidence or {},
                     },
                     now,
                 )
+                if row["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"} and stage in {
+                    "VALIDATION_PENDING",
+                    "FIX_READY",
+                }:
+                    connection.execute(
+                        """INSERT INTO outcomes(opportunity_key,selected_at,submit_ready_at,
+                           failure_class,quality_json,updated_at)
+                           VALUES (?,NULL,?,NULL,?,?)
+                           ON CONFLICT(opportunity_key) DO UPDATE SET
+                             submit_ready_at=COALESCE(
+                               excluded.submit_ready_at,outcomes.submit_ready_at
+                             ),
+                             quality_json=excluded.quality_json,
+                             updated_at=excluded.updated_at""",
+                        (
+                            key,
+                            now if stage == "FIX_READY" else None,
+                            canonical_json(evidence or {}),
+                            now,
+                        ),
+                    )
                 return
             connection.execute(
                 "UPDATE opportunities SET stage=?,terminal_reason=?,updated_at=? WHERE key=?",
@@ -2728,7 +2768,9 @@ class RadarLedger:
                      SELECT r.opportunity_key FROM events r
                      JOIN opportunities o ON o.key=r.opportunity_key
                      WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
-                       AND o.stage='VALIDATION_PENDING'
+                       AND o.stage IN (
+                         'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
+                       )
                        {event_filter}
                        AND NOT EXISTS (
                          SELECT 1 FROM task_quarantines quarantine
@@ -2939,7 +2981,9 @@ class RadarLedger:
                    JOIN events s ON s.opportunity_key=o.key
                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                      AND s.dedupe_key=d.dedupe_key
-                   WHERE o.stage='VALIDATION_PENDING' AND s.created_at<=?
+                   WHERE o.stage IN (
+                     'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
+                   ) AND s.created_at<=?
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
                        WHERE quarantine.opportunity_key=o.key
@@ -3555,7 +3599,9 @@ class RadarLedger:
                      AND d.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                      AND json_extract(d.payload_json,'$.resultDigest')=?
                    WHERE o.key=? AND i.thread_id=?
-                     AND o.stage='VALIDATION_PENDING'
+                     AND o.stage IN (
+                       'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
+                     )
                    LIMIT 1""",
                 (result_digest, key, thread_id),
             ).fetchone()
@@ -3593,7 +3639,9 @@ class RadarLedger:
                        AND json_extract(b2.payload_json,'$.resultDigest')=
                            json_extract(d.payload_json,'$.resultDigest')
                    )
-                   WHERE o.stage='VALIDATION_PENDING'"""
+                   WHERE o.stage IN (
+                     'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
+                   )"""
             ).fetchall()
         blocked: list[dict[str, Any]] = []
         for row in rows:
@@ -3687,7 +3735,9 @@ class RadarLedger:
                      WHERE d2.opportunity_key=o.key
                        AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                    )
-                   WHERE o.stage='VALIDATION_PENDING'
+                   WHERE o.stage IN (
+                     'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
+                   )
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
                        WHERE quarantine.opportunity_key=o.key
@@ -3739,7 +3789,9 @@ class RadarLedger:
                      WHERE d2.opportunity_key=o.key
                        AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                    )
-                   WHERE o.stage='VALIDATION_PENDING'
+                   WHERE o.stage IN (
+                     'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
+                   )
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
                        WHERE quarantine.opportunity_key=o.key
@@ -3856,7 +3908,9 @@ class RadarLedger:
                    )
                    JOIN intents i ON i.opportunity_key=o.key
                      AND i.thread_id=json_extract(d.payload_json,'$.threadId')
-                   WHERE o.stage='VALIDATION_PENDING'
+                   WHERE o.stage IN (
+                     'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
+                   )
                      AND i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
@@ -3946,7 +4000,9 @@ class RadarLedger:
                      AND n.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
                    JOIN intents i ON i.opportunity_key=o.key
                      AND i.thread_id=json_extract(d.payload_json,'$.threadId')
-                   WHERE o.stage='VALIDATION_PENDING'
+                   WHERE o.stage IN (
+                     'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
+                   )
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
                        WHERE quarantine.opportunity_key=o.key
@@ -4014,7 +4070,9 @@ class RadarLedger:
                        WHERE latest.opportunity_key=o.key
                          AND latest.status='ACTIVE'
                      )
-                   WHERE o.stage='VALIDATION_PENDING'
+                   WHERE o.stage IN (
+                     'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
+                   )
                    ORDER BY q.created_at,o.key"""
             ).fetchall()
         return [
@@ -4384,7 +4442,9 @@ class RadarLedger:
                    JOIN events s ON s.opportunity_key=o.key
                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                      AND s.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
-                   WHERE o.stage='VALIDATION_PENDING' AND s.created_at<=?
+                   WHERE o.stage IN (
+                     'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
+                   ) AND s.created_at<=?
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
                        WHERE quarantine.opportunity_key=o.key
@@ -5224,7 +5284,24 @@ class RadarLedger:
             ).fetchone()
             if row is None:
                 raise LedgerError("issue is not registered for radar publication")
-            if row["stage"] != "FIX_READY":
+            previous_publication = connection.execute(
+                """SELECT p.pr_url,r.commit_sha,r.branch
+                   FROM publication_requests r
+                   JOIN publication_permits p ON p.request_id=r.request_id
+                   WHERE r.opportunity_key=? AND p.status='CONSUMED'
+                     AND p.pr_url IS NOT NULL
+                   ORDER BY p.updated_at DESC LIMIT 1""",
+                (row["key"],),
+            ).fetchone()
+            followup = connection.execute(
+                """SELECT head_sha,wake_digest FROM pr_followups
+                   WHERE opportunity_key=? AND followup_required=1""",
+                (row["key"],),
+            ).fetchone()
+            if row["stage"] != "FIX_READY" and not (
+                row["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+                and previous_publication is not None
+            ):
                 raise LedgerError("opportunity is not submit-ready")
             if row["thread_id"] != thread_id:
                 raise LedgerError("publication thread identity mismatch")
@@ -5247,20 +5324,6 @@ class RadarLedger:
                 (row["key"],),
             ).fetchone()
             quality = json.loads(outcome["quality_json"]) if outcome else {}
-            previous_publication = connection.execute(
-                """SELECT p.pr_url,r.commit_sha,r.branch
-                   FROM publication_requests r
-                   JOIN publication_permits p ON p.request_id=r.request_id
-                   WHERE r.opportunity_key=? AND p.status='CONSUMED'
-                     AND p.pr_url IS NOT NULL
-                   ORDER BY p.updated_at DESC LIMIT 1""",
-                (row["key"],),
-            ).fetchone()
-            followup = connection.execute(
-                """SELECT head_sha,wake_digest FROM pr_followups
-                   WHERE opportunity_key=? AND followup_required=1""",
-                (row["key"],),
-            ).fetchone()
             if previous_publication and previous_publication["branch"] != branch:
                 raise LedgerError("PR update must preserve the published branch")
             previous_commit_sha = (

@@ -851,13 +851,13 @@ def test_task_context_recovery_is_idempotent(tmp_path):
     assert first["publicationRestored"] is True
     assert second["intentRestored"] is False
     assert second["publicationRestored"] is False
-    assert second["stage"] == "FIX_READY"
+    assert second["stage"] == "PR_OPEN"
     current = store.task_context(
         issue_url="https://github.com/a/b/issues/1",
         thread_id="thread-recovered",
     )
     assert current is not None
-    assert current["stage"] == "FIX_READY"
+    assert current["stage"] == "PR_OPEN"
     with store.connect() as connection:
         recovered_events = connection.execute(
             """SELECT COUNT(*) FROM events
@@ -1308,6 +1308,146 @@ def test_post_publication_no_go_audit_does_not_downgrade_lifecycle(tmp_path):
         ).fetchone()
     assert dict(opportunity) == {"stage": "PR_OPEN", "terminal_reason": None}
     assert json.loads(ignored["payload_json"])["reason"] == "ISSUE_CLOSED"
+
+
+@pytest.mark.parametrize(
+    "published_stage",
+    ["PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "MERGED", "CLOSED"],
+)
+def test_published_stage_preserves_validation_as_a_substate(tmp_path, published_stage):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+        title_time="08-04 05:25",
+    )
+    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": "https://example.test/pr/1"})
+    if published_stage != "PR_OPEN":
+        store.record_stage(
+            "a/b#1", published_stage, evidence={"prUrl": "https://example.test/pr/1"}
+        )
+
+    store.record_stage(
+        "a/b#1",
+        "VALIDATION_PENDING",
+        evidence={"missing": ["relevant_tests_green"]},
+        dedupe_key="validation-result-1",
+    )
+
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage,terminal_reason FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()
+        preserved = connection.execute(
+            """SELECT payload_json FROM events WHERE opportunity_key='a/b#1'
+               AND event_type='POST_PUBLICATION_STAGE_PRESERVED'
+               AND dedupe_key='validation-result-1'"""
+        ).fetchone()
+    assert dict(opportunity) == {"stage": published_stage, "terminal_reason": None}
+    payload = json.loads(preserved["payload_json"])
+    assert payload["preservedStage"] == published_stage
+    assert payload["requestedStage"] == "VALIDATION_PENDING"
+
+
+def test_replayed_stage_receipt_cannot_undo_later_result(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+        title_time="08-04 05:25",
+    )
+    store.record_stage(
+        "a/b#1",
+        "VALIDATION_PENDING",
+        evidence={"missing": ["independent_review_passed"]},
+        dedupe_key="older-result",
+    )
+    store.record_stage(
+        "a/b#1",
+        "FIX_READY",
+        evidence={field: True for field in QUALITY_FIELDS},
+        dedupe_key="reviewed-result",
+    )
+
+    store.record_stage(
+        "a/b#1",
+        "VALIDATION_PENDING",
+        evidence={"missing": ["independent_review_passed"]},
+        dedupe_key="older-result",
+    )
+
+    with store.connect() as connection:
+        stage = connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+            "stage"
+        ]
+        replay_count = connection.execute(
+            """SELECT COUNT(*) FROM events WHERE opportunity_key='a/b#1'
+               AND event_type='VALIDATION_PENDING' AND dedupe_key='older-result'"""
+        ).fetchone()[0]
+    assert stage == "FIX_READY"
+    assert replay_count == 1
+
+
+@pytest.mark.parametrize("terminal_stage", ["MERGED", "CLOSED"])
+def test_terminal_publication_ignores_stale_validation_quality(tmp_path, terminal_stage):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+        title_time="08-04 05:25",
+    )
+    initial_quality = {field: True for field in QUALITY_FIELDS}
+    store.record_stage("a/b#1", "FIX_READY", evidence=initial_quality)
+    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": "https://example.test/pr/1"})
+    store.record_stage("a/b#1", terminal_stage, evidence={"prUrl": "https://example.test/pr/1"})
+    with store.connect() as connection:
+        before = dict(
+            connection.execute(
+                """SELECT submit_ready_at,quality_json,updated_at FROM outcomes
+                   WHERE opportunity_key='a/b#1'"""
+            ).fetchone()
+        )
+
+    store.record_stage(
+        "a/b#1",
+        "VALIDATION_PENDING",
+        evidence={"missing": ["relevant_tests_green"]},
+        dedupe_key="terminal-validation",
+    )
+    store.record_stage(
+        "a/b#1",
+        "FIX_READY",
+        evidence={field: False for field in QUALITY_FIELDS},
+        dedupe_key="terminal-fix-ready",
+    )
+
+    with store.connect() as connection:
+        opportunity_stage = connection.execute(
+            "SELECT stage FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()["stage"]
+        after = dict(
+            connection.execute(
+                """SELECT submit_ready_at,quality_json,updated_at FROM outcomes
+                   WHERE opportunity_key='a/b#1'"""
+            ).fetchone()
+        )
+    assert opportunity_stage == terminal_stage
+    assert after == before
 
 
 def test_policy_migration_reopens_only_matching_undispatched_terminal(tmp_path):

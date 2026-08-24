@@ -125,6 +125,8 @@ CLOUD_PR_FOLLOWUP_MAX_AGE_MINUTES = 150
 APP_SERVER_WATCHDOG_INTERVAL_SECONDS = 5.0
 APP_SERVER_WATCHDOG_STALE_SECONDS = 15.0
 APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS = 30.0
+APP_SERVER_WATCHDOG_LIVE_PROBE_SECONDS = 60.0
+APP_SERVER_WATCHDOG_LIVE_RETRY_SECONDS = 120.0
 APP_SERVER_EVENT_DRAIN_SLICE_SECONDS = 1.0
 APP_SERVER_TASK_TURN_MAX_SECONDS = 45 * 60.0
 ROOT_THREAD_START_TIMEOUT_SECONDS = 60.0
@@ -4850,6 +4852,7 @@ def _wait_for_app_server_terminal_turn(
     watch_started_at = monotonic()
     next_read_at = watch_started_at + APP_SERVER_WATCHDOG_INTERVAL_SECONDS
     next_external_probe_at = watch_started_at + APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS
+    next_live_probe_at = watch_started_at + APP_SERVER_WATCHDOG_LIVE_PROBE_SECONDS
     task_deadline = watch_started_at + APP_SERVER_TASK_TURN_MAX_SECONDS
     while True:
         # A very short turn can finish in the same read that returned the
@@ -4899,6 +4902,19 @@ def _wait_for_app_server_terminal_turn(
                     "status": independently_observed["status"],
                     "error": independently_observed.get("error"),
                 }
+            if now >= next_live_probe_at and request_stale:
+                live_observed = live_thread_turn_states({thread_id}).get(thread_id)
+                next_live_probe_at = monotonic() + APP_SERVER_WATCHDOG_LIVE_RETRY_SECONDS
+                if (
+                    live_observed
+                    and live_observed.get("turnId") == turn_id
+                    and live_observed.get("status") in {"completed", "interrupted", "failed"}
+                ):
+                    return {
+                        "turnId": turn_id,
+                        "status": live_observed["status"],
+                        "error": live_observed.get("error"),
+                    }
         if now >= next_read_at and (read_request_id is None or request_stale):
             read_request_id = next_request_id
             next_request_id += 1
@@ -12553,6 +12569,7 @@ def _managed_published_pr_authority(
         and followup.get("prUrl") == published_pr["pr_url"]
         and value.get("followupDigest")
         and value.get("followupDigest") == followup.get("wakeDigest")
+        and str(candidate.get("stage") or "") in PUBLISHED_TASK_STAGES
     ):
         return None
     return published_pr
@@ -12748,6 +12765,31 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and not possible_policy_recovery
                 and not initial_review_recoverable
             ):
+                seen_followup = context.get("prFollowup")
+                seen_wake_digest = (
+                    str(seen_followup.get("wakeDigest") or "")
+                    if isinstance(seen_followup, dict)
+                    else ""
+                )
+                seen_expected_parent = (
+                    str(seen_followup.get("preparedHeadSha") or seen_followup.get("headSha") or "")
+                    if isinstance(seen_followup, dict)
+                    else ""
+                )
+                if seen_wake_digest and (
+                    value.get("followupDigest") == seen_wake_digest
+                    or (
+                        not value.get("followupDigest")
+                        and re.fullmatch(r"[0-9a-f]{40}", seen_expected_parent)
+                        and value.get("previousCommitSha") == seen_expected_parent
+                    )
+                ):
+                    store.record_followup_result(
+                        candidate["key"],
+                        wake_digest=seen_wake_digest,
+                        result_digest=initial_digest,
+                        stage=str(candidate["stage"]),
+                    )
                 active_quarantine = store.active_task_quarantine(candidate["key"])
                 if active_quarantine is not None:
                     quarantined_already_recorded.append(
@@ -13118,10 +13160,24 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and not controller_review_recoverable
             ):
                 continue
+            expected_followup_parent = (
+                str(
+                    context_followup.get("preparedHeadSha") or context_followup.get("headSha") or ""
+                )
+                if isinstance(context_followup, dict)
+                else ""
+            )
+            exact_followup_parent_bound = bool(
+                isinstance(context_followup, dict)
+                and not value.get("followupDigest")
+                and re.fullmatch(r"[0-9a-f]{40}", expected_followup_parent)
+                and value.get("previousCommitSha") == expected_followup_parent
+            )
             if candidate["stage"] in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"} and (
                 isinstance(context_followup, dict)
                 and value.get("followupDigest") != context_followup.get("wakeDigest")
                 and not legacy_compatible_result
+                and not exact_followup_parent_bound
             ):
                 raise RuntimeError("task result PR follow-up digest mismatch")
             if stage == "AUDIT_NO_GO":

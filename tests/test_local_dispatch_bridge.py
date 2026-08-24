@@ -7460,6 +7460,79 @@ def test_app_server_watchdog_uses_persisted_terminal_probe_when_read_stalls(monk
     assert json.loads(process.stdin.writes[0])["method"] == "thread/read"
 
 
+def test_app_server_watchdog_uses_bounded_live_probe_when_rollout_lacks_abort(monkeypatch):
+    class FakeStdin:
+        def __init__(self):
+            self.writes: list[bytes] = []
+
+        def write(self, value: bytes) -> None:
+            self.writes.append(value)
+
+        def flush(self) -> None:
+            return None
+
+    class FakeStdout:
+        @staticmethod
+        def fileno() -> int:
+            return 123
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = FakeStdin()
+            self.stdout = FakeStdout()
+
+        @staticmethod
+        def poll():
+            return None
+
+    class NeverReadySelector:
+        @staticmethod
+        def select(_timeout):
+            return []
+
+    class StepClock:
+        def __init__(self):
+            self.value = -1.0
+
+        def __call__(self):
+            self.value += 1.0
+            return self.value
+
+    live_calls: list[set[str]] = []
+    monkeypatch.setattr(MODULE, "monotonic", StepClock())
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_STALE_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_LIVE_PROBE_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _thread_id: None)
+
+    def live_probe(thread_ids):
+        live_calls.append(thread_ids)
+        return {
+            "thread-1": {
+                "turnId": "turn-1",
+                "status": "interrupted",
+                "code": "turn_interrupted",
+                "message": "interrupted",
+            }
+        }
+
+    monkeypatch.setattr(MODULE, "live_thread_turn_states", live_probe)
+    process = FakeProcess()
+
+    result = MODULE._wait_for_app_server_terminal_turn(
+        process,
+        NeverReadySelector(),
+        b"",
+        thread_id="thread-1",
+        turn_id="turn-1",
+    )
+
+    assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
+    assert live_calls == [{"thread-1"}]
+    assert json.loads(process.stdin.writes[0])["method"] == "thread/read"
+
+
 def test_app_server_watchdog_times_out_without_opening_second_app_server(monkeypatch):
     class FakeStdin:
         def __init__(self):
@@ -10494,6 +10567,7 @@ def _bind_published_pr_authority_fixture(
     managed_state: str = "OPEN",
     reservation_opportunity_key: str = "a/b#1",
     explicit_pr_followup: bool = False,
+    degrade_stage: bool = True,
 ) -> tuple[ManagedLedger, dict, str]:
     value = json.loads(result_path.read_text(encoding="utf-8"))
     head_sha = str(value["reproductionReceipt"]["commitSha"])
@@ -10584,7 +10658,11 @@ def _bind_published_pr_authority_fixture(
             source="test-published-authority-reconciliation",
         )
 
-    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={"polluted": True})
+    if degrade_stage:
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE opportunities SET stage='VALIDATION_PENDING' WHERE key='a/b#1'"
+            )
     degraded_context = json.loads(
         MODULE.write_task_context(
             store,
@@ -10714,7 +10792,7 @@ def test_published_pr_authority_requires_exact_opportunity_reservation(tmp_path)
     )
 
 
-def test_published_pr_authority_preserves_exact_pr_followup_wake_chain(tmp_path):
+def test_published_pr_authority_repairs_degraded_pr_followup_wake_chain(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
         missing_quality=("relevant_tests_green",),
@@ -10736,8 +10814,72 @@ def test_published_pr_authority_preserves_exact_pr_followup_wake_chain(tmp_path)
             context=context,
             value=value,
         )
-        is None
+        is not None
     )
+
+
+def test_published_pr_followup_validation_preserves_public_lifecycle(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+    )
+    _managed, context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+        degrade_stage=False,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    previous_head = str(value["commitSha"])
+    (worktree / "runtime.py").write_text("value = 3\nassert value == 3\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: address runtime follow-up")
+    followup_head = run_git(worktree, "rev-parse", "HEAD")
+    value.update(
+        {
+            "commitSha": followup_head,
+            "headSha": followup_head,
+            "previousCommitSha": previous_head,
+            "commitMessage": "fix: address runtime follow-up",
+            "controllerCommitChangedFiles": ["runtime.py"],
+            "changedFiles": ["runtime.py"],
+        }
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    _sign_reproduction_certificate(
+        value,
+        result_path=result_path,
+        base_sha=str(value["selectedBaseSha"]),
+        head_sha=followup_head,
+        commit_sha=followup_head,
+        store=store,
+    )
+    assert context["stage"] == "PR_OPEN"
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": ["relevant_tests_green"],
+        }
+    ]
+    restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert restored["stage"] == "PR_OPEN"
+    assert restored["publicationReceipt"]["prUrl"] == pr_url
+    candidates = store.validation_followup_candidates()
+    assert [item["key"] for item in candidates] == ["a/b#1"]
+    with store.connect() as connection:
+        preserved = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='POST_PUBLICATION_STAGE_PRESERVED'
+               ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+    assert json.loads(preserved["payload_json"])["requestedStage"] == "VALIDATION_PENDING"
 
 
 @pytest.mark.parametrize(
