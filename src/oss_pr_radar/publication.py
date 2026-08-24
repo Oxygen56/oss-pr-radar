@@ -9,13 +9,14 @@ import json
 import os
 import re
 import subprocess
+import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from .decision import authorize
 from .evidence import collect_evidence
-from .github_client import GitHubClient, GitHubError
+from .github_client import GitHubClient, GitHubError, is_transient_github_error
 from .independent_review import controller_review_passed
 from .ledger import LedgerError, RadarLedger
 from .metrics import assess_submit_ready
@@ -40,6 +41,7 @@ PUBLIC_TOOL_BRANCH_RE = re.compile(
 CONTROL_ROOT = Path(__file__).parents[2]
 MAX_PUBLICATION_EVIDENCE_BYTES = 1024 * 1024
 _MAX_PUBLICATION_EVIDENCE_BASE64_BYTES = ((MAX_PUBLICATION_EVIDENCE_BYTES + 2) // 3) * 4
+_GITHUB_GIT_RETRY_DELAYS = (0.25, 1.0)
 
 
 class PublicationError(RuntimeError):
@@ -351,10 +353,21 @@ def _upstream_remote(worktree: Path, repo: str) -> str:
     raise PublicationError("worktree has no remote for the upstream repository")
 
 
+def _github_git_command(args: list[str], *, cwd: Path, timeout: int) -> str:
+    for attempt in range(len(_GITHUB_GIT_RETRY_DELAYS) + 1):
+        try:
+            return command(args, cwd=cwd, timeout=timeout)
+        except (PublicationError, subprocess.TimeoutExpired) as exc:
+            if attempt >= len(_GITHUB_GIT_RETRY_DELAYS) or not is_transient_github_error(exc):
+                raise
+            time.sleep(_GITHUB_GIT_RETRY_DELAYS[attempt])
+    raise AssertionError("unreachable")
+
+
 def _refresh_upstream_branch(worktree: Path, repo: str, default_branch: str) -> str:
     remote = _upstream_remote(worktree, repo)
     ref = f"refs/heads/{default_branch}"
-    raw = command(
+    raw = _github_git_command(
         ["git", "ls-remote", "--exit-code", "--heads", remote, ref],
         cwd=worktree,
         timeout=60,
@@ -369,7 +382,7 @@ def _refresh_upstream_branch(worktree: Path, repo: str, default_branch: str) -> 
     except PublicationError:
         local_sha = ""
     if local_sha.casefold() != live_sha:
-        command(
+        _github_git_command(
             [
                 "git",
                 "fetch",

@@ -320,6 +320,149 @@ def test_changed_upstream_branch_fetches_exact_tracking_ref(monkeypatch, tmp_pat
     ]
 
 
+def test_refresh_upstream_branch_retries_transient_ls_remote_errors(monkeypatch, tmp_path):
+    sha = "a" * 40
+    ls_remote_calls = 0
+    sleeps = []
+
+    def command(args, *, cwd, timeout=120):
+        nonlocal ls_remote_calls
+        if args == ["git", "remote"]:
+            return "origin"
+        if args[:3] == ["git", "remote", "get-url"]:
+            return "https://github.com/example/project.git"
+        if args[:3] == ["git", "ls-remote", "--exit-code"]:
+            ls_remote_calls += 1
+            if ls_remote_calls < 3:
+                raise publication.PublicationError("unexpected EOF while reading")
+            return f"{sha}\trefs/heads/main"
+        if args[:3] == ["git", "rev-parse", "--verify"]:
+            return sha
+        raise AssertionError(args)
+
+    monkeypatch.setattr(publication, "command", command)
+    monkeypatch.setattr(publication.time, "sleep", sleeps.append)
+
+    publication._refresh_upstream_branch(tmp_path, "example/project", "main")
+
+    assert ls_remote_calls == 3
+    assert sleeps == [0.25, 1.0]
+
+
+def test_refresh_upstream_branch_retries_transient_fetch_error(monkeypatch, tmp_path):
+    old_sha = "a" * 40
+    live_sha = "b" * 40
+    fetch_calls = 0
+    sleeps = []
+
+    def command(args, *, cwd, timeout=120):
+        nonlocal fetch_calls
+        if args == ["git", "remote"]:
+            return "origin"
+        if args[:3] == ["git", "remote", "get-url"]:
+            return "https://github.com/example/project.git"
+        if args[:3] == ["git", "ls-remote", "--exit-code"]:
+            return f"{live_sha}\trefs/heads/main"
+        if args[:2] == ["git", "fetch"]:
+            fetch_calls += 1
+            if fetch_calls == 1:
+                raise publication.PublicationError(
+                    "curl 56 Recv failure: Operation timed out\n"
+                    "fatal: expected flush after ref listing"
+                )
+            return ""
+        if args[:3] == ["git", "rev-parse", "--verify"]:
+            return live_sha if fetch_calls >= 2 else old_sha
+        raise AssertionError(args)
+
+    monkeypatch.setattr(publication, "command", command)
+    monkeypatch.setattr(publication.time, "sleep", sleeps.append)
+
+    publication._refresh_upstream_branch(tmp_path, "example/project", "main")
+
+    assert fetch_calls == 2
+    assert sleeps == [0.25]
+
+
+def test_refresh_upstream_branch_retries_subprocess_timeout(monkeypatch, tmp_path):
+    sha = "a" * 40
+    ls_remote_calls = 0
+    sleeps = []
+
+    def command(args, *, cwd, timeout=120):
+        nonlocal ls_remote_calls
+        if args == ["git", "remote"]:
+            return "origin"
+        if args[:3] == ["git", "remote", "get-url"]:
+            return "https://github.com/example/project.git"
+        if args[:3] == ["git", "ls-remote", "--exit-code"]:
+            ls_remote_calls += 1
+            if ls_remote_calls == 1:
+                raise subprocess.TimeoutExpired(args, timeout)
+            return f"{sha}\trefs/heads/main"
+        if args[:3] == ["git", "rev-parse", "--verify"]:
+            return sha
+        raise AssertionError(args)
+
+    monkeypatch.setattr(publication, "command", command)
+    monkeypatch.setattr(publication.time, "sleep", sleeps.append)
+
+    publication._refresh_upstream_branch(tmp_path, "example/project", "main")
+
+    assert ls_remote_calls == 2
+    assert sleeps == [0.25]
+
+
+def test_refresh_upstream_branch_does_not_retry_hard_error(monkeypatch, tmp_path):
+    ls_remote_calls = 0
+    sleeps = []
+
+    def command(args, *, cwd, timeout=120):
+        nonlocal ls_remote_calls
+        if args == ["git", "remote"]:
+            return "origin"
+        if args[:3] == ["git", "remote", "get-url"]:
+            return "https://github.com/example/project.git"
+        if args[:3] == ["git", "ls-remote", "--exit-code"]:
+            ls_remote_calls += 1
+            raise publication.PublicationError("fatal: repository not found")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(publication, "command", command)
+    monkeypatch.setattr(publication.time, "sleep", sleeps.append)
+
+    with pytest.raises(publication.PublicationError, match="repository not found"):
+        publication._refresh_upstream_branch(tmp_path, "example/project", "main")
+
+    assert ls_remote_calls == 1
+    assert sleeps == []
+
+
+def test_refresh_upstream_branch_stops_after_two_transient_retries(monkeypatch, tmp_path):
+    ls_remote_calls = 0
+    sleeps = []
+
+    def command(args, *, cwd, timeout=120):
+        nonlocal ls_remote_calls
+        if args == ["git", "remote"]:
+            return "origin"
+        if args[:3] == ["git", "remote", "get-url"]:
+            return "https://github.com/example/project.git"
+        if args[:3] == ["git", "ls-remote", "--exit-code"]:
+            ls_remote_calls += 1
+            raise publication.PublicationError("unexpected EOF while reading")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(publication, "command", command)
+    monkeypatch.setattr(publication.time, "sleep", sleeps.append)
+
+    with pytest.raises(publication.PublicationError, match="unexpected EOF"):
+        publication._refresh_upstream_branch(tmp_path, "example/project", "main")
+
+    assert ls_remote_calls == 3
+    assert sleeps == [0.25, 1.0]
+
+
 def test_blocked_publication_can_be_reingested_after_evidence_is_corrected(tmp_path):
     store, request, _evidence_path = prepared_request(tmp_path)
     store.block_publication_request(request["request_id"], "BASE_BRANCH_MISMATCH")
