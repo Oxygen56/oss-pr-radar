@@ -5669,6 +5669,75 @@ def _task_turn_prompt(delivery_kind: str, candidate: dict[str, Any]) -> str:
     raise RuntimeError("unsupported task-turn delivery kind")
 
 
+def _bound_legacy_managed_task_project_root(
+    candidate: dict[str, Any],
+    *,
+    raw_thread_cwd: str,
+    thread_source: str,
+    project_id: str | None,
+    worktree: Path,
+) -> Path | None:
+    """Validate the one historical project root used by managed issue tasks.
+
+    Older managed tasks were created in the Radar project itself before new
+    tasks moved to the shared GitHub project.  Accept that exact root only
+    when the authenticated task context still binds the issue, task, thread,
+    and deterministic managed worktree.  This is deliberately a resume-only
+    compatibility check; it does not broaden new-task or receipt creation.
+    """
+
+    legacy_root = GITHUB_ROOT / "oss-pr-radar"
+    raw_cwd = Path(raw_thread_cwd)
+    if (
+        not raw_cwd.is_absolute()
+        or raw_cwd != legacy_root
+        or thread_source != "appServer"
+        or project_id not in {None, "", DEFAULT_TASK_PROJECT_ID}
+    ):
+        return None
+    try:
+        legacy_fd, opened_legacy_root = open_directory_handle(
+            legacy_root,
+            label="legacy managed task project root",
+        )
+    except RuntimeError:
+        return None
+    else:
+        os.close(legacy_fd)
+    if opened_legacy_root != legacy_root:
+        return None
+
+    issue_url = str(candidate.get("issueUrl") or "")
+    issue_match = ISSUE_URL.fullmatch(issue_url)
+    if issue_match is None:
+        return None
+    repo, issue_number = issue_match.groups()
+    if candidate.get("key") != f"{repo}#{issue_number}":
+        return None
+    try:
+        context, _updated_at = _verified_shared_task_context(shared_context_path(issue_url))
+    except (OSError, RuntimeError, ValueError):
+        return None
+    intent_id = str(context.get("intentId") or "")
+    if not intent_id:
+        return None
+    expected_worktree = managed_worktree_path(intent_id, repo).resolve()
+    expected_context = {
+        "schemaVersion": TASK_CONTEXT_SCHEMA,
+        "key": candidate["key"],
+        "issueUrl": issue_url,
+        "threadId": str(candidate.get("threadId") or candidate.get("thread_id") or ""),
+        "worktreePath": str(worktree),
+        "workspaceMode": "github_project_managed_worktree",
+        "taskProjectRoot": str(GITHUB_ROOT.resolve()),
+    }
+    if expected_worktree != worktree or any(
+        context.get(key) != value for key, value in expected_context.items()
+    ):
+        return None
+    return opened_legacy_root
+
+
 def _validated_task_turn_thread(candidate: dict[str, Any]) -> tuple[Path, str | None]:
     thread_id = str(candidate.get("threadId") or candidate.get("thread_id") or "")
     issue_url = str(candidate.get("issueUrl") or "")
@@ -5681,8 +5750,15 @@ def _validated_task_turn_thread(candidate: dict[str, Any]) -> tuple[Path, str | 
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
     try:
+        columns = {
+            str(item[1]) for item in connection.execute("PRAGMA table_info(threads)").fetchall()
+        }
+        source_projection = "thread_source" if "thread_source" in columns else "'appServer'"
+        project_projection = "project_id" if "project_id" in columns else "NULL"
         row = connection.execute(
-            "SELECT cwd,archived,first_user_message,rollout_path FROM threads WHERE id=?",
+            f"SELECT cwd,archived,first_user_message,rollout_path,"
+            f"{source_projection} AS thread_source,{project_projection} AS project_id "
+            "FROM threads WHERE id=?",
             (thread_id,),
         ).fetchone()
     finally:
@@ -5691,10 +5767,19 @@ def _validated_task_turn_thread(candidate: dict[str, Any]) -> tuple[Path, str | 
         raise RuntimeError("task-turn delivery target is missing or archived")
     if canonical_prompt(str(row["first_user_message"] or "")) != issue_prompt(issue_url):
         raise RuntimeError("task-turn delivery target prompt mismatch")
-    cwd = Path(str(row["cwd"])).resolve()
+    raw_thread_cwd = str(row["cwd"] or "")
+    cwd = Path(raw_thread_cwd).resolve()
     if _is_managed_worktree(worktree):
         if cwd != GITHUB_ROOT.resolve():
-            raise RuntimeError("managed task-turn delivery project root mismatch")
+            legacy_root = _bound_legacy_managed_task_project_root(
+                candidate,
+                raw_thread_cwd=raw_thread_cwd,
+                thread_source=str(row["thread_source"] or ""),
+                project_id=(str(row["project_id"]) if row["project_id"] is not None else None),
+                worktree=worktree,
+            )
+            if legacy_root is None or cwd != legacy_root:
+                raise RuntimeError("managed task-turn delivery project root mismatch")
     elif cwd != worktree or not _is_within(worktree, WORKTREE_ROOT):
         raise RuntimeError("legacy task-turn delivery worktree mismatch")
     return cwd, row["rollout_path"]
@@ -11955,9 +12040,60 @@ def _terminal_published_result_missing_worktree(
     )
 
 
+def _managed_published_pr_authority(
+    managed_ledger: ManagedLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return the exact published PR that makes a stale local result non-authoritative."""
+
+    receipt = context.get("publicationReceipt")
+    if not isinstance(receipt, dict):
+        return None
+    pr_url = str(receipt.get("prUrl") or "")
+    publication_head_sha = str(receipt.get("commitSha") or "")
+    try:
+        published_pr = managed_ledger.published_pr_for_opportunity(
+            str(candidate["key"]),
+            pr_url=pr_url,
+            publication_head_sha=publication_head_sha,
+        )
+    except ValueError:
+        return None
+    if published_pr is None:
+        return None
+    result_stage = str(value.get("stage") or "")
+    if published_pr["state"] == "MERGED":
+        return None if result_stage == "MERGED" else published_pr
+    if result_stage in PUBLISHED_TASK_STAGES:
+        return None
+    followup = context.get("prFollowup")
+    if (
+        isinstance(followup, dict)
+        and followup.get("prUrl") == published_pr["pr_url"]
+        and value.get("followupDigest")
+        and value.get("followupDigest") == followup.get("wakeDigest")
+    ):
+        return None
+    return published_pr
+
+
+def _preserved_published_stage(current_stage: str, managed_pr_state: str) -> str:
+    if managed_pr_state == "MERGED":
+        return "MERGED"
+    if managed_pr_state != "OPEN":
+        raise RuntimeError("managed published PR state is invalid")
+    if PR_STAGE_PRIORITY.get(current_stage, 0) >= PR_STAGE_PRIORITY["PR_OPEN"]:
+        return current_stage
+    return "PR_OPEN"
+
+
 def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     managed_adapter = ManagedAdapter(ROOT, args.ledger)
+    managed_ledger = managed_adapter.ledger
     ingested: list[dict[str, Any]] = []
     publication_requests: list[dict[str, Any]] = []
     validation_deferred: list[dict[str, Any]] = []
@@ -11988,6 +12124,98 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             value = json.loads(raw)
             if not isinstance(value, dict):
                 raise RuntimeError("task result must be an object")
+            context = json.loads(_read_task_context_bytes_from_private(result_access))
+            if not isinstance(context, dict):
+                raise RuntimeError("task result context must be an object")
+            expected = {
+                "schemaVersion": TASK_RESULT_SCHEMA,
+                "key": candidate["key"],
+                "issueUrl": candidate["issueUrl"],
+                "threadId": candidate["threadId"],
+                "worktreePath": str(result_access.worktree),
+            }
+            for key, expected_value in expected.items():
+                if value.get(key) != expected_value:
+                    raise RuntimeError(f"task result mismatch: {key}")
+            published_pr = _managed_published_pr_authority(
+                managed_ledger,
+                candidate=candidate,
+                context=context,
+                value=value,
+            )
+            if published_pr is not None:
+                previous_stage = str(candidate["stage"])
+                restored_stage = _preserved_published_stage(
+                    previous_stage, str(published_pr["state"])
+                )
+                result_file_digest = hashlib.sha256(raw).hexdigest()
+                if restored_stage != previous_stage:
+                    store.record_stage(
+                        candidate["key"],
+                        restored_stage,
+                        evidence={
+                            "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE",
+                            "prUrl": published_pr["pr_url"],
+                            "managedPrState": published_pr["state"],
+                            "ignoredResultStage": value.get("stage"),
+                        },
+                        dedupe_key=(
+                            f"managed-published-pr-authoritative:{published_pr['pr_key']}:"
+                            f"{result_file_digest}"
+                        ),
+                    )
+                refreshed_context_path = write_task_context(
+                    store,
+                    issue_url=str(candidate["issueUrl"]),
+                    thread_id=str(candidate["threadId"]),
+                    cwd=result_access.worktree,
+                )
+                refreshed_context = json.loads(
+                    refreshed_context_path.read_text(encoding="utf-8")
+                )
+                refreshed_receipt = refreshed_context.get("publicationReceipt")
+                expected_receipt_status = (
+                    restored_stage
+                    if restored_stage in {"MERGED", "CLOSED"}
+                    else "PR_OPEN"
+                )
+                if (
+                    refreshed_context.get("stage") != restored_stage
+                    or not isinstance(refreshed_receipt, dict)
+                    or refreshed_receipt.get("status") != expected_receipt_status
+                    or refreshed_receipt.get("prUrl") != published_pr["pr_url"]
+                ):
+                    raise RuntimeError("published task context restoration mismatch")
+                managed_ledger.record_event(
+                    event_type="MANAGED_PUBLISHED_PR_AUTHORITATIVE",
+                    idempotency_key=(
+                        f"managed-published-pr-authoritative:{candidate['key']}:"
+                        f"{result_file_digest}"
+                    ),
+                    opportunity_key=str(candidate["key"]),
+                    task_id=str(candidate.get("intentId") or candidate["threadId"]),
+                    pr_key=str(published_pr["pr_key"]),
+                    state=restored_stage,
+                    source="result-ingestion",
+                    provenance={
+                        "reservationKey": published_pr["reservation_key"],
+                        "publicationHeadSha": published_pr["publication_head_sha"],
+                        "resultFileDigest": result_file_digest,
+                    },
+                    payload={
+                        "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE",
+                        "ignoredResultStage": value.get("stage"),
+                        "legacyStageBefore": previous_stage,
+                        "legacyStageAfter": restored_stage,
+                    },
+                )
+                ignored.append(
+                    {
+                        "key": str(candidate["key"]),
+                        "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE",
+                    }
+                )
+                continue
             receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
             if (
                 value.get("handoffMode") == "controller_commit_required"
@@ -12040,20 +12268,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         }
                     )
                 continue
-            context = json.loads(_read_task_context_bytes_from_private(result_access))
-            if not isinstance(context, dict):
-                raise RuntimeError("task result context must be an object")
             controller_policy = _controller_policy_verification(context)
-            expected = {
-                "schemaVersion": TASK_RESULT_SCHEMA,
-                "key": candidate["key"],
-                "issueUrl": candidate["issueUrl"],
-                "threadId": candidate["threadId"],
-                "worktreePath": str(result_access.worktree),
-            }
-            for key, expected_value in expected.items():
-                if value.get(key) != expected_value:
-                    raise RuntimeError(f"task result mismatch: {key}")
             task_stage = str(
                 context.get("taskStage")
                 or managed_candidate.get("taskStage")

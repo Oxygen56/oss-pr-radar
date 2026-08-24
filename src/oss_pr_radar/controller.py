@@ -18,6 +18,7 @@ from .operational_auth import require_operational_authorization
 from .release_binding import bind_runtime, runtime_ledger_path, runtime_python
 
 DEFAULT_PROJECT_ID = "5e41d21c-cba3-4be0-9a02-7eef35b67625"
+CONTROLLER_REPAIR_AGE_MINUTES = 90
 Runner = Callable[[Path, str, Sequence[str], set[int], int], dict[str, Any]]
 
 
@@ -166,7 +167,7 @@ def controller_cycle(
             "--code-root",
             str(binding.code_root),
             "--max-effective-age-minutes",
-            "110",
+            str(CONTROLLER_REPAIR_AGE_MINUTES),
             "--repair",
         ],
         allowed_codes={0, 2},

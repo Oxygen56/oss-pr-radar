@@ -3298,6 +3298,44 @@ class ManagedLedger:
         finally:
             connection.close()
 
+    def published_pr_for_opportunity(
+        self,
+        opportunity_key: str,
+        *,
+        pr_url: str,
+        publication_head_sha: str,
+    ) -> dict[str, Any] | None:
+        """Return an exact reservation-bound PR that is still published.
+
+        The publication reservation is the durable issue-to-PR binding.  Do
+        not infer this relationship from repository identity or managed task
+        results, because historical managed results may not carry a PR key.
+        """
+
+        opportunity_key = canonical_opportunity_key(opportunity_key)
+        if _PR_URL_RE.fullmatch(pr_url) is None:
+            raise ValueError("published PR URL is invalid")
+        if not re.fullmatch(r"[0-9a-f]{40}", publication_head_sha):
+            raise ValueError("published PR reservation head SHA is invalid")
+        connection = self._connection()
+        try:
+            row = connection.execute(
+                """SELECT r.reservation_key,r.opportunity_key,r.pr_key,
+                          r.head_sha AS publication_head_sha,r.state AS reservation_state,
+                          p.pr_url,p.head_sha,p.state,p.observed_at
+                   FROM managed_publication_reservations r
+                   JOIN managed_prs p ON p.pr_key=r.pr_key
+                   WHERE r.opportunity_key=? AND r.head_sha=? AND p.pr_url=?
+                     AND p.state IN ('OPEN','MERGED')
+                   ORDER BY CASE p.state WHEN 'MERGED' THEN 0 ELSE 1 END,
+                            p.observed_at DESC,r.updated_at DESC
+                   LIMIT 1""",
+                (opportunity_key, publication_head_sha, pr_url),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            connection.close()
+
     def _invitation_exemption(
         self,
         event_key: str | None,

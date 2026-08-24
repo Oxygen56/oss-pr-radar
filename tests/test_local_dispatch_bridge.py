@@ -7118,6 +7118,124 @@ def test_active_root_task_worker_owns_the_first_turn(monkeypatch, tmp_path):
     assert MODULE.active_root_task_worker("thread-2") is None
 
 
+def _historical_managed_task_turn_fixture(monkeypatch, tmp_path):
+    issue_url = "https://github.com/a/b/issues/1"
+    project_root = tmp_path / "github"
+    legacy_root = project_root / "oss-pr-radar"
+    legacy_root.mkdir(parents=True)
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    intent_id = "intent-1"
+    worktree = MODULE.managed_worktree_path(intent_id, "a/b")
+    worktree.mkdir(parents=True)
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text("", encoding="utf-8")
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, cwd TEXT, archived INTEGER, "
+            "first_user_message TEXT, rollout_path TEXT, thread_source TEXT, "
+            "project_id TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?)",
+            (
+                "thread-1",
+                str(legacy_root),
+                0,
+                MODULE.issue_prompt(issue_url),
+                str(rollout),
+                "appServer",
+                None,
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    candidate = {
+        "key": "a/b#1",
+        "issueUrl": issue_url,
+        "threadId": "thread-1",
+        "worktreePath": str(worktree),
+    }
+    context = {
+        "schemaVersion": MODULE.TASK_CONTEXT_SCHEMA,
+        "key": candidate["key"],
+        "issueUrl": issue_url,
+        "intentId": intent_id,
+        "threadId": candidate["threadId"],
+        "worktreePath": str(worktree.resolve()),
+        "workspaceMode": "github_project_managed_worktree",
+        "taskProjectRoot": str(project_root.resolve()),
+    }
+    return candidate, context, thread_db, legacy_root, worktree, rollout
+
+
+def test_task_turn_thread_allows_exact_bound_historical_managed_project_root(
+    monkeypatch, tmp_path
+):
+    candidate, context, _thread_db, legacy_root, _worktree, rollout = (
+        _historical_managed_task_turn_fixture(monkeypatch, tmp_path)
+    )
+    verified_paths = []
+
+    def verified_context(path):
+        verified_paths.append(path)
+        return context, "2026-08-24T00:00:00Z"
+
+    monkeypatch.setattr(MODULE, "_verified_shared_task_context", verified_context)
+
+    cwd, rollout_path = MODULE._validated_task_turn_thread(candidate)
+
+    assert cwd == legacy_root.resolve()
+    assert rollout_path == str(rollout)
+    assert verified_paths == [MODULE.shared_context_path(candidate["issueUrl"])]
+
+
+def test_task_turn_thread_rejects_historical_root_aliases_and_nearby_paths(
+    monkeypatch, tmp_path
+):
+    candidate, context, thread_db, legacy_root, _worktree, _rollout = (
+        _historical_managed_task_turn_fixture(monkeypatch, tmp_path)
+    )
+    sibling = legacy_root.parent / "oss-pr-radar-copy"
+    sibling.mkdir()
+    descendant = legacy_root / "child"
+    descendant.mkdir()
+    alias = legacy_root.parent / "oss-pr-radar-alias"
+    alias.symlink_to(legacy_root, target_is_directory=True)
+    verified_paths = []
+    monkeypatch.setattr(
+        MODULE,
+        "_verified_shared_task_context",
+        lambda path: (verified_paths.append(path), (context, "unused"))[1],
+    )
+
+    for invalid_cwd in (sibling, descendant, alias):
+        with sqlite3.connect(thread_db) as connection:
+            connection.execute(
+                "UPDATE threads SET cwd=? WHERE id='thread-1'", (str(invalid_cwd),)
+            )
+        with pytest.raises(RuntimeError, match="project root mismatch"):
+            MODULE._validated_task_turn_thread(candidate)
+
+    assert verified_paths == []
+
+
+def test_task_turn_thread_rejects_unbound_historical_managed_worktree_context(
+    monkeypatch, tmp_path
+):
+    candidate, context, _thread_db, _legacy_root, _worktree, _rollout = (
+        _historical_managed_task_turn_fixture(monkeypatch, tmp_path)
+    )
+    context["intentId"] = "different-intent"
+    monkeypatch.setattr(
+        MODULE,
+        "_verified_shared_task_context",
+        lambda _path: (context, "2026-08-24T00:00:00Z"),
+    )
+
+    with pytest.raises(RuntimeError, match="project root mismatch"):
+        MODULE._validated_task_turn_thread(candidate)
+
+
 def test_task_turn_delivery_reconciles_a_materialized_turn_without_resending(monkeypatch, tmp_path):
     issue_url = "https://github.com/a/b/issues/1"
     reserved_at = datetime.now(UTC) - timedelta(minutes=5)
@@ -9871,6 +9989,298 @@ def _controller_commit_result(
             review_value["quality"] = review_quality
             _write_explicit_controller_review(tmp_path, review_value)
     return store, worktree, result_path
+
+
+def _bind_published_pr_authority_fixture(
+    store: RadarLedger,
+    worktree: Path,
+    result_path: Path,
+    *,
+    managed_state: str = "OPEN",
+    reservation_opportunity_key: str = "a/b#1",
+    explicit_pr_followup: bool = False,
+) -> tuple[ManagedLedger, dict, str]:
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    head_sha = str(value["reproductionReceipt"]["commitSha"])
+    branch = str(value["branch"])
+    pr_url = "https://github.com/a/b/pull/9"
+    now = iso_z(datetime.now(UTC))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES ('published-authority-request','a/b#1','thread-1',?,?,?,
+                       'published-authority-evidence','CONSUMED','{}',?,?)""",
+            (head_sha, branch, str(worktree), now, now),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES ('published-authority-permit','published-authority-request',
+                       'https://github.com/a/b/issues/1',?,?,'CONSUMED',?,?,'{}',?,?)""",
+            (
+                head_sha,
+                branch,
+                iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                pr_url,
+                now,
+                now,
+            ),
+        )
+    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": pr_url})
+    if explicit_pr_followup:
+        store.import_pr_followups(
+            {
+                "version": "pr_followup_v3",
+                "generatedAt": now,
+                "items": [
+                    {
+                        "url": pr_url,
+                        "headSha": head_sha,
+                        "actionDigest": "published-authority-action",
+                        "taskActionDigest": "published-authority-task-action",
+                        "taskFollowupRequired": True,
+                        "taskActions": ["修复当前 PR 上的真实回归"],
+                        "evidence": {"actionableCheckNames": ["Regression"]},
+                        "checkedAt": now,
+                    }
+                ],
+            }
+        )
+
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    reservation_key = "publication:published-authority"
+    managed.reserve_publication_slot(
+        reservation_key=reservation_key,
+        request_id="managed-published-authority-request",
+        repo="a/b",
+        head_ref=branch,
+        head_sha=head_sha,
+        opportunity_key=reservation_opportunity_key,
+        idempotency_key="managed-published-authority-reservation",
+    )
+    managed.record_publication_receipt_atomic(
+        pr_key="a/b#9",
+        owner="a",
+        repo="b",
+        number=9,
+        head_sha=head_sha,
+        pr_url=pr_url,
+        auto_created=True,
+        source_kind="MANAGED_PUBLICATION_RECEIPT",
+        source="test-published-authority",
+        reservation_key=reservation_key,
+        opportunity_key=reservation_opportunity_key,
+        event_idempotency_key="managed-published-authority-receipt",
+    )
+    if managed_state != "OPEN":
+        managed.upsert_pr(
+            pr_key="a/b#9",
+            owner="a",
+            repo="b",
+            number=9,
+            head_sha=head_sha,
+            pr_url=pr_url,
+            state=managed_state,
+            auto_created=True,
+            source_kind="MANAGED_PUBLICATION_RECEIPT",
+            source="test-published-authority-reconciliation",
+        )
+
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={"polluted": True})
+    degraded_context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    value["contextDigest"] = degraded_context["contextDigest"]
+    if explicit_pr_followup:
+        value["followupDigest"] = degraded_context["prFollowup"]["wakeDigest"]
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    return managed, degraded_context, pr_url
+
+
+@pytest.mark.parametrize(("managed_state", "expected_stage"), [("OPEN", "PR_OPEN"), ("MERGED", "MERGED")])
+def test_ingest_keeps_reservation_bound_published_pr_authoritative(
+    tmp_path, managed_state, expected_stage
+):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("minimal_fix_verified", "relevant_tests_green"),
+    )
+    managed, degraded_context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        managed_state=managed_state,
+    )
+    assert degraded_context["stage"] == "VALIDATION_PENDING"
+    assert degraded_context["publicationReceipt"]["status"] == "PR_OPEN"
+    task_before = managed.read_task("intent-1")
+    with managed._connection() as connection:
+        result_count_before = connection.execute("SELECT COUNT(*) FROM managed_results").fetchone()[
+            0
+        ]
+    bad_result_before = result_path.read_bytes()
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["ingested"] == []
+    assert result["publicationRequests"] == []
+    assert result["validationDeferred"] == []
+    assert result["ignored"] == [
+        {"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}
+    ]
+    restored = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert restored["stage"] == expected_stage
+    local_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert local_context["stage"] == expected_stage
+    assert local_context["publicationReceipt"]["prUrl"] == pr_url
+    assert local_context["publicationReceipt"]["status"] == expected_stage
+    assert result_path.read_bytes() == bad_result_before
+    assert store.validation_followup_candidates() == []
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='TASK_RESULT_VALIDATION_DEFERRED'"
+            ).fetchone()[0]
+            == 0
+        )
+    with managed._connection() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM managed_results").fetchone()[0] == (
+            result_count_before
+        )
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM managed_lifecycle_events
+                   WHERE event_type='MANAGED_PUBLISHED_PR_AUTHORITATIVE'
+                     AND opportunity_key='a/b#1' AND pr_key='a/b#9'"""
+            ).fetchone()[0]
+            == 1
+        )
+    assert managed.read_task("intent-1") == task_before
+
+
+def test_ingest_allows_fix_ready_again_after_authoritative_pr_closes(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("minimal_fix_verified", "relevant_tests_green"),
+    )
+    _managed, _context, _pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        managed_state="CLOSED",
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert "ignored" not in result
+    assert result["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": ["minimal_fix_verified", "relevant_tests_green"],
+        }
+    ]
+    assert (
+        store.task_context(
+            issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+        )["stage"]
+        == "VALIDATION_PENDING"
+    )
+
+
+def test_published_pr_authority_requires_exact_opportunity_reservation(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    managed, context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        reservation_opportunity_key="a/b#2",
+    )
+
+    assert (
+        managed.published_pr_for_opportunity(
+            "a/b#1",
+            pr_url=pr_url,
+            publication_head_sha=context["publicationReceipt"]["commitSha"],
+        )
+        is None
+    )
+
+
+def test_published_pr_authority_preserves_exact_pr_followup_wake_chain(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+    )
+    _managed, context, _pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+    )
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+
+    assert value["followupDigest"] == context["prFollowup"]["wakeDigest"]
+    assert (
+        MODULE._managed_published_pr_authority(
+            ManagedLedger(store.path, ensure_schema=True),
+            candidate=candidate,
+            context=context,
+            value=value,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("result_stage", "explicit_pr_followup"),
+    [("FIX_READY", True), ("PR_OPEN", False)],
+)
+def test_merged_pr_authority_overrides_stale_published_or_followup_result(
+    tmp_path, result_stage, explicit_pr_followup
+):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("relevant_tests_green",),
+    )
+    _managed, _context, _pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        managed_state="MERGED",
+        explicit_pr_followup=explicit_pr_followup,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["stage"] = result_stage
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["ignored"] == [
+        {"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}
+    ]
+    context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert context["stage"] == "MERGED"
+    assert context["publicationReceipt"]["status"] == "MERGED"
+    assert store.validation_followup_candidates() == []
 
 
 def _refresh_reproduction_certificate(result_path: Path) -> str:

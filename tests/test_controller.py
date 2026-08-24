@@ -219,6 +219,31 @@ def test_controller_cycle_skips_sync_while_remote_scan_is_active(tmp_path):
     assert result["stages"]["queueSync"]["reason"] == "remote_scan_active"
 
 
+def test_controller_repairs_after_one_missed_hour_without_tightening_final_health(tmp_path):
+    health_commands: dict[str, list[str]] = {}
+
+    def runner(_root, stage, argv, _allowed, _timeout):
+        if stage in {"workflowHealth", "finalWorkflowHealth"}:
+            health_commands[stage] = list(argv)
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+
+    assert result["ok"] is True
+    repair = health_commands["workflowHealth"]
+    assert repair[repair.index("--max-effective-age-minutes") + 1] == "90"
+    assert "--repair" in repair
+    final = health_commands["finalWorkflowHealth"]
+    assert final[final.index("--max-effective-age-minutes") + 1] == "110"
+    assert "--repair" not in final
+
+
 def test_controller_cycle_lock_suppresses_overlap(tmp_path):
     lock_path = tmp_path / "state" / "controller-cycle.lock"
     lock_path.parent.mkdir()
