@@ -7,7 +7,11 @@ from typing import Any
 
 import pytest
 
-from oss_pr_radar.ledger import LedgerError, RadarLedger
+from oss_pr_radar.ledger import (
+    LedgerError,
+    RadarLedger,
+    bind_dispatched_recovery_prompt,
+)
 from oss_pr_radar.metrics import QUALITY_FIELDS, assess_submit_ready, rolling_quality
 from oss_pr_radar.util import iso_z, parse_time, sha256_json
 
@@ -1912,6 +1916,253 @@ def test_terminal_stage_retires_sent_recovery_without_result(tmp_path):
 
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="WRONG_REPO")
 
+    assert store.sent_recoveries_without_result() == []
+
+
+def test_new_prompt_rearms_a_legacy_exhausted_dispatch_recovery_once(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    legacy = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=legacy["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=legacy["recoveryNonce"])
+    store.exhaust_recovery(thread_id="thread-1", nonce=legacy["recoveryNonce"])
+
+    assert store.recovery_candidates(min_age_minutes=0) == []
+    raw = store.recovery_candidates(
+        min_age_minutes=0,
+        include_exhausted_dispatched=True,
+    )[0]
+    prompt_version = "issue-bound-recovery-v1"
+    prompt_digest = "a" * 64
+    rearmed = bind_dispatched_recovery_prompt(
+        raw,
+        prompt_version=prompt_version,
+        prompt_digest=prompt_digest,
+    )
+
+    assert rearmed is not None
+    assert rearmed["recoveryNonce"] != legacy["recoveryNonce"]
+    assert rearmed["rearmedFromExhausted"] == {
+        "eventId": raw["exhaustedRecoveries"][0]["eventId"],
+        "exhaustedNonce": legacy["recoveryNonce"],
+    }
+    store.reserve_recovery(
+        thread_id="thread-1",
+        nonce=rearmed["recoveryNonce"],
+        recovery_prompt_version=prompt_version,
+        recovery_prompt_digest=prompt_digest,
+    )
+    reservation = store.unresolved_recoveries()[0]["reservation"]
+    assert reservation["recoveryPromptVersion"] == prompt_version
+    assert reservation["recoveryPromptDigest"] == prompt_digest
+    assert reservation["rearmedFromExhausted"] == rearmed["rearmedFromExhausted"]
+    store.commit_recovery(thread_id="thread-1", nonce=rearmed["recoveryNonce"])
+    store.abandon_recovery_delivery(
+        thread_id="thread-1",
+        nonce=rearmed["recoveryNonce"],
+        reason="TERMINAL_RECOVERY_TURN_INTERRUPTED",
+        min_age_minutes=0,
+    )
+    retry_raw = store.recovery_candidates(
+        min_age_minutes=0,
+        include_exhausted_dispatched=True,
+    )[0]
+    retry = bind_dispatched_recovery_prompt(
+        retry_raw,
+        prompt_version=prompt_version,
+        prompt_digest=prompt_digest,
+    )
+    assert retry is not None
+    assert retry["recoveryChainDigest"] == rearmed["recoveryChainDigest"]
+    assert retry["recoveryNonce"] != rearmed["recoveryNonce"]
+    store.reserve_recovery(
+        thread_id="thread-1",
+        nonce=retry["recoveryNonce"],
+        recovery_prompt_version=prompt_version,
+        recovery_prompt_digest=prompt_digest,
+    )
+    store.commit_recovery(thread_id="thread-1", nonce=retry["recoveryNonce"])
+    assert store.sent_recoveries_without_result()[0]["retryCount"] == 1
+    store.exhaust_recovery(thread_id="thread-1", nonce=retry["recoveryNonce"])
+
+    exhausted_again = store.recovery_candidates(
+        min_age_minutes=0,
+        include_exhausted_dispatched=True,
+    )[0]
+    assert (
+        bind_dispatched_recovery_prompt(
+            exhausted_again,
+            prompt_version=prompt_version,
+            prompt_digest=prompt_digest,
+        )
+        is None
+    )
+    changed_prompt = bind_dispatched_recovery_prompt(
+        exhausted_again,
+        prompt_version=prompt_version,
+        prompt_digest="b" * 64,
+    )
+    assert changed_prompt is None
+    with pytest.raises(LedgerError, match="stale or invalid"):
+        store.reserve_recovery(
+            thread_id="thread-1",
+            nonce=retry["recoveryNonce"],
+            recovery_prompt_version="issue-bound-recovery-v2",
+            recovery_prompt_digest="b" * 64,
+        )
+
+
+def test_recovery_retry_count_is_scoped_to_the_current_recovery_chain(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    now = iso_z(datetime.now(UTC))
+
+    def sent_recovery(
+        nonce: str,
+        kind: str,
+        followup_digest: str | None,
+        recovery_chain_digest: str | None = None,
+    ) -> None:
+        with store.transaction() as connection:
+            store._event(
+                connection,
+                "a/b#1",
+                "THREAD_RECOVERY_RESERVED",
+                nonce,
+                {
+                    "threadId": "thread-1",
+                    "recoveryNonce": nonce,
+                    "recoveryKind": kind,
+                    "followupDigest": followup_digest,
+                    "recoveryChainDigest": recovery_chain_digest,
+                },
+                now,
+            )
+            store._event(
+                connection,
+                "a/b#1",
+                "THREAD_RECOVERY_SENT",
+                nonce,
+                {"threadId": "thread-1", "recoveryNonce": nonce},
+                now,
+            )
+
+    def interrupt(nonce: str) -> None:
+        with store.transaction() as connection:
+            store._event(
+                connection,
+                "a/b#1",
+                "THREAD_RECOVERY_DELIVERY_ABANDONED",
+                f"abandoned-{nonce}",
+                {
+                    "threadId": "thread-1",
+                    "recoveryNonce": nonce,
+                    "reservationDigest": nonce,
+                    "reason": "TERMINAL_RECOVERY_TURN_INTERRUPTED",
+                },
+                now,
+            )
+
+    sent_recovery("dispatch-1", "DISPATCHED_TASK", None)
+    interrupt("dispatch-1")
+    sent_recovery("dispatch-bound-1", "DISPATCHED_TASK", None, "new-chain")
+    interrupt("dispatch-bound-1")
+    sent_recovery("dispatch-bound-2", "DISPATCHED_TASK", None, "new-chain")
+    sent_recovery("validation-1", "VALIDATION_FOLLOWUP_RESULT", "result-1")
+    interrupt("validation-1")
+    sent_recovery("validation-2", "VALIDATION_FOLLOWUP_RESULT", "result-1")
+    sent_recovery("pr-1", "PR_FOLLOWUP_RESULT", "wake-1")
+
+    pending = {
+        item["reservationDigest"]: item["retryCount"]
+        for item in store.sent_recoveries_without_result()
+    }
+
+    assert pending == {"dispatch-bound-2": 1, "validation-2": 1, "pr-1": 0}
+
+
+def test_exhaust_recovery_rolls_back_abandonment_when_terminal_write_fails(monkeypatch, tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    raw = store.recovery_candidates(
+        min_age_minutes=0,
+        include_exhausted_dispatched=True,
+    )[0]
+    bound = bind_dispatched_recovery_prompt(
+        raw,
+        prompt_version="issue-bound-recovery-v1",
+        prompt_digest="a" * 64,
+    )
+    assert bound is not None
+    store.reserve_recovery(
+        thread_id="thread-1",
+        nonce=bound["recoveryNonce"],
+        recovery_prompt_version=bound["recoveryPromptVersion"],
+        recovery_prompt_digest=bound["recoveryPromptDigest"],
+    )
+    store.commit_recovery(thread_id="thread-1", nonce=bound["recoveryNonce"])
+    original_event = store._event
+
+    def fail_terminal_event(connection, key, event_type, dedupe_key, payload, created_at):
+        if event_type == "THREAD_RECOVERY_RETRY_EXHAUSTED":
+            raise RuntimeError("injected terminal write failure")
+        return original_event(connection, key, event_type, dedupe_key, payload, created_at)
+
+    monkeypatch.setattr(store, "_event", fail_terminal_event)
+    with pytest.raises(RuntimeError, match="injected terminal write failure"):
+        store.exhaust_recovery(thread_id="thread-1", nonce=bound["recoveryNonce"])
+
+    with store.connect() as connection:
+        rolled_back = connection.execute(
+            """SELECT event_type,COUNT(*) FROM events
+               WHERE event_type IN (
+                 'THREAD_RECOVERY_DELIVERY_ABANDONED',
+                 'THREAD_RECOVERY_RETRY_EXHAUSTED'
+               ) GROUP BY event_type"""
+        ).fetchall()
+    assert rolled_back == []
+    assert store.sent_recoveries_without_result()[0]["reservationDigest"] == bound["recoveryNonce"]
+
+    monkeypatch.setattr(store, "_event", original_event)
+    store.exhaust_recovery(thread_id="thread-1", nonce=bound["recoveryNonce"])
+    with store.connect() as connection:
+        committed = dict(
+            connection.execute(
+                """SELECT event_type,COUNT(*) FROM events
+                   WHERE event_type IN (
+                     'THREAD_RECOVERY_DELIVERY_ABANDONED',
+                     'THREAD_RECOVERY_RETRY_EXHAUSTED'
+                   ) GROUP BY event_type"""
+            ).fetchall()
+        )
+    assert committed == {
+        "THREAD_RECOVERY_DELIVERY_ABANDONED": 1,
+        "THREAD_RECOVERY_RETRY_EXHAUSTED": 1,
+    }
     assert store.sent_recoveries_without_result() == []
 
 

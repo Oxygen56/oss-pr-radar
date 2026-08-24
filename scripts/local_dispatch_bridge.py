@@ -47,7 +47,11 @@ from oss_pr_radar.independent_review import (  # noqa: E402
     controller_review_result,
     review_once,
 )
-from oss_pr_radar.ledger import LedgerError, RadarLedger  # noqa: E402
+from oss_pr_radar.ledger import (  # noqa: E402
+    LedgerError,
+    RadarLedger,
+    bind_dispatched_recovery_prompt,
+)
 from oss_pr_radar.managed_adapter import (  # noqa: E402
     GitHubAbsenceQueries,
     ManagedAdapter,
@@ -123,6 +127,16 @@ APP_SERVER_WATCHDOG_STALE_SECONDS = 15.0
 APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS = 30.0
 APP_SERVER_EVENT_DRAIN_SLICE_SECONDS = 1.0
 APP_SERVER_TASK_TURN_MAX_SECONDS = 45 * 60.0
+ROOT_THREAD_START_TIMEOUT_SECONDS = 60.0
+ROOT_TURN_START_TIMEOUT_SECONDS = 45.0
+ROOT_TASK_INDEX_WAIT_SECONDS = 30.0
+ROOT_TASK_RECEIPT_MARGIN_SECONDS = 15.0
+ROOT_TASK_RECEIPT_WAIT_SECONDS = (
+    ROOT_THREAD_START_TIMEOUT_SECONDS
+    + ROOT_TURN_START_TIMEOUT_SECONDS
+    + ROOT_TASK_INDEX_WAIT_SECONDS
+    + ROOT_TASK_RECEIPT_MARGIN_SECONDS
+)
 GITHUB_GIT_RETRY_DELAYS = (1.0, 3.0)
 VALIDATION_PREFETCH_TIMEOUTS = {
     "cargo_locked_fetch": 300,
@@ -365,6 +379,49 @@ VALIDATION_RECOVERY_PROMPT = (
     + END_RESULT_TURN_PROMPT
     + PLAIN_LANGUAGE_STATUS_PROMPT
 )
+DISPATCHED_RECOVERY_PROMPT_VERSION = "issue-bound-recovery-v1"
+
+
+def _recovery_turn_prompt(candidate: dict[str, Any], terminal_error: dict[str, Any] | None) -> str:
+    recovery_kind = str(
+        candidate.get("recoveryKind")
+        or (candidate.get("reservation") or {}).get("recoveryKind")
+        or "DISPATCHED_TASK"
+    )
+    if recovery_kind == "VALIDATION_FOLLOWUP_RESULT":
+        return VALIDATION_RECOVERY_PROMPT
+    issue_url = str(candidate.get("issueUrl") or "")
+    if not ISSUE_URL.fullmatch(issue_url):
+        raise RuntimeError("task recovery has an invalid issue URL")
+    if recovery_kind == "PR_FOLLOWUP_RESULT":
+        return _pr_followup_prompt({"issueUrl": issue_url})
+    if terminal_error and terminal_error.get("code") == "cyber_policy":
+        return benign_policy_recovery_prompt(issue_url)
+    return issue_prompt(issue_url)
+
+
+def _dispatched_recovery_prompt_binding(prompt: str) -> tuple[str, str]:
+    return (
+        DISPATCHED_RECOVERY_PROMPT_VERSION,
+        hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+    )
+
+
+def _verify_dispatched_recovery_prompt_binding(candidate: dict[str, Any], prompt: str) -> None:
+    reservation = candidate.get("reservation") or {}
+    expected_version = candidate.get("recoveryPromptVersion") or reservation.get(
+        "recoveryPromptVersion"
+    )
+    expected_digest = candidate.get("recoveryPromptDigest") or reservation.get(
+        "recoveryPromptDigest"
+    )
+    if expected_version is None and expected_digest is None:
+        return
+    version, digest = _dispatched_recovery_prompt_binding(prompt)
+    if expected_version != version or expected_digest != digest:
+        raise RuntimeError("recovery prompt binding mismatch")
+
+
 issue_prompt = canonical_prompt
 
 
@@ -4501,7 +4558,7 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
                 selector,
                 buffer,
                 response_id=1,
-                timeout=30,
+                timeout=ROOT_THREAD_START_TIMEOUT_SECONDS,
                 action="thread/start",
             )
             thread_id = str(((message.get("result") or {}).get("thread") or {}).get("id") or "")
@@ -4531,14 +4588,14 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
             selector,
             buffer,
             response_id=2,
-            timeout=45,
+            timeout=ROOT_TURN_START_TIMEOUT_SECONDS,
             action="turn/start",
         )
         turn_id = str(((message.get("result") or {}).get("turn") or {}).get("id") or "")
         if not turn_id:
             raise RuntimeError("app server did not start the root task turn")
 
-        deadline = monotonic() + 30
+        deadline = monotonic() + ROOT_TASK_INDEX_WAIT_SECONDS
         while monotonic() < deadline:
             connection = sqlite3.connect(THREAD_DB)
             try:
@@ -4650,7 +4707,7 @@ def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
             "creationToken": args.creation_token,
         },
     )
-    deadline = monotonic() + 60
+    deadline = monotonic() + ROOT_TASK_RECEIPT_WAIT_SECONDS
     while monotonic() < deadline:
         if receipt.exists():
             result = read_json(receipt, missing={})
@@ -4658,6 +4715,11 @@ def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
                 raise RuntimeError(str(result.get("error") or "root task creation failed"))
             return result
         sleep(0.25)
+    if receipt.exists():
+        result = read_json(receipt, missing={})
+        if not result.get("ok"):
+            raise RuntimeError(str(result.get("error") or "root task creation failed"))
+        return result
     raise RuntimeError("root task creation result is unknown; orphan reconciliation required")
 
 
@@ -5601,9 +5663,9 @@ def _task_turn_prompt(delivery_kind: str, candidate: dict[str, Any]) -> str:
         finally:
             connection.close()
         terminal_error = latest_terminal_thread_error(row[0] if row else None)
-        if terminal_error and terminal_error.get("code") == "cyber_policy":
-            return benign_policy_recovery_prompt(issue_url)
-        return issue_prompt(issue_url)
+        prompt = _recovery_turn_prompt(candidate, terminal_error)
+        _verify_dispatched_recovery_prompt_binding(candidate, prompt)
+        return prompt
     raise RuntimeError("unsupported task-turn delivery kind")
 
 
@@ -13776,7 +13838,10 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
         (datetime.now(UTC) - timedelta(minutes=max(30, args.min_age_minutes))).timestamp()
     )
     try:
-        candidates = store.recovery_candidates(min_age_minutes=0)
+        candidates = store.recovery_candidates(
+            min_age_minutes=0,
+            include_exhausted_dispatched=True,
+        )
         candidate_thread_ids = {item["threadId"] for item in candidates}
         context_candidates = getattr(store, "task_context_candidates", lambda: [])()
         probe_thread_ids: set[str] = set()
@@ -13878,6 +13943,17 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 if turn_state and turn_state.get("status") in {"failed", "interrupted"}
                 else None
             )
+            if candidate.get("recoveryKind") == "DISPATCHED_TASK":
+                recovery_prompt = _recovery_turn_prompt(candidate, terminal_error)
+                prompt_version, prompt_digest = _dispatched_recovery_prompt_binding(recovery_prompt)
+                bound_candidate = bind_dispatched_recovery_prompt(
+                    candidate,
+                    prompt_version=prompt_version,
+                    prompt_digest=prompt_digest,
+                )
+                if bound_candidate is None:
+                    continue
+                candidate = bound_candidate
             completed_validation_without_result = False
             if (
                 candidate.get("recoveryKind") == "VALIDATION_FOLLOWUP_RESULT"
@@ -14021,31 +14097,53 @@ def recovery_reserve(args: argparse.Namespace) -> dict[str, Any]:
         or authorized.get("recoveryNonce") != args.recovery_nonce
     ):
         raise RuntimeError("recovery is not the current serialized candidate")
-    candidate = ledger(args.ledger).reserve_recovery(
-        thread_id=args.thread_id,
-        nonce=args.recovery_nonce,
-    )
     connection = sqlite3.connect(THREAD_DB)
     try:
         row = connection.execute(
-            "SELECT rollout_path FROM threads WHERE id=?", (candidate["threadId"],)
+            "SELECT rollout_path FROM threads WHERE id=?", (authorized["threadId"],)
         ).fetchone()
     finally:
         connection.close()
     terminal_error = authorized.get("terminalError") or latest_terminal_thread_error(
         row[0] if row else None
     )
-    prompt = issue_prompt(candidate["issueUrl"])
-    if candidate.get("recoveryKind") == "VALIDATION_FOLLOWUP_RESULT":
-        prompt = VALIDATION_RECOVERY_PROMPT
-    elif terminal_error and terminal_error.get("code") == "cyber_policy":
-        prompt = benign_policy_recovery_prompt(str(candidate["issueUrl"]))
+    prompt = _recovery_turn_prompt(authorized, terminal_error)
+    reserve_kwargs: dict[str, Any] = {
+        "thread_id": args.thread_id,
+        "nonce": args.recovery_nonce,
+    }
+    if authorized.get("recoveryKind") == "DISPATCHED_TASK":
+        prompt_version, prompt_digest = _dispatched_recovery_prompt_binding(prompt)
+        if (
+            authorized.get("recoveryPromptVersion") != prompt_version
+            or authorized.get("recoveryPromptDigest") != prompt_digest
+        ):
+            raise RuntimeError("recovery prompt authorization is stale")
+        reserve_kwargs.update(
+            {
+                "recovery_prompt_version": prompt_version,
+                "recovery_prompt_digest": prompt_digest,
+            }
+        )
+    candidate = ledger(args.ledger).reserve_recovery(**reserve_kwargs)
+    if candidate.get("recoveryKind") == "DISPATCHED_TASK":
+        _verify_dispatched_recovery_prompt_binding(candidate, prompt)
     return {
         "ok": True,
         "threadId": candidate["threadId"],
         "prompt": prompt,
         "recoveryNonce": candidate["recoveryNonce"],
         "terminalError": terminal_error,
+        **(
+            {
+                "recoveryPromptVersion": candidate["recoveryPromptVersion"],
+                "recoveryPromptDigest": candidate["recoveryPromptDigest"],
+                "recoveryChainDigest": candidate["recoveryChainDigest"],
+                "rearmedFromExhausted": candidate.get("rearmedFromExhausted"),
+            }
+            if candidate.get("recoveryKind") == "DISPATCHED_TASK"
+            else {}
+        ),
     }
 
 

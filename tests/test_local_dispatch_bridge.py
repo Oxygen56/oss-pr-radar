@@ -940,6 +940,58 @@ def test_root_task_create_passes_runtime_root_to_worker(monkeypatch, tmp_path):
     assert result["threadId"] == "thread-1"
 
 
+@pytest.mark.parametrize("receipt_at", [120.0, 150.0])
+def test_root_task_create_accepts_a_late_or_boundary_receipt(monkeypatch, tmp_path, receipt_at):
+    assert MODULE.ROOT_THREAD_START_TIMEOUT_SECONDS == 60.0
+    assert MODULE.ROOT_TASK_RECEIPT_WAIT_SECONDS == 150.0
+    assert MODULE.ROOT_TASK_RECEIPT_WAIT_SECONDS > 90.0
+    assert 90.0 < receipt_at <= MODULE.ROOT_TASK_RECEIPT_WAIT_SECONDS
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    monkeypatch.setattr(MODULE, "STATE", tmp_path)
+    receipt = tmp_path / "root_task_receipts" / "token-boundary.json"
+
+    class FakeWorker:
+        pid = 123
+
+    monkeypatch.setattr(MODULE.subprocess, "Popen", lambda *_args, **_kwargs: FakeWorker())
+    calls = 0
+
+    def boundary_monotonic():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return 0.0
+        receipt.write_text(
+            json.dumps({"ok": True, "threadId": "thread-boundary", "turnId": "turn-1"}),
+            encoding="utf-8",
+        )
+        return receipt_at
+
+    monkeypatch.setattr(MODULE, "monotonic", boundary_monotonic)
+    monkeypatch.setattr(
+        MODULE,
+        "sleep",
+        lambda _seconds: pytest.fail("boundary receipt should not require another poll"),
+    )
+
+    result = MODULE.root_task_create(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            runtime_root=runtime_root,
+            intent_id="intent-1",
+            creation_token="token-boundary",
+            project_id="github-project",
+            source_repo="/tmp/source",
+            worktree="/tmp/worktree",
+            title_time="08-24 01:29",
+        )
+    )
+
+    assert result["threadId"] == "thread-boundary"
+    assert calls == 2
+
+
 def test_resolve_repo_code_paths_uses_symbol_search_for_method_anchors():
     class Client:
         @staticmethod
@@ -7643,12 +7695,26 @@ def test_recovery_reserve_rephrases_a_benign_policy_false_positive(monkeypatch, 
         connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)")
         connection.execute("INSERT INTO threads VALUES (?,?)", ("thread-1", str(rollout)))
 
+    issue_url = "https://github.com/a/b/issues/1"
+    prompt = MODULE.benign_policy_recovery_prompt(issue_url)
+    prompt_version, prompt_digest = MODULE._dispatched_recovery_prompt_binding(prompt)
+    reserve_calls = []
+
     class Store:
-        def reserve_recovery(self, **_kwargs):
+        def reserve_recovery(self, **kwargs):
+            reserve_calls.append(kwargs)
             return {
                 "threadId": "thread-1",
-                "issueUrl": "https://github.com/a/b/issues/1",
+                "issueUrl": issue_url,
                 "recoveryNonce": "nonce",
+                "recoveryKind": "DISPATCHED_TASK",
+                "recoveryPromptVersion": prompt_version,
+                "recoveryPromptDigest": prompt_digest,
+                "recoveryChainDigest": "c" * 64,
+                "rearmedFromExhausted": {
+                    "eventId": 9,
+                    "exhaustedNonce": "legacy-nonce",
+                },
             }
 
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
@@ -7658,7 +7724,16 @@ def test_recovery_reserve_rephrases_a_benign_policy_false_positive(monkeypatch, 
         "recovery_list",
         lambda _args: {
             "ok": True,
-            "recoverable": [{"threadId": "thread-1", "recoveryNonce": "nonce"}],
+            "recoverable": [
+                {
+                    "threadId": "thread-1",
+                    "issueUrl": issue_url,
+                    "recoveryNonce": "nonce",
+                    "recoveryKind": "DISPATCHED_TASK",
+                    "recoveryPromptVersion": prompt_version,
+                    "recoveryPromptDigest": prompt_digest,
+                }
+            ],
         },
     )
 
@@ -7670,12 +7745,19 @@ def test_recovery_reserve_rephrases_a_benign_policy_false_positive(monkeypatch, 
         )
     )
 
-    assert result["prompt"] == MODULE.benign_policy_recovery_prompt(
-        "https://github.com/a/b/issues/1"
-    )
-    assert result["prompt"].startswith(MODULE.issue_prompt("https://github.com/a/b/issues/1"))
+    assert result["prompt"] == prompt
+    assert result["prompt"].startswith(MODULE.issue_prompt(issue_url))
     assert "GPU" not in result["prompt"]
     assert result["terminalError"]["code"] == "cyber_policy"
+    assert reserve_calls == [
+        {
+            "thread_id": "thread-1",
+            "nonce": "nonce",
+            "recovery_prompt_version": prompt_version,
+            "recovery_prompt_digest": prompt_digest,
+        }
+    ]
+    assert result["rearmedFromExhausted"]["exhaustedNonce"] == "legacy-nonce"
 
 
 def test_cleanup_commit_removes_managed_bootstrap_context(monkeypatch, tmp_path):

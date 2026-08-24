@@ -49,6 +49,85 @@ PR_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
 ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
 
 
+def bind_dispatched_recovery_prompt(
+    candidate: dict[str, Any],
+    *,
+    prompt_version: str,
+    prompt_digest: str,
+) -> dict[str, Any] | None:
+    """Bind one dispatched-task recovery to the exact prompt that will be sent.
+
+    Legacy exhausted recoveries did not record prompt provenance. A new prompt
+    may rearm one of those terminal markers once; an exhaustion carrying the
+    same version and digest remains terminal.
+    """
+
+    if candidate.get("recoveryKind") != "DISPATCHED_TASK":
+        raise LedgerError("prompt binding only applies to dispatched-task recovery")
+    version = str(prompt_version).strip()
+    digest = str(prompt_digest).strip().lower()
+    if not version or len(version) > 160:
+        raise LedgerError("recovery prompt version is invalid")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise LedgerError("recovery prompt digest is invalid")
+    exhausted = list(candidate.get("exhaustedRecoveries") or [])
+    if any(
+        marker.get("recoveryPromptVersion") is not None
+        or marker.get("recoveryPromptDigest") is not None
+        for marker in exhausted
+    ):
+        return None
+    rearmed_from = max(
+        exhausted,
+        key=lambda marker: int(marker.get("eventId") or 0),
+        default=None,
+    )
+    base_nonce = str(candidate.get("recoveryNonce") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", base_nonce):
+        raise LedgerError("base recovery nonce is invalid")
+    marker_binding = (
+        {
+            "eventId": int(rearmed_from.get("eventId") or 0),
+            "exhaustedNonce": str(rearmed_from.get("exhaustedNonce") or ""),
+        }
+        if rearmed_from is not None
+        else None
+    )
+    bound = dict(candidate)
+    bound.update(
+        {
+            "baseRecoveryNonce": base_nonce,
+            "recoveryPromptVersion": version,
+            "recoveryPromptDigest": digest,
+            "recoveryChainDigest": sha256_json(
+                {
+                    "key": candidate.get("key"),
+                    "threadId": candidate.get("threadId"),
+                    "dispatchedAt": candidate.get("dispatchedAt"),
+                    "recoveryKind": candidate.get("recoveryKind"),
+                    "followupDigest": candidate.get("followupDigest") or "",
+                    "recoveryPromptVersion": version,
+                    "recoveryPromptDigest": digest,
+                    "rearmedFromExhausted": marker_binding,
+                    "chainVersion": "recovery-chain-v1",
+                }
+            ),
+            "recoveryNonce": sha256_json(
+                {
+                    "baseRecoveryNonce": base_nonce,
+                    "recoveryPromptVersion": version,
+                    "recoveryPromptDigest": digest,
+                    "rearmedFromExhausted": marker_binding,
+                    "bindingVersion": "recovery-prompt-binding-v1",
+                }
+            ),
+        }
+    )
+    if marker_binding is not None:
+        bound["rearmedFromExhausted"] = marker_binding
+    return bound
+
+
 def _publication_probe_valid(
     request: dict[str, Any], evidence: dict[str, Any] | None = None
 ) -> bool:
@@ -2450,7 +2529,12 @@ class RadarLedger:
                 exclude_intent_id=exclude_intent_id,
             )
 
-    def recovery_candidates(self, *, min_age_minutes: int = 90) -> list[dict[str, Any]]:
+    def recovery_candidates(
+        self,
+        *,
+        min_age_minutes: int = 90,
+        include_exhausted_dispatched: bool = False,
+    ) -> list[dict[str, Any]]:
         cutoff = iso_z(
             datetime.now(UTC) - timedelta(minutes=max(0, min(int(min_age_minutes), 24 * 60)))
         )
@@ -2474,7 +2558,7 @@ class RadarLedger:
                        WHERE quarantine.opportunity_key=o.key
                          AND quarantine.status='ACTIVE'
                      )
-                     AND NOT EXISTS (
+                     AND (? OR NOT EXISTS (
                        SELECT 1 FROM events exhausted
                        JOIN events recovery
                          ON recovery.opportunity_key=exhausted.opportunity_key
@@ -2485,7 +2569,7 @@ class RadarLedger:
                          AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
                          AND json_extract(recovery.payload_json,'$.recoveryKind')='DISPATCHED_TASK'
                          AND recovery.created_at>=d.created_at
-                     )
+                     ))
                      AND NOT EXISTS (
                        SELECT 1 FROM events e
                        WHERE e.opportunity_key=o.key
@@ -2508,7 +2592,7 @@ class RadarLedger:
                          )
                      )
                    ORDER BY d.created_at""",
-                (cutoff,),
+                (cutoff, int(include_exhausted_dispatched)),
             ).fetchall()
             followup_rows = connection.execute(
                 """SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
@@ -2641,6 +2725,47 @@ class RadarLedger:
                    ORDER BY s.created_at""",
                 (cutoff,),
             ).fetchall()
+            exhausted_dispatched_rows = (
+                connection.execute(
+                    """SELECT exhausted.id AS event_id,
+                              exhausted.opportunity_key AS key,
+                              exhausted.dedupe_key AS exhausted_nonce,
+                              exhausted.payload_json AS exhausted_payload_json,
+                              recovery.payload_json AS recovery_payload_json,
+                              recovery.created_at AS recovery_created_at
+                       FROM events exhausted
+                       JOIN events recovery
+                         ON recovery.opportunity_key=exhausted.opportunity_key
+                        AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                        AND recovery.dedupe_key=exhausted.dedupe_key
+                       WHERE exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                         AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                             'DISPATCHED_TASK'
+                       ORDER BY exhausted.id"""
+                ).fetchall()
+                if include_exhausted_dispatched
+                else []
+            )
+        exhausted_by_task: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for exhausted_row in exhausted_dispatched_rows:
+            recovery_payload = json.loads(exhausted_row["recovery_payload_json"])
+            exhausted_payload = json.loads(exhausted_row["exhausted_payload_json"])
+            marker = {
+                "eventId": int(exhausted_row["event_id"]),
+                "exhaustedNonce": str(exhausted_row["exhausted_nonce"]),
+                "recoveryCreatedAt": str(exhausted_row["recovery_created_at"]),
+                "recoveryPromptVersion": exhausted_payload.get("recoveryPromptVersion")
+                or recovery_payload.get("recoveryPromptVersion"),
+                "recoveryPromptDigest": exhausted_payload.get("recoveryPromptDigest")
+                or recovery_payload.get("recoveryPromptDigest"),
+            }
+            exhausted_by_task.setdefault(
+                (
+                    str(exhausted_row["key"]),
+                    str(recovery_payload.get("threadId") or ""),
+                ),
+                [],
+            ).append(marker)
         candidates: dict[str, dict[str, Any]] = {}
         for row, recovery_kind in (
             *((row, "DISPATCHED_TASK") for row in dispatched_rows),
@@ -2669,6 +2794,12 @@ class RadarLedger:
                     f"{row['recovery_epoch'] or ''}|recovery-v3"
                 ),
             }
+            if recovery_kind == "DISPATCHED_TASK" and include_exhausted_dispatched:
+                candidate["exhaustedRecoveries"] = [
+                    marker
+                    for marker in exhausted_by_task.get((str(row["key"]), thread_id), [])
+                    if str(marker["recoveryCreatedAt"]) >= str(row["dispatched_at"])
+                ]
             previous = candidates.get(thread_id)
             if previous is None or candidate["dispatchedAt"] > previous["dispatchedAt"]:
                 candidates[thread_id] = candidate
@@ -2741,10 +2872,43 @@ class RadarLedger:
                 """SELECT o.key,i.thread_id,r.dedupe_key AS reservation_digest,
                           r.payload_json,s.created_at AS sent_at,
                           (SELECT COUNT(*) FROM events prior
+                           JOIN events prior_recovery
+                             ON prior_recovery.opportunity_key=prior.opportunity_key
+                            AND prior_recovery.event_type='THREAD_RECOVERY_RESERVED'
+                            AND prior_recovery.dedupe_key=json_extract(
+                                  prior.payload_json,'$.reservationDigest'
+                                )
                            WHERE prior.opportunity_key=o.key
                              AND prior.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
                              AND json_extract(prior.payload_json,'$.reason')=
                                  'TERMINAL_RECOVERY_TURN_INTERRUPTED'
+                             AND prior.id<r.id
+                             AND json_extract(prior_recovery.payload_json,'$.threadId')=
+                                 json_extract(r.payload_json,'$.threadId')
+                             AND json_extract(prior_recovery.payload_json,'$.recoveryKind')=
+                                 json_extract(r.payload_json,'$.recoveryKind')
+                             AND COALESCE(
+                                   json_extract(
+                                     prior_recovery.payload_json,'$.followupDigest'
+                                   ),''
+                                 )=COALESCE(
+                                   json_extract(r.payload_json,'$.followupDigest'),''
+                                 )
+                             AND (
+                               (
+                                 json_extract(r.payload_json,'$.recoveryChainDigest')
+                                   IS NULL
+                                 AND json_extract(
+                                       prior_recovery.payload_json,
+                                       '$.recoveryChainDigest'
+                                     ) IS NULL
+                               )
+                               OR json_extract(
+                                    prior_recovery.payload_json,'$.recoveryChainDigest'
+                                  )=json_extract(
+                                    r.payload_json,'$.recoveryChainDigest'
+                                  )
+                             )
                           ) AS retry_count
                    FROM opportunities o
                    JOIN intents i ON i.intent_id=(
@@ -2794,13 +2958,32 @@ class RadarLedger:
             for row in rows
         ]
 
-    def reserve_recovery(self, *, thread_id: str, nonce: str) -> dict[str, Any]:
+    def reserve_recovery(
+        self,
+        *,
+        thread_id: str,
+        nonce: str,
+        recovery_prompt_version: str | None = None,
+        recovery_prompt_digest: str | None = None,
+    ) -> dict[str, Any]:
         # The bridge may authorize an immediate one-shot recovery after a
         # terminal desktop error, before the normal stale-task threshold.
+        if (recovery_prompt_version is None) != (recovery_prompt_digest is None):
+            raise LedgerError("recovery prompt binding is incomplete")
         candidates = {
-            item["threadId"]: item for item in self.recovery_candidates(min_age_minutes=0)
+            item["threadId"]: item
+            for item in self.recovery_candidates(
+                min_age_minutes=0,
+                include_exhausted_dispatched=recovery_prompt_version is not None,
+            )
         }
         candidate = candidates.get(thread_id)
+        if candidate and recovery_prompt_version is not None:
+            candidate = bind_dispatched_recovery_prompt(
+                candidate,
+                prompt_version=recovery_prompt_version,
+                prompt_digest=str(recovery_prompt_digest),
+            )
         if not candidate or candidate["recoveryNonce"] != nonce:
             raise LedgerError("recovery authorization is stale or invalid")
         now = iso_z(datetime.now(UTC))
@@ -2838,6 +3021,10 @@ class RadarLedger:
                     "recoveryNonce": nonce,
                     "recoveryKind": candidate["recoveryKind"],
                     "followupDigest": candidate.get("followupDigest"),
+                    "recoveryPromptVersion": candidate.get("recoveryPromptVersion"),
+                    "recoveryPromptDigest": candidate.get("recoveryPromptDigest"),
+                    "recoveryChainDigest": candidate.get("recoveryChainDigest"),
+                    "rearmedFromExhausted": candidate.get("rearmedFromExhausted"),
                 },
                 now,
             )
@@ -2920,6 +3107,7 @@ class RadarLedger:
                    WHERE r.event_type='THREAD_RECOVERY_RESERVED'
                      AND json_extract(r.payload_json,'$.threadId')=?
                      AND json_extract(r.payload_json,'$.recoveryNonce')=?
+                     AND r.dedupe_key=?
                      AND (? OR NOT EXISTS (
                        SELECT 1 FROM events sent
                        WHERE sent.opportunity_key=r.opportunity_key
@@ -2936,7 +3124,7 @@ class RadarLedger:
                          AND abandoned.id>r.id
                      )
                    ORDER BY r.id DESC LIMIT 1""",
-                (thread_id, nonce, int(allow_sent)),
+                (thread_id, nonce, nonce, int(allow_sent)),
             ).fetchone()
             if row is None:
                 raise LedgerError("recovery delivery is not abandonable")
@@ -2962,25 +3150,46 @@ class RadarLedger:
     def exhaust_recovery(self, *, thread_id: str, nonce: str) -> None:
         """Release a repeatedly interrupted recovery and make the terminal state durable."""
 
-        self.abandon_recovery_delivery(
-            thread_id=thread_id,
-            nonce=nonce,
-            reason="RECOVERY_RETRY_EXHAUSTED",
-            min_age_minutes=0,
-        )
         with self.transaction() as connection:
             row = connection.execute(
-                """SELECT opportunity_key AS key,payload_json FROM events
-                   WHERE event_type='THREAD_RECOVERY_RESERVED'
-                     AND json_extract(payload_json,'$.threadId')=?
-                     AND json_extract(payload_json,'$.recoveryNonce')=?
-                   ORDER BY id DESC LIMIT 1""",
-                (thread_id, nonce),
+                """SELECT r.opportunity_key AS key,r.dedupe_key,r.payload_json,
+                          r.created_at
+                   FROM events r
+                   WHERE r.event_type='THREAD_RECOVERY_RESERVED'
+                     AND json_extract(r.payload_json,'$.threadId')=?
+                     AND json_extract(r.payload_json,'$.recoveryNonce')=?
+                     AND r.dedupe_key=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events abandoned
+                       WHERE abandoned.opportunity_key=r.opportunity_key
+                         AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                         AND json_extract(
+                               abandoned.payload_json,'$.reservationDigest'
+                             )=r.dedupe_key
+                         AND abandoned.id>r.id
+                     )
+                   ORDER BY r.id DESC LIMIT 1""",
+                (thread_id, nonce, nonce),
             ).fetchone()
             if row is None:
                 raise LedgerError("exhausted recovery reservation not found")
             reservation = json.loads(row["payload_json"])
             now = iso_z(datetime.now(UTC))
+            self._event(
+                connection,
+                row["key"],
+                "THREAD_RECOVERY_DELIVERY_ABANDONED",
+                sha256_text(f"{thread_id}|{row['dedupe_key']}|{row['created_at']}"),
+                {
+                    "threadId": thread_id,
+                    "recoveryNonce": nonce,
+                    "reservationDigest": row["dedupe_key"],
+                    "reservedAt": row["created_at"],
+                    "reason": "RECOVERY_RETRY_EXHAUSTED",
+                    "minimumAgeMinutes": 0,
+                },
+                now,
+            )
             self._event(
                 connection,
                 row["key"],
@@ -2991,6 +3200,10 @@ class RadarLedger:
                     "recoveryNonce": nonce,
                     "recoveryKind": reservation.get("recoveryKind"),
                     "followupDigest": reservation.get("followupDigest"),
+                    "recoveryPromptVersion": reservation.get("recoveryPromptVersion"),
+                    "recoveryPromptDigest": reservation.get("recoveryPromptDigest"),
+                    "recoveryChainDigest": reservation.get("recoveryChainDigest"),
+                    "rearmedFromExhausted": reservation.get("rearmedFromExhausted"),
                 },
                 now,
             )
