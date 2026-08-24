@@ -1289,6 +1289,35 @@
     ],
     "why": "Issue provides a precise root cause and a deterministic repro, but a recent comment reveals a second, deeper bug (remaining_list never reaches the provider) that invalidates the proposed fix's sufficiency. Existing PR #29288 is stale and incomplete. Maintainer confirmation is needed to align on the correct fix scope."
   },
+  "06f127d8f85b79679737df5dd32e6cc01cd3ede0d1138ae4f5eb8293ca0f4ad8": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py",
+      "python/sglang/multimodal_gen/runtime/managers/scheduler.py",
+      "python/sglang/srt/dllm/mixin/scheduler.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #35645; need to ensure the fix is more complete (e.g., includes regression tests) to avoid duplication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that sets Scheduler.chunked_req to consume all remaining chunk budget, places a request in waiting_queue, and asserts that get_new_batch_prefill() does not process waiting requests after budget exhaustion."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific implementation approach or have design constraints not mentioned in the issue."
+    ],
+    "why": "The issue provides a clear root cause: after resuming a chunked request, the scheduler fails to check the updated chunk budget before scanning the waiting queue, leading to unnecessary cache matching and potential host-cache load-back. The reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR (#35645) exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
   "07009529dbb8298a44c4cbfcd69ef4fc87986a273db47f150bb7b4e5bd491721": {
     "confidence": 0.8,
     "contradictions": [
@@ -7634,6 +7663,35 @@
       "Whether maintainer is actively investigating or has design constraints"
     ],
     "why": "Issue reports a clear, reproducible bug in AG-UI approval resume where only the first of multiple gated calls executes. Root cause is identified in _local_approval_content_ids_to_remove occurrence-matching. However, the deterministic gate requires HUMAN_REVIEW, and the issue lacks maintainer approval or design confirmation. Existing PR #7546 is not directly related, so no competition. Actionable fix is plausible but requires maintainer direction."
+  },
+  "2ad309e750401ac0ff8648b03351940cc02fe3f1c807356eef971d8aaed2c45a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #53522 claims to fix the issue but only gates metadata construction, leaving the kernel launch unconditional; issue states this is insufficient."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "csrc/apis/attention.hpp",
+      "smxx_fp8_fp4_paged_mqa_logits.hpp",
+      "vllm/models/deepseek_v4/attention.py"
+    ],
+    "risks": [
+      "Existing PR #53522 may partially cover the metadata assert; need to ensure the fix addresses the kernel launch and memory corruption, not just the assert."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on DGX Spark with DeepSeek-V4-Flash and fp8 KV cache; run decode forward with compress_ratio=128 and assert no crash or illegal memory access; compare logits against a CPU reference or non-DeepGEMM fallback."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer option (a), (b), or (c) from the issue; exact hardware availability for testing."
+    ],
+    "why": "Issue provides a precise root cause: DSV4 compressed pages (2 states) violate the paged MQA kernel's compile-time block_kv 32/64 template constraint, causing an assert or silent memory corruption. Concrete code anchors and a clear validation path (reproduce on DGX Spark, test with small model) support actionable algorithm work."
   },
   "2aff874b834f495c7a007eca6558cfbf89933744f31c556db7af0de08e516c48": {
     "confidence": 0.85,
@@ -24377,6 +24435,34 @@
     ],
     "why": "Issue reports a clear performance bug: full conversation snapshots are re-saved on every step, causing excessive storage and latency. Root cause is evident from the issue body, and the maintainer has labeled it for trio-tnt, indicating active triage. However, the deterministic gate requires HUMAN_REVIEW, and the open PR #21068 may partially address the issue but lacks explicit linkage and has requested changes. Thus, maintainer confirmation is needed before starting work."
   },
+  "7ecdde56b1d607d0bcd314e17ac34909419531de45601ce9a3cde3e1c1620895": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/multimodal_gen/configs/models/encoders/qwen3.py",
+      "python/sglang/multimodal_gen/runtime/models/encoders/qwen3.py",
+      "python/sglang/kernels/aot/csrc/cpu/model/qwen3.cpp"
+    ],
+    "risks": [
+      "Root cause may be in a shared sampling/logits path affecting other models; fix could introduce regressions if not carefully scoped."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the provided curl command and model to reproduce token loops on v0.5.17, then run targeted unit tests for Qwen3.5 generation and sampling paths."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; maintainer preference for fix approach unknown."
+    ],
+    "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, indicating a generation-level bug in v0.5.17 for Qwen3.5-arch models. Root cause not yet identified, but the actionable path is to add a failing test and bisect the regression. No duplicate or merged fix found."
+  },
   "7ee9071c510ccf2eee1957b8087078dea24ffdd1da42f004b4f25610551a1753": {
     "confidence": 0.7,
     "contradictions": [],
@@ -33791,6 +33877,41 @@
     ],
     "why": "The issue clearly identifies a client-side bug where expired DCR client secrets are never invalidated, causing permanent auth failure. The existing PR #3260 is a draft with incomplete evidence and lacks a deterministic reproduction, leaving room for a stronger PR with a failing test and robust fix."
   },
+  "b6c8a12af76a2d77524de709c34433c9963be250d04bcb61bc77c0a03619a6ed": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #33784 claims to fix flush_cache while paused, but issue states flush_cache cannot succeed due to waiting_queue; PR may not address root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "RadixCache eviction/reset logic in retract path",
+      "flush_cache behavior during paused generation",
+      "cache_finished_req and reset_for_retract handling"
+    ],
+    "risks": [
+      "Potential performance impact of full eviction on retract",
+      "Behavior change may affect existing users relying on partial release",
+      "Need to coordinate with existing PRs to avoid duplication"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided scenario: pause_generation(mode='retract'), then check KV cache release via prefix matching or memory metrics",
+      "Add regression test verifying no prefix match after weight update and full KV release",
+      "Test continue_generation recomputes KV correctly"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer self-contained retract vs separate flush",
+      "Exact implementation details for evicting radix entries safely",
+      "Whether existing PR #32153 or #31962 already covers this fix (merged PR #31962 may have resolved it)"
+    ],
+    "why": "Issue provides a clear root cause (retract only decrements lock refs for radix-owned prefix, leaving KV resident), measured impact (old-weight KV reuse causing logprob divergence), and a concrete validation path (prefix matching and logprob comparison). The suggested fix is actionable and aligns with documented retract semantics."
+  },
   "b6eedd046ca39d7273f2cb0c46f4067f6655b4f1083a03472dd5e2884c4e771e": {
     "confidence": 0.85,
     "contradictions": [
@@ -34998,6 +35119,37 @@
       "Exact backend configuration or adapter code responsible for tool handling"
     ],
     "why": "Issue provides a minimal curl repro, control models, and recent regression timeline; root cause is specific to Ox Alpha free model's tool path on both Zen routes. Evidence shows partial recovery on one route but Go route still failing, so actionable fix remains."
+  },
+  "bc78007f03222bf59fb6fb64c02f0ec95696b8000ef9126f5eecaa7a7221fe1d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer suggests #50344 may fix the issue, but reporter shows corruption persists after backport."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py",
+      "vllm/v1/core/kv_cache_manager.py",
+      "MambaManager allocation/rollback logic"
+    ],
+    "risks": [
+      "Potential overlap with open PRs #53479, #50457, #52244; need to compare implementation boundaries to avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided experiment matrix: DFlash2 spec decode + LMCacheMPConnector attached, run long agent sessions with shared prefix, verify corruption. Add regression test for connector presence with zero token transfer under spec decode."
+    ],
+    "unknowns": [
+      "Whether the corruption persists on latest main/nightly build; reporter plans to test but has not yet."
+    ],
+    "why": "Issue provides a detailed experiment matrix isolating the corruption to speculative decoding with any KV connector attached, even with zero token transfer, and identifies a suspected code path. Maintainer comment confirms a relevant fix (#50344) but reporter shows corruption persists after backport, narrowing the root cause to connector presence interacting with mamba spec-verify rollback. This is a concrete, reproducible bug with clear validation path."
   },
   "bc9e9b7e51aff67e8c703b161a3a170dd939e572895bce7983a072347d187207": {
     "confidence": 0.7,
@@ -37415,6 +37567,38 @@
       "Full details of related issues #39049 and #39407 due to lookup timeout"
     ],
     "why": "Issue reports a high-context correctness bug in Gemma 4 31B with a clear reproduction path and maintainer-requested ablation data. However, the deterministic gate is HUMAN_REVIEW, and the related issue audit failed due to timeout, leaving uncertainty about existing coverage. An open PR #40391 may address a related KV cache alignment issue but lacks strong semantic overlap and is stale."
+  },
+  "c78c39bd59840b9b262670bf1e7df1095cb20b946b6aaba7fc83931df7045841": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue claims the bug persists in the latest version, but there is a merged PR #34458 that may have partially addressed it. Also, the open PR #36154 claims to fix the issue but lacks root-cause coverage."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/deepseek.py",
+      "rust/sglang-server/src/message/finish_reason.rs",
+      "python/sglang/srt/eplb/eplb_algorithms/deepseek.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #34244 and #36154; need to ensure the fix is distinct and addresses the root cause. Also, the bug may be model-specific and require specific hardware (H200) for reproduction."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided curl command and DeepSeek-V4-Flash-0731 model, verify that all content chunks are streamed before tool_calls delta, and add a regression test for mixed content and tool_calls streaming."
+    ],
+    "unknowns": [
+      "Whether the existing PRs fully resolve the issue, and whether the fix requires changes in the parser or the streaming buffer. Also, the exact code path causing the truncation is not pinpointed."
+    ],
+    "why": "The issue provides a clear reproduction with expected vs actual streaming output, identifying a concrete bug in streaming content truncation when both content and tool_calls are present. The root cause is likely in the streaming buffer or parser logic, and the suggested fix is actionable. Although there are existing PRs, they lack complete root-cause coverage, leaving room for a competitive contribution."
   },
   "c79265cd74f58fd3616c936048256a0bc83299a3cdb96b0478ff836484c301b4": {
     "confidence": 0.7,
