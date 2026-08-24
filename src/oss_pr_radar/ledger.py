@@ -5582,6 +5582,31 @@ class RadarLedger:
             "createdAt": row["created_at"],
         }
 
+    def active_task_quarantines(self, key: str) -> list[dict[str, Any]]:
+        """Return every active task-local quarantine with a stable payload binding."""
+
+        with self.connect() as connection:
+            ensure_quarantine_schema(connection)
+            rows = connection.execute(
+                """SELECT * FROM task_quarantines
+                   WHERE opportunity_key=? AND status='ACTIVE'
+                   ORDER BY quarantine_id""",
+                (key,),
+            ).fetchall()
+        quarantines: list[dict[str, Any]] = []
+        for row in rows:
+            payload = quarantine_payload(row)
+            quarantines.append(
+                {
+                    "reason": str(row["reason"]),
+                    "dedupeKey": str(row["dedupe_key"]),
+                    "payload": payload,
+                    "payloadDigest": sha256_json(payload),
+                    "createdAt": row["created_at"],
+                }
+            )
+        return quarantines
+
     def single_active_task_quarantine(self, key: str) -> dict[str, Any] | None:
         """Return an active quarantine only when it is the sole task-local gate."""
 
@@ -5650,6 +5675,92 @@ class RadarLedger:
                 {"reason": reason, "dedupeKey": dedupe_key, **evidence},
                 now,
             )
+
+    def clear_task_quarantines_exact(
+        self,
+        key: str,
+        *,
+        gates: list[dict[str, Any]],
+        evidence: dict[str, Any],
+    ) -> None:
+        """Atomically clear one exact, complete snapshot of active quarantine gates."""
+
+        if not isinstance(gates, list) or not gates:
+            raise LedgerError("exact task quarantine gate set is empty")
+        if not isinstance(evidence, dict) or evidence.get("revalidated") is not True:
+            raise LedgerError("exact task quarantine clear evidence is incomplete")
+
+        expected: list[tuple[str, str, str]] = []
+        identities: set[tuple[str, str]] = set()
+        for gate in gates:
+            if not isinstance(gate, dict):
+                raise LedgerError("exact task quarantine gate is invalid")
+            reason = gate.get("reason")
+            dedupe_key = gate.get("dedupeKey")
+            payload_digest = gate.get("payloadDigest")
+            if (
+                not isinstance(reason, str)
+                or not reason
+                or not isinstance(dedupe_key, str)
+                or not dedupe_key
+                or not isinstance(payload_digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", payload_digest) is None
+            ):
+                raise LedgerError("exact task quarantine gate is invalid")
+            identity = (reason, dedupe_key)
+            if identity in identities:
+                raise LedgerError("exact task quarantine gate set contains duplicates")
+            identities.add(identity)
+            expected.append((reason, dedupe_key, payload_digest))
+
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            ensure_quarantine_schema(connection)
+            active_rows = connection.execute(
+                """SELECT * FROM task_quarantines
+                   WHERE opportunity_key=? AND status='ACTIVE'
+                   ORDER BY quarantine_id""",
+                (key,),
+            ).fetchall()
+            if not active_rows:
+                raise LedgerError("exact task quarantine active gate set is empty")
+            actual = [
+                (
+                    str(row["reason"]),
+                    str(row["dedupe_key"]),
+                    sha256_json(quarantine_payload(row)),
+                )
+                for row in active_rows
+            ]
+            if len(actual) != len(expected) or set(actual) != set(expected):
+                raise LedgerError("exact task quarantine active gate set changed")
+
+            for reason, dedupe_key, payload_digest in actual:
+                cleared = clear_quarantine_exact(
+                    connection,
+                    opportunity_key=key,
+                    reason=reason,
+                    dedupe_key=dedupe_key,
+                    evidence=evidence,
+                    cleared_at=now,
+                )
+                if cleared != 1:
+                    raise LedgerError("exact task quarantine batch was not cleared")
+                self._event(
+                    connection,
+                    key,
+                    "TASK_QUARANTINE_CLEARED",
+                    sha256_text(
+                        f"{key}|{reason}|{dedupe_key}|{payload_digest}|{canonical_json(evidence)}"
+                    ),
+                    {
+                        "reason": reason,
+                        "dedupeKey": dedupe_key,
+                        "payloadDigest": payload_digest,
+                        **evidence,
+                    },
+                    now,
+                )
 
     def record_shared_context_quarantine(
         self,

@@ -5037,3 +5037,231 @@ def test_exact_task_quarantine_clear_clears_only_the_bound_row(tmp_path):
         "resultDigest": "result-1",
         "revalidated": True,
     }
+
+
+def _record_batch_task_quarantines(store: RadarLedger, *, now: str) -> None:
+    from oss_pr_radar.task_quarantine import record
+
+    with store.transaction() as connection:
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="SHARED_CONTEXT_INVALID",
+            dedupe_key="invalid-1",
+            payload={"error": "published task result authentication is invalid"},
+            created_at=now,
+        )
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="PR_FOLLOWUP_REBIND_REQUIRED",
+            dedupe_key="rebind-1",
+            payload={"requiresRebind": True},
+            created_at=now,
+        )
+
+
+def test_active_task_quarantines_returns_every_payload_bound_gate(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    _record_batch_task_quarantines(store, now=now)
+
+    assert store.active_task_quarantines("a/b#1") == [
+        {
+            "reason": "SHARED_CONTEXT_INVALID",
+            "dedupeKey": "invalid-1",
+            "payload": {"error": "published task result authentication is invalid"},
+            "payloadDigest": sha256_json(
+                {"error": "published task result authentication is invalid"}
+            ),
+            "createdAt": now,
+        },
+        {
+            "reason": "PR_FOLLOWUP_REBIND_REQUIRED",
+            "dedupeKey": "rebind-1",
+            "payload": {"requiresRebind": True},
+            "payloadDigest": sha256_json({"requiresRebind": True}),
+            "createdAt": now,
+        },
+    ]
+
+
+def test_exact_task_quarantine_batch_clear_keeps_blocked_publications_unchanged(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    _record_batch_task_quarantines(store, now=now)
+    with store.transaction() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,reason,request_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "request-1",
+                "a/b#1",
+                "thread-1",
+                "a" * 40,
+                "fix/runtime",
+                str(tmp_path / "worktree"),
+                "evidence",
+                "BLOCKED",
+                "BLOCKED_REPRODUCTION_REQUIRED",
+                json.dumps({"opportunityKey": "a/b#1"}),
+                now,
+                now,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,reason,request_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "request-2",
+                "a/b#1",
+                "thread-2",
+                "b" * 40,
+                "fix/unrelated",
+                str(tmp_path / "other-worktree"),
+                "other-evidence",
+                "BLOCKED",
+                "BLOCKED_REPRODUCTION_REQUIRED",
+                json.dumps({"opportunityKey": "a/b#1"}),
+                now,
+                now,
+            ),
+        )
+
+    gates = store.active_task_quarantines("a/b#1")
+    store.clear_task_quarantines_exact(
+        "a/b#1",
+        gates=gates,
+        evidence={"revalidated": True, "resultDigest": "result-1"},
+    )
+
+    assert store.active_task_quarantines("a/b#1") == []
+    with store.connect() as connection:
+        requests = connection.execute(
+            """SELECT request_id,commit_sha,status,reason,updated_at
+               FROM publication_requests WHERE opportunity_key='a/b#1'
+               ORDER BY request_id"""
+        ).fetchall()
+        events = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1' AND event_type='TASK_QUARANTINE_CLEARED'
+               ORDER BY id"""
+        ).fetchall()
+    assert [tuple(row) for row in requests] == [
+        (
+            "request-1",
+            "a" * 40,
+            "BLOCKED",
+            "BLOCKED_REPRODUCTION_REQUIRED",
+            now,
+        ),
+        (
+            "request-2",
+            "b" * 40,
+            "BLOCKED",
+            "BLOCKED_REPRODUCTION_REQUIRED",
+            now,
+        ),
+    ]
+    assert [json.loads(row["payload_json"])["dedupeKey"] for row in events] == [
+        "invalid-1",
+        "rebind-1",
+    ]
+    assert all(json.loads(row["payload_json"])["revalidated"] is True for row in events)
+
+
+@pytest.mark.parametrize("change", ["empty", "duplicate", "missing", "extra"])
+def test_exact_task_quarantine_batch_clear_rejects_inexact_gate_sets(tmp_path, change):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    _record_batch_task_quarantines(store, now=now)
+    gates = store.active_task_quarantines("a/b#1")
+    if change == "empty":
+        changed = []
+    elif change == "duplicate":
+        changed = [gates[0], gates[0]]
+    elif change == "missing":
+        changed = gates[:1]
+    else:
+        changed = gates + [
+            {
+                "reason": "EXTRA_GATE",
+                "dedupeKey": "extra-1",
+                "payloadDigest": "f" * 64,
+            }
+        ]
+
+    with pytest.raises(LedgerError, match="gate set"):
+        store.clear_task_quarantines_exact(
+            "a/b#1",
+            gates=changed,
+            evidence={"revalidated": True},
+        )
+    assert len(store.active_task_quarantines("a/b#1")) == 2
+
+
+def test_exact_task_quarantine_batch_clear_rejects_payload_drift(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    _record_batch_task_quarantines(store, now=now)
+    gates = store.active_task_quarantines("a/b#1")
+    with store.transaction() as connection:
+        connection.execute(
+            """UPDATE task_quarantines SET payload_json=?
+               WHERE opportunity_key='a/b#1' AND dedupe_key='invalid-1'""",
+            (json.dumps({"error": "changed"}),),
+        )
+
+    with pytest.raises(LedgerError, match="active gate set changed"):
+        store.clear_task_quarantines_exact(
+            "a/b#1",
+            gates=gates,
+            evidence={"revalidated": True},
+        )
+    assert len(store.active_task_quarantines("a/b#1")) == 2
+
+
+def test_exact_task_quarantine_batch_clear_rolls_back_every_write(tmp_path, monkeypatch):
+    import oss_pr_radar.ledger as ledger_module
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    _record_batch_task_quarantines(store, now=now)
+    gates = store.active_task_quarantines("a/b#1")
+    original_clear = ledger_module.clear_quarantine_exact
+    attempts = 0
+
+    def fail_second_clear(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            return 0
+        return original_clear(*args, **kwargs)
+
+    monkeypatch.setattr(ledger_module, "clear_quarantine_exact", fail_second_clear)
+    with pytest.raises(LedgerError, match="batch was not cleared"):
+        store.clear_task_quarantines_exact(
+            "a/b#1",
+            gates=gates,
+            evidence={"revalidated": True},
+        )
+
+    assert len(store.active_task_quarantines("a/b#1")) == 2
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key='a/b#1'
+                     AND event_type='TASK_QUARANTINE_CLEARED'"""
+            ).fetchone()[0]
+            == 0
+        )

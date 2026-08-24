@@ -3662,6 +3662,215 @@ def test_shared_context_quarantine_concurrent_observation_has_one_artifact(monke
         )
 
 
+def _published_validation_auth_quarantine_fixture(tmp_path):
+    store, worktree, local_path, shared_path = _context_digest_fixture(
+        tmp_path / "fixture", stage="PR_OPEN"
+    )
+    context = json.loads(local_path.read_text(encoding="utf-8"))
+    context["stage"] = "PR_OPEN"
+    context["publicationReceipt"] = {
+        "status": "PR_OPEN",
+        "prUrl": "https://github.com/a/b/pull/2",
+        "commitSha": run_git(worktree, "rev-parse", "HEAD"),
+    }
+    context["prFollowup"] = {
+        "checkedAt": "2026-08-24T07:31:43Z",
+        "wakeDigest": "a" * 64,
+    }
+    context["contextDigest"] = MODULE._task_context_digest(context, None)
+    _rewrite_context_mirrors(local_path, shared_path, context)
+    historical = dict(context)
+    historical["prFollowup"] = dict(context["prFollowup"]) | {"checkedAt": "2026-08-24T05:56:50Z"}
+    raws = [
+        (json.dumps(historical, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(),
+        shared_path.read_bytes(),
+    ]
+    for raw in raws:
+        MODULE._quarantine_shared_context(
+            store,
+            shared_path,
+            RuntimeError("published task result authentication is invalid"),
+            raw=raw,
+            source_stat=shared_path.stat(),
+        )
+    return store, worktree, local_path, shared_path, context
+
+
+def test_published_validation_auth_repair_clears_complete_exact_quarantine_batch(
+    monkeypatch, tmp_path
+):
+    store, _worktree, _local_path, shared_path, context = (
+        _published_validation_auth_quarantine_fixture(tmp_path)
+    )
+    monkeypatch.setattr(
+        MODULE, "_authenticated_published_validation_result", lambda _context: "d" * 64
+    )
+
+    cleared = MODULE._clear_exact_published_validation_auth_quarantines(
+        store, path=shared_path, context=context
+    )
+
+    assert cleared == 2
+    assert store.active_task_quarantines("a/b#1") == []
+
+
+def test_context_restore_failure_preserves_published_validation_auth_quarantines(
+    monkeypatch, tmp_path
+):
+    store, _worktree, _local_path, _shared_path, _context = (
+        _published_validation_auth_quarantine_fixture(tmp_path)
+    )
+    before = store.active_task_quarantines("a/b#1")
+    original_identities = {
+        (gate["reason"], gate["dedupeKey"], gate["payloadDigest"]) for gate in before
+    }
+    monkeypatch.setattr(
+        MODULE, "_authenticated_published_validation_result", lambda _context: "d" * 64
+    )
+
+    def fail_restore(*_args, **_kwargs):
+        raise RuntimeError("injected task context binding conflict")
+
+    monkeypatch.setattr(store, "restore_task_context", fail_restore)
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+    after = store.active_task_quarantines("a/b#1")
+    active_identities = {
+        (gate["reason"], gate["dedupeKey"], gate["payloadDigest"]) for gate in after
+    }
+
+    assert recovered["restored"] == []
+    assert original_identities <= active_identities
+    assert len(original_identities) == 2
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='TASK_QUARANTINE_CLEARED'"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.parametrize("tamper", ["extra-gate", "artifact", "historical-context"])
+def test_published_validation_auth_repair_keeps_whole_batch_on_any_mismatch(
+    monkeypatch, tmp_path, tamper
+):
+    store, _worktree, _local_path, shared_path, context = (
+        _published_validation_auth_quarantine_fixture(tmp_path)
+    )
+    monkeypatch.setattr(
+        MODULE, "_authenticated_published_validation_result", lambda _context: "d" * 64
+    )
+    gates = store.active_task_quarantines("a/b#1")
+    if tamper == "extra-gate":
+        store.record_shared_context_quarantine(
+            key="a/b#1",
+            reason="OTHER_ACTIVE_GATE",
+            dedupe_key="other-active-gate",
+            payload={"unexpected": True},
+            created_at=iso_z(datetime.now(UTC)),
+        )
+    else:
+        artifact_path = Path(gates[0]["payload"]["artifactPath"])
+        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+        if tamper == "artifact":
+            artifact["error"] = "tampered"
+        else:
+            historical = json.loads(base64.b64decode(artifact["originalBytesBase64"]))
+            historical["title"] = "tampered"
+            historical_raw = json.dumps(historical, sort_keys=True).encode()
+            artifact["originalBytesBase64"] = base64.b64encode(historical_raw).decode()
+        artifact_path.write_text(json.dumps(artifact, sort_keys=True), encoding="utf-8")
+        artifact_path.chmod(0o600)
+
+    assert (
+        MODULE._clear_exact_published_validation_auth_quarantines(
+            store, path=shared_path, context=context
+        )
+        == 0
+    )
+    assert len(store.active_task_quarantines("a/b#1")) >= 2
+
+
+def test_published_validation_auth_repair_is_batch_safe_under_concurrency(monkeypatch, tmp_path):
+    store, _worktree, _local_path, shared_path, context = (
+        _published_validation_auth_quarantine_fixture(tmp_path)
+    )
+    monkeypatch.setattr(
+        MODULE, "_authenticated_published_validation_result", lambda _context: "d" * 64
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        cleared = list(
+            pool.map(
+                lambda _index: MODULE._clear_exact_published_validation_auth_quarantines(
+                    store, path=shared_path, context=context
+                ),
+                range(2),
+            )
+        )
+
+    assert sorted(cleared) == [0, 2]
+    assert store.active_task_quarantines("a/b#1") == []
+
+
+def test_authenticated_published_validation_result_requires_repaired_digest(monkeypatch, tmp_path):
+    _store, worktree, local_path, shared_path = _context_digest_fixture(
+        tmp_path / "fixture", stage="PR_OPEN"
+    )
+    context = json.loads(local_path.read_text(encoding="utf-8"))
+    context["stage"] = "PR_OPEN"
+    context["publicationReceipt"] = {
+        "status": "PR_OPEN",
+        "prUrl": "https://github.com/a/b/pull/2",
+        "commitSha": run_git(worktree, "rev-parse", "HEAD"),
+    }
+    context["prFollowup"] = {
+        "checkedAt": "2026-08-24T07:31:43Z",
+        "wakeDigest": "a" * 64,
+    }
+    context["contextDigest"] = MODULE._task_context_digest(context, None)
+    _rewrite_context_mirrors(local_path, shared_path, context)
+    result = {
+        "schemaVersion": MODULE.TASK_RESULT_SCHEMA,
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree),
+        "contextDigest": context["contextDigest"],
+        "stage": "FIX_READY",
+        "followupDigest": "a" * 64,
+        "taskId": "intent-1",
+        "selectedBaseSha": run_git(worktree, "rev-parse", "HEAD"),
+        "headSha": run_git(worktree, "rev-parse", "HEAD"),
+        "commitSha": run_git(worktree, "rev-parse", "HEAD"),
+        "codePaths": ["README.md"],
+        "quality": {"evidence": True},
+    }
+    unsigned = dict(result)
+    unsigned.pop("contextDigest")
+    digest = sha256_json(unsigned)
+    result["resultDigest"] = digest
+    result["reproductionReceipt"] = {"resultDigest": digest}
+    result_path = Path(context["resultPath"])
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    result_path.chmod(0o600)
+
+    assert MODULE._authenticated_published_validation_result(context) is None
+
+    def verify_repaired_receipt(*_args, **kwargs):
+        assert kwargs["enforce_freshness"] is False
+        return True
+
+    monkeypatch.setattr(MODULE, "verify_probe_receipt", verify_repaired_receipt)
+    assert MODULE._authenticated_published_validation_result(context) == digest
+
+    result["resultDigest"] = "f" * 64
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    result_path.chmod(0o600)
+    assert MODULE._authenticated_published_validation_result(context) is None
+
+
 def test_shared_context_unknown_filename_fails_without_quarantine_write(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)

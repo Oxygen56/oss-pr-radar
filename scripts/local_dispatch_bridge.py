@@ -2421,6 +2421,11 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
             restored_context = store.restore_task_context(
                 context, source_updated_at=source_updated_at
             )
+            _clear_exact_published_validation_auth_quarantines(
+                store,
+                path=path,
+                context=context,
+            )
             receipt_restored = False
             if result_receipt and not store.task_result_digest_seen(
                 result_receipt["key"], result_receipt["digest"]
@@ -4310,6 +4315,79 @@ def _shared_context_identity_from_filename(path: Path, raw: bytes) -> tuple[str,
     return f"{repo}#{issue_number}", issue_url
 
 
+def _read_context_quarantine_artifact_at(
+    parent_fd: int,
+    artifact_path: Path,
+) -> tuple[dict[str, Any], bytes]:
+    """Read one private quarantine artifact without following or racing its path."""
+
+    if artifact_path.parent != shared_context_quarantine_root():
+        raise RuntimeError("context quarantine artifact path is outside the private root")
+    try:
+        path_stat = os.stat(artifact_path.name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError as exc:
+        raise RuntimeError("shared context quarantine artifact is missing") from exc
+    if (
+        stat.S_ISLNK(path_stat.st_mode)
+        or not stat.S_ISREG(path_stat.st_mode)
+        or path_stat.st_uid != os.getuid()
+        or stat.S_IMODE(path_stat.st_mode) != 0o600
+    ):
+        raise RuntimeError("shared context quarantine artifact is not a private regular file")
+    artifact_fd = -1
+    try:
+        artifact_fd = os.open(
+            artifact_path.name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_fd,
+        )
+        first = os.fstat(artifact_fd)
+        if (
+            not stat.S_ISREG(first.st_mode)
+            or first.st_uid != os.getuid()
+            or stat.S_IMODE(first.st_mode) != 0o600
+            or (first.st_dev, first.st_ino) != (path_stat.st_dev, path_stat.st_ino)
+        ):
+            raise RuntimeError("shared context quarantine artifact is unsafe")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(artifact_fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        second = os.fstat(artifact_fd)
+        stable_fields = (
+            "st_dev",
+            "st_ino",
+            "st_mode",
+            "st_uid",
+            "st_size",
+            "st_mtime_ns",
+            "st_ctime_ns",
+        )
+        if tuple(getattr(first, name) for name in stable_fields) != tuple(
+            getattr(second, name) for name in stable_fields
+        ):
+            raise RuntimeError("shared context quarantine artifact changed while reading")
+        final_path_stat = os.stat(
+            artifact_path.name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if (final_path_stat.st_dev, final_path_stat.st_ino) != (first.st_dev, first.st_ino):
+            raise RuntimeError("shared context quarantine artifact path changed while reading")
+        raw = b"".join(chunks)
+        artifact = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as artifact_exc:
+        raise RuntimeError("shared context quarantine artifact is invalid") from artifact_exc
+    finally:
+        if artifact_fd >= 0:
+            os.close(artifact_fd)
+    if not isinstance(artifact, dict):
+        raise RuntimeError("shared context quarantine artifact is invalid")
+    return artifact, raw
+
+
 def _ensure_context_quarantine_artifact(
     artifact_path: Path,
     *,
@@ -4361,58 +4439,10 @@ def _ensure_context_quarantine_artifact(
         except FileNotFoundError:
             artifact_stat = None
         if artifact_stat is not None:
-            if (
-                stat.S_ISLNK(artifact_stat.st_mode)
-                or not stat.S_ISREG(artifact_stat.st_mode)
-                or artifact_stat.st_uid != os.getuid()
-                or stat.S_IMODE(artifact_stat.st_mode) != 0o600
-            ):
-                raise RuntimeError("shared context quarantine artifact is not a regular file")
-            artifact_fd = -1
-            try:
-                artifact_fd = os.open(
-                    artifact_path.name,
-                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-                    dir_fd=parent_fd,
-                )
-                first = os.fstat(artifact_fd)
-                if (
-                    not stat.S_ISREG(first.st_mode)
-                    or first.st_uid != os.getuid()
-                    or stat.S_IMODE(first.st_mode) != 0o600
-                ):
-                    raise RuntimeError("shared context quarantine artifact is unsafe")
-                chunks: list[bytes] = []
-                while True:
-                    chunk = os.read(artifact_fd, 1024 * 1024)
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-                second = os.fstat(artifact_fd)
-                if (
-                    first.st_dev,
-                    first.st_ino,
-                    first.st_size,
-                    first.st_mtime_ns,
-                    first.st_ctime_ns,
-                ) != (
-                    second.st_dev,
-                    second.st_ino,
-                    second.st_size,
-                    second.st_mtime_ns,
-                    second.st_ctime_ns,
-                ):
-                    raise RuntimeError("shared context quarantine artifact changed while reading")
-                artifact = json.loads(b"".join(chunks).decode("utf-8"))
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as artifact_exc:
-                raise RuntimeError(
-                    "shared context quarantine artifact is invalid"
-                ) from artifact_exc
-            finally:
-                if artifact_fd >= 0:
-                    os.close(artifact_fd)
-            if not isinstance(artifact, dict):
-                raise RuntimeError("shared context quarantine artifact is invalid")
+            artifact, _artifact_raw = _read_context_quarantine_artifact_at(
+                parent_fd,
+                artifact_path,
+            )
             if any(
                 artifact.get(name) != expected
                 for name, expected in {
@@ -4527,6 +4557,257 @@ def _quarantine_shared_context(
         "originalBytesSha256": source_digest,
         "new": bool(persisted.get("created")),
     }
+
+
+def _context_without_pr_followup_check_time(value: dict[str, Any]) -> str | None:
+    """Canonicalize a published context while ignoring only its observation time."""
+
+    try:
+        normalized = json.loads(canonical_json(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    followup = normalized.get("prFollowup")
+    if not isinstance(followup, dict):
+        return None
+    checked_at = followup.pop("checkedAt", None)
+    if not isinstance(checked_at, str) or not checked_at:
+        return None
+    return canonical_json(normalized)
+
+
+def _authenticated_published_validation_result(context: dict[str, Any]) -> str | None:
+    """Return the repaired result digest for one exact published validation handoff."""
+
+    if str(context.get("stage") or "") not in PUBLISHED_TASK_STAGES:
+        return None
+    publication = context.get("publicationReceipt")
+    followup = context.get("prFollowup")
+    if (
+        not isinstance(publication, dict)
+        or not publication.get("prUrl")
+        or not isinstance(followup, dict)
+        or not followup.get("wakeDigest")
+    ):
+        return None
+    worktree = _lexical_absolute(Path(str(context.get("worktreePath") or "")))
+    result_path = _lexical_absolute(Path(str(context.get("resultPath") or "")))
+    candidate = {"worktreePath": str(worktree)}
+    if result_path != _task_result_path(candidate):
+        return None
+    try:
+        result_data = _read_task_result_bytes_if_present(candidate)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if result_data is None:
+        return None
+    _path, raw = result_data
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    expected = {
+        "schemaVersion": TASK_RESULT_SCHEMA,
+        "key": context.get("key"),
+        "issueUrl": context.get("issueUrl"),
+        "threadId": context.get("threadId"),
+        "worktreePath": str(worktree),
+        "contextDigest": context.get("contextDigest"),
+        "stage": "FIX_READY",
+        "followupDigest": followup.get("wakeDigest"),
+    }
+    if any(value.get(name) != expected_value for name, expected_value in expected.items()):
+        return None
+    receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+    if not isinstance(receipt, dict) or not receipt.get("resultDigest"):
+        return None
+    try:
+        result_digest = _task_result_digest(value, raw)
+    except RuntimeError:
+        return None
+    if value.get("resultDigest") != result_digest or receipt.get("resultDigest") != result_digest:
+        return None
+    issue_match = ISSUE_URL.fullmatch(str(context.get("issueUrl") or ""))
+    code_paths = value.get("codePaths")
+    if issue_match is None or not isinstance(code_paths, list) or not code_paths:
+        return None
+    if not verify_probe_receipt(
+        receipt,
+        repo=issue_match.group(1),
+        base_sha=str(value.get("selectedBaseSha") or ""),
+        code_paths=[str(item) for item in code_paths],
+        required_level=REPRODUCED_VALIDATED,
+        issue_url=str(context["issueUrl"]),
+        task_id=str(value.get("taskId") or ""),
+        thread_id=str(context.get("threadId") or ""),
+        head_sha=str(value.get("headSha") or ""),
+        commit_sha=str(value.get("commitSha") or ""),
+        result_digest=result_digest,
+        enforce_freshness=False,
+    ):
+        return None
+    return result_digest
+
+
+def _clear_exact_published_validation_auth_quarantines(
+    store: RadarLedger,
+    *,
+    path: Path,
+    context: dict[str, Any],
+) -> int:
+    """Clear only a complete batch caused by the repaired result-auth bug."""
+
+    key = str(context.get("key") or "")
+    issue_url = str(context.get("issueUrl") or "")
+    if not key or not issue_url:
+        return 0
+    with opportunity_action_guard(ledger_action_guard_root(store.path), key):
+        result_digest = _authenticated_published_validation_result(context)
+        if result_digest is None:
+            return 0
+        try:
+            current_raw, _current_stat, current_path = _read_shared_context_file(path)
+            current_value = json.loads(current_raw)
+        except (OSError, RuntimeError, UnicodeDecodeError, json.JSONDecodeError):
+            return 0
+        if current_path != path or current_value != context:
+            return 0
+        canonical_current = _context_without_pr_followup_check_time(context)
+        if canonical_current is None:
+            return 0
+        gates = store.active_task_quarantines(key)
+        if not gates:
+            return 0
+        expected_reason = "SHARED_CONTEXT_INVALID"
+        expected_error = "published task result authentication is invalid"
+        expected_path = str(path)
+        expected_payload_keys = {
+            "issueUrl",
+            "originalPath",
+            "originalBytesSha256",
+            "artifactPath",
+            "error",
+        }
+        expected_artifact_keys = {
+            "schemaVersion",
+            "key",
+            "issueUrl",
+            "reason",
+            "error",
+            "originalPath",
+            "originalMode",
+            "originalBytesSha256",
+            "originalBytesBase64",
+            "observedAt",
+        }
+        verified_gates: list[dict[str, str]] = []
+        try:
+            quarantine_fd, _quarantine_path, handles = _open_shared_context_quarantine_directory(
+                create=False
+            )
+        except (OSError, RuntimeError):
+            return 0
+        try:
+            for gate in gates:
+                payload = gate.get("payload")
+                if (
+                    gate.get("reason") != expected_reason
+                    or not isinstance(payload, dict)
+                    or set(payload) != expected_payload_keys
+                    or payload.get("issueUrl") != issue_url
+                    or payload.get("originalPath") != expected_path
+                    or payload.get("error") != expected_error
+                ):
+                    return 0
+                original_digest = str(payload.get("originalBytesSha256") or "")
+                if not re.fullmatch(r"[0-9a-f]{64}", original_digest):
+                    return 0
+                expected_dedupe = hashlib.sha256(
+                    f"shared-context|{path}|{original_digest}|{expected_reason}".encode("utf-8")
+                ).hexdigest()
+                if gate.get("dedupeKey") != expected_dedupe:
+                    return 0
+                if gate.get("payloadDigest") != sha256_json(payload):
+                    return 0
+                artifact_identity = sha256_json(
+                    {
+                        "key": key,
+                        "reason": expected_reason,
+                        "originalPath": expected_path,
+                        "originalBytesSha256": original_digest,
+                    }
+                )
+                expected_artifact_path = (
+                    shared_context_quarantine_root() / f"q-{artifact_identity}.json"
+                )
+                if payload.get("artifactPath") != str(expected_artifact_path):
+                    return 0
+                artifact, _artifact_raw = _read_context_quarantine_artifact_at(
+                    quarantine_fd,
+                    expected_artifact_path,
+                )
+                if set(artifact) != expected_artifact_keys:
+                    return 0
+                expected_artifact = {
+                    "schemaVersion": "shared-context-quarantine-v1",
+                    "key": key,
+                    "issueUrl": issue_url,
+                    "reason": expected_reason,
+                    "error": expected_error,
+                    "originalPath": expected_path,
+                    "originalMode": 0o600,
+                    "originalBytesSha256": original_digest,
+                    "observedAt": gate.get("createdAt"),
+                }
+                if any(
+                    artifact.get(name) != expected_value
+                    for name, expected_value in expected_artifact.items()
+                ):
+                    return 0
+                try:
+                    historical_raw = base64.b64decode(
+                        str(artifact.get("originalBytesBase64") or ""),
+                        validate=True,
+                    )
+                    historical_context = json.loads(historical_raw)
+                except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+                    return 0
+                if (
+                    hashlib.sha256(historical_raw).hexdigest() != original_digest
+                    or not isinstance(historical_context, dict)
+                    or _shared_context_identity_from_filename(path, historical_raw)
+                    != (key, issue_url)
+                    or _context_without_pr_followup_check_time(historical_context)
+                    != canonical_current
+                ):
+                    return 0
+                verified_gates.append(
+                    {
+                        "reason": expected_reason,
+                        "dedupeKey": expected_dedupe,
+                        "payloadDigest": str(gate["payloadDigest"]),
+                    }
+                )
+        except (OSError, RuntimeError, ValueError, TypeError):
+            return 0
+        finally:
+            for descriptor in reversed(handles):
+                os.close(descriptor)
+        try:
+            store.clear_task_quarantines_exact(
+                key,
+                gates=verified_gates,
+                evidence={
+                    "revalidated": True,
+                    "repair": "PUBLISHED_VALIDATION_RESULT_AUTH_REPAIRED",
+                    "resultDigest": result_digest,
+                    "contextDigest": str(context.get("contextDigest") or ""),
+                },
+            )
+        except (sqlite3.Error, RuntimeError, ValueError, TypeError):
+            return 0
+        return len(verified_gates)
 
 
 def _exclude_private_task_dir(worktree: Path) -> None:
