@@ -4303,13 +4303,11 @@ class RadarLedger:
         if publication_row is not None:
             pr_url = publication_row["pr_url"]
             if pr_url:
-                receipt_status = (
-                    row["stage"] if row["stage"] in {"MERGED", "CLOSED"} else "PR_OPEN"
-                )
+                receipt_status = row["stage"] if row["stage"] in {"MERGED", "CLOSED"} else "PR_OPEN"
             else:
-                receipt_status = publication_row["permit_status"] or publication_row[
-                    "request_status"
-                ]
+                receipt_status = (
+                    publication_row["permit_status"] or publication_row["request_status"]
+                )
             publication_receipt = {
                 "status": receipt_status,
                 "prUrl": pr_url,

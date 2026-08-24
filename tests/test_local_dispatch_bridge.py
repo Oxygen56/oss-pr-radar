@@ -7168,9 +7168,7 @@ def _historical_managed_task_turn_fixture(monkeypatch, tmp_path):
     return candidate, context, thread_db, legacy_root, worktree, rollout
 
 
-def test_task_turn_thread_allows_exact_bound_historical_managed_project_root(
-    monkeypatch, tmp_path
-):
+def test_task_turn_thread_allows_exact_bound_historical_managed_project_root(monkeypatch, tmp_path):
     candidate, context, _thread_db, legacy_root, _worktree, rollout = (
         _historical_managed_task_turn_fixture(monkeypatch, tmp_path)
     )
@@ -7189,9 +7187,7 @@ def test_task_turn_thread_allows_exact_bound_historical_managed_project_root(
     assert verified_paths == [MODULE.shared_context_path(candidate["issueUrl"])]
 
 
-def test_task_turn_thread_rejects_historical_root_aliases_and_nearby_paths(
-    monkeypatch, tmp_path
-):
+def test_task_turn_thread_rejects_historical_root_aliases_and_nearby_paths(monkeypatch, tmp_path):
     candidate, context, thread_db, legacy_root, _worktree, _rollout = (
         _historical_managed_task_turn_fixture(monkeypatch, tmp_path)
     )
@@ -7210,9 +7206,7 @@ def test_task_turn_thread_rejects_historical_root_aliases_and_nearby_paths(
 
     for invalid_cwd in (sibling, descendant, alias):
         with sqlite3.connect(thread_db) as connection:
-            connection.execute(
-                "UPDATE threads SET cwd=? WHERE id='thread-1'", (str(invalid_cwd),)
-            )
+            connection.execute("UPDATE threads SET cwd=? WHERE id='thread-1'", (str(invalid_cwd),))
         with pytest.raises(RuntimeError, match="project root mismatch"):
             MODULE._validated_task_turn_thread(candidate)
 
@@ -10105,7 +10099,9 @@ def _bind_published_pr_authority_fixture(
     return managed, degraded_context, pr_url
 
 
-@pytest.mark.parametrize(("managed_state", "expected_stage"), [("OPEN", "PR_OPEN"), ("MERGED", "MERGED")])
+@pytest.mark.parametrize(
+    ("managed_state", "expected_stage"), [("OPEN", "PR_OPEN"), ("MERGED", "MERGED")]
+)
 def test_ingest_keeps_reservation_bound_published_pr_authoritative(
     tmp_path, managed_state, expected_stage
 ):
@@ -10134,12 +10130,8 @@ def test_ingest_keeps_reservation_bound_published_pr_authoritative(
     assert result["ingested"] == []
     assert result["publicationRequests"] == []
     assert result["validationDeferred"] == []
-    assert result["ignored"] == [
-        {"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}
-    ]
-    restored = store.task_context(
-        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
-    )
+    assert result["ignored"] == [{"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}]
+    restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
     assert restored["stage"] == expected_stage
     local_context = json.loads(
         (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
@@ -10195,9 +10187,9 @@ def test_ingest_allows_fix_ready_again_after_authoritative_pr_closes(tmp_path):
         }
     ]
     assert (
-        store.task_context(
-            issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
-        )["stage"]
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
         == "VALIDATION_PENDING"
     )
 
@@ -10272,9 +10264,7 @@ def test_merged_pr_authority_overrides_stale_published_or_followup_result(
     result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
 
     assert result["ok"] is True, result["errors"]
-    assert result["ignored"] == [
-        {"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}
-    ]
+    assert result["ignored"] == [{"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}]
     context = json.loads(
         (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
     )

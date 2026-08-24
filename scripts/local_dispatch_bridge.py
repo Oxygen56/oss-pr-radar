@@ -12170,14 +12170,10 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     thread_id=str(candidate["threadId"]),
                     cwd=result_access.worktree,
                 )
-                refreshed_context = json.loads(
-                    refreshed_context_path.read_text(encoding="utf-8")
-                )
+                refreshed_context = json.loads(refreshed_context_path.read_text(encoding="utf-8"))
                 refreshed_receipt = refreshed_context.get("publicationReceipt")
                 expected_receipt_status = (
-                    restored_stage
-                    if restored_stage in {"MERGED", "CLOSED"}
-                    else "PR_OPEN"
+                    restored_stage if restored_stage in {"MERGED", "CLOSED"} else "PR_OPEN"
                 )
                 if (
                     refreshed_context.get("stage") != restored_stage
