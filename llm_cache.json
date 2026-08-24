@@ -3891,6 +3891,37 @@
     ],
     "why": "The issue reports a user-visible bug with a clear repro, but the root cause is ambiguous: the `[1m]` suffix may be a Claude Code client-side convention that should be stripped before sending to the provider, or the provider may reject it. Existing PR #35217 has semantic overlap but is a draft with a large diff and no explicit link to this issue, requiring maintainer review to avoid duplicate work."
   },
+  "19b1592572e718af98b1dfffe8f065419044d851da98b6a4a73fc5511df35e72": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comment by virajchoudhary reports recovery on zen/v1 but Go route still failing; issue remains open for Go route"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Restore Ox Alpha tool adapter on zen/v1 and zen/go/v1 routes",
+      "Fix routing/migration for x-preview-f-free / ox-alpha-free model"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach",
+      "Risk of affecting other models if routing changes are broad"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl command with tools array against both routes and assert HTTP 200 with valid tool_calls",
+      "Add regression test for tool calls on x-preview-f-free and ox-alpha-free models"
+    ],
+    "unknowns": [
+      "Exact root cause (routing vs adapter) not yet identified",
+      "Whether maintainer has already started a fix or has design preferences"
+    ],
+    "why": "Issue provides a minimal curl repro, consistent failure, control models, and recent comments confirm the tools-specific failure on the Ox Alpha free model. Root cause is likely a routing/adapter issue for that model's tool path, with clear validation path via the provided curl command."
+  },
   "1a529736c5274daa720ebf934fbade8a20e08166bed3ceb0958eae778b531109": {
     "confidence": 0.8,
     "contradictions": [],
@@ -5480,6 +5511,36 @@
       "Maintainer preference on scope (images only vs all media types) and whether to allow unfamiliar image MIME types."
     ],
     "why": "Issue clearly identifies a security-relevant bug in shared download path with verified repro and suggested fix direction. However, existing PR #7334 is closed pending assignment and repository requires assignment, so maintainer action is needed before new work."
+  },
+  "22360569ebc8c7676b4ddd54ef1daa8cb765ab1c1ff3001e5c71d05015b0cf36": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #34458 is merged but issue remains open; no explicit confirmation that it fixes this issue."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "streaming buffer flush logic",
+      "tool-call parser handling in deepseek-v4"
+    ],
+    "risks": [
+      "The fix may interact with existing parser logic and require careful handling of chunk boundaries.",
+      "Potential performance impact if flushing is done too aggressively."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided curl command and model; assert that all content chunks are emitted before tool_calls delta.",
+      "Add a regression test that streams a response with both content and tool_calls and verifies the full content is received."
+    ],
+    "unknowns": [
+      "Whether the merged PR #34458 fully resolves the issue; maintainer confirmation is missing."
+    ],
+    "why": "The issue provides a clear reproduction with expected vs actual streaming chunks, identifies the specific transition from content to tool_calls, and suggests a concrete fix (flush pending text before tool_calls). The related PR #34458 (merged) addresses chunk-invariant parsing for DeepSeek-V4, but the issue remains open and the root cause coverage is not confirmed, so the contribution is still actionable."
   },
   "22bc58af1de3779e4e8f58253e1fa0ba42f0419b36bb3fe52e67ba066ea5beae": {
     "confidence": 0.7,
@@ -23964,6 +24025,38 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a flaky CI failure in torch.compile CUDA graph capture, but root cause is unknown and reproduction is incomplete. The only comment indicates the exact config passes in isolation on H100, and the failure may be due to cross-test GPU state on H200. No maintainer investigation or confirmation of a distinct root cause. The issue is a CI failure report, not a concrete algorithm bug with a clear fix path."
   },
+  "84b554342f82cdb4de5e92af863f0510abef847fe6c5c031d71a5ca6790e4869": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "PrefillRouter::generate context linking",
+      "SGLang cancellation monitor early request ID determination",
+      "abort_request dispatch after registration",
+      "KV-transfer lifecycle draining"
+    ],
+    "risks": [
+      "Potential race conditions in request registration and cancellation",
+      "Changes may affect PD protocol cleanup and KV-transfer resource management"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with long prompt and client disconnect before first token; verify short request not delayed",
+      "Add unit test for cancellation propagation before first output",
+      "Add integration test for SGLang abort_request after registration race"
+    ],
+    "unknowns": [
+      "Exact maintainer design preference for cancellation propagation",
+      "Whether existing PR #13703 will be merged or superseded"
+    ],
+    "why": "Issue provides detailed reproduction steps, expected vs actual behavior, and code-path analysis identifying two lifecycle gaps (context cancellation not linked, SGLang request ID learned too late). Concrete validation path exists via reproduction and targeted tests. Existing PR #13703 is incomplete (missing root cause coverage, CI failures), leaving room for a more complete fix."
+  },
   "84ba1cf6420b2d84e14e629c75008a63e88f08322f6542e639e41900e0cac126": {
     "confidence": 0.7,
     "contradictions": [],
@@ -27019,6 +27112,42 @@
       "Whether there are other related issues or PRs not captured due to timeout"
     ],
     "why": "The issue provides a detailed root cause and reproduction for a bug in picture parsing where empty chunks are marked as success when OCR text is short and no image2text model is configured. However, the deterministic gate requires HUMAN_REVIEW, and the related issue audit failed due to timeout, leaving potential duplicate or related work unverified. The candidate is actionable but requires maintainer confirmation and further investigation."
+  },
+  "981902023b0247696449fd08b33273a3033fd73fa0fc423aa1fb85fffeea38e0": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix CUDA graph capture for hybrid GDN models on SM89",
+      "Implement tc_piecewise decode support for Qwen3.5/3.8 hybrid models",
+      "Optimize native MTP memory allocation to avoid exhausting Mamba/KV cache",
+      "Resolve dtype mismatch in gdn_backend.py:559 for AWQ with BF16 Mamba cache"
+    ],
+    "risks": [
+      "Potential overlap with issue #35851 may require coordination",
+      "Fixing CUDA graph capture may be complex and require hardware-specific changes",
+      "Performance improvements may not reach llama.cpp levels due to architectural differences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the CUDA graph hang using the provided docker command with --cuda-graph-backend-decode breakable",
+      "Run a reference comparison against llama.cpp on the same model to quantify performance gap",
+      "Add a regression test for dtype mismatch in gdn_backend.py:559 with AWQ and BF16 Mamba cache",
+      "Test native MTP with reduced memory footprint to ensure at least one request slot is available"
+    ],
+    "unknowns": [
+      "Exact root cause of CUDA graph hang not yet identified",
+      "Whether maintainers have already started work on related issues"
+    ],
+    "why": "The issue provides a concrete, reproducible bug with multiple failure modes, code anchors, and a clear performance gap. It identifies specific algorithmic mechanisms (AWQ quantization, hybrid GDN architecture, CUDA graph capture) and includes a validation path via reference comparison and targeted tests."
   },
   "983e755434f181ab15a1f26c254a6eb2847566bf7dfb3e578cf6fda8935516f0": {
     "confidence": 0.85,
