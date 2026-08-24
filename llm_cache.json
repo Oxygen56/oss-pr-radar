@@ -26153,6 +26153,37 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports a concrete multimodal resume failure with a clear traceback and code anchors, but the root cause is not confirmed by maintainers and the fix scope is unclear. The candidate is a bug report, not a code contribution, and the deterministic gate says ALLOW_PRIVATE_WORK, not a clean public PR. The track requires an algorithm mechanism, but the evidence only shows a metadata lifecycle bug in the LLM API, not a training objective, numerical method, or evaluation methodology. The expected changes are speculative and no maintainer confirmation exists."
   },
+  "92f2a8ef8fd06da4f7ec58d6febdfa2a7c69ae2d8bc0ecdfbec94a38bcf03a3f": {
+    "confidence": 0.85,
+    "contradictions": [
+      "No contradictions found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "PrefillRouter::generate cancellation propagation",
+      "SGLang cancellation monitor request ID handling",
+      "Chunked prefill cancellation boundary logic"
+    ],
+    "risks": [
+      "Potential interaction with existing PR #13703 which may already address part of the issue; need to compare and avoid duplication.",
+      "Changes to cancellation lifecycle may affect decode-phase cancellation or KV-transfer draining."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided steps: cold streaming request with long prompt, disconnect before first token, then send short request and measure latency.",
+      "Add a regression test that verifies abort_request is called after request registration when cancellation arrives before first output."
+    ],
+    "unknowns": [
+      "Whether the existing PR #13703 fully resolves the issue or if additional work is needed; maintainer preference on implementation approach is unknown."
+    ],
+    "why": "The issue provides a detailed root cause analysis with two specific lifecycle gaps, a concrete reproduction path, and expected behavior. The candidate is actionable and technically valuable, with a clear validation path via the provided reproduction steps."
+  },
   "92f8afbeb17182e7b2388928832393fa0897b5e631fe420eaa5bf44967dea465": {
     "confidence": 0.8,
     "contradictions": [],
@@ -29282,6 +29313,40 @@
     ],
     "wait_reason": null,
     "why": "The RFC identifies concrete silent-fallback bugs in reward parsing, config validation, and training loops, with specific file/line references and a clear fail-fast policy. It includes a test plan for CPU regression tests and aligns with upstream verl's design. The issue is labeled 'help wanted' and a collaborator endorsed it, making it actionable."
+  },
+  "a97233f1a82acd73138efe2c6bb3328dd9a8da89e201ba393c8b18ea9a3215d0": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #35872 is titled for AMD ROCm but issue is on NVIDIA SM89; semantic overlap may be coincidental."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "gdn_backend.py",
+      "awq quantization path",
+      "CUDA graph capture logic for hybrid models",
+      "MTP memory allocation"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #35872 which may already address part of the issue; need to compare implementation boundaries.",
+      "Floating-point or random variation may obscure numerical correctness; must fix seeds and tolerances."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction commands with decode CUDA graph enabled to confirm hang; then apply fix and verify capture completes and decode throughput improves.",
+      "Add a numerical regression test comparing AWQ output with FP16 vs BF16 to ensure dtype consistency.",
+      "Test MTP allocation with reduced memory fraction to ensure at least one request slot is available."
+    ],
+    "unknowns": [
+      "Whether PR #35872 actually fixes the CUDA graph hang on SM89; requires manual comparison."
+    ],
+    "why": "The issue provides a concrete, reproducible bug with clear root causes: CUDA graph capture hangs for hybrid GDN models, dtype mismatch in AWQ path, and MTP memory allocation failure. It includes executable reproduction commands and specific code anchors, enabling a reference-vs-implementation test. The track is llm_algorithm with mechanisms in model_architecture and numerics_quantization, and the validation path is concrete."
   },
   "a9ed777cdb78b0f430741af887510ab938125b6d23e3dc7c680d68f77235c50d": {
     "confidence": 0.85,
@@ -39245,6 +39310,38 @@
     ],
     "why": "Issue #692 reports a clear bug: MEMORY_FILE_PATH env var is ignored, causing data loss in npx temp dir. Root cause is likely env var not forwarded through npx or path resolution issue. Existing PR #4327 is open but stale (>30 days) and lacks strong evidence, leaving room for a better PR with comprehensive fix and tests."
   },
+  "df2a3cc4b6bca67f3728811de2a6b86d843eded64f966730d254e3ad2dd3e540": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found; comments align on root cause and workaround."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "trl/generation/vllm_generation.py",
+      "trl/trainer/grpo_trainer.py"
+    ],
+    "risks": [
+      "Fix may need to handle both colocate and server modes consistently.",
+      "Potential performance impact from dequantizing weights before sync."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with tiny Qwen2, bnb-4bit NF4, LoRA on q_proj/v_proj, and vLLM server; assert no AssertionError and training proceeds.",
+      "Add a regression test that runs _move_model_to_vllm with a quantized base and verifies pushed weight shapes match vLLM expectations."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer option A or B; but both are actionable and the issue is open for contribution."
+    ],
+    "why": "Issue provides a clear root cause: merge_adapter() dequantizes 4-bit weights, causing shape mismatch with vLLM's expected packed weights. Maintainer confirms diagnosis and suggests a fix direction. Recent collaborator comment provides updated reproduction and two concrete fix options (A: dequantize before push, B: send quant_state). This is a concrete, actionable algorithm bug in GRPO training with QLoRA and vLLM."
+  },
   "df2d9eeed189b4e20bd8d7e96e11a2ef3e1c55c6629e94904428fda2931771f8": {
     "confidence": 0.85,
     "contradictions": [],
@@ -39996,6 +40093,37 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue clearly describes a missing atomic compaction API in observational memory, with source-level reproduction and expected behavior. However, the gate decision is HUMAN_REVIEW and the issue is not maintainer-approved, so work should not start without maintainer confirmation. The proposed API shape is flexible and design confirmation is needed."
+  },
+  "e219454bce705516f97bb37b62b7ef704ebb6541eb8807562f1f5843d8ff3f54": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #9478 is closed with changes requested but still listed as open in duplicate assessment; state inconsistency"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/reasoning-effort.ts",
+      "OpenAI-compatible pipeline buildReasoningConfig",
+      "settings persistence handling"
+    ],
+    "risks": [
+      "Potential overlap with PR #9478 or #9501; need to ensure fix covers the samplingParams passthrough path to avoid silent reasoning drop"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test asserting 'max' never reaches the wire for an OpenAI-compatible provider without supported list",
+      "Reproduce with /effort max on OpenAI-compatible provider and verify no 400 and clamping to highest accepted tier"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer option 1, 2, or 3; whether the fix should also address the samplingParams passthrough issue raised in comments"
+    ],
+    "why": "Issue provides a clear root cause (clampReasoningEffort fallback includes 'max', and OpenAI-compatible path bypasses clamp), a concrete reproduction, and a preferred fix direction. The triage comment confirms the root cause and extends it to the OpenAI pipeline. Although PR #9478 exists and is closed with changes requested, it is not merged and does not fully cover the root cause (root_cause_coverage false). The issue remains actionable."
   },
   "e232997a7c90f76a8b8810c43a449c7a6e1bd3497a8a1f0cbdfdebe3c0740886": {
     "confidence": 0.7,
