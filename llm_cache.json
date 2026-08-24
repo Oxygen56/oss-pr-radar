@@ -20188,6 +20188,33 @@
     ],
     "why": "Issue identifies four scheduler defects with detailed reproduction and root-cause analysis; comments confirm bugs 1 and 4 fixed in v1.46, bug 3 partially addressed, and remaining bounded defect is recipe settings ignored in scheduled runs. Existing PR #11110 overlaps scheduler code but lacks tests and does not reference the issue. Maintainer design confirmation is pending for scope of recipe settings and unknown-setting validation."
   },
+  "6b9066f30bcd6c94e8596ea62f1c0fba190b680a2246ca92535fa169914c426e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "CLI argument parsing and session resume logic",
+      "README clarification for headless --id usage"
+    ],
+    "risks": [
+      "Potential behavior change for existing interactive --id users",
+      "Need to ensure compatibility with piped stdin and --yolo variants"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction commands in a headless Docker environment to confirm the failure",
+      "Add a regression test that invokes cline with --json --id <session-id> and a positional prompt, asserting successful resume and output"
+    ],
+    "unknowns": [
+      "Exact code location and maintainer design preference for the fix"
+    ],
+    "why": "Issue provides a clear, reproducible bug with exact commands and expected behavior; root cause is identified as the --id path unconditionally routing to interactive mode and dropping the prompt. A concrete validation path exists via the provided reproduction steps."
+  },
   "6b96109e69e17a6be5b40b720df2a11218f2ef1310838c08359434bc82842258": {
     "confidence": 0.85,
     "contradictions": [
@@ -20836,6 +20863,32 @@
       "Whether fix requires changes to vLLM or upstream TileLang"
     ],
     "why": "Issue provides a clear reproduction path, specific code anchors (TileLang kernel, symmetric memory), and identifies a regression from v0.25.0 to v0.27.1 on SM90. The root cause is localized to MLA kernel warmup and distributed initialization, with concrete validation via multi-rank startup test."
+  },
+  "6db4447b73de4eeabbadf20ce1b4c28f96d951f305226f6d6361ceb50e0782be": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "packages/memory/src/processors/observational-memory/observational-memory.ts",
+      "packages/memory/integration-tests/src/working-memory-state-signal.test.ts"
+    ],
+    "risks": [
+      "Filtering state signals too broadly could exclude legitimate state signals; need to target only working-memory state signals."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add integration test that seeds resource-scoped working memory, starts a new thread, sends an unrelated task, captures observer input, and asserts the working-memory state signal is absent and persisted memory unchanged."
+    ],
+    "unknowns": [
+      "Exact maintainer preference for filtering approach (metadata vs text matching) is not yet confirmed."
+    ],
+    "why": "Issue provides a clear root cause (OM observer includes working-memory state signals as user-authored history), a concrete reproduction with expected/actual behavior, and a suggested fix with regression test steps. Maintainer bot confirms the bug and proposes a narrow fix. No duplicate PR or issue found."
   },
   "6e16bf9e0b7436bfb4cd43bad39e87a51ffb5a5ce2cfb1c78a20cdad4faa0121": {
     "confidence": 0.85,
@@ -29218,6 +29271,37 @@
     ],
     "why": "Issue clearly identifies a mypy overload chain break caused by interleaved string literals, with a minimal repro and a suggested fix. However, an existing PR (#4774) directly addresses the issue but is closed and lacks regression tests, requiring maintainer review to decide whether to reopen or accept a new PR."
   },
+  "9da23ac21e3795ee18b0ddb1d908b3fc360f1606876a674dc071ff4b9b1fa9d0": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue claims bug exists in 1.15.0; maintainer comment says core issue resolved on main by #7305, but acknowledges remaining gap for kwargs-dependent providers."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/packages/core/agent_framework/_mcp.py",
+      "python/packages/core/tests/core/test_mcp.py"
+    ],
+    "risks": [
+      "Potential API design change for a new connect-time hook may require maintainer consensus.",
+      "Changing ambient request behavior could break existing servers that rely on unauthenticated initialize."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a test that a kwargs-dependent header_provider raises or returns no headers on ambient request, and assert the initialize request is sent with expected headers when a connect-time hook is provided.",
+      "Run pytest tests/core/test_mcp.py -k 'header_provider' to ensure existing 17 tests pass and new tests cover the connect-time scenario."
+    ],
+    "unknowns": [
+      "Whether maintainer prefers a new explicit hook vs documenting static-provider convention; no maintainer approval yet."
+    ],
+    "why": "The issue identifies a concrete bug in header_provider handling during MCP connect handshake, with a clear root cause (ContextVar only set in call_tool) and a live reproduction. A maintainer comment confirms the core delivery mechanism is fixed but notes a remaining gap for kwargs-dependent providers on ambient requests, which aligns with the issue's suggested feature. The contribution is actionable: implement a distinct connect-time header hook or document static-provider convention, with existing test patterns to extend."
+  },
   "9db0b04cde367f79a146dc04e2e407d9ef1ac00ca20a3acc32742892d814c6b1": {
     "confidence": 0.85,
     "contradictions": [
@@ -31927,6 +32011,38 @@
     ],
     "why": "The issue is an evidence/ops completion task, not a code contribution. The implementation gap is already closed by commit 23b875ff7f8, and the remaining work requires human-provided artifacts (ASR bundle, fused library) and legal audio staging. No new code change is actionable without those prerequisites."
   },
+  "af31d73f4d4fd772051ae5ca0f5e4e48e62dda0d18e955cf3073c4d44154753a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Scheduler.get_new_batch_prefill() to check budget after resuming chunked request",
+      "PrefillAdder budget_state() integration",
+      "Add regression test for chunk budget exhaustion scenario"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #35645; need to ensure distinct contribution",
+      "Behavior change might affect other scheduling paths; need careful review"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a unit test that sets chunked_req to consume all remaining chunk budget, adds a waiting request, and asserts that waiting queue is not scanned and no cache matching occurs",
+      "Run existing scheduler tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific implementation approach",
+      "Exact code changes in existing PR #35645 that might already cover the fix"
+    ],
+    "why": "Issue provides a clear root cause: scheduler fails to check chunk budget after resuming a chunked request, leading to unnecessary waiting-queue scans and potential host-cache load-back. Reproduction steps are concrete and deterministic at scheduler level. Existing PR #35645 addresses the same issue but lacks tests, leaving room for a more complete contribution."
+  },
   "af58976ba654f3f4294b8d4f0f27e7c539549bb181a754e64c36e0a0c37e835b": {
     "confidence": 0.8,
     "contradictions": [
@@ -33911,6 +34027,35 @@
       "Whether in-container vLLM upgrades are a supported workflow (maintainer decision pending)"
     ],
     "why": "Issue identifies a clear root cause: baked flashinfer-jit-cache version skew with in-container vLLM upgrade causes serve-time registry failure. Maintainer triage confirms engagement and a latent structural hazard remains even though the original repro no longer occurs on 1.4.x. The suggested fix (coupling package versions or documenting unsupported workflow) is actionable and validated by a build-time assert pattern."
+  },
+  "bab9c75d1d59965be3965cd1fddd4016c4ec46ebd7b9d7c36564367351b588fa": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/durable/evented-agent.ts",
+      "packages/core/src/agent/durable/durable-agent.ts",
+      "packages/core/src/agent/durable/workflows/create-durable-agentic-workflow.ts",
+      "packages/core/src/workflows/evented/workflow-event-processor/index.ts"
+    ],
+    "risks": [
+      "Potential behavior change for workflows relying on the current fallthrough in endWorkflow; need to ensure the fix is scoped to EventedAgent to avoid unintended side effects."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that creates an EventedAgent with persistent storage, runs a turn to completion, and asserts listActiveRuns() no longer returns the run and recoverActiveRuns() does not re-execute it.",
+      "Run targeted unit tests for the durable agent packages and static checks."
+    ],
+    "unknowns": [
+      "No maintainer design preference confirmed; the suggested fix direction is reasonable but may need maintainer input."
+    ],
+    "why": "Issue provides a precise root cause (EventedAgent.executeWorkflow never calls deleteRunSnapshots), a concrete reproduction path, and a suggested fix direction with a clear validation path. The bug is user-visible and impactful, and the evidence is sufficient to make the work actionable."
   },
   "baf84b37b45525f1717459a1d77d898ac45108686753c576c32e760588cd5979": {
     "confidence": 0.7,
@@ -42140,6 +42285,36 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue describes a reproducible degenerate output on DeepSeek-V4-Flash with SM120, but the root cause is not identified. Existing PR #49636 and #50455 overlap semantically with the issue's code paths and may already address the bug, requiring manual comparison before creating a new task."
   },
+  "e1976a06033d1d1e0f8782c81823016d9a26a52b8e0b8d4efa647c988d4a3bbe": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found; the comment confirms the issue is specific to sm_110a and does not contradict the root cause."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py",
+      "vllm/_custom_ops.py",
+      "csrc/libtorch_stable/gdn/fused_gdn_decode_kernel.cu"
+    ],
+    "risks": [
+      "The fix may require rebuilding the kernel for sm_110a, which could be non-trivial; runtime fallback may introduce performance regressions on other architectures if not carefully gated."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction command on Jetson Thor (sm_110a) with MTP speculative decoding and verify no crash; optionally add a unit test that checks the guard falls back to Triton when the cubin is missing for the current arch."
+    ],
+    "unknowns": [
+      "Whether the maintainers prefer building the kernel for sm_110a versus adding a runtime fallback; the exact cubin compilation flags for the wheel."
+    ],
+    "why": "The issue provides a clear root cause: the capability guard checks symbol presence and device capability but not cubin arch coverage, causing a kernel launch failure on sm_110a. The reproduction is concrete (exact command and traceback), and the suggested fixes are actionable. The algorithm track is satisfied because the issue involves a fused kernel for GDN linear attention with MTP, a model architecture and numerical path, and the validation path is a direct runtime test on the affected hardware."
+  },
   "e1cd35e346d6c508dd7de7283ac6d44717cb24bd3d49d87843369f9b5a2622b1": {
     "confidence": 0.6,
     "contradictions": [
@@ -46763,6 +46938,34 @@
       "Whether maintainers plan to merge or revise PR #25387; whether backfill is acceptable or requires migration; exact CI failure causes."
     ],
     "why": "Issue clearly identifies a bug where max_end_user_budget_id is not persisted to DB, causing budget reset to fail. However, an existing PR (#25387) directly addresses this issue but is closed with missing tests and CI failures, requiring maintainer review to determine if it can be revived or if a new PR is needed."
+  },
+  "f780eef814f26a4bae83c9cc2a0ede195c1bbafcc97fd3b248692e66c1debb6e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/multimodal_gen/configs/models/encoders/qwen3.py",
+      "python/sglang/multimodal_gen/runtime/models/encoders/qwen3.py",
+      "python/sglang/kernels/aot/csrc/cpu/model/qwen3.cpp"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach; risk of introducing API behavior changes if not carefully scoped."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl command against a server built from the fix and verify clean output without token loops.",
+      "Add a regression test using the Qwen3.5-arch model with the given flags to assert non-repetitive generation."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; maintainer design preference unknown."
+    ],
+    "why": "Issue provides a clear regression with a concrete reproduction command, isolated variables, and a known working version, indicating a generation-level bug in the Qwen3.5 architecture. The code paths are identifiable, and a validation path exists via the provided repro."
   },
   "f79e44a2960f65e5e83900378076a2cfe45e1e342b32f63041c20fc7b89ec833": {
     "confidence": 0.7,
