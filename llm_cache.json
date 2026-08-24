@@ -6347,6 +6347,34 @@
     ],
     "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction, expected vs actual behavior, and a proposed fix. The track is llm_algorithm with a concrete validation path: reproduce the assertion error and verify the fix by running with different k values."
   },
+  "24d354d71a57115253108e73c83b164328a599777321aa838987264118640e54": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py",
+      "vllm/_custom_ops.py",
+      "csrc/libtorch_stable/gdn/fused_gdn_decode_kernel.cu"
+    ],
+    "risks": [
+      "Potential performance regression if fallback to Triton is triggered on other architectures; need to ensure the fix does not break the fused path on supported archs like sm_121."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction command on Jetson Thor (sm_110a) with MTP speculative decoding and verify no crash; add a regression test that checks the guard falls back to Triton when the cubin lacks the device arch."
+    ],
+    "unknowns": [
+      "Exact build configuration of the wheel's cubin set; whether maintainers prefer a build fix vs runtime guard."
+    ],
+    "why": "The issue provides a clear root cause: the capability guard checks symbol presence and device capability but not cubin arch coverage, leading to a kernel launch failure on sm_110a. The reproduction is concrete with commands and traceback, and a verified workaround exists. The suggested fixes are actionable and testable."
+  },
   "25066b07d1f7cda452b8737faa42d21033e07bc2bfd836691b46bd198f4530fe": {
     "confidence": 0.7,
     "contradictions": [],
@@ -17665,6 +17693,34 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a user-visible bug in message indexing but provides no root cause, logs, or maintainer confirmation. No open PR or related issue exists, and the track is agent_ai_infra, not llm_algorithm. The candidate lacks a concrete implementation path and validation plan beyond reproduction."
   },
+  "5fbdb703ea647e903f0f2a7e88444b96a7bd2feac0f4ff48f8422a569859a816": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Add typeof check in isNodeDefaultFetch or defer probe to getDefaultDownloadFetch",
+      "Update vendored AI SDK bundle in @mastra/core, @mastra/ai-sdk, @mastra/server"
+    ],
+    "risks": [
+      "Potential behavior change if fetch is undefined but later polyfilled; deferring probe could alter detection timing",
+      "Need to ensure vendored bundle updates are consistent across packages"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that imports @mastra/core/workflows in a jest-environment-jsdom environment without global fetch and asserts no throw",
+      "Run existing unit tests for the affected packages"
+    ],
+    "unknowns": [
+      "Exact version range affected (only 1.61.0 tested)",
+      "Maintainer preference for fix approach (guard vs deferral)"
+    ],
+    "why": "Issue provides a clear root cause (unguarded Function.prototype.toString.call(fetch) at module load) and a concrete reproduction with jest-environment-jsdom. The suggested fix is minimal and preserves intended behavior. This is a high-impact bug affecting test suites that import @mastra/core/workflows."
+  },
   "5fefcfafa9805475b802a674c9ea4f2465fbad4cbad1be54dff6505ac28672eb": {
     "confidence": 0.8,
     "contradictions": [],
@@ -20424,6 +20480,33 @@
       "Whether existing PR #16218 actually fixes this issue or only partially overlaps"
     ],
     "why": "Issue clearly identifies a detached promise causing silent title loss on serverless runtimes, with a minimal repro. However, the deterministic gate requires HUMAN_REVIEW, and existing PRs (e.g., #16218) overlap semantically, requiring maintainer comparison before creating a new task."
+  },
+  "6bb3d7358f61176d8a225c19320235a712b9e243a8d80e2f4644ee11f87c1109": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py",
+      "python/sglang/multimodal_gen/runtime/managers/scheduler.py",
+      "python/sglang/srt/dllm/mixin/scheduler.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #35645; need to ensure unique contribution by adding tests and possibly refining fix."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that sets chunked_req to consume all remaining chunk budget, places a waiting request, and asserts that get_new_batch_prefill() does not process the waiting request after budget exhaustion."
+    ],
+    "unknowns": [
+      "Exact code path in scheduler.py where budget check should be inserted; maintainer preference for fix approach."
+    ],
+    "why": "Issue provides a clear root cause: scheduler fails to check chunk budget after resuming a chunked request, leading to unnecessary waiting-queue scans and potential host-cache load-back. Reproduction steps are concrete and deterministic at scheduler level. Existing PR #35645 addresses the same issue but lacks tests, leaving room for a more complete contribution."
   },
   "6bbe2156f55dda7088b8137cd9948d13eead74965b9cc449c2e691d47009935d": {
     "confidence": 0.85,
@@ -28073,6 +28156,34 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports agent integrations hanging with local Qwen models, but comments indicate the root cause is large prompts exceeding context and long prefill times, not a bug in Ollama. No concrete code path or reproducible failure in Ollama is identified; the issue is likely usage/harness configuration. No maintainer confirmation or design direction."
+  },
+  "952f7819438c05b3bf8941221e4768e60d7936a8d87970bd0b2e5f161ca4c132": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "MLA KV writer guards in SGLang-owned writers",
+      "AITER fused writer integration contract"
+    ],
+    "risks": [
+      "Potential conflict with PR #36003 if not merged",
+      "AITER integration requires separate API-safe follow-up"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided deterministic reproduction for each writer",
+      "Add regression tests for BF16, FP8, scale, and TMA/JIT writers with reserved slot"
+    ],
+    "unknowns": [
+      "Whether PR #36003 will be merged and cover all SGLang-owned writers"
+    ],
+    "why": "Issue provides a clear root cause (MLA writers overwrite reserved slot 0), a deterministic reproduction, and a concrete validation path via PR #36003 and the AITER probe. The algorithm evidence confirms attention and numerics mechanisms with code anchors and experiment signals."
   },
   "95d7915553b8f1cfdf44ddfa9111869582100e3f09ed66a40a1c2e252c969b2b": {
     "confidence": 0.9,
@@ -43806,6 +43917,37 @@
       "Whether the bug reproduces on other GPU types or with smaller model sizes"
     ],
     "why": "Issue reports a silent corruption in FSDP inference for MiniMax-H3, with a clear reproduction and measured symptom differences. The code path is identified (fsdp_load.py, shard_model), and the bug is likely a distributed sharding/synchronization invariant violation. No competing PR addresses this specific bug; existing PRs are unrelated or only keyword-overlap. The track is llm_algorithm with mechanisms distributed_training and numerics_quantization, and the issue supports a reference-vs-implementation test (FSDP=false vs true)."
+  },
+  "e70373020717384162897f6ef117fafaee7b4f2a6c29d8acd191773a26427a42": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/multimodal_gen/configs/models/encoders/qwen3.py",
+      "python/sglang/multimodal_gen/runtime/models/encoders/qwen3.py",
+      "python/sglang/kernels/aot/csrc/cpu/model/qwen3.cpp"
+    ],
+    "risks": [
+      "Root cause may be in a shared sampling/logits path affecting other models; fix must avoid broad behavioral changes.",
+      "The model is NVFP4 quantized; quantization-specific issues may require specialized testing."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl command to reproduce the token loop on 0.5.17, then run the same command on the fix branch to verify clean output.",
+      "Add a regression test that runs a short generation with the Qwen3.5 architecture and asserts no repetitive token loops."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; may require bisecting between 0.5.6.dev and 0.5.17.",
+      "Whether the issue is specific to NVFP4 quantization or affects all Qwen3.5 models."
+    ],
+    "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, indicating a generation-level bug in the Qwen3.5 architecture. The root cause is not yet identified, but the evidence is sufficient to start a focused investigation and build a regression test."
   },
   "e707f1a08777a6af2c11d3750d0aea71ef11493033361b98eb9989caf994a57d": {
     "confidence": 0.85,
