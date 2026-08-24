@@ -301,6 +301,33 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue reports a real bug but the proposed fix (fail-open) conflicts with an existing design decision documented in the repo. Maintainer comment confirms the fail-closed boundary is intentional and suggests a different fix direction (prompt/catalog mismatch). The correct approach requires maintainer decision between two opposite changes."
   },
+  "02e30646bec96817489b03fea80567a6180ade48846d33d5c852678366c8ba37": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py",
+      "python/sglang/srt/scheduler/... (PrefillAdder)"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #35645; need to ensure distinct implementation or improve upon it.",
+      "Changing scheduler control flow may affect other scheduling paths; need careful regression testing."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that sets Scheduler.chunked_req to consume all remaining chunk budget, places a request in waiting_queue, runs get_new_batch_prefill(), and asserts that the waiting request is not processed (no cache matching or load-back)."
+    ],
+    "unknowns": [
+      "Exact code location of the waiting-queue loop and how to best integrate the budget check; maintainer preference on implementation approach."
+    ],
+    "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to check the updated chunk budget before scanning the waiting queue, leading to unnecessary cache matching and host-cache load-back. Reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
   "031bd822e038ae62196db445830dd6f270cc82fa790941ed2b117aab474373ec": {
     "confidence": 0.7,
     "contradictions": [
@@ -3280,6 +3307,36 @@
       "Maintainer design preference on model_info field handling"
     ],
     "why": "The issue describes a user-visible bug where manually added fields in Model Info are not persisted, with multiple user confirmations. However, the root cause is unclear (possible caching/race condition) and the deterministic gate requires HUMAN_REVIEW. Open PR and related issue lookups failed, so duplicate work cannot be excluded. Maintainer design preference is unknown."
+  },
+  "13b5c6cd88e33f6324c3e010d266c0dc458805cc7230781d035f9a67b12aebc8": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()",
+      "vllm/config/vllm.py: ensure VllmConfig.compute_hash() propagates the updated speculative hash"
+    ],
+    "risks": [
+      "The fix may not cover all cache key components (e.g., other config fields affecting shapes), but the issue specifically identifies num_speculative_tokens as the missing factor.",
+      "Potential performance impact from recompiling for each k, but that is expected and acceptable."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that creates two SpeculativeConfig instances with different num_speculative_tokens and asserts their compute_hash() outputs differ.",
+      "Add an integration test that runs vLLM with num_speculative_tokens=9, then with num_speculative_tokens=7 using the same cache directory, and verifies no assertion error occurs."
+    ],
+    "unknowns": [
+      "Whether the proposed fix has been implemented in any open PR; the open PR #53367 exists but lacks tests and root cause coverage, so the issue remains actionable."
+    ],
+    "why": "The issue provides a precise root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm, and the issue involves model architecture and distributed training mechanisms with a clear validation path via numerical regression or runtime assertion tests."
   },
   "13ce011ed264aee7f12dc757b48dbc6363faa251ddf18f45e4c412ce8bcc6e91": {
     "confidence": 0.85,
@@ -21231,6 +21288,43 @@
     ],
     "why": "Issue provides detailed root cause and repro, but existing PR #2078 is draft and may already address it; maintainer design preferences and PR quality need assessment before starting competing work."
   },
+  "72ab4f5f6b62cbd2260045e539b44f991266f0232bcb4dc2398a8081bc4274b7": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #33182 title suggests T2I support but semantic overlap with CUDA/Qwen3; may not be directly related"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix dtype mismatch in gdn_backend.py for AWQ with BF16 Mamba cache",
+      "Implement or enable decode CUDA graph support for hybrid GDN models",
+      "Investigate native MTP memory allocation to allow request slots on 32GB"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #33182 which may address similar code paths; need manual comparison",
+      "Hardware-specific (SM89) may limit test availability",
+      "Fixing dtype may not resolve CUDA graph hangs; requires deeper investigation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run provided reproduction commands with SGLANG_MAMBA_CONV_DTYPE=float16 to confirm stable eager path",
+      "Test decode CUDA graph with breakable and tc_piecewise to reproduce hang",
+      "Add unit test for AWQ output dtype vs Mamba cache dtype to catch mismatch",
+      "Run numerical comparison against llama.cpp for token-level output consistency"
+    ],
+    "unknowns": [
+      "Whether existing PR #33182 actually fixes the root cause",
+      "Exact cause of CUDA graph hang (kernel incompatibility vs memory issue)",
+      "Availability of SM89 hardware for testing"
+    ],
+    "why": "The issue identifies a concrete runtime bug with reproducible commands and code-level anchors (gdn_backend.py:559, AWQ dtype mismatch, CUDA graph hangs). It involves quantization numerics and model architecture, satisfying the llm_algorithm track. The root cause is clear: dtype mismatch in AWQ path and missing fast path for hybrid GDN on SM89. Validation path is concrete via reproduction commands and potential numerical tests."
+  },
   "733337bcf3c87277414f60dd1315f1676fd748dcac6334cf725cfd865868f68b": {
     "confidence": 0.6,
     "contradictions": [
@@ -30059,6 +30153,34 @@
     ],
     "why": "Issue reports q4_0 KV cache causing degenerate output on small models, but root cause is not confirmed; maintainer suggests it may be model unsuitability and points to a PR for per-model overrides. No concrete code path or algorithm change is proposed."
   },
+  "a7b1b1eb06f03cefedb27ecd538e5fac8c5d5dd6009430917791d62430acd750": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/multimodal_gen/configs/models/encoders/qwen3.py",
+      "python/sglang/multimodal_gen/runtime/models/encoders/qwen3.py",
+      "python/sglang/kernels/aot/csrc/cpu/model/qwen3.cpp"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach; need to avoid broad API changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl command with the specified model and flags to reproduce the token loop on 0.5.17, then run the same on 0.5.6.dev to confirm regression. Add a regression test that checks for non-repetitive output and proper finish_reason."
+    ],
+    "unknowns": [
+      "Exact root cause commit or code change between 0.5.6.dev and 0.5.17 is not identified; maintainer design preference not confirmed."
+    ],
+    "why": "Issue provides a clear regression with exact version comparison, isolated variables, and a reproducible command. Root cause is narrowed to generation-level changes in 0.5.17 for Qwen3.5-arch models, with code anchors in qwen3 model files. Actionable fix path is to add a regression test and investigate sampling/logits pipeline."
+  },
   "a80821f98e3da9ec6c72d18495f58a91729ade0207e271b44f826b29676913ef": {
     "confidence": 0.85,
     "contradictions": [],
@@ -34263,6 +34385,35 @@
     ],
     "why": "Issue clearly identifies a security-relevant bug in shared download_item path with verified repro and suggested fix direction. However, existing PR #7334 already implements a fix but is auto-closed due to assignment policy; maintainer assignment/confirmation is required to proceed."
   },
+  "c05639554b453e245b3d83d43830e5149b63bcccd42358b5fad11dfa9898d57c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/controllers/mcp/mcp.py",
+      "session management in MCP controllers"
+    ],
+    "risks": [
+      "Potential behavior change in session handling could affect other MCP operations; need to ensure compatibility with existing session patterns."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that reproduces the closed-transaction error by calling an MCP tool with a workflow that triggers internal commit, then verify the fix prevents the error."
+    ],
+    "unknowns": [
+      "Exact code change preferred by maintainers; whether the fix should be applied to cloud infrastructure or self-hosted codebase."
+    ],
+    "why": "Issue provides clear reproduction steps, expected vs actual behavior, and a confirmed root cause (SQLAlchemy session management in MCP controller) with code anchors and related PRs. The bug is user-visible and affects a critical path, making a fix actionable."
+  },
   "c08f6aa2da9675d6969eb6ea20ef46dfc319b20e028ac7e6411b6ced390011fe": {
     "confidence": 0.85,
     "contradictions": [],
@@ -37292,6 +37443,34 @@
       "Maintainer confirmation on root cause and desired fix direction"
     ],
     "why": "The issue reports a concrete LLM quantization regression (FP8 to MXFP4) with a clear reproduction path and numerical evidence (completion length increase). However, the root cause is unconfirmed, and the open PR search failed due to rate limits, leaving potential duplicate implementations unassessed. The deterministic gate requires HUMAN_REVIEW."
+  },
+  "d076bd033e98a40b4b4268a47501e7fb7f7009727395d05edc0287bd278b264b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Commenter initially says issue is with text/code block, not thought block; later clarifies it's different from code block wrapping."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "chat sidebar CSS/component width constraint",
+      "possibly add 'w-screen' or equivalent to container class"
+    ],
+    "risks": [
+      "CSS change may affect other layout aspects; need to ensure responsive behavior across sidebar sizes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by sending a prompt to a reasoning model in VS Code sidebar and observe horizontal overflow; apply fix and verify no overflow with long text/code blocks."
+    ],
+    "unknowns": [
+      "Exact CSS file and class responsible; whether maintainers prefer a different fix approach."
+    ],
+    "why": "Issue reports a clear UI overflow bug with reproduction steps and user-confirmed workaround; root cause is likely missing width constraint in chat container CSS. A concrete patch is suggested in comments, and no duplicate or competing PR covers the same fix."
   },
   "d0e1962b0800fe1dfd31e09092b66800fc7fbf50497879ad5d01aa3b47999176": {
     "confidence": 0.6,
