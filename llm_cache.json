@@ -696,6 +696,40 @@
     ],
     "why": "Issue provides a clear, reproducible bug with root cause confirmed by maintainer via source inspection. Fix is localized and leverages existing utilities (sniffFileKind, looksLikeText). No competing PR exists."
   },
+  "0542346e7d2a8147e9d4feb81152df8dd14bb0ca04f1e2dfd2ed0025755c8516": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #18691 claims to fix the misleading message but does not address the root cause of silent no-op for Built-in datasets; issue expects both.",
+      "Dosu comment suggests parse_type=2 for pipeline binding, while issue reporter used parse_type=1; this is a clarification, not a contradiction."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "dataset_wiki_generator.py",
+      "compilation_template_group_api.py",
+      "api_utils.py"
+    ],
+    "risks": [
+      "Potential overlap with PR #18691; must ensure the new fix complements rather than duplicates it.",
+      "Changing error messages or adding pre-validation may affect existing API behavior; need maintainer alignment."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that reproduces the silent no-op for Built-in datasets (no Compiler template) and asserts an actionable error or pre-validation.",
+      "Run existing unit tests in test/unit_test/rag/svr/task_executor_refactor/ and API tests for compilation_template_group_api.py."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a pre-validation UI change vs. a backend error message change.",
+      "Whether PR #18691 will be merged and how it affects the remaining root-cause fix."
+    ],
+    "why": "Issue provides a clear root cause (wiki eligibility requires a Compiler-bound template, absent for Built-in datasets), a concrete reproduction path, and expected behavior. An open PR (#18691) already addresses the misleading message with tests, but the underlying silent no-op for Built-in datasets remains unaddressed, leaving a distinct actionable fix."
+  },
   "054487dab001368b540bf5a8f87e6499991e503362d64376b4ed1ad1676d9219": {
     "confidence": 0.6,
     "contradictions": [],
@@ -4068,6 +4102,37 @@
     ],
     "why": "Issue clearly identifies a bug in is_final_response() for non-streaming A2A responses, with a concrete reproduction and two proposed fixes. Existing PR #5006 overlaps semantically but is not directly linked and may not fully address the issue; a new PR could provide a more targeted fix."
   },
+  "1aa7ddca57603a6f8f4861c4d09f73f494607eb046b80218a7c00b7492d2ccaa": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #33182 title suggests T2I support but semantic overlap with CUDA/Qwen3 may be coincidental."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "gdn_backend.py dtype handling",
+      "CUDA graph capture for hybrid GDN models",
+      "MTP memory allocation logic"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #33182 requires manual comparison to avoid duplicate work.",
+      "Hardware-specific (SM89) may limit reproducibility on other GPUs."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided docker command with eager decode to establish baseline, then enable decode CUDA graph and verify no hang; add a unit test for gdn_backend.py dtype mismatch using a small hybrid model with AWQ and FP16/BF16 inputs."
+    ],
+    "unknowns": [
+      "Whether PR #33182 actually addresses the root cause; maintainer confirmation needed."
+    ],
+    "why": "The issue provides a concrete, reproducible bug with clear root causes: CUDA graph capture hangs for hybrid GDN models, dtype mismatch in gdn_backend.py, and MTP memory allocation failure. It includes executable reproduction commands and specific code anchors, enabling a reference-vs-implementation test for quantization and numerical correctness."
+  },
   "1adba1c39fdb23739085d01b4d82eb47c876d4ca45cd83642f6811454d6e145e": {
     "confidence": 0.7,
     "contradictions": [],
@@ -6940,6 +7005,39 @@
     ],
     "why": "The issue provides a clear root cause (token underestimation in count_tokens), a reproducible benchmark with concrete numbers, and a specific code path. The proposed fix (improving token estimation) is actionable and testable against actual model usage."
   },
+  "294229533097b4965afec0a00faf37ea90dd015cc56753d799293111d0ff2151": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/v1/attention/backends/turboquant_attn.py",
+      "vllm/v1/worker/gpu_model_runner.py",
+      "quantization scaling or numerical path in TurboQuant KV cache"
+    ],
+    "risks": [
+      "Hardware dependency: requires sm120 GPU (RTX 5090) to reproduce; may not be available in CI.",
+      "Potential overlap with existing PRs #53406 and #53410 that address related TurboQuant spec-decode issues; need to ensure the fix is distinct and not already covered."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided command on sm120 hardware, then run a reference implementation (e.g., fp8 KV) and compare outputs for long prompts; add a regression test that asserts no repetition collapse (max consecutive repeat <= 1) for turboquant KV with MTP K3 on a small model or synthetic setup."
+    ],
+    "unknowns": [
+      "Exact root cause (e.g., scaling error vs. kernel bug) not yet isolated; maintainer confirmation of issue validity is absent; whether existing PRs #53406/#53410 fully resolve this issue is unclear."
+    ],
+    "why": "The issue provides a detailed, reproducible bug with clear root-cause evidence: repetition collapse occurs only with turboquant KV cache combined with MTP, while fp8 KV works. The report includes exact commands, a comparison table, and ruled-out alternatives, establishing a concrete algorithmic/numerical defect in the TurboQuant attention backend. The track is llm_algorithm with mechanisms in model_architecture, numerics_quantization, and kernel_algorithm, and a validation path via reference comparison and regression tests is feasible."
+  },
   "29589401203795fd43c5f27d4eebb135710b2e4d18a61172a84b7efb866f3b24": {
     "confidence": 0.85,
     "contradictions": [],
@@ -8990,6 +9088,36 @@
     ],
     "wait_reason": null,
     "why": "Issue provides a precise root-cause chain with code anchors and a minimal in-process repro, plus a concrete fingerprint-based fix. No competing PR or issue found. The fix is local and testable."
+  },
+  "3608d3499629d21078d787534f32c8b832ad17c37c67a8c333fade8ff5c78005": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #35645 claims to fix the issue but lacks tests and root-cause coverage, while the issue provides a clear reproduction and expected behavior."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py",
+      "python/sglang/multimodal_gen/runtime/managers/scheduler.py",
+      "python/sglang/srt/dllm/mixin/scheduler.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #35645; need to ensure the fix is distinct and adds regression tests.",
+      "Changing scheduler control flow may affect other scheduling paths; need to verify no regressions in existing tests."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that sets Scheduler.chunked_req to consume all remaining chunk budget, places a request in waiting_queue, runs get_new_batch_prefill(), and asserts that the waiting request is not processed for cache matching or load-back."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific implementation approach or have design preferences for the scheduler fix."
+    ],
+    "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to check the updated chunk budget before scanning the waiting queue, leading to unnecessary cache matching and host-cache load-back. Reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
   "3618fc6631bd2ec5805249e1a2b613ccf7e2f1802235c727e8ee840603967358": {
     "confidence": 0.6,
@@ -23397,6 +23525,38 @@
     ],
     "why": "Issue identifies a concrete bug in the gemma4 tool parser: tool_choice='required' does not enforce tool call generation, and finish_reason is incorrectly set to 'tool_calls' with empty tool_calls. Root cause is partially known (translation layer in #53255) and the enforcement gap is clearly described. The issue provides a reproduction methodology (loop script, payload variations) and a validation path (compare behavior under load, check finish_reason and tool_calls). This is a legitimate LLM algorithm bug in tool-calling logic, not mere plumbing."
   },
+  "7fb0841ae83cef3d579eac2bf1a17f1ac383322b91e5b951f03b383309d326ca": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue title mentions TileLang warmup, but comment shows failure during CUDA graph capture after DeepGEMM warmup."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "DeepGEMM kernel or pin update",
+      "CUDA graph capture path in vLLM"
+    ],
+    "risks": [
+      "The fix may be already merged in main; need to verify if backport is needed.",
+      "CUDA errors are asynchronous, so the exact kernel instruction may not be identified."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with v0.27.1 and DeepGEMM e21c821 on 8xH20; apply 8b1392b and verify startup and chat completion succeed.",
+      "Add regression test for SM90/H20 CUDA graph capture with DeepGEMM warmup."
+    ],
+    "unknowns": [
+      "Exact DeepGEMM commit causing the regression (not bisected).",
+      "Whether the fix is already in v0.28.0 or main."
+    ],
+    "why": "The issue provides a clear root cause: a DeepGEMM revision regression between e21c821 and 8b1392b causes CUDA graph capture failure on SM90/H20. The A/B test in the comments isolates the regression and confirms the fix in PR #52035. This is a concrete, actionable algorithm/kernel bug with a validation path."
+  },
   "7fb9b0128031ea27f0be98d838efbe1d19f949255acae565042e94e1471b2951": {
     "confidence": 0.85,
     "contradictions": [],
@@ -24974,6 +25134,36 @@
       "Whether maintainers have a preferred design for handling provider-reported usage fields across other providers."
     ],
     "why": "The issue identifies a concrete bug in Anthropic usage calculation where provider-reported thinking_tokens are ignored, leading to incorrect reasoning_tokens. The root cause is clearly located in calculate_usage, and a minimal fix is proposed. No competing PR or issue exists, and the fix is actionable with a clear test path."
+  },
+  "87eb60e77cd218898337d12853c5e7714160300693c5f26d35563cee47447c6d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/multimodal_gen/configs/models/encoders/qwen3.py",
+      "python/sglang/multimodal_gen/runtime/models/encoders/qwen3.py",
+      "python/sglang/kernels/aot/csrc/cpu/model/qwen3.cpp"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach; need to confirm design before large changes.",
+      "NVFP4 quantization may introduce hardware-specific behavior not covered by standard CI."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the provided curl command with the specified model and flags, asserting no token repetition and correct finish_reason.",
+      "Run existing sglang model tests for Qwen3.5-arch and generation/sampling tests."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; requires bisection or code inspection to pinpoint the regression."
+    ],
+    "why": "Issue provides a clear user-visible regression with a concrete reproduction command, isolated variables (DFLASH, reasoning parser, tools), and a known working version. Root cause is localized to generation/sampling/logits path for Qwen3.5-arch models, with code anchors in qwen3 model files. No duplicate or overlapping PR found. Actionable fix with a clear test path."
   },
   "88306db1867555542276642382f52aded724336fd11ac879745f43ca10f2efa1": {
     "confidence": 0.85,
@@ -36101,6 +36291,31 @@
     ],
     "why": "Issue reports a plausible DSpark acceptance collapse on DeepSeek-V4-Flash-0731 with detailed per-position data and ruled-out factors, but maintainer comments suggest the random-token benchmark may be the cause, and open PR search failed due to rate limit, leaving duplicate/competing work unassessed."
   },
+  "ca611277497caa677b7878eb90aa4419b8692f52022dd5fe61eb830f878271ba": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()"
+    ],
+    "risks": [
+      "Potential hash changes may invalidate existing caches, but that is acceptable for correctness."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that runs with two different num_speculative_tokens values and asserts distinct cache keys or successful recompilation without shape assertion failures."
+    ],
+    "unknowns": [
+      "No explicit maintainer approval, but not required for actionability."
+    ],
+    "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction path and a proposed fix, making it actionable."
+  },
   "cad64f1b75bd66c21f7cebf442c1a21d1ebca66db58c873b4c656e05db8dba73": {
     "confidence": 0.6,
     "contradictions": [],
@@ -38141,6 +38356,37 @@
       "Maintainer confirmation on desired fix approach"
     ],
     "why": "The issue reports a crash in vLLM's metrics logger when CPU offloading is enabled, with a clear stack trace pointing to a negative counter increment. A commenter provides a detailed reproducer and suggests it may be a duplicate of #36755. However, the open PR and related issue lookups timed out, so duplicate implementations cannot be ruled out. The deterministic gate requires HUMAN_REVIEW, and the repository's AI disclosure policy conflicts with automated action."
+  },
+  "d51996c2fbccf66aee787bdea128c433d5ec2eeed1ee6f848c733a9d2416b7a6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/controllers/mcp/mcp.py: replace sessionmaker().begin() with plain Session and explicit commit management",
+      "Add regression test for MCP tool invocation with internal commit in generation pipeline"
+    ],
+    "risks": [
+      "Changing session management may affect transaction boundaries and require careful handling of rollback/commit semantics",
+      "Potential impact on other MCP endpoints if not isolated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by calling an MCP tool via n8n client against a Dify Cloud MCP server and assert no -32603 error",
+      "Add unit test simulating AppGenerateService internal commit followed by ORM operation in MCP controller"
+    ],
+    "unknowns": [
+      "Exact code path in Dify Cloud that differs from self-hosted; maintainer confirmation of fix approach not yet provided"
+    ],
+    "why": "Issue provides a clear regression with exact error message, reproduction steps, and a confirmed root cause from maintainer bot: SQLAlchemy session management in MCP controller (api/controllers/mcp/mcp.py) using sessionmaker().begin() conflicts with internal commits in AppGenerateService. The fix pattern is known (use plain Session with expire_on_commit=False), and the issue is user-visible and affects a critical path."
   },
   "d52ace46a124558a03645a031d05d0451816631fb033f482b24c24e70edaafdb": {
     "confidence": 0.85,
