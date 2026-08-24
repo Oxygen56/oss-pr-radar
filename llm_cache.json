@@ -30870,6 +30870,32 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly describes a real bug with root cause and repro, but an existing PR #1563 directly addresses it and is open with changes requested. The issue itself is a discussion/design confirmation before PR submission, and the maintainer has already triaged and pointed to #1563. Starting new work would duplicate existing effort."
   },
+  "a558c445b427b092ee518c7867b3380831d0eb91993ddb098c27ed8f6bccddf1": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "CustomStreamWrapper",
+      "GenericStreamingChunk handling",
+      "response_id pinning logic"
+    ],
+    "risks": [
+      "Potential behavior change for providers that intentionally vary ids; need to ensure only generic path is affected."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that streams a GenericStreamingChunk-based provider and asserts all chunks share the same top-level id."
+    ],
+    "unknowns": [
+      "Exact implementation details of the fix; whether maintainers prefer a specific approach."
+    ],
+    "why": "Issue clearly identifies a user-visible streaming bug with a concrete root cause: GenericStreamingChunk path fails to pin response_id, causing each SSE chunk to get a fresh uuid4. The fix is localized and testable, and the issue provides a repro and expected behavior."
+  },
   "a57ce1d2ab337e3257aa76c6286e7979a6bb0088294130d9c6e7488a6550d8d0": {
     "confidence": 0.8,
     "contradictions": [
@@ -41396,6 +41422,35 @@
     ],
     "why": "The issue identifies a concrete root cause: the capability guard checks symbol presence and device capability but not cubin arch coverage, leading to a kernel launch failure on sm_110a. The reporter provides a reproducible command, traceback, and a verified workaround, and suggests multiple actionable fixes. The evidence includes code anchors and a clear validation path."
   },
+  "dc59d9d91682447c80859fada61e809f31732567211363d59c3ec112971db119": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/multimodal_gen/configs/models/encoders/qwen3.py",
+      "python/sglang/multimodal_gen/runtime/models/encoders/qwen3.py",
+      "python/sglang/kernels/aot/csrc/cpu/model/qwen3.cpp"
+    ],
+    "risks": [
+      "Model is NVFP4 quantized and may require specific hardware; test may be heavy.",
+      "Root cause may be in sampling/logits/pipe layer, requiring deeper investigation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test using the provided curl command and model (orcarouter/Qwen3.8-27B-Uncensored-NVFP4) to assert non-looping output and correct finish_reason.",
+      "Run existing sglang model tests and targeted unit tests for qwen3 parser and generation."
+    ],
+    "unknowns": [
+      "Exact root cause commit between 0.5.6.dev and 0.5.17 not identified; maintainer preference for fix approach unknown."
+    ],
+    "why": "Issue provides a clear regression: 0.5.17 breaks generation into token loops for Qwen3.5-arch model, while 0.5.6.dev works. Includes exact repro command, model names, and isolation steps (with/without DFLASH, parser, tools). Root cause is narrowed to generation-level regression in 0.5.17, independent of speculative decoding. Actionable: add failing test using repro, then fix along model/runtime paths."
+  },
   "dc5bd1280cad71f4cb48021e87e9559fb50ef09979a29738aca70730237ae8d6": {
     "confidence": 0.7,
     "contradictions": [
@@ -43595,6 +43650,38 @@
       "Exact caching backend and configuration used in the production incident, which may affect reproduction of the cache corruption."
     ],
     "why": "The issue provides a clear, reproducible bug with a minimal local repro, a precise traceback pointing to the faulty code path, and a concrete expected behavior. The root cause is identified as a non-iterable object returned when converting a non-streaming response to a fake stream, causing downstream async-for failures and cache corruption. This is a high-value fix in the proxy's streaming and caching logic."
+  },
+  "e4fabda8a3fad5d8228b4abed96c24b301d866a617a82a0c7527d5ed0be36096": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #53367 claims to fix the issue but lacks tests and root-cause coverage; issue proposes a more complete fix including num_speculative_tokens_per_batch_size"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()",
+      "Add regression test verifying distinct cache keys for different k values"
+    ],
+    "risks": [
+      "Changing hash may invalidate existing caches, causing recompilation overhead",
+      "Potential interaction with other config fields not covered by hash"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test for SpeculativeConfig.compute_hash() asserting different hashes for different num_speculative_tokens",
+      "Integration test: run server with k=9, then k=7 using same cache root, expect no assertion error"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different fix approach or have additional requirements",
+      "Exact test framework and location for regression tests"
+    ],
+    "why": "Issue provides a clear root cause: missing num_speculative_tokens in SpeculativeConfig.compute_hash() causes torch.compile cache collisions. Includes minimal reproduction steps and a concrete proposed fix. Although an open PR #53367 exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
   "e50476dd7fb544c08c3afe3c784235163af4ce54291601de1140082a58905f91": {
     "confidence": 0.85,
