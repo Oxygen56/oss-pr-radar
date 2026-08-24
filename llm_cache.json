@@ -14932,6 +14932,36 @@
     ],
     "why": "Issue describes a clear load-balancing bug in disaggregated prefill routing with a concrete reproduction and metrics. Maintainer comment identifies root cause: advisory selection without worker load booking and no active-block tracking, leading to random selection among workers. No competing PR addresses this; existing PRs are unrelated or lack tests."
   },
+  "53f74109fb13f846249df3c7f0b2685933c46d6c11e468ce9784c75d4e72c474": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found; the issue and PR assessment are consistent."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()",
+      "vllm/config/vllm.py: ensure VllmConfig.compute_hash() propagates the updated speculative config hash"
+    ],
+    "risks": [
+      "The fix may require updating existing cache keys, invalidating previously cached artifacts and causing recompilation overhead.",
+      "Potential interaction with dynamic speculative decoding where num_speculative_tokens_per_batch_size changes; must ensure hash covers all shape-affecting parameters."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that constructs two SpeculativeConfig instances differing only in num_speculative_tokens and asserts their compute_hash() outputs differ.",
+      "Add an integration test that runs vLLM with the same model and speculative config but different num_speculative_tokens (e.g., 7 and 9) using a shared cache root, and verifies no assertion error occurs."
+    ],
+    "unknowns": [
+      "Whether the proposed fix has been implemented in any PR; the open PR #53367 lacks tests and may not fully cover the fix."
+    ],
+    "why": "The issue precisely identifies a root cause in the torch.compile cache key computation: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing shape-incompatible compiled graphs to be reused across different speculative token counts. The report includes a concrete reproduction (two server launches with different k values), a clear expected behavior, and a proposed fix with code changes. This is a valid LLM algorithm mechanism (model architecture and distributed training) with a clear validation path via regression testing."
+  },
   "53fcf4843f720f6be4a9109050b2c70064df91a4b63856f72974b19734e0f5ea": {
     "confidence": 0.8,
     "contradictions": [],
@@ -15233,6 +15263,45 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly describes a silent correctness bug in Valkey vector store reset/delete_col, with concrete repro and root cause. However, three closed PRs (#6996, #7013, #7023) already target the same fix, and the repo policy requires an accepted issue before PR review. The issue is not yet labelled accepted, and the author of #7013 explicitly requests that label. This is a duplicate-review situation: the fix is well understood but needs maintainer acceptance and coordination with existing PRs."
+  },
+  "54e935f6dbfb55a4fd8b67e62db0c74ced0f3b8a10ff16152408fd00103d6c02": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The original report claimed priority scheduling caused zero hits, but later comments corrected this, attributing the issue to budget fragmentation and the Eagle back-off, exonerating the priority policy."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py",
+      "tests/v1/core/test_scheduler.py",
+      "tests/v1/kv_connector/unit/offloading_connector/test_scheduler.py"
+    ],
+    "risks": [
+      "The fix may trade latency for cacheability, as noted in the issue (extra scheduler steps per crossed marker).",
+      "The fix does not address the #52789 checkpoint gate, which may still limit cache hits under spec decoding.",
+      "Changing the carve policy may affect other workloads; existing unit tests pin the current carve sequence and need updates."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the CPU-only scheduler harness with real Scheduler and hybrid KV config, comparing chunk ends and prefix hits with and without use_eagle, as described in the issue comments.",
+      "Run the GPU end-to-end reproduction on a hybrid GDN model (e.g., Qwen3.5-0.8B-text-only) with and without speculative config, measuring prefix cache hits and warm prefill latency.",
+      "Add a regression test for the knife-edge zero-hit case where a sibling shares exactly one block (1600 tokens) with MTP enabled."
+    ],
+    "unknowns": [
+      "Whether the proposed fix in PR #53479 will be merged and whether it fully resolves the issue without regressions.",
+      "The exact impact of the #52789 checkpoint gate on the fix's effectiveness.",
+      "Whether the maintainers will accept the proposed boundary-aware carve approach."
+    ],
+    "why": "The issue identifies a concrete LLM algorithm bug in align-mode prefix caching with speculative decoding, with root cause traced to the Eagle one-block back-off in _mamba_block_aligned_split. Multiple independent reproductions (CPU harness and GPU end-to-end) confirm the mechanism, and a proposed fix (PR #53479) is under review. The evidence includes detailed measurements and a clear validation path."
   },
   "54eeb961fd4b540da9ac94aeef927c7b454bdad9ec70ca411e3df24e8a10f732": {
     "confidence": 0.85,
@@ -18727,6 +18796,34 @@
       "Exact in-sandbox agent-server exception behind the 500 is not yet captured"
     ],
     "why": "Issue provides a clear, reproducible bug with a minimal A/B test isolating the plugin-loading path, a concrete 500 error on the conversation/events endpoint, and acceptance criteria. The root cause is identified as plugin source resolution/validation occurring too late, with an existing draft PR (automation#339) targeting the same fix. The contribution is actionable and technically valuable."
+  },
+  "65d29d3a42b5995ae393a1895c3f79808369b4e23b3952be993310c3df587c03": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue body states the bug is frontend-only, but the readiness check comment notes missing labels; no contradiction in technical facts."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Agent Canvas sidebar token panel",
+      "frontend data source for cache_read_tokens"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different data source or refactor; ensure no API behavior changes beyond the sidebar display."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that mocks backend stats.usage_to_metrics with nonzero cache_read_tokens and verifies the sidebar displays the same value as the Usage Tab."
+    ],
+    "unknowns": [
+      "Exact frontend code path and component structure for the sidebar token panel; whether maintainers have a preferred implementation approach."
+    ],
+    "why": "The issue provides a clear frontend-only bug with a concrete reproduction path, expected vs actual behavior, and a specific root cause (sidebar reads from null metrics field instead of populated stats.usage_to_metrics). Acceptance criteria include a regression test, making the fix actionable."
   },
   "65df70baa60bb014fa5d15be411e3b5a5cab4e541a456a00eaf51e692ebef185": {
     "confidence": 0.7,
@@ -36598,6 +36695,38 @@
     ],
     "why": "The issue clearly identifies a bug in profiling.numerical() for multi-input models, with a reproducible traceback showing np.ascontiguousarray(X) fails on a list of arrays with different shapes. The fix is localized to the profiling code path, and no competing PR exists."
   },
+  "c9af5972f65bae1463e2a6ead9d79cc1cb8ef92d13d0fda8872d7cad6cce01c1": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/multimodal_gen/configs/models/encoders/qwen3.py",
+      "python/sglang/multimodal_gen/runtime/models/encoders/qwen3.py",
+      "python/sglang/kernels/aot/csrc/cpu/model/qwen3.cpp"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach.",
+      "The issue may require specific hardware (80GB GPU) not available in CI."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl command against a server started with the given flags on version 0.5.17 to reproduce the token loop.",
+      "Bisect between 0.5.6.dev and 0.5.17 to identify the introducing commit.",
+      "Add a regression test that checks for non-repetitive generation on a Qwen3.5-arch model."
+    ],
+    "unknowns": [
+      "Exact root cause commit not yet identified.",
+      "Whether maintainers have already started an internal fix."
+    ],
+    "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, identifying a specific model architecture and version range. Root cause is not yet identified but the evidence is sufficient to start a bisect and targeted debugging. No duplicate or merged fix found."
+  },
   "c9c946ff34929ec11bb867b43746f226c79807213cec8fbc11eac784c8e17f7d": {
     "confidence": 0.6,
     "contradictions": [
@@ -43200,6 +43329,32 @@
     "wait_reason": null,
     "why": "Issue provides a minimal reproducer, exact traceback, and root-cause analysis (zero-sized parameter absent from param_to_partition_ids) with a clear fix direction. It is a concrete distributed-training bug in ZeRO stage 1/2, actionable and testable."
   },
+  "e7ea66cd742fa992eb2b677302a613c9a5f030f9b8623b8e62b8156ae0a6496c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Scheduler.get_new_batch_prefill()",
+      "PrefillAdder budget check logic"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #35645; need to ensure the fix is distinct and adds regression tests."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that sets Scheduler.chunked_req to consume all remaining chunk budget, places a waiting request, and asserts that the waiting queue is not scanned and no cache matching occurs."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific implementation approach over the existing PR."
+    ],
+    "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to re-check the chunk budget before scanning the waiting queue, causing unnecessary cache matching and host-cache load-back. The reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR (#35645) exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
   "e804d6fc98d9e952a2ef6fe2ac963f4db525c752e462b3f160a37d49729345bc": {
     "confidence": 0.7,
     "contradictions": [],
@@ -47384,6 +47539,38 @@
       "Whether regression still exists on current main"
     ],
     "why": "The issue provides a reproducible throughput regression with a clear bisection window and rules out several hypotheses. A contributor's code analysis identifies a plausible root cause (shared single-thread executor for pooling preprocessing/postprocessing) with a concrete one-flag test to confirm. This is a valuable, actionable performance investigation."
+  },
+  "fafa146f58acdab494590d21be7b089099c04e9689ff1a602f6c00245d4b5277": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #44343 claims to address the issue but lacks root-cause coverage evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "ToolRegistry.webSearchEnabled logic",
+      "websearch tool exposure for custom providers",
+      "configuration handling for websearch provider"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different design (e.g., per-provider config vs. env pin).",
+      "Risk of duplicating existing PR #44343 if not differentiated."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the issue by configuring a custom provider and verifying websearch is absent from tools; then apply fix and verify websearch appears and functions.",
+      "Add a unit test for webSearchEnabled covering custom provider IDs and env flag combinations.",
+      "Run existing tool registry tests and static checks."
+    ],
+    "unknowns": [
+      "Maintainer design preference for exposing websearch to custom providers."
+    ],
+    "why": "The issue provides a clear root cause: a hardcoded provider whitelist in ToolRegistry.webSearchEnabled that excludes custom/local providers, with reproduction steps and MITM evidence. An open PR (#44343) addresses it but lacks root-cause coverage, leaving room for a more complete fix. The contribution is actionable and technically valuable."
   },
   "fb12208e14ebb932c0291e4798ceeb0e83e099586391915a89e6a1e2e421fbf5": {
     "confidence": 0.7,
