@@ -301,6 +301,36 @@
     ],
     "why": "Issue provides a clear root cause: hard-coded retry config and sync observation failure aborting the turn, with a concrete production trigger and a minimal fail-open patch. The proposal is actionable and testable."
   },
+  "02ab4354e2fb0c36ff87a3987c29dd305d0434085224a6b7fbe155dff35eeb3d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #34935 is titled 'honour allow_requests_on_db_unavailable in readiness probe' but the issue states the readiness path is not the core defect; the core is the authentication path and recovery. This suggests the PR may not address the root cause."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/proxy_server.py",
+      "litellm/proxy/auth/resolvers/store.py",
+      "litellm/proxy/health_endpoints/_health_endpoints.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #34935; need to compare implementation boundaries to avoid duplication.",
+      "Changing authentication error handling may affect existing fail-open behavior for other database-unavailable scenarios."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that simulates initial Prisma connection failure with allow_requests_on_db_unavailable: true, then verifies that a valid virtual key request returns either the restricted fail-open identity or a 503, not a 401, and that after database recovery the request succeeds without restart."
+    ],
+    "unknowns": [
+      "Whether PR #34935 already fixes the initial-connect nil-client authentication path or only the readiness probe; the assessment indicates root_cause_coverage: false, but the exact implementation details are not provided."
+    ],
+    "why": "The issue provides a detailed root cause: initial Prisma connection failure sets the global client to None, causing authentication to raise NoDatabaseConnectionError before cache lookup, resulting in a 401 instead of fail-open or 503, and no reconnect watchdog. The evidence includes code anchors, reproduction steps, and production observations. An open PR (#34935) overlaps semantically but does not fully cover the root cause (initial-connect nil-client path), leaving a clear actionable gap."
+  },
   "02b69f4251cbeba77af8e3c25bcb13812ed3c35a701c35bd3ba9a18cfef74e39": {
     "confidence": 0.8,
     "contradictions": [
@@ -24071,6 +24101,35 @@
     ],
     "why": "The issue provides a clear root cause: clampReasoningEffort() falls back to the full tier list including 'max', and the OpenAI-compatible path bypasses clamping entirely. The triage confirms the root cause and extends it to the buildReasoningConfig() path. A concrete fix direction and regression test are specified."
   },
+  "7e1184670741d501c8528344ab988f2e927ed69482f858befa18a6f187edf7cb": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "ChatCompletionsHttpClient exception handling",
+      "Introduce ChatCompletionsHttpException or similar typed exception"
+    ],
+    "risks": [
+      "Potential API change may require maintainer design preference",
+      "Existing callers relying on IOException message parsing may break"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit tests with a mock HTTP server returning 429 and 401, asserting the typed exception's statusCode() and responseBody()",
+      "Add test for connection failure to ensure it remains a plain IOException",
+      "Add test for response body containing 'code':429 to ensure it does not affect status"
+    ],
+    "unknowns": [
+      "Maintainer preference for exception type design",
+      "Exact code location and current implementation details beyond the snippet"
+    ],
+    "why": "The issue clearly identifies a root cause: ChatCompletionsHttpClient wraps all non-success HTTP responses in a plain IOException, losing structured status information. It provides a concrete reproduction path (HTTP 429 server) and a detailed expected behavior with a typed exception. The suggested tests are specific and cover streaming/non-streaming, different status codes, and connection failures. This is a valuable, actionable improvement for agent infrastructure."
+  },
   "7e14d982cb7b2e600b260dde7d74d085573348ce2d70026d174a999032b73aaa": {
     "confidence": 0.8,
     "contradictions": [],
@@ -28534,6 +28593,38 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue accurately identifies a silent security gap on Windows and proposes a clear seam, but the fix direction is an architectural decision (native addon vs helper binary vs docs) that maintainers must confirm. The reporter explicitly asks for direction before implementing, and the triage bot recommends maintainer decision. No competing PR exists, but work cannot start without design confirmation."
   },
+  "97b780bd117ccb593cfab1009486100cbb42179a609f35a4c02f362c87d53487": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #53367 claims to fix the same issue but lacks tests and root cause coverage; however, the issue itself provides sufficient root cause evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()",
+      "vllm/config/vllm.py: ensure VllmConfig.compute_hash() propagates the updated speculative hash"
+    ],
+    "risks": [
+      "Potential hash collisions if other config fields are also omitted; need to ensure all shape-affecting parameters are included.",
+      "Changing the hash may invalidate existing caches, causing recompilation overhead for users."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test for SpeculativeConfig.compute_hash() asserting different hashes for different num_speculative_tokens values.",
+      "Add an integration test that runs vLLM with two different num_speculative_tokens values sharing the same cache directory and verifies no assertion error."
+    ],
+    "unknowns": [
+      "Whether the proposed fix is already implemented in PR #53367 and if it is complete; but the issue's root cause and fix are clear, so this is not blocking."
+    ],
+    "why": "The issue provides a clear root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm and the issue qualifies as it involves model architecture and distributed training mechanisms with a concrete validation path (reproduce with two server runs and verify no assertion failure)."
+  },
   "97c4141612a630c09d8cbe628e7b68569405b17e334827f173efc623bd10c438": {
     "confidence": 0.7,
     "contradictions": [
@@ -32648,6 +32739,37 @@
     ],
     "why": "Issue clearly identifies a real bug with root cause and reproduction, but an existing PR (#25387) directly targets the same code paths and is closed with CI failures and no tests. Maintainer review is needed to decide whether to revive that PR or accept a new one."
   },
+  "b1318133216fb102c7f4f670025f31230a8502660a12c3784a0c5193fc160834": {
+    "confidence": 0.85,
+    "contradictions": [
+      "comment from virajchoudhary reports zen/v1 recovered, while Go route still failing per #44503"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "restore Ox Alpha tool adapter on zen/v1 and zen/go/v1",
+      "fix routing/migration for x-preview-f-free/ox-alpha-free"
+    ],
+    "risks": [
+      "possible maintainer preference for a different fix approach",
+      "transient upstream issue may mask the underlying bug"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "run the provided curl repro with tools against both routes to confirm failure",
+      "add regression test that sends a tools request to x-preview-f-free and expects a valid tool_calls response"
+    ],
+    "unknowns": [
+      "exact code path causing the endpoint unavailability",
+      "whether the fix is purely backend-side or requires client changes"
+    ],
+    "why": "Issue provides a minimal curl repro, control models, and multiple independent confirmations; root cause is isolated to the Ox Alpha free model's tool path on both Zen routes. The failure is reproducible and specific, making it actionable for a code fix."
+  },
   "b2497ac01dcaa0c1c4ce11bc3759ba5dd59314ae45bf30f53275df7459de699e": {
     "confidence": 0.85,
     "contradictions": [
@@ -33593,6 +33715,34 @@
       "Maintainer design preferences for session recovery"
     ],
     "why": "The issue describes a clear user-visible bug with a minimal reproduction, but the root cause is not fully diagnosed and the fix may require design decisions about session lifecycle and error recovery. The deterministic gate requires HUMAN_REVIEW, and there is no maintainer approval or explicit help-wanted signal."
+  },
+  "b73f16a06295b064da9e71b573828221c2779f27c5a9f95948b7b39056d6a137": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/durable/evented-agent.ts",
+      "possibly workflow-event-processor or create-durable-agentic-workflow"
+    ],
+    "risks": [
+      "Changing cleanup timing may affect recovery semantics for genuinely orphaned runs; need to ensure cleanup is driven by terminal events and survives process restart.",
+      "Potential behavior change for workflows relying on current fallthrough if alternative fix is chosen."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Write a failing test using persistent storage (e.g., @mastra/pg or @mastra/libsql) that runs an evented agent to completion and asserts listActiveRuns() does not include the finished run and recoverActiveRuns() does not re-drive it.",
+      "Run targeted unit tests in packages/core and static checks."
+    ],
+    "unknowns": [
+      "No maintainer design preference confirmed; issue is still in triage."
+    ],
+    "why": "Issue provides a clear root cause: EventedAgent overrides executeWorkflow() and never calls deleteRunSnapshots() on terminal states, leaving stale snapshot rows that pollute listActiveRuns() and cause recoverActiveRuns() to re-execute finished runs. Reproduction steps and expected/actual behavior are concrete, with code anchors and a suggested fix direction."
   },
   "b75ea9d08656a9aada325f0b89232d545b2af542faea5cc9bc0e66ee27b1635a": {
     "confidence": 0.8,
@@ -39624,6 +39774,36 @@
     ],
     "why": "The issue reports empirical observations about DBCache knobs on MiniMax-H3, but lacks a clear root cause for the inert default threshold and the quality gap. It is filed as a set of observations, not a concrete code fix. The open PR and related issue lookups timed out, so duplicate work cannot be excluded. The deterministic gate requires HUMAN_REVIEW."
   },
+  "d4d7f4702a351398f4e27e9eb5ef2733cb30355d1a684756f398bfa4ec251ffc": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Existing PR #31962 is merged but may not fully address the root cause; PR #33784 is draft and lacks tests"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "RadixCache KV release logic in retract path",
+      "flush_cache behavior during paused generation"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach",
+      "Risk of breaking existing retract semantics if not carefully implemented"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the issue by running a server with retract mode and verifying KV cache remains after pause; add a regression test that checks all KV pages are released after retract and that old-weight KV is not reused after weight update."
+    ],
+    "unknowns": [
+      "Exact maintainer design preference for the fix",
+      "Whether the merged PR #31962 already resolves the issue in the current codebase"
+    ],
+    "why": "The issue provides a detailed root cause analysis with code anchors and measured impact, establishing a concrete bug in retract mode's KV release. The suggested fix is actionable and testable, and the existing PRs are incomplete, leaving room for a competitive contribution."
+  },
   "d50d73e67794606726637ae2e79bd3bd4304751466387f7500ca87e23504dcb3": {
     "confidence": 0.85,
     "contradictions": [
@@ -41183,6 +41363,38 @@
       "Whether existing storage adapters can support CAS without breaking changes"
     ],
     "why": "The issue is a well-documented concurrency bug with a public minimal reproduction and real production impact. The root cause is clearly identified: lack of atomic claim/CAS in the resume path. However, the deterministic gate requires HUMAN_REVIEW, and the maintainer has not yet confirmed the preferred design (in-process vs storage-backed). The existing PR #20512 is closed and incomplete for multi-instance scenarios. Thus, maintainer guidance is needed before implementation."
+  },
+  "dc1a4d60ab2c91e05080df74f4056409360a02d9758aee0e5b7b998909159ca2": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "Modify capability guard in qwen_gdn_linear_attn.py to probe device arch or catch launch error and fall back to Triton",
+      "Possibly build the MTP post-conv kernel for sm_110a"
+    ],
+    "risks": [
+      "Changing the guard may affect performance on supported architectures if fallback triggers incorrectly",
+      "Catching launch errors at runtime may mask other kernel issues"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction command on Jetson Thor (sm_110a) with MTP speculative decoding and verify no crash",
+      "Add a regression test that checks the guard falls back to Triton when kernel image is missing for the device"
+    ],
+    "unknowns": [
+      "Exact build configuration of the wheel's cubin set for sm_110a",
+      "Maintainer preference among suggested fixes"
+    ],
+    "why": "The issue identifies a concrete root cause: the capability guard checks symbol presence and device capability but not cubin arch coverage, leading to a kernel launch failure on sm_110a. The reporter provides a reproducible command, traceback, and a verified workaround, and suggests multiple actionable fixes. The evidence includes code anchors and a clear validation path."
   },
   "dc5bd1280cad71f4cb48021e87e9559fb50ef09979a29738aca70730237ae8d6": {
     "confidence": 0.7,
@@ -44704,6 +44916,36 @@
     ],
     "why": "Issue describes a clear load-balancing bug with a concrete repro and root-cause analysis in comments, but the deterministic gate requires HUMAN_REVIEW and there are overlapping open PRs and related issues that need maintainer triage."
   },
+  "ea4c983757ffd430092d3f49c06ebe6d6ccad388b513876d396a7cdfe62def9a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/multimodal_gen/configs/models/encoders/qwen3.py",
+      "python/sglang/multimodal_gen/runtime/models/encoders/qwen3.py",
+      "python/sglang/kernels/aot/csrc/cpu/model/qwen3.cpp"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach; need to confirm design before large changes.",
+      "The issue may require specific hardware (80GB GPU) and model access, which could limit testability."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl command with the specified model and flags to reproduce the token loop on 0.5.17, then run the same command on the fix branch to verify clean output.",
+      "Add a regression test that runs a short generation with the Qwen3.5-arch model and asserts no repetitive token loops and correct finish_reason."
+    ],
+    "unknowns": [
+      "Exact root cause commit or code change in 0.5.17 that introduced the regression; maintainer's preferred fix direction."
+    ],
+    "why": "Issue provides a clear user-visible regression with a concrete reproduction command, isolated variables, and a known working version. Root cause is narrowed to generation-level logic for Qwen3.5-arch models in 0.5.17, with code anchors in qwen3 model files. Actionable fix path is to add a regression test and investigate sampling/logits/pipe changes."
+  },
   "ea7822f312a66d1d12a613b7e21a48bd4b803957eb52b2be732abeb87c4feba7": {
     "confidence": 0.7,
     "contradictions": [
@@ -44913,6 +45155,37 @@
       "Whether PR #13903 is considered a competing implementation or abandoned"
     ],
     "why": "Issue provides a detailed root cause and a public reproduction, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#13903) is closed with gaps (no tests, stale). Maintainer has not confirmed design or assignment, so work should wait for maintainer direction."
+  },
+  "eb52eed57b7e81ba092c246f6d574dc3f6f63695363d332e59942371c30cfd12": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "CustomStreamWrapper",
+      "GenericStreamingChunk handling",
+      "response_id pinning logic"
+    ],
+    "risks": [
+      "Potential API behavior change if response_id semantics are altered for other providers.",
+      "Need to coordinate with existing PR #38106 to avoid duplication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that streams a GenericStreamingChunk-based provider and asserts all chunks share the same top-level id.",
+      "Run existing streaming tests and lint."
+    ],
+    "unknowns": [
+      "Exact implementation details of the fix and whether maintainers prefer a specific approach."
+    ],
+    "why": "Issue clearly identifies a user-visible bug with a concrete root cause: GenericStreamingChunk path in CustomStreamWrapper fails to pin response_id, causing each chunk to generate a new uuid4. The fix is actionable and testable via a streaming regression test. Existing PR #38106 is incomplete (missing root cause coverage), leaving room for a better contribution."
   },
   "eb69e27cc961d4f8fe97229ad7db8f2359a5424fdf9b7c8fc31302a37ebf0524": {
     "confidence": 0.7,
