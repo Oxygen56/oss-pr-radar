@@ -66,11 +66,15 @@ def test_default_runner_does_not_proxy_fallback_for_github_http_error(monkeypatc
     assert len(calls) == 1
 
 
-def test_transient_errors_include_ssl_syscall_and_eof_while_reading():
+def test_transient_errors_include_cli_connectivity_failures():
     assert is_transient_github_error("OpenSSL SSL_connect: SSL_ERROR_SYSCALL")
     assert is_transient_github_error("unexpected EOF while reading")
     assert is_transient_github_error(
         "Failed to connect to github.com port 443: Couldn't connect to server"
+    )
+    assert is_transient_github_error(
+        "error connecting to api.github.com\n"
+        "check your internet connection or https://githubstatus.com"
     )
 
 
@@ -82,6 +86,26 @@ def test_api_retries_plain_eof_and_then_succeeds():
         calls.append(True)
         if len(calls) == 1:
             raise GitHubError('Get "https://api.github.com/repos/a/b/issues/1": EOF')
+        return '{"number":1}'
+
+    client = GitHubClient(runner=runner, retry_delays=(0.01,), sleeper=delays.append)
+
+    assert client.issue("a/b", 1)["number"] == 1
+    assert len(calls) == 2
+    assert delays == [0.01]
+
+
+def test_api_retries_github_cli_connectivity_error_and_then_succeeds():
+    calls = []
+    delays = []
+
+    def runner(_args, _timeout):
+        calls.append(True)
+        if len(calls) == 1:
+            raise GitHubError(
+                "error connecting to api.github.com\n"
+                "check your internet connection or https://githubstatus.com"
+            )
         return '{"number":1}'
 
     client = GitHubClient(runner=runner, retry_delays=(0.01,), sleeper=delays.append)

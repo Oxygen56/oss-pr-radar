@@ -44,6 +44,8 @@ def _is_connectivity_github_error(error: BaseException | str) -> bool:
             "timed out",
             "timeout",
             "temporarily unavailable",
+            "error connecting to api.github.com",
+            "check your internet connection",
             "failed to connect",
             "couldn't connect",
             "connection reset",
