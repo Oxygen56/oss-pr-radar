@@ -1347,6 +1347,141 @@ def test_policy_migration_reopens_only_matching_undispatched_terminal(tmp_path):
         )
 
 
+def test_state_drift_invalidates_exact_intent_and_allows_fresh_same_digest(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    original = intent(selectedBaseSha="old-base")
+    assert store.enqueue(original) is True
+
+    invalidated = store.invalidate_state_drift_intent(
+        "a/b#1",
+        intent_id="intent-1",
+        evidence={
+            "issue": {"updated_at": original["issueUpdatedAt"]},
+            "selectedBaseSha": "old-base",
+            "liveBaseSha": "new-base",
+            "evidenceDigest": "live-evidence",
+        },
+    )
+
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage,terminal_reason FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()
+        old_status = connection.execute(
+            "SELECT status FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()["status"]
+        no_go_events = connection.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type='AUDIT_NO_GO'"
+        ).fetchone()[0]
+    assert dict(opportunity) == {"stage": "QUALIFIED", "terminal_reason": None}
+    assert old_status == "REJECTED"
+    assert no_go_events == 0
+    assert invalidated["staleBaseSha"] == "old-base"
+    assert invalidated["liveBaseSha"] == "new-base"
+    assert store.terminal_feedback() == []
+    assert store.scanner_recheck_feedback()[0]["intent_id"] == "intent-1"
+
+    replay = original | {"expiresAt": iso_z(datetime.now(UTC) + timedelta(hours=2))}
+    assert store.enqueue(replay) is False
+    fresh = original | {
+        "intentId": "intent-2",
+        "issuedAt": iso_z(datetime.now(UTC) + timedelta(seconds=1)),
+        "expiresAt": iso_z(datetime.now(UTC) + timedelta(hours=2)),
+    }
+    assert store.enqueue(fresh) is True
+    assert [item["intentId"] for item in store.pending()] == ["intent-2"]
+
+    repeated = store.invalidate_state_drift_intent(
+        "a/b#1", intent_id="intent-1", evidence={"liveBaseSha": "ignored"}
+    )
+    assert repeated["changed"] is False
+    assert repeated["recordedAt"] == invalidated["recordedAt"]
+
+
+def test_state_drift_invalidation_rejects_creating_and_thread_bound_intents(tmp_path):
+    creating = RadarLedger(tmp_path / "creating.sqlite3")
+    creating.enqueue(intent())
+    creating.claim("intent-1", "worker")
+    creating.reserve_creation("intent-1", owner="worker")
+
+    with pytest.raises(LedgerError, match="no longer invalidatable"):
+        creating.invalidate_state_drift_intent("a/b#1", intent_id="intent-1")
+    with creating.connect() as connection:
+        assert (
+            connection.execute("SELECT status FROM intents WHERE intent_id='intent-1'").fetchone()[
+                "status"
+            ]
+            == "CREATING"
+        )
+        assert (
+            connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+                "stage"
+            ]
+            == "CREATING"
+        )
+
+    bound = RadarLedger(tmp_path / "bound.sqlite3")
+    bound.enqueue(intent())
+    bound.claim("intent-1", "worker")
+    bound.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/worktree",
+    )
+
+    with pytest.raises(LedgerError, match="thread-bound"):
+        bound.invalidate_state_drift_intent("a/b#1", intent_id="intent-1")
+    with bound.connect() as connection:
+        assert (
+            connection.execute("SELECT status FROM intents WHERE intent_id='intent-1'").fetchone()[
+                "status"
+            ]
+            == "DISPATCHED"
+        )
+
+
+def test_historical_state_drift_migration_is_bounded_and_idempotent(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    original = intent(selectedBaseSha="old-base")
+    store.enqueue(original)
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="STATE_DRIFT",
+        evidence={
+            "evidence": {
+                "issue": {"updated_at": original["issueUpdatedAt"]},
+                "selectedBaseSha": "old-base",
+                "liveBaseSha": "new-base",
+            }
+        },
+    )
+
+    migrated = store.invalidate_state_drift_intent(
+        "a/b#1", intent_id="intent-1", historical_terminal=True
+    )
+    repeated = store.invalidate_state_drift_intent(
+        "a/b#1", intent_id="intent-1", historical_terminal=True
+    )
+
+    assert migrated["changed"] is True
+    assert repeated["changed"] is False
+    assert repeated["recordedAt"] == migrated["recordedAt"]
+    assert store.terminal_feedback() == []
+    assert store.scanner_recheck_feedback()[0]["live_base_sha"] == "new-base"
+
+
+def test_historical_state_drift_migration_rejects_published_opportunity(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.record_stage("a/b#1", "PR_OPEN", evidence={})
+
+    with pytest.raises(LedgerError, match="published"):
+        store.invalidate_state_drift_intent("a/b#1", intent_id="intent-1", historical_terminal=True)
+
+
 def test_task_context_recovers_disclosure_policy_from_live_audit(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent(autoSubmitAuthorized=False, publicSubmissionAllowed=False))

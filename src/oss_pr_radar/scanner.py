@@ -2086,11 +2086,14 @@ def should_skip_seen(
 def merge_controller_terminal_feedback(
     seen: dict[str, Any], feedback: dict[str, Any]
 ) -> dict[str, Any]:
-    """Overlay controller terminal judgments unless cloud state saw a newer issue revision."""
+    """Overlay terminal judgments and one-shot controller-requested rechecks."""
 
     merged = dict(seen)
     for key, value in feedback.items():
-        if not isinstance(value, dict) or value.get("status") != CONTROLLER_TERMINAL_STATUS:
+        if not isinstance(value, dict) or value.get("status") not in {
+            CONTROLLER_TERMINAL_STATUS,
+            "state_drift",
+        }:
             continue
         current = merged.get(key) if isinstance(merged.get(key), dict) else {}
         current_updated = parse_github_time(
@@ -2100,6 +2103,24 @@ def merge_controller_terminal_feedback(
             value.get("issue_updated"), datetime.min.replace(tzinfo=timezone.utc)
         )
         if current_updated > feedback_updated:
+            continue
+        if value.get("status") == "state_drift":
+            current_analyzed = parse_github_time(
+                current.get("analyzed"), datetime.min.replace(tzinfo=timezone.utc)
+            )
+            feedback_analyzed = parse_github_time(
+                value.get("analyzed"), datetime.min.replace(tzinfo=timezone.utc)
+            )
+            if current_analyzed > feedback_analyzed:
+                continue
+            merged[key] = (
+                current
+                | value
+                | {
+                    "first_deferred_at": value.get("analyzed"),
+                    "requeued_at": value.get("analyzed"),
+                }
+            )
             continue
         merged[key] = current | value
     return merged

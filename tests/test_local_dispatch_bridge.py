@@ -23,6 +23,7 @@ from types import SimpleNamespace
 import pytest
 
 from oss_pr_radar.contracts import contract_digest
+from oss_pr_radar.decision import AuthorizationDecision
 from oss_pr_radar.dispatch import (
     INTENT_VERSION,
     QUEUE_VERSION,
@@ -756,6 +757,63 @@ def test_event_drain_creates_exactly_one_new_issue_task(monkeypatch, tmp_path):
         ("claim", "intent-1"),
         ("creation", "intent-1"),
         ("create", "token-1", tmp_path),
+    ]
+
+
+def test_event_drain_reports_state_drift_as_scanner_recheck_not_terminal(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_list",
+        lambda _args: {"candidates": [], "restoreRequired": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_list",
+        lambda _args: {"candidates": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "recovery_list",
+        lambda _args: {"recoverable": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "list_pending",
+        lambda _path: {"pending": [{"intentId": "intent-1", "key": "a/b#1"}]},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "claim_intent",
+        lambda _args: {
+            "authorized": False,
+            "recheckRequired": True,
+            "scannerRecheck": {"recordedAt": "2026-08-24T03:16:45Z"},
+            "decision": {"status": "BLOCK", "reason_code": "STATE_DRIFT"},
+        },
+    )
+
+    result = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            runtime_root=tmp_path,
+            project_id="github-project",
+            owner="event-drain",
+        )
+    )
+
+    assert result["action"] == "none"
+    assert result["terminalized"] == []
+    assert result["held"] == []
+    assert result["scannerRechecks"] == [
+        {
+            "key": "a/b#1",
+            "intentId": "intent-1",
+            "reason": "STATE_DRIFT",
+            "recordedAt": "2026-08-24T03:16:45Z",
+        }
     ]
 
 
@@ -2158,6 +2216,134 @@ def test_terminal_feedback_does_not_republish_unchanged_state(monkeypatch, tmp_p
     assert [call[2] for call in calls] == ["restore"]
 
 
+def test_state_drift_feedback_replaces_false_terminal_once(monkeypatch, tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    issue_updated = iso_z(now - timedelta(minutes=5))
+    store.enqueue(
+        {
+            "intentId": "intent-drift",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "issueUpdatedAt": issue_updated,
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+            "selectedBaseSha": "old-base",
+        }
+    )
+    recheck = store.invalidate_state_drift_intent(
+        "a/b#1",
+        intent_id="intent-drift",
+        evidence={
+            "issue": {"updated_at": issue_updated},
+            "selectedBaseSha": "old-base",
+            "liveBaseSha": "new-base",
+        },
+    )
+    state = bind_validation_runtime(monkeypatch, tmp_path)
+    state.mkdir()
+    feedback_path = state / "controller_terminal_feedback.json"
+    feedback_path.write_text(
+        json.dumps(
+            {
+                "a/b#1": {
+                    "analyzed": "2026-08-24T03:19:00Z",
+                    "status": "controller_terminal",
+                    "controller_stage": "AUDIT_NO_GO",
+                    "terminal_reason": "STATE_DRIFT",
+                    "issue_updated": issue_updated,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+    monkeypatch.setattr(MODULE, "command", lambda args, **_kwargs: calls.append(args) or "")
+
+    first = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=store.path))
+    first_saved = json.loads(feedback_path.read_text(encoding="utf-8"))
+    second = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=store.path))
+    second_saved = json.loads(feedback_path.read_text(encoding="utf-8"))
+
+    assert first["scannerRechecks"] == [{"key": "a/b#1", "intentId": "intent-drift"}]
+    assert first["stateChanged"] is True
+    assert second["stateChanged"] is False
+    assert first_saved == second_saved
+    assert first_saved["a/b#1"]["status"] == "state_drift"
+    assert first_saved["a/b#1"]["controller_stage"] is None
+    assert first_saved["a/b#1"]["terminal_reason"] is None
+    assert first_saved["a/b#1"]["analyzed"] == recheck["recordedAt"]
+    assert first_saved["a/b#1"]["stale_base_sha"] == "old-base"
+    assert first_saved["a/b#1"]["live_base_sha"] == "new-base"
+    assert [call[2] for call in calls] == ["restore", "publish", "restore"]
+
+
+def test_historical_state_drift_reopen_entry_keeps_old_intent_rejected(monkeypatch, tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-drift",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "issueUpdatedAt": iso_z(now),
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+            "selectedBaseSha": "old-base",
+        }
+    )
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="STATE_DRIFT",
+        evidence={
+            "evidence": {
+                "issue": {"updated_at": iso_z(now)},
+                "selectedBaseSha": "old-base",
+                "liveBaseSha": "new-base",
+            }
+        },
+    )
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    updates = []
+    monkeypatch.setattr(
+        MODULE,
+        "_publish_controller_feedback_updates",
+        lambda value: updates.append(value) or (True, 1),
+    )
+
+    result = MODULE.reopen_state_drift(
+        SimpleNamespace(ledger=store.path, key="a/b#1", intent_id="intent-drift")
+    )
+
+    with store.connect() as connection:
+        status = connection.execute(
+            "SELECT status FROM intents WHERE intent_id='intent-drift'"
+        ).fetchone()["status"]
+        stage = connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+            "stage"
+        ]
+    assert result["recheckRequired"] is True
+    assert result["ledgerChanged"] is True
+    assert status == "REJECTED"
+    assert stage == "QUALIFIED"
+    assert updates[0]["a/b#1"]["status"] == "state_drift"
+
+
 def test_terminal_feedback_defers_when_issue_changed_after_dispatch(monkeypatch, tmp_path):
     store, _worktree = registered_store(tmp_path)
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
@@ -2177,6 +2363,321 @@ def test_terminal_feedback_defers_when_issue_changed_after_dispatch(monkeypatch,
     assert result["published"] == 0
     assert result["deferred"] == [{"key": "a/b#1", "reason": "issue_updated_after_local_snapshot"}]
     assert not (state / "controller_terminal_feedback.json").exists()
+
+
+def _record_requalified_wrong_repo_terminal(store: RadarLedger) -> None:
+    baseline_issue = {
+        "state": "open",
+        "title": "OAuth token exchange fails",
+        "body": "The hosted callback rejects `access_token` for TikTok.",
+        "labels": [{"name": "support"}],
+        "assignees": [],
+        "updated_at": "2026-08-21T18:40:56Z",
+    }
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_PASS",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": baseline_issue,
+                    "comments": [
+                        {
+                            "id": 1,
+                            "body": "This is handled by the hosted service, not this SDK repo.",
+                            "created_at": "2026-08-21T18:40:55Z",
+                            "updated_at": "2026-08-21T18:40:55Z",
+                            "author_association": "MEMBER",
+                            "user": {"login": "maintainer"},
+                        }
+                    ],
+                    "defaultBranch": "main",
+                    "liveBaseSha": "a" * 40,
+                    "repoProbeReceipt": {
+                        "codePaths": ["src/oauth/client.ts"],
+                    },
+                }
+            }
+        },
+    )
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        evidence={"summary": "Hosted service implementation is absent from this repository."},
+        reason="WRONG_REPO",
+    )
+    # Reproduce the production failure: a later scanner intent already moved
+    # the opportunity back to QUALIFIED even though no task-level evidence changed.
+    store.record_stage("a/b#1", "QUALIFIED", evidence={})
+
+
+def test_wrong_repo_terminal_survives_low_information_comment_refresh(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    _record_requalified_wrong_repo_terminal(store)
+    state = bind_validation_runtime(monkeypatch, tmp_path)
+    state.mkdir()
+
+    class GitHub:
+        def issue(self, _repo, _number):
+            return {
+                "state": "open",
+                "title": "OAuth token exchange fails",
+                "body": "The hosted callback rejects `access_token` for TikTok.",
+                "labels": [{"name": "support"}],
+                "assignees": [],
+                "updated_at": "2099-08-24T03:12:58Z",
+            }
+
+        def comments(self, _repo, _number):
+            return [
+                {
+                    "id": 1,
+                    "body": "This is handled by the hosted service, not this SDK repo.",
+                    "created_at": "2026-08-21T18:40:55Z",
+                    "updated_at": "2026-08-21T18:40:55Z",
+                    "author_association": "MEMBER",
+                    "user": {"login": "maintainer"},
+                },
+                {
+                    "id": 2,
+                    "body": "Hi I want to work on this issue can you please assign me this issue",
+                    "created_at": "2099-08-24T03:12:58Z",
+                    "updated_at": "2099-08-24T03:12:58Z",
+                    "author_association": "NONE",
+                    "user": {"login": "volunteer"},
+                },
+            ]
+
+        def branch(self, _repo, branch):
+            assert branch == "main"
+            return {"commit": {"sha": "b" * 40}}
+
+        def compare(self, _repo, base, head):
+            assert (base, head) == ("a" * 40, "b" * 40)
+            return {
+                "status": "ahead",
+                "total_commits": 1,
+                "files": [
+                    {
+                        "filename": f"docs/changelog-{index}.md",
+                        "patch": "+ unrelated docs",
+                    }
+                    for index in range(300)
+                ],
+            }
+
+        def repository_tree(self, _repo, ref):
+            assert ref in {"a" * 40, "b" * 40}
+            return [
+                {"type": "blob", "path": "src/oauth/client.ts", "sha": "1" * 40},
+                {
+                    "type": "blob",
+                    "path": "docs/changelog.md",
+                    "sha": ("2" if ref == "a" * 40 else "3") * 40,
+                },
+            ]
+
+    monkeypatch.setattr(MODULE, "GitHubClient", GitHub)
+    monkeypatch.setattr(MODULE, "command", lambda *_args, **_kwargs: "")
+
+    result = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=store.path))
+
+    saved = json.loads((state / "controller_terminal_feedback.json").read_text())
+    assert result["published"] == 1
+    assert result["deferred"] == []
+    assert saved["a/b#1"]["status"] == "controller_terminal"
+    assert saved["a/b#1"]["terminal_reason"] == "WRONG_REPO"
+    assert saved["a/b#1"]["issue_updated"] == "2099-08-24T03:12:58Z"
+
+
+@pytest.mark.parametrize(
+    ("issue_body", "new_comment", "changed_files"),
+    [
+        (
+            "The public SDK now implements the TikTok token exchange.",
+            None,
+            [{"filename": "docs/changelog.md", "patch": "+ unrelated docs"}],
+        ),
+        (
+            "The hosted callback rejects `access_token` for TikTok.",
+            "The public implementation is now in `src/oauth/client.ts` and needs a parser fix.",
+            [{"filename": "docs/changelog.md", "patch": "+ unrelated docs"}],
+        ),
+        (
+            "The hosted callback rejects `access_token` for TikTok.",
+            None,
+            [
+                {
+                    "filename": "src/oauth/client.ts",
+                    "patch": "+ parse the TikTok access_token response",
+                }
+            ],
+        ),
+    ],
+)
+def test_wrong_repo_terminal_allows_material_evidence_recheck(
+    monkeypatch, tmp_path, issue_body, new_comment, changed_files
+):
+    store, _worktree = registered_store(tmp_path)
+    _record_requalified_wrong_repo_terminal(store)
+    state = bind_validation_runtime(monkeypatch, tmp_path)
+    state.mkdir()
+
+    class GitHub:
+        def issue(self, _repo, _number):
+            return {
+                "state": "open",
+                "title": "OAuth token exchange fails",
+                "body": issue_body,
+                "labels": [{"name": "support"}],
+                "assignees": [],
+                "updated_at": "2099-08-24T03:12:58Z",
+            }
+
+        def comments(self, _repo, _number):
+            comments = [
+                {
+                    "id": 1,
+                    "body": "This is handled by the hosted service, not this SDK repo.",
+                    "created_at": "2026-08-21T18:40:55Z",
+                    "updated_at": "2026-08-21T18:40:55Z",
+                    "author_association": "MEMBER",
+                    "user": {"login": "maintainer"},
+                }
+            ]
+            if new_comment:
+                comments.append(
+                    {
+                        "id": 2,
+                        "body": new_comment,
+                        "created_at": "2099-08-24T03:12:58Z",
+                        "updated_at": "2099-08-24T03:12:58Z",
+                        "author_association": "MEMBER",
+                        "user": {"login": "maintainer"},
+                    }
+                )
+            return comments
+
+        def branch(self, _repo, _branch):
+            return {"commit": {"sha": "b" * 40}}
+
+        def compare(self, _repo, _base, _head):
+            return {"status": "ahead", "total_commits": 1, "files": changed_files}
+
+    monkeypatch.setattr(MODULE, "GitHubClient", GitHub)
+    monkeypatch.setattr(MODULE, "command", lambda *_args, **_kwargs: "")
+
+    result = MODULE.publish_terminal_feedback(SimpleNamespace(ledger=store.path))
+
+    assert result["published"] == 0
+    assert result["deferred"] == [{"key": "a/b#1", "reason": "material_terminal_evidence_changed"}]
+    assert not (state / "controller_terminal_feedback.json").exists()
+
+
+def test_claim_intent_rejects_low_information_wrong_repo_requalification(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    _record_requalified_wrong_repo_terminal(store)
+    now = datetime.now(UTC)
+    assert store.enqueue(
+        {
+            "intentId": "intent-2",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "OAuth token exchange fails",
+            "mode": "canary",
+            "category": "NEW_CLEAN_CANDIDATE",
+            "scanGate": "ALLOW_TO_WORK",
+            "autoSpawn": True,
+            "score": 9,
+            "snapshotId": "new-snapshot",
+            "decisionDigest": "new-decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+            "issueUpdatedAt": "2099-08-24T03:12:58Z",
+        }
+    )
+    current_evidence = {
+        "digest": "current-evidence",
+        "complete": True,
+        "repo": "a/b",
+        "issue": {
+            "state": "open",
+            "title": "OAuth token exchange fails",
+            "body": "The hosted callback rejects `access_token` for TikTok.",
+            "labels": [{"name": "support"}],
+            "assignees": [],
+            "updated_at": "2099-08-24T03:12:58Z",
+        },
+        "comments": [
+            {
+                "id": 1,
+                "body": "This is handled by the hosted service, not this SDK repo.",
+                "author_association": "MEMBER",
+                "user": {"login": "maintainer"},
+            },
+            {
+                "id": 2,
+                "body": "Hi I want to work on this issue can you please assign me this issue",
+                "author_association": "NONE",
+                "user": {"login": "volunteer"},
+            },
+        ],
+        "liveBaseSha": "b" * 40,
+    }
+    evidence = SimpleNamespace(
+        digest="current-evidence",
+        probe_level="PATHS_VERIFIED",
+        as_dict=lambda: current_evidence,
+    )
+    verdict = AuthorizationDecision(
+        status="ALLOW",
+        reason_code="LIVE_EVIDENCE_PASSED",
+        checks={"evidence": "PASS"},
+        evidence_digest="current-evidence",
+    )
+
+    class GitHub:
+        def compare(self, _repo, _base, _head):
+            return {
+                "status": "ahead",
+                "total_commits": 1,
+                "files": [{"filename": "docs/changelog.md", "patch": "+ unrelated docs"}],
+            }
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "_audit_intent", lambda _intent: (evidence, verdict))
+    monkeypatch.setattr(MODULE, "_higher_priority_existing_work", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(MODULE, "GitHubClient", GitHub)
+
+    result = MODULE.claim_intent(
+        SimpleNamespace(
+            ledger=store.path,
+            intent_id="intent-2",
+            owner="controller",
+            lease_minutes=15,
+            prepare=False,
+        )
+    )
+
+    assert result["authorized"] is False
+    assert result["claimed"] is False
+    assert result["decision"]["reason_code"] == "WRONG_REPO"
+    assert store.pending() == []
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT status FROM intents WHERE intent_id='intent-2'").fetchone()[
+                "status"
+            ]
+            == "REJECTED"
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM intents WHERE opportunity_key='a/b#1' AND thread_id IS NOT NULL"
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_terminal_feedback_treats_transient_github_failure_as_deferred(monkeypatch, tmp_path):
@@ -10728,7 +11229,6 @@ def test_repaired_implementation_context_rearms_same_result_once(tmp_path, prior
         thread_id="thread-1",
         cwd=worktree,
     )
-
     assert store.implementation_followup_candidates() == []
     with store.connect() as connection:
         repaired_count = connection.execute(
@@ -10743,6 +11243,48 @@ def test_repaired_implementation_context_rearms_same_result_once(tmp_path, prior
         ).fetchone()[0]
     assert repaired_count == 1
     assert sent_count == 2
+
+
+def test_implementation_followup_reserve_repairs_context_before_delivery(tmp_path):
+    store, worktree, _result_path = _controller_commit_result(tmp_path)
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    provenance = json.loads(managed.read_task("intent-1")["provenance_json"])
+    result_digest = str(provenance["probeReceipt"]["resultDigest"])
+    store.record_task_result_ingested("a/b#1", digest=result_digest, stage="IMPLEMENTATION_READY")
+    candidate = store.implementation_followup_candidates()[0]
+    context_path = worktree / ".oss-pr-radar" / "task-context.json"
+    stale = json.loads(context_path.read_text(encoding="utf-8"))
+    stale.update(
+        {
+            "taskStage": "REPRODUCTION_REQUIRED",
+            "probeLevel": "UNVERIFIED",
+            "allowedActions": [
+                "read_issue",
+                "read_repo",
+                "run_reproduction_probe",
+                "write_structured_result",
+            ],
+            "taskMode": "reproduction_only",
+            "childMayEditFiles": False,
+        }
+    )
+    stale.pop("reproductionReceipt", None)
+    MODULE._atomic_json(context_path, stale)
+
+    reserved = MODULE.implementation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+        )
+    )
+
+    refreshed = json.loads(context_path.read_text(encoding="utf-8"))
+    assert reserved["resultDigest"] == candidate["resultDigest"]
+    assert refreshed["taskStage"] == "IMPLEMENTATION_READY"
+    assert refreshed["probeLevel"] == "REPRODUCED_VALIDATED"
+    assert refreshed["childMayEditFiles"] is True
+    assert refreshed["resultDigest"] == candidate["resultDigest"]
 
 
 def test_controller_normalizes_child_base_to_prepared_default_branch(tmp_path):
@@ -15966,6 +16508,107 @@ def test_publication_finalize_failure_reconciles_without_second_create_pr(monkey
     assert calls == ["push", "create-pr"]
 
 
+def test_publication_update_receipt_reconciles_without_creation_reservation(monkeypatch, tmp_path):
+    pr_url = "https://github.com/a/b/pull/1"
+    request = {
+        "requestId": "request-update",
+        "opportunityKey": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "publicationKind": "PR_UPDATE",
+        "existingPrUrl": pr_url,
+        "commitSha": "a" * 40,
+    }
+    recorded: dict[str, object] = {}
+
+    class Store:
+        def publication_work_items(self):
+            return [
+                {
+                    "request_id": "request-update",
+                    "request": request,
+                    "externalPublicationReceipt": {
+                        "ok": True,
+                        "prUrl": pr_url,
+                        "metadataUpdated": True,
+                    },
+                }
+            ]
+
+        def mark_managed_publication_reconciled(self, request_id, *, pr_url, head_sha):
+            recorded["reconciled"] = (request_id, pr_url, head_sha)
+
+    class Adapter:
+        def __init__(self, _root, _ledger):
+            pass
+
+        def record_publication_receipt(self, *, request, receipt, receipt_observation):
+            recorded["request"] = request
+            recorded["receipt"] = receipt
+            recorded["receiptObservation"] = receipt_observation
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "ManagedAdapter", Adapter)
+
+    result = MODULE.run_publication_queue(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["published"] == [
+        {
+            "requestId": "request-update",
+            "key": "a/b#1",
+            "prUrl": pr_url,
+            "pushReconciled": True,
+        }
+    ]
+    assert recorded["request"]["requestId"] == "request-update"
+    assert "reservationKey" not in recorded["request"]
+    assert recorded["receiptObservation"] is True
+    assert recorded["reconciled"] == ("request-update", pr_url, "a" * 40)
+
+
+def test_publication_update_receipt_rejects_a_different_pr(monkeypatch, tmp_path):
+    class Store:
+        def publication_work_items(self):
+            return [
+                {
+                    "request_id": "request-update",
+                    "request": {
+                        "requestId": "request-update",
+                        "opportunityKey": "a/b#1",
+                        "issueUrl": "https://github.com/a/b/issues/1",
+                        "publicationKind": "PR_UPDATE",
+                        "existingPrUrl": "https://github.com/a/b/pull/1",
+                        "commitSha": "a" * 40,
+                    },
+                    "externalPublicationReceipt": {
+                        "ok": True,
+                        "prUrl": "https://github.com/a/b/pull/2",
+                    },
+                }
+            ]
+
+    class Adapter:
+        def __init__(self, _root, _ledger):
+            pass
+
+        def record_publication_receipt(self, **_kwargs):
+            pytest.fail("a receipt for another PR must not be recorded")
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "ManagedAdapter", Adapter)
+
+    result = MODULE.run_publication_queue(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["published"] == []
+    assert result["errors"] == [
+        {
+            "requestId": "request-update",
+            "error": "external publication receipt has an invalid request binding",
+        }
+    ]
+
+
 def test_publication_queue_reconciles_interrupted_push_before_pr_confirmation(
     monkeypatch, tmp_path
 ):
@@ -16267,6 +16910,9 @@ def test_reproduction_probe_entrypoint_persists_missing_profile_failure(tmp_path
 def test_slow_cycle_quarantine_excludes_bad_result_and_continues_normal_task(monkeypatch, tmp_path):
     """Exercise recovery, ingestion, and the slow cycle with two real tasks."""
 
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
+    )
     monkeypatch.setattr(MODULE, "ROOT", tmp_path)
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
     monkeypatch.setattr(MODULE, "WORKTREE_ROOT", tmp_path / "worktrees")
@@ -16719,9 +17365,14 @@ from pathlib import Path
 import oss_pr_radar.local_publication as _publication
 from oss_pr_radar.release_binding import runtime_ledger_path
 _bridge = Path(os.environ['RADAR_TEST_BRIDGE'])
+_publication.disk_snapshot = lambda _root: {'level': 'ok'}
 def _real_bridge(root, operation, **kwargs):
     if operation == 'publish-terminal-feedback':
         return {'ok': True, 'published': 1, 'errors': []}
+    if operation == 'sync':
+        return {'ok': True, 'verified': 0, 'inserted': 0,
+                'prFollowup': {'status': 'imported', 'matched': 0,
+                               'inserted': 0, 'updated': 0}}
     completed = subprocess.run(
         [sys.executable, str(_bridge), '--runtime-root', str(root),
          '--ledger', str(runtime_ledger_path(root)), operation],
@@ -17637,4 +18288,56 @@ def test_guarded_task_popen_blocks_active_quarantine_before_process_start(tmp_pa
             opportunity_key="example/project#1",
             argv=[sys.executable, "-c", "raise SystemExit(1)"],
             cwd=tmp_path,
+        )
+
+
+def test_implementation_result_is_not_deduped_as_its_reproduction_result(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    implementation = json.loads(result_path.read_text(encoding="utf-8"))
+    implementation["handoffMode"] = "controller_commit_required"
+    implementation["commitSha"] = None
+    implementation.pop("controllerCommitChangedFiles", None)
+    result_path.write_text(json.dumps(implementation), encoding="utf-8")
+    reproduction_digest = implementation["reproductionReceipt"]["resultDigest"]
+    assert implementation["resultDigest"] == reproduction_digest
+    assert implementation["handoffMode"] == "controller_commit_required"
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "DISPATCHED"
+    )
+
+    # The reproduction phase has already consumed this signed digest.  The
+    # implementation envelope legitimately carries it forward until the
+    # controller finalizes and rebinds the commit receipt.
+    store.record_task_result_ingested(
+        "a/b#1", digest=reproduction_digest, stage="IMPLEMENTATION_READY"
+    )
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True, first["errors"]
+    assert first["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(first["publicationRequests"]) == 1
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["handoffMode"] == "controller_commit_complete"
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "FIX_READY"
+    )
+
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert repeated["ok"] is True, repeated["errors"]
+    assert repeated["ingested"] == []
+    assert repeated["publicationRequests"] == []
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM publication_requests WHERE opportunity_key='a/b#1'"
+            ).fetchone()[0]
+            == 1
         )

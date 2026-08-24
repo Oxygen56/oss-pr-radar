@@ -50,6 +50,7 @@ FAST_WORK_LOCK = "fast-worker.lock"
 SLOW_WORK_LOCK = "slow-worker.lock"
 SLOW_REQUEST_STATE = "slow-work-request.json"
 SLOW_BACKOFF_STATE = "slow-worker-backoff.json"
+SLOW_CLOUD_SYNC_INTERVAL_SECONDS = 300
 # The bridge runs in a fresh Python process.  Its deadline therefore includes
 # interpreter and native-extension startup, which can exceed 15 seconds under
 # ordinary host load before the local-only operation even opens the ledger.
@@ -289,6 +290,35 @@ def sync_cloud_queue_if_due(
                 }
             )
 
+    followup_listing: dict[str, Any] = {
+        "ok": True,
+        "candidates": [],
+        "unresolved": [],
+    }
+    followup_import = sync.get("prFollowup")
+    if (
+        not errors
+        and isinstance(followup_import, dict)
+        and followup_import.get("status") == "imported"
+    ):
+        try:
+            followup_listing = runner(root, "pr-followup-list")
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            followup_listing = {
+                "ok": False,
+                "error": f"{type(exc).__name__}:{str(exc)[:400]}",
+            }
+        if followup_listing.get("ok") is False:
+            errors.append(
+                {
+                    "error": str(
+                        followup_listing.get("error")
+                        or followup_listing.get("errors")
+                        or "PR follow-up list failed"
+                    )[:400]
+                }
+            )
+
     result = {
         "ok": not errors,
         "attempted": True,
@@ -296,6 +326,9 @@ def sync_cloud_queue_if_due(
         "inserted": int(sync.get("inserted") or 0),
         "superseded": int(sync.get("superseded") or 0),
         "pending": list(listing.get("pending") or []),
+        "prFollowup": followup_import if isinstance(followup_import, dict) else {},
+        "prFollowupCandidates": list(followup_listing.get("candidates") or []),
+        "prFollowupUnresolved": list(followup_listing.get("unresolved") or []),
         "errors": errors,
     }
     _write_queue_sync_state(
@@ -579,7 +612,11 @@ def slow_advance_once(
                     result = {"ok": False, "errors": [{"error": "DISK_STOP_THRESHOLD"}]}
                 else:
                     reproduction = runner(root, "reproduction-probe")
-                    result = advance_once(root, runner=runner, queue_sync_interval_seconds=None)
+                    result = advance_once(
+                        root,
+                        runner=runner,
+                        queue_sync_interval_seconds=SLOW_CLOUD_SYNC_INTERVAL_SECONDS,
+                    )
                     result["reproductionProbe"] = reproduction
                     result["slowWorkerDiagnostic"] = _slow_worker_diagnostic(
                         root, result, reproduction
@@ -798,8 +835,13 @@ def advance_once(
     cleanup_reconciliation = runner(root, "cleanup-reconcile")
     publication = runner(root, "publication-run")
     published = list(publication.get("published") or [])
+    implementation_context_changed = any(
+        item.get("stage") == "IMPLEMENTATION_READY" for item in ingested
+    )
     context_sync = (
-        runner(root, "context-sync") if published else {"ok": True, "written": [], "errors": []}
+        runner(root, "context-sync")
+        if published or implementation_context_changed
+        else {"ok": True, "written": [], "errors": []}
     )
     queue_sync = sync_cloud_queue_if_due(
         root,
@@ -852,11 +894,13 @@ def advance_once(
         or recoverable
         or retryable_delivery_pending(root)
         or queue_sync.get("pending")
+        or queue_sync.get("prFollowupCandidates")
+        or queue_sync.get("prFollowupUnresolved")
     )
     if should_drain and lifecycle_healthy:
         drain = runner(root, "drain-once")
         errors.extend(list(drain.get("errors") or []))
-        if drain.get("terminalized"):
+        if drain.get("terminalized") or drain.get("scannerRechecks"):
             terminal_feedback_needed = True
     if terminal_feedback_needed and lifecycle_healthy:
         terminal_feedback = runner(root, "publish-terminal-feedback")
@@ -878,6 +922,9 @@ def advance_once(
         or drain_activity
         or queue_sync.get("inserted")
         or queue_sync.get("superseded")
+        or queue_sync.get("prFollowupCandidates")
+        or queue_sync.get("prFollowupUnresolved")
+        or drain.get("scannerRechecks")
         or queue_sync.get("errors")
     )
     errors.extend(list(queue_sync.get("errors") or []))

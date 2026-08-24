@@ -44,6 +44,7 @@ STAGES = (
 )
 TERMINAL_STAGES = {"AUDIT_NO_GO", "MERGED", "CLOSED"}
 PUBLISHED_STAGES = {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "MERGED", "CLOSED"}
+STATE_DRIFT_RECHECK_EVENT = "STATE_DRIFT_RECHECK_REQUIRED"
 PR_UPDATE_REARM_REASONS = {"EXISTING_PR_HEAD_DRIFT", "NON_FAST_FORWARD_PR_UPDATE"}
 PR_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
 ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
@@ -675,13 +676,21 @@ class RadarLedger:
                     )
                 return False
             duplicate = connection.execute(
-                """SELECT intent_id FROM intents
-                   WHERE opportunity_key=?
+                """SELECT i.intent_id FROM intents i
+                   WHERE i.opportunity_key=?
                      AND (
-                       (status IN ('PENDING','LEASED') AND expires_at>?)
-                       OR status='CREATING'
-                       OR status IN ('DISPATCHED','COMPLETED')
-                       OR (status='REJECTED' AND intent_digest=?)
+                       (i.status IN ('PENDING','LEASED') AND i.expires_at>?)
+                       OR i.status='CREATING'
+                       OR i.status IN ('DISPATCHED','COMPLETED')
+                       OR (
+                         i.status='REJECTED' AND i.intent_digest=?
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events drift
+                            WHERE drift.opportunity_key=i.opportunity_key
+                              AND drift.event_type='STATE_DRIFT_RECHECK_REQUIRED'
+                              AND json_extract(drift.payload_json,'$.intentId')=i.intent_id
+                         )
+                       )
                      )
                    LIMIT 1""",
                 (key, now, intent.get("decisionDigest") or intent["intentId"]),
@@ -2225,6 +2234,150 @@ class RadarLedger:
                 now,
             )
 
+    def invalidate_state_drift_intent(
+        self,
+        key: str,
+        *,
+        intent_id: str,
+        evidence: dict[str, Any] | None = None,
+        historical_terminal: bool = False,
+    ) -> dict[str, Any]:
+        """Invalidate one pre-thread intent and request a fresh scanner decision."""
+
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            opportunity = connection.execute(
+                "SELECT stage,terminal_reason FROM opportunities WHERE key=?", (key,)
+            ).fetchone()
+            if opportunity is None:
+                raise LedgerError("opportunity not found")
+            intent = connection.execute(
+                """SELECT status,thread_id,payload_json FROM intents
+                   WHERE intent_id=? AND opportunity_key=?""",
+                (intent_id, key),
+            ).fetchone()
+            if intent is None:
+                raise LedgerError("state drift intent not found")
+            if connection.execute(
+                """SELECT 1 FROM intents WHERE opportunity_key=? AND (
+                       thread_id IS NOT NULL OR client_thread_id IS NOT NULL
+                       OR worktree_path IS NOT NULL
+                   ) LIMIT 1""",
+                (key,),
+            ).fetchone():
+                raise LedgerError("a thread-bound opportunity cannot be reopened for state drift")
+            publication_evidence = connection.execute(
+                """SELECT 1 FROM publication_requests WHERE opportunity_key=?
+                   UNION ALL SELECT 1 FROM pr_followups WHERE opportunity_key=?
+                   UNION ALL SELECT 1 FROM events WHERE opportunity_key=?
+                     AND event_type IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED','MERGED','CLOSED')
+                   LIMIT 1""",
+                (key, key, key),
+            ).fetchone()
+            if opportunity["stage"] in PUBLISHED_STAGES or publication_evidence:
+                raise LedgerError("a published opportunity cannot be reopened for state drift")
+
+            existing_event = connection.execute(
+                """SELECT payload_json,created_at FROM events
+                   WHERE opportunity_key=? AND event_type=? AND dedupe_key=?""",
+                (key, STATE_DRIFT_RECHECK_EVENT, intent_id),
+            ).fetchone()
+            if existing_event is not None:
+                if (
+                    opportunity["stage"] != "QUALIFIED"
+                    or opportunity["terminal_reason"] is not None
+                    or intent["status"] != "REJECTED"
+                ):
+                    raise LedgerError("state drift recheck has already advanced")
+                payload = json.loads(existing_event["payload_json"])
+                return {
+                    "key": key,
+                    "intentId": intent_id,
+                    "issueUpdatedAt": payload.get("issueUpdatedAt"),
+                    "staleBaseSha": payload.get("staleBaseSha"),
+                    "liveBaseSha": payload.get("liveBaseSha"),
+                    "evidenceDigest": payload.get("evidenceDigest"),
+                    "recordedAt": str(existing_event["created_at"]),
+                    "changed": False,
+                }
+
+            if historical_terminal:
+                if (
+                    opportunity["stage"] != "AUDIT_NO_GO"
+                    or opportunity["terminal_reason"] != "STATE_DRIFT"
+                ):
+                    raise LedgerError("historical state drift migration authorization is stale")
+                if intent["status"] != "REJECTED":
+                    raise LedgerError("historical state drift intent is not rejected")
+            elif intent["status"] not in {"PENDING", "LEASED"}:
+                raise LedgerError("state drift intent is no longer invalidatable")
+
+            intent_payload = json.loads(intent["payload_json"])
+            audit_evidence = evidence if isinstance(evidence, dict) else {}
+            if historical_terminal and not audit_evidence:
+                terminal_event = connection.execute(
+                    """SELECT payload_json FROM events
+                       WHERE opportunity_key=? AND event_type='AUDIT_NO_GO'
+                       ORDER BY created_at DESC,id DESC LIMIT 1""",
+                    (key,),
+                ).fetchone()
+                if terminal_event is not None:
+                    terminal_payload = json.loads(terminal_event["payload_json"])
+                    value = terminal_payload.get("evidence")
+                    if isinstance(value, dict):
+                        audit_evidence = value
+            issue = audit_evidence.get("issue")
+            issue = issue if isinstance(issue, dict) else {}
+            payload = {
+                "intentId": intent_id,
+                "issueUpdatedAt": audit_evidence.get("issueUpdatedAt")
+                or issue.get("updated_at")
+                or intent_payload.get("issueUpdatedAt"),
+                "staleBaseSha": audit_evidence.get("selectedBaseSha")
+                or audit_evidence.get("selected_base_sha")
+                or intent_payload.get("selectedBaseSha")
+                or (intent_payload.get("preTaskEvidence") or {}).get("baseSha"),
+                "liveBaseSha": audit_evidence.get("liveBaseSha")
+                or audit_evidence.get("live_base_sha"),
+                "evidenceDigest": audit_evidence.get("evidenceDigest")
+                or audit_evidence.get("digest"),
+                "historicalMigration": historical_terminal,
+            }
+            connection.execute(
+                """UPDATE intents SET status='REJECTED',lease_owner=NULL,lease_until=NULL,
+                   creation_token=NULL,client_thread_id=NULL,creation_started_at=NULL,updated_at=?
+                   WHERE intent_id=?""",
+                (now, intent_id),
+            )
+            connection.execute(
+                """UPDATE opportunities SET stage='QUALIFIED',terminal_reason=NULL,updated_at=?
+                   WHERE key=?""",
+                (now, key),
+            )
+            connection.execute(
+                """UPDATE outcomes SET failure_class=NULL,updated_at=?
+                   WHERE opportunity_key=? AND failure_class='STATE_DRIFT'""",
+                (now, key),
+            )
+            self._event(
+                connection,
+                key,
+                STATE_DRIFT_RECHECK_EVENT,
+                intent_id,
+                payload,
+                now,
+            )
+            return {
+                "key": key,
+                "intentId": intent_id,
+                "issueUpdatedAt": payload["issueUpdatedAt"],
+                "staleBaseSha": payload["staleBaseSha"],
+                "liveBaseSha": payload["liveBaseSha"],
+                "evidenceDigest": payload["evidenceDigest"],
+                "recordedAt": now,
+                "changed": True,
+            }
+
     def restore_verified_reproduction(
         self,
         key: str,
@@ -2342,32 +2495,137 @@ class RadarLedger:
         with self.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT o.key, o.repo, o.issue_number, o.issue_url, o.stage,
-                       o.terminal_reason,
-                       MAX(i.issued_at) AS latest_intent_issued_at,
+                WITH feedback_candidates AS (
+                    SELECT o.key, o.repo, o.issue_number, o.issue_url,
+                           CASE
+                             WHEN o.stage IN ('AUDIT_NO_GO', 'MERGED', 'CLOSED')
+                               THEN o.stage
+                             ELSE 'AUDIT_NO_GO'
+                           END AS feedback_stage,
+                           CASE
+                             WHEN o.stage IN ('AUDIT_NO_GO', 'MERGED', 'CLOSED')
+                               THEN o.terminal_reason
+                             ELSE outcomes.failure_class
+                           END AS feedback_reason
+                      FROM opportunities o
+                      LEFT JOIN outcomes ON outcomes.opportunity_key=o.key
+                     WHERE o.stage IN ('AUDIT_NO_GO', 'MERGED', 'CLOSED')
+                        OR (
+                            outcomes.failure_class='WRONG_REPO'
+                            AND o.stage NOT IN (
+                                'PR_OPEN', 'CI_GREEN', 'MAINTAINER_ACCEPTED', 'MERGED', 'CLOSED'
+                            )
+                            AND EXISTS (
+                                SELECT 1 FROM intents dispatched
+                                 WHERE dispatched.opportunity_key=o.key
+                                   AND dispatched.thread_id IS NOT NULL
+                            )
+                            AND EXISTS (
+                                SELECT 1 FROM events terminal_event
+                                 WHERE terminal_event.opportunity_key=o.key
+                                   AND terminal_event.event_type='AUDIT_NO_GO'
+                            )
+                        )
+                ), terminal_candidates AS (
+                    SELECT candidate.*,
+                           (
+                               SELECT MAX(e.created_at)
+                                 FROM events e
+                                WHERE e.opportunity_key=candidate.key
+                                  AND e.event_type=candidate.feedback_stage
+                           ) AS terminal_recorded_at
+                      FROM feedback_candidates candidate
+                )
+                SELECT terminal.key, terminal.repo, terminal.issue_number,
+                       terminal.issue_url, terminal.feedback_stage AS stage,
+                       terminal.feedback_reason AS terminal_reason,
                        (
-                           SELECT MAX(e.created_at)
-                             FROM events e
-                            WHERE e.opportunity_key=o.key
-                              AND e.event_type=o.stage
-                       ) AS terminal_recorded_at,
+                           SELECT MAX(i.issued_at)
+                             FROM intents i
+                            WHERE i.opportunity_key=terminal.key
+                       ) AS latest_intent_issued_at,
+                       terminal.terminal_recorded_at,
                        (
                            SELECT json_extract(e.payload_json, '$.issueUpdatedAt')
                              FROM events e
-                            WHERE e.opportunity_key=o.key
-                              AND e.event_type=o.stage
+                            WHERE e.opportunity_key=terminal.key
+                              AND e.event_type=terminal.feedback_stage
                             ORDER BY e.created_at DESC, e.id DESC
                             LIMIT 1
-                       ) AS terminal_issue_updated_at
-                  FROM opportunities o
-                  LEFT JOIN intents i ON i.opportunity_key=o.key
-                 WHERE o.stage IN ('AUDIT_NO_GO', 'MERGED', 'CLOSED')
-                 GROUP BY o.key, o.repo, o.issue_number, o.issue_url, o.stage,
-                          o.terminal_reason
-                 ORDER BY o.key
+                       ) AS terminal_issue_updated_at,
+                       (
+                           SELECT e.payload_json
+                             FROM events e
+                            WHERE e.opportunity_key=terminal.key
+                              AND e.event_type IN ('AUDIT_PASS', 'AUDIT_SNAPSHOT')
+                              AND e.created_at<=terminal.terminal_recorded_at
+                            ORDER BY e.created_at DESC, e.id DESC
+                            LIMIT 1
+                       ) AS terminal_audit_payload_json,
+                       (
+                           SELECT e.payload_json
+                             FROM events e
+                            WHERE e.opportunity_key=terminal.key
+                              AND e.event_type=terminal.feedback_stage
+                            ORDER BY e.created_at DESC, e.id DESC
+                            LIMIT 1
+                       ) AS terminal_payload_json
+                  FROM terminal_candidates terminal
+                 ORDER BY terminal.key
                 """
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def scanner_recheck_feedback(self) -> list[dict[str, Any]]:
+        """Return active one-shot scanner rechecks emitted by live preflight."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.repo,o.issue_number,o.issue_url,
+                          e.payload_json,e.created_at
+                     FROM events e
+                     JOIN opportunities o ON o.key=e.opportunity_key
+                    WHERE e.event_type=? AND o.stage='QUALIFIED'
+                      AND e.id=(
+                          SELECT MAX(latest.id) FROM events latest
+                           WHERE latest.opportunity_key=e.opportunity_key
+                             AND latest.event_type=?
+                      )
+                      AND EXISTS (
+                          SELECT 1 FROM intents i
+                           WHERE i.opportunity_key=o.key
+                             AND i.intent_id=json_extract(e.payload_json,'$.intentId')
+                             AND i.status='REJECTED' AND i.thread_id IS NULL
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM intents bound
+                           WHERE bound.opportunity_key=o.key AND bound.thread_id IS NOT NULL
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM publication_requests request
+                           WHERE request.opportunity_key=o.key
+                      )
+                    ORDER BY o.key""",
+                (STATE_DRIFT_RECHECK_EVENT, STATE_DRIFT_RECHECK_EVENT),
+            ).fetchall()
+        feedback: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            feedback.append(
+                {
+                    "key": str(row["key"]),
+                    "repo": str(row["repo"]),
+                    "issue_number": int(row["issue_number"]),
+                    "issue_url": str(row["issue_url"]),
+                    "intent_id": str(payload.get("intentId") or ""),
+                    "issue_updated_at": payload.get("issueUpdatedAt"),
+                    "stale_base_sha": payload.get("staleBaseSha"),
+                    "live_base_sha": payload.get("liveBaseSha"),
+                    "evidence_digest": payload.get("evidenceDigest"),
+                    "recheck_recorded_at": str(row["created_at"]),
+                }
+            )
+        return feedback
 
     def pending_alerts(self, *, min_age_minutes: int = 70) -> list[dict[str, Any]]:
         threshold = max(60, min(int(min_age_minutes), 24 * 60))

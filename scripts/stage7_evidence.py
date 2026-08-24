@@ -15,6 +15,7 @@ from oss_pr_radar.automation_snapshot import build_automation_snapshot  # noqa: 
 from oss_pr_radar.operational_auth import (  # noqa: E402
     authorization_path,
     issue_worker_staging_authorization,
+    reset_expired_worker_staging,
 )
 from oss_pr_radar.runtime import write_json  # noqa: E402
 from oss_pr_radar.stage7_acceptance import (  # noqa: E402
@@ -48,6 +49,9 @@ def main() -> int:
     staging.add_argument("--runtime-root", type=Path, required=True)
     staging.add_argument("--managed-counts-evidence", type=Path, required=True)
     staging.add_argument("--home", type=Path)
+    reset_staging = sub.add_parser("reset-expired-worker-staging")
+    reset_staging.add_argument("--runtime-root", type=Path, required=True)
+    reset_staging.add_argument("--home", type=Path)
     args = parser.parse_args()
     if args.kind == "automation-snapshot":
         value = build_automation_snapshot(
@@ -89,6 +93,12 @@ def main() -> int:
                 sort_keys=True,
             )
         )
+    elif args.kind == "reset-expired-worker-staging":
+        value = reset_expired_worker_staging(
+            args.runtime_root,
+            home=args.home,
+        )
+        print(json.dumps(value, ensure_ascii=False, sort_keys=True))
     else:
         value = issue_operational_authorization(
             args.runtime_root,

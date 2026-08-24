@@ -171,6 +171,9 @@ def _write_staged_plists(home: Path, worker_specs: list[dict[str, object]]) -> N
 def test_first_activation_promotes_auth_before_bootstrap_and_rolls_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str | None
 ) -> None:
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
+    )
     runtime = tmp_path / "runtime"
     (runtime / "state").mkdir(parents=True)
     home = tmp_path / "home"

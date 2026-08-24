@@ -246,7 +246,7 @@ def controller_cycle(
             "hourly-controller",
             timeout=1800,
         )
-        if drain.get("terminalized"):
+        if drain.get("terminalized") or drain.get("scannerRechecks"):
             bridge("terminalFeedbackAfterDrain", "publish-terminal-feedback")
         else:
             stages["terminalFeedbackAfterDrain"] = {"ok": True, "skipped": True}

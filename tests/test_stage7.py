@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import oss_pr_radar.operational_auth as operational_auth_module
 import oss_pr_radar.stage7_cutover as cutover_module
 import scripts.deploy_local_runtime as deploy_local_runtime
 import scripts.install_local_publication_workers as workers_module
+import scripts.stage7_evidence as stage7_evidence_script
 from oss_pr_radar.automation_contracts import build_contracts
 from oss_pr_radar.automation_snapshot import (
     _prompt_digest,
@@ -29,6 +31,7 @@ from oss_pr_radar.operational_auth import (
     consume_worker_staging_authorization,
     finalize_operational_authorization,
     issue_worker_staging_authorization,
+    reset_expired_worker_staging,
     staged_worker_receipt_path,
     verify_operational_authorization,
     worker_spec_digest,
@@ -423,6 +426,281 @@ def test_staging_authorization_rejects_bound_tamper_before_any_stage_write(
         )
     assert not (home / "Library" / "LaunchAgents").exists()
     assert not operational_auth_module.staged_worker_receipt_path(runtime).exists()
+
+
+def _consume_signed_staging_fixture(
+    runtime: Path, home: Path, specs: list[dict[str, object]]
+) -> dict[str, object]:
+    launch_dir = (home / "Library" / "LaunchAgents").resolve()
+    launch_dir.mkdir(parents=True)
+    spec_digest = worker_spec_digest(specs)
+    records: list[dict[str, object]] = []
+    for spec in specs:
+        label = str(spec["Label"])
+        path = launch_dir / f"{label}.plist"
+        path.write_bytes(plistlib.dumps(spec, fmt=plistlib.FMT_XML, sort_keys=True))
+        path.chmod(0o600)
+        records.append(
+            {
+                "worker": label,
+                "label": label,
+                "plistPath": str(path),
+                "plistSha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "mode": "0o600",
+                "ownerUid": operational_auth_module.os.getuid(),
+                "regular": True,
+                "symlink": False,
+                "loaded": False,
+                "pid": None,
+                "specDigest": spec_digest,
+                "observedAt": iso_z(utc_now()),
+            }
+        )
+    return consume_worker_staging_authorization(
+        runtime,
+        specs=specs,
+        worker_records=records,
+    )
+
+
+def test_expired_worker_staging_reset_preserves_bound_plists_and_allows_reissue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "staging-reset-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime, home, specs, token_path = _signed_staging_fixture(tmp_path)
+    token = json.loads(token_path.read_text(encoding="utf-8"))
+    counts_path = Path(str(token["managedCountsEvidencePath"]))
+    receipt = _consume_signed_staging_fixture(runtime, home, specs)
+    expires = datetime.fromisoformat(str(receipt["stagingExpiresAt"]).replace("Z", "+00:00"))
+
+    result = reset_expired_worker_staging(
+        runtime,
+        home=home,
+        launchctl_runner=lambda _label: "Could not find service",
+        now=expires + timedelta(seconds=1),
+    )
+
+    assert result["ok"] is True
+    assert result["reset"] is True
+    assert result["workersUnloaded"] is True
+    assert result["pendingPublicationEffects"] == 0
+    assert result["removed"] == [
+        "worker-staging-authorization.json",
+        "staged-worker-receipt.json",
+    ]
+    assert not token_path.exists()
+    assert not staged_worker_receipt_path(runtime).exists()
+    assert all(
+        (home / "Library" / "LaunchAgents" / f"{spec['Label']}.plist").is_file() for spec in specs
+    )
+    renewed = issue_worker_staging_authorization(
+        runtime,
+        managed_counts_evidence=counts_path,
+        home=home,
+    )
+    assert renewed["state"] == "ACTIVE"
+
+
+def test_expired_worker_staging_reset_is_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "staging-reset-block-key" * 3)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime, home, _specs, token_path = _signed_staging_fixture(tmp_path)
+    token = json.loads(token_path.read_text(encoding="utf-8"))
+    expires = datetime.fromisoformat(str(token["expiresAt"]).replace("Z", "+00:00"))
+
+    with pytest.raises(RuntimeError, match="refuses unexpired"):
+        reset_expired_worker_staging(
+            runtime,
+            home=home,
+            launchctl_runner=lambda _label: "service not found",
+            now=datetime.fromisoformat(str(token["issuedAt"]).replace("Z", "+00:00"))
+            + timedelta(seconds=1),
+        )
+    assert token_path.exists()
+
+    with pytest.raises(RuntimeError, match="requires unloaded worker"):
+        reset_expired_worker_staging(
+            runtime,
+            home=home,
+            launchctl_runner=lambda label: (
+                "state = waiting" if label.endswith("local-publication") else "service not found"
+            ),
+            now=expires + timedelta(seconds=1),
+        )
+    assert token_path.exists()
+
+    import oss_pr_radar.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "pending_publication_effects", lambda _path: 1)
+    with pytest.raises(RuntimeError, match="zero pending publication effects"):
+        reset_expired_worker_staging(
+            runtime,
+            home=home,
+            launchctl_runner=lambda _label: "service not found",
+            now=expires + timedelta(seconds=1),
+        )
+    assert token_path.exists()
+
+
+def test_expired_worker_staging_reset_rejects_staged_plist_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "staging-reset-drift-key" * 3)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime, home, specs, token_path = _signed_staging_fixture(tmp_path)
+    receipt = _consume_signed_staging_fixture(runtime, home, specs)
+    expires = datetime.fromisoformat(str(receipt["stagingExpiresAt"]).replace("Z", "+00:00"))
+    drifted = home / "Library" / "LaunchAgents" / f"{specs[0]['Label']}.plist"
+    drifted.write_bytes(drifted.read_bytes() + b"\n")
+
+    with pytest.raises(RuntimeError, match="plist binding mismatch"):
+        reset_expired_worker_staging(
+            runtime,
+            home=home,
+            launchctl_runner=lambda _label: "service not found",
+            now=expires + timedelta(seconds=1),
+        )
+    assert token_path.exists()
+    assert staged_worker_receipt_path(runtime).exists()
+
+
+def test_expired_worker_staging_reset_clears_only_staged_operational_auth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "staging-reset-staged-key" * 3)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime, home, specs, token_path = _signed_staging_fixture(tmp_path)
+    receipt = _consume_signed_staging_fixture(runtime, home, specs)
+    _, binding = operational_auth_module.active_release(runtime)
+    ledger = operational_auth_module._current_ledger_identity(runtime)
+    issued = utc_now()
+    auth_unsigned = {
+        "schema": operational_auth_module.OPERATIONAL_AUTH_SCHEMA,
+        "state": "STAGED",
+        "runtimeRootDigest": runtime_root_digest(runtime),
+        "releaseId": binding["releaseId"],
+        "releaseHead": binding["commit"],
+        "releaseManifestSha256": binding["manifestSha256"],
+        "ledgerTarget": ledger["target"],
+        "ledgerGeneration": ledger["generation"],
+        "ledgerSha256AtIssue": ledger["sha256"],
+        "managedPrProjectionDigest": ledger["managedPrProjectionDigest"],
+        "managedCountsEvidenceSha256": receipt["managedCountsEvidenceSha256"],
+        "automationSnapshotSha256": "a" * 64,
+        "issuedAt": iso_z(issued),
+        "workerConfigDigest": worker_spec_digest(specs),
+        "stagedWorkerReceiptSha256": operational_auth_module.stable_evidence_digest(
+            staged_worker_receipt_path(runtime)
+        ),
+        "stagingNonce": receipt["stagingNonce"],
+        "workerPlistBindings": [
+            {
+                key: item[key]
+                for key in (
+                    "label",
+                    "plistPath",
+                    "plistSha256",
+                    "mode",
+                    "ownerUid",
+                    "regular",
+                    "symlink",
+                )
+            }
+            for item in receipt["workers"]
+        ],
+    }
+    auth_path = authorization_path(runtime)
+    auth_path.write_text(
+        json.dumps(
+            {
+                **auth_unsigned,
+                **sign_current(
+                    auth_unsigned, context=operational_auth_module.OPERATIONAL_AUTH_CONTEXT
+                ),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    result = reset_expired_worker_staging(
+        runtime,
+        home=home,
+        launchctl_runner=lambda _label: "service not found",
+        now=issued + timedelta(minutes=11),
+    )
+
+    assert result["removed"] == [
+        "operational-authorization.json",
+        "worker-staging-authorization.json",
+        "staged-worker-receipt.json",
+    ]
+    assert not auth_path.exists()
+    assert not token_path.exists()
+    assert not staged_worker_receipt_path(runtime).exists()
+
+
+def test_expired_worker_staging_reset_never_clears_active_operational_auth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "staging-reset-active-key" * 3)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime, home, _specs, _token_path = _signed_staging_fixture(tmp_path)
+    unsigned = {"schema": operational_auth_module.OPERATIONAL_AUTH_SCHEMA, "state": "ACTIVE"}
+    auth_path = authorization_path(runtime)
+    auth_path.write_text(
+        json.dumps(
+            {
+                **unsigned,
+                **sign_current(unsigned, context=operational_auth_module.OPERATIONAL_AUTH_CONTEXT),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    auth_path.chmod(0o600)
+
+    with pytest.raises(RuntimeError, match="refuses ACTIVE"):
+        reset_expired_worker_staging(
+            runtime,
+            home=home,
+            launchctl_runner=lambda _label: "service not found",
+            now=utc_now() + timedelta(hours=1),
+        )
+    assert auth_path.exists()
+
+
+def test_stage7_evidence_exposes_expired_worker_staging_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runtime = tmp_path / "runtime"
+    observed: dict[str, object] = {}
+
+    def reset(root: Path, *, home: Path | None = None) -> dict[str, object]:
+        observed.update({"root": root, "home": home})
+        return {"ok": True, "reset": True}
+
+    monkeypatch.setattr(stage7_evidence_script, "reset_expired_worker_staging", reset)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "stage7_evidence.py",
+            "reset-expired-worker-staging",
+            "--runtime-root",
+            str(runtime),
+            "--home",
+            str(tmp_path / "home"),
+        ],
+    )
+
+    assert stage7_evidence_script.main() == 0
+    assert observed == {"root": runtime, "home": tmp_path / "home"}
+    assert json.loads(capsys.readouterr().out)["reset"] is True
 
 
 def test_stage7_prepare_activate_and_rollback_only_moves_pointer(tmp_path, monkeypatch):

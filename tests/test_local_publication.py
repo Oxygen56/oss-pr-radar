@@ -167,6 +167,57 @@ def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
     assert result["drain"]["threadId"] == "thread-3"
 
 
+def test_implementation_context_is_synced_before_followup_drain(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 1, "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [{"key": "a/b#1", "stage": "IMPLEMENTATION_READY"}],
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "errors": [],
+            }
+        if operation == "context-sync":
+            return {
+                "ok": True,
+                "written": [{"key": "a/b#1", "path": "/tmp/task-context.json"}],
+                "errors": [],
+            }
+        if operation == "drain-once":
+            return {
+                "ok": True,
+                "action": "implementation_followup_dispatched",
+                "key": "a/b#1",
+                "threadId": "thread-1",
+            }
+        if operation == "publication-feedback-list":
+            return {"ok": True, "candidates": [], "unresolved": [], "errors": []}
+        if operation == "recovery-list":
+            return {"ok": True, "recoverable": [], "errors": []}
+        return {
+            "ok": True,
+            "updated": [],
+            "renamed": [],
+            "archived": [],
+            "published": [],
+            "pending": [],
+            "blocked": [],
+            "errors": [],
+        }
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls.index("context-sync") < calls.index("drain-once")
+    assert result["ok"] is True
+    assert result["contextsSynced"][0]["key"] == "a/b#1"
+    assert result["drain"]["action"] == "implementation_followup_dispatched"
+
+
 def test_advance_once_keeps_legacy_task_quarantine_out_of_global_errors(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.sync_cloud_queue_if_due",
@@ -347,6 +398,39 @@ def test_ingested_terminal_result_is_published_without_drain_terminalization(tmp
 
     assert calls[-2:] == ["drain-once", "publish-terminal-feedback"]
     assert result["ok"] is True
+    assert result["terminalFeedback"]["published"] == 1
+
+
+def test_scanner_recheck_from_drain_is_published_before_cycle_finishes(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [{"key": "a/b#1", "stage": "QUALIFIED"}],
+                "publicationRequests": [],
+                "errors": [],
+            }
+        if operation == "drain-once":
+            return {
+                "ok": True,
+                "action": "none",
+                "terminalized": [],
+                "scannerRechecks": [{"key": "a/b#1", "reason": "STATE_DRIFT"}],
+            }
+        if operation == "publish-terminal-feedback":
+            return {"ok": True, "published": 1, "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert calls[-2:] == ["drain-once", "publish-terminal-feedback"]
+    assert result["ok"] is True
+    assert result["activity"] is True
     assert result["terminalFeedback"]["published"] == 1
 
 
@@ -846,8 +930,11 @@ def test_slow_worker_persisted_backoff_first_run_records_fresh_health(tmp_path, 
     assert "slowNoopReason" not in slow
 
 
-def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(tmp_path):
+def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(monkeypatch, tmp_path):
     observed = {}
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
+    )
 
     def runner(_root: Path, operation: str):
         if operation == "reproduction-probe":
@@ -875,6 +962,10 @@ def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(tmp_path):
             return {"ok": True, "archived": [], "errors": []}
         if operation == "publication-run":
             return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+        if operation == "sync":
+            return {"ok": True, "verified": 0, "inserted": 0, "superseded": 0}
+        if operation == "list":
+            return {"ok": True, "pending": []}
         if operation == "publication-feedback-list":
             return {"ok": True, "candidates": [], "unresolved": [], "reconciled": []}
         if operation == "recovery-list":
@@ -930,6 +1021,10 @@ def test_slow_worker_marks_terminal_missing_worktree_skip_as_success(monkeypatch
             return {"ok": True, "archived": [], "errors": []}
         if operation == "publication-run":
             return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+        if operation == "sync":
+            return {"ok": True, "verified": 0, "inserted": 0, "superseded": 0}
+        if operation == "list":
+            return {"ok": True, "pending": []}
         if operation == "publication-feedback-list":
             return {"ok": True, "candidates": [], "unresolved": [], "reconciled": []}
         if operation == "recovery-list":
@@ -1143,6 +1238,130 @@ def test_due_cloud_queue_sync_imports_and_lists_pending_work(tmp_path):
     assert result["ok"] is True
     assert result["inserted"] == 1
     assert result["pending"] == [{"key": "a/b#1"}]
+
+
+def test_synced_actionable_pr_followup_is_exposed_to_the_serial_drain(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        responses = {
+            "context-recover": {"ok": True, "errors": [], "unavailable": []},
+            "ingest-results": {"ok": True},
+            "independent-review-run": {"ok": True, "updated": []},
+            "title-reconcile": {"ok": True},
+            "cleanup-reconcile": {"ok": True},
+            "publication-run": {"ok": True},
+            "sync": {
+                "ok": True,
+                "verified": 0,
+                "inserted": 0,
+                "prFollowup": {
+                    "status": "imported",
+                    "matched": 1,
+                    "inserted": 1,
+                    "updated": 0,
+                },
+            },
+            "list": {"ok": True, "pending": []},
+            "pr-followup-list": {
+                "ok": True,
+                "candidates": [{"key": "ai-dynamo/dynamo#13691"}],
+                "unresolved": [],
+            },
+            "publication-feedback-list": {"ok": True},
+            "recovery-list": {"ok": True, "recoverable": []},
+            "drain-once": {
+                "ok": True,
+                "action": "pr_followup_dispatched",
+                "key": "ai-dynamo/dynamo#13691",
+            },
+        }
+        return responses[operation]
+
+    result = advance_once(
+        tmp_path,
+        runner=runner,
+        queue_sync_interval_seconds=300,
+    )
+
+    assert result["ok"] is True
+    assert result["queueSync"]["prFollowupCandidates"] == [{"key": "ai-dynamo/dynamo#13691"}]
+    assert result["drain"]["action"] == "pr_followup_dispatched"
+    assert calls.index("pr-followup-list") < calls.index("drain-once")
+
+
+def test_replayed_pr_followup_without_a_candidate_does_not_retrigger_drain(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        responses = {
+            "context-recover": {"ok": True, "errors": [], "unavailable": []},
+            "ingest-results": {"ok": True},
+            "independent-review-run": {"ok": True, "updated": []},
+            "title-reconcile": {"ok": True},
+            "cleanup-reconcile": {"ok": True},
+            "publication-run": {"ok": True},
+            "sync": {
+                "ok": True,
+                "verified": 0,
+                "inserted": 0,
+                "prFollowup": {
+                    "status": "imported",
+                    "matched": 1,
+                    "inserted": 0,
+                    "updated": 1,
+                },
+            },
+            "list": {"ok": True, "pending": []},
+            "pr-followup-list": {"ok": True, "candidates": [], "unresolved": []},
+            "publication-feedback-list": {"ok": True},
+            "recovery-list": {"ok": True, "recoverable": []},
+        }
+        return responses[operation]
+
+    result = advance_once(
+        tmp_path,
+        runner=runner,
+        queue_sync_interval_seconds=300,
+    )
+
+    assert result["ok"] is True
+    assert result["drain"]["action"] == "not_triggered"
+    assert "drain-once" not in calls
+
+
+def test_slow_cycle_polls_cloud_pr_followups_every_five_minutes(monkeypatch, tmp_path):
+    observed = []
+
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
+    )
+
+    def sync(_root, *, runner, interval_seconds, now=None):
+        observed.append(interval_seconds)
+        return {"ok": True, "attempted": False, "pending": [], "errors": []}
+
+    monkeypatch.setattr("oss_pr_radar.local_publication.sync_cloud_queue_if_due", sync)
+
+    def runner(_root: Path, operation: str):
+        if operation == "reproduction-probe":
+            return {"ok": True, "count": 0, "errors": []}
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "unavailable": [], "errors": []}
+        if operation == "ingest-results":
+            return {"ok": True, "ingested": [], "publicationRequests": [], "errors": []}
+        if operation == "publication-feedback-list":
+            return {"ok": True, "candidates": [], "unresolved": [], "errors": []}
+        if operation == "recovery-list":
+            return {"ok": True, "recoverable": [], "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = slow_advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert observed == [300]
 
 
 def test_cloud_queue_sync_is_throttled_after_an_attempt(tmp_path):

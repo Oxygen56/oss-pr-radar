@@ -178,6 +178,28 @@ def test_controller_skips_post_publication_cleanup_without_terminal_block(tmp_pa
     assert result["stages"]["cleanupReconcileAfterPublication"]["skipped"] is True
 
 
+def test_controller_publishes_state_drift_recheck_after_drain(tmp_path):
+    calls: list[str] = []
+
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        calls.append(stage)
+        if stage == "drain":
+            return {
+                "ok": True,
+                "action": "none",
+                "terminalized": [],
+                "scannerRechecks": [{"key": "a/b#1", "reason": "STATE_DRIFT"}],
+            }
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path, code_root=DEV_CODE_ROOT, allow_unreleased_code=True, runner=runner, notify=False
+    )
+
+    assert result["ok"] is True
+    assert calls.index("drain") < calls.index("terminalFeedbackAfterDrain")
+
+
 def test_controller_cycle_fails_closed_when_context_recovery_fails(tmp_path):
     calls: list[str] = []
 

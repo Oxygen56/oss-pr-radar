@@ -274,6 +274,9 @@ def test_live_base_drift_is_recorded_and_never_creates_task(tmp_path, monkeypatc
     )
     assert result["authorized"] is False
     assert result["decision"]["reason_code"] == "STATE_DRIFT"
+    assert result["recheckRequired"] is True
+    assert result["scannerRecheck"]["staleBaseSha"] == "old-base"
+    assert result["scannerRecheck"]["liveBaseSha"] == "new-base"
     with ManagedLedger(database)._connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM managed_tasks").fetchone()[0] == 0
         assert (
@@ -282,6 +285,21 @@ def test_live_base_drift_is_recorded_and_never_creates_task(tmp_path, monkeypatc
             ).fetchone()[0]
             == "state_drift"
         )
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage,terminal_reason FROM opportunities WHERE key='owner/repo#7'"
+        ).fetchone()
+        intent_status = connection.execute(
+            "SELECT status FROM intents WHERE intent_id='intent-7'"
+        ).fetchone()["status"]
+        no_go_count = connection.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type='AUDIT_NO_GO'"
+        ).fetchone()[0]
+    assert dict(opportunity) == {"stage": "QUALIFIED", "terminal_reason": None}
+    assert intent_status == "REJECTED"
+    assert no_go_count == 0
+    assert store.terminal_feedback() == []
+    assert store.scanner_recheck_feedback()[0]["intent_id"] == "intent-7"
     assert ("branch", "owner/repo:main") in client.calls
 
 

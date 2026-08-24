@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import plistlib
 import re
 import sqlite3
 import stat
@@ -175,20 +176,24 @@ def revoke_operational_authorization(runtime_root: Path) -> None:
                 os.close(directory)
 
 
+def _revoke_worker_staging_authorization_unlocked(runtime_root: Path) -> None:
+    path = worker_staging_authorization_path(runtime_root)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
 def revoke_worker_staging_authorization(runtime_root: Path) -> None:
     """Revoke only the staging permit; the receipt remains for activation proof."""
 
     with _WorkerStagingLock(runtime_root):
-        for path in (worker_staging_authorization_path(runtime_root),):
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                continue
-            directory = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+        _revoke_worker_staging_authorization_unlocked(runtime_root)
 
 
 def stable_evidence_digest(path: Path) -> str:
@@ -788,7 +793,7 @@ def _preflight_requirements(preflight: dict[str, Any]) -> None:
         raise RuntimeError("operational authorization requires unloaded release-bound workers")
 
 
-def issue_operational_authorization(
+def _issue_operational_authorization_unlocked(
     runtime_root: Path,
     *,
     preflight: dict[str, Any],
@@ -858,9 +863,31 @@ def issue_operational_authorization(
     if not auth.get("keyId") or not auth.get("signature"):
         raise PermissionError("current signing key is unavailable")
     value = {**unsigned, **auth}
-    revoke_worker_staging_authorization(runtime_root)
+    _revoke_worker_staging_authorization_unlocked(runtime_root)
     _write_private(authorization_path(runtime_root), value)
     return value
+
+
+def issue_operational_authorization(
+    runtime_root: Path,
+    *,
+    preflight: dict[str, Any],
+    managed_counts_evidence: Path,
+    automation_snapshot: Path,
+    managed_counts_evidence_sha256: str | None = None,
+    automation_snapshot_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Sign the only authorization that allows deployed business actions."""
+
+    with _WorkerStagingLock(runtime_root):
+        return _issue_operational_authorization_unlocked(
+            runtime_root,
+            preflight=preflight,
+            managed_counts_evidence=managed_counts_evidence,
+            automation_snapshot=automation_snapshot,
+            managed_counts_evidence_sha256=managed_counts_evidence_sha256,
+            automation_snapshot_sha256=automation_snapshot_sha256,
+        )
 
 
 def _verify_worker_plist_bindings(bindings: object) -> bool:
@@ -980,3 +1007,392 @@ def finalize_operational_authorization(runtime_root: Path) -> dict[str, Any]:
         _remove_private_and_fsync(staged_worker_receipt_path(runtime_root))
         _write_private_commit_point(authorization_path(runtime_root), {**unsigned, **signed})
         return {**unsigned, **signed}
+
+
+def _reset_timestamp(value: object, *, field: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"worker staging reset timestamp is invalid: {field}") from exc
+    if parsed.tzinfo is None:
+        raise RuntimeError(f"worker staging reset timestamp has no UTC offset: {field}")
+    return parsed.astimezone(UTC)
+
+
+def _reset_bound_counts_evidence(
+    path_value: object,
+    *,
+    expected_digest: object,
+    runtime_root: Path,
+    binding: dict[str, Any],
+    ledger: dict[str, Any],
+    now: datetime,
+) -> datetime:
+    path = Path(str(path_value))
+    digest = stable_evidence_digest(path)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("worker staging reset counts evidence is invalid") from exc
+    if not isinstance(value, dict) or value.get("schema") != (
+        "oss-pr-radar.stage7-counts-evidence.v1"
+    ):
+        raise RuntimeError("worker staging reset counts evidence schema is invalid")
+    unsigned = {key: item for key, item in value.items() if key not in {"keyId", "signature"}}
+    if not verify_current(
+        unsigned,
+        context="stage7-counts-evidence-v1",
+        key_id=value.get("keyId"),
+        signature=value.get("signature"),
+    ):
+        raise RuntimeError("worker staging reset counts evidence authentication failed")
+    if (
+        digest != expected_digest
+        or digest != stable_evidence_digest(path)
+        or value.get("runtimeRootDigest") != runtime_root_digest(runtime_root)
+        or value.get("releaseId") != binding.get("releaseId")
+        or value.get("releaseHead") not in {None, binding.get("commit")}
+        or value.get("ledgerGeneration") != ledger.get("generation")
+        or value.get("ledgerSha256") != ledger.get("sha256")
+        or value.get("managedPrProjectionDigest") != ledger.get("managedPrProjectionDigest")
+    ):
+        raise RuntimeError("worker staging reset counts evidence binding mismatch")
+    observed = _reset_timestamp(value.get("observedAt"), field="counts.observedAt")
+    if observed > now:
+        raise RuntimeError("worker staging reset counts evidence is from the future")
+    return observed
+
+
+def _validate_reset_worker_plists(
+    specs: list[dict[str, Any]],
+    *,
+    home: Path,
+    receipt: dict[str, Any] | None,
+    now: datetime,
+) -> bool:
+    launch_dir = home.resolve() / "Library" / "LaunchAgents"
+    expected = {str(spec["Label"]): spec for spec in specs}
+    paths = {label: launch_dir / f"{label}.plist" for label in expected}
+    present = [path.exists() or path.is_symlink() for path in paths.values()]
+    if any(present) and not all(present):
+        raise RuntimeError("worker staging reset refuses partial worker plist state")
+    if all(present):
+        for label, path in paths.items():
+            try:
+                metadata = path.lstat()
+                actual = plistlib.loads(path.read_bytes())
+            except (OSError, plistlib.InvalidFileException) as exc:
+                raise RuntimeError("worker staging reset worker plist is unreadable") from exc
+            if (
+                stat.S_ISLNK(metadata.st_mode)
+                or not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or actual != expected[label]
+            ):
+                raise RuntimeError("worker staging reset worker plist binding mismatch")
+    if receipt is None:
+        return all(present)
+    if not all(present):
+        raise RuntimeError("worker staging reset receipt requires three staged plists")
+    records = receipt.get("workers")
+    if not isinstance(records, list) or len(records) != len(expected):
+        raise RuntimeError("worker staging reset receipt worker set is invalid")
+    by_label = {str(item.get("label")): item for item in records if isinstance(item, dict)}
+    if set(by_label) != set(expected) or len(by_label) != len(records):
+        raise RuntimeError("worker staging reset receipt worker labels are invalid")
+    spec_digest = worker_spec_digest(specs)
+    for label, item in by_label.items():
+        path = paths[label]
+        observed = _reset_timestamp(item.get("observedAt"), field=f"{label}.observedAt")
+        if observed > now:
+            raise RuntimeError("worker staging reset worker observation is from the future")
+        if (
+            item.get("loaded") is not False
+            or item.get("pid") is not None
+            or item.get("specDigest") != spec_digest
+            or item.get("plistPath") != str(path)
+            or item.get("plistSha256") != hashlib.sha256(path.read_bytes()).hexdigest()
+            or item.get("mode") != "0o600"
+            or item.get("ownerUid") != os.getuid()
+            or item.get("regular") is not True
+            or item.get("symlink") is not False
+        ):
+            raise RuntimeError("worker staging reset receipt plist binding mismatch")
+    return True
+
+
+def reset_expired_worker_staging(
+    runtime_root: Path,
+    *,
+    home: Path | None = None,
+    launchctl_runner: Any | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Clear only expired, release-bound staging state while workers are stopped.
+
+    Every observable intermediate state remains fail-closed: a STAGED full
+    authorization is removed first, and the receipt that blocks a fresh stage
+    is removed last.  The staging lock serializes this reset with stage,
+    authorization issue, and activation commit operations.
+    """
+
+    runtime_root = runtime_root.resolve()
+    base = (home or Path.home()).resolve()
+    current_time = now or datetime.now(UTC)
+    if current_time.tzinfo is None:
+        raise RuntimeError("worker staging reset time must include a UTC offset")
+    current_time = current_time.astimezone(UTC)
+    with _WorkerStagingLock(runtime_root):
+        release_path, binding = active_release(runtime_root)
+        ledger = _current_ledger_identity(runtime_root)
+        from .local_publication import worker_specs
+        from .release_binding import runtime_ledger_path
+        from .runtime import pending_publication_effects
+        from .runtime_audit import WORKER_LABELS, launchctl_print
+
+        specs = worker_specs(release_path, home=base, runtime_root=runtime_root)
+        expected_spec_digest = worker_spec_digest(specs)
+        runner = launchctl_runner or launchctl_print
+        unloaded_markers = ("could not find", "service not found", "no such process")
+        for worker in ("fast", "slow", "queue-importer"):
+            label = WORKER_LABELS[worker]
+            output = runner(label)
+            if not isinstance(output, str) or not any(
+                marker in output.casefold() for marker in unloaded_markers
+            ):
+                raise RuntimeError(f"worker staging reset requires unloaded worker: {worker}")
+        pending = pending_publication_effects(runtime_ledger_path(runtime_root))
+        if pending != 0:
+            raise RuntimeError("worker staging reset requires zero pending publication effects")
+
+        auth_path = authorization_path(runtime_root)
+        staging_path = worker_staging_authorization_path(runtime_root)
+        receipt_path = staged_worker_receipt_path(runtime_root)
+        auth: dict[str, Any] | None = None
+        staging: dict[str, Any] | None = None
+        receipt: dict[str, Any] | None = None
+        stale_reasons: list[str] = []
+
+        if auth_path.exists() or auth_path.is_symlink():
+            if (
+                auth_path.is_symlink()
+                or not auth_path.is_file()
+                or stat.S_IMODE(auth_path.stat().st_mode) != 0o600
+            ):
+                raise RuntimeError("worker staging reset operational authorization is unsafe")
+            try:
+                auth = json.loads(auth_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError(
+                    "worker staging reset operational authorization is invalid"
+                ) from exc
+            if not isinstance(auth, dict) or auth.get("schema") != OPERATIONAL_AUTH_SCHEMA:
+                raise RuntimeError(
+                    "worker staging reset operational authorization schema is invalid"
+                )
+            unsigned = {
+                key: item for key, item in auth.items() if key not in {"keyId", "signature"}
+            }
+            if not verify_current(
+                unsigned,
+                context=OPERATIONAL_AUTH_CONTEXT,
+                key_id=auth.get("keyId"),
+                signature=auth.get("signature"),
+            ):
+                raise RuntimeError(
+                    "worker staging reset operational authorization authentication failed"
+                )
+            if auth.get("state") == "ACTIVE":
+                raise RuntimeError("worker staging reset refuses ACTIVE operational authorization")
+            if auth.get("state") != "STAGED":
+                raise RuntimeError(
+                    "worker staging reset operational authorization state is invalid"
+                )
+            if (
+                auth.get("runtimeRootDigest") != runtime_root_digest(runtime_root)
+                or auth.get("releaseId") != binding.get("releaseId")
+                or auth.get("releaseHead") != binding.get("commit")
+                or auth.get("releaseManifestSha256") != binding.get("manifestSha256")
+                or auth.get("ledgerTarget") != ledger.get("target")
+                or auth.get("ledgerGeneration") != ledger.get("generation")
+                or auth.get("ledgerSha256AtIssue") != ledger.get("sha256")
+                or auth.get("managedPrProjectionDigest") != ledger.get("managedPrProjectionDigest")
+                or auth.get("workerConfigDigest") != expected_spec_digest
+            ):
+                raise RuntimeError(
+                    "worker staging reset operational authorization binding mismatch"
+                )
+            bindings = auth.get("workerPlistBindings")
+            if not _verify_worker_plist_bindings(bindings):
+                raise RuntimeError(
+                    "worker staging reset operational authorization plist binding mismatch"
+                )
+            expected_paths = {
+                label: str(base / "Library" / "LaunchAgents" / f"{label}.plist")
+                for label in (str(spec["Label"]) for spec in specs)
+            }
+            if (
+                not isinstance(bindings, list)
+                or {
+                    str(item.get("label")): str(item.get("plistPath"))
+                    for item in bindings
+                    if isinstance(item, dict)
+                }
+                != expected_paths
+            ):
+                raise RuntimeError(
+                    "worker staging reset operational authorization worker set mismatch"
+                )
+            issued = _reset_timestamp(auth.get("issuedAt"), field="authorization.issuedAt")
+            if issued > current_time:
+                raise RuntimeError("worker staging reset authorization is from the future")
+            if current_time - issued > WORKER_STAGING_MAX_EVIDENCE_AGE:
+                stale_reasons.append("operational_authorization_stale")
+
+        if staging_path.exists() or staging_path.is_symlink():
+            staging = _read_json_signed_staging(staging_path)
+            issued = _reset_timestamp(staging.get("issuedAt"), field="staging.issuedAt")
+            expires = _reset_timestamp(staging.get("expiresAt"), field="staging.expiresAt")
+            if (
+                issued > current_time
+                or expires <= issued
+                or expires - issued > WORKER_STAGING_AUTH_TTL
+            ):
+                raise RuntimeError("worker staging reset authorization timestamps are invalid")
+            if (
+                staging.get("runtimeRootDigest") != runtime_root_digest(runtime_root)
+                or staging.get("releaseId") != binding.get("releaseId")
+                or staging.get("releaseHead") != binding.get("commit")
+                or staging.get("releaseManifestSha256") != binding.get("manifestSha256")
+                or staging.get("ledgerTarget") != ledger.get("target")
+                or staging.get("ledgerGeneration") != ledger.get("generation")
+                or staging.get("ledgerSha256") != ledger.get("sha256")
+                or staging.get("managedPrProjectionDigest")
+                != ledger.get("managedPrProjectionDigest")
+                or staging.get("workerSpecDigest") != expected_spec_digest
+            ):
+                raise RuntimeError("worker staging reset authorization binding mismatch")
+            counts_observed = _reset_bound_counts_evidence(
+                staging.get("managedCountsEvidencePath"),
+                expected_digest=staging.get("managedCountsEvidenceSha256"),
+                runtime_root=runtime_root,
+                binding=binding,
+                ledger=ledger,
+                now=current_time,
+            )
+            if expires <= current_time:
+                stale_reasons.append("worker_staging_authorization_expired")
+            if current_time - counts_observed > WORKER_STAGING_MAX_EVIDENCE_AGE:
+                stale_reasons.append("managed_counts_evidence_stale")
+
+        if receipt_path.exists() or receipt_path.is_symlink():
+            receipt = _read_staged_receipt(runtime_root)
+            if (
+                receipt.get("runtimeRootDigest") != runtime_root_digest(runtime_root)
+                or receipt.get("releaseId") != binding.get("releaseId")
+                or receipt.get("releaseHead") != binding.get("commit")
+                or receipt.get("releaseManifestSha256") != binding.get("manifestSha256")
+                or receipt.get("ledgerTarget") != ledger.get("target")
+                or receipt.get("ledgerGeneration") != ledger.get("generation")
+                or receipt.get("ledgerSha256") != ledger.get("sha256")
+                or receipt.get("managedPrProjectionDigest")
+                != ledger.get("managedPrProjectionDigest")
+                or receipt.get("workerSpecDigest") != expected_spec_digest
+            ):
+                raise RuntimeError("worker staging reset receipt binding mismatch")
+            staged_at = _reset_timestamp(receipt.get("stagedAt"), field="receipt.stagedAt")
+            expires = _reset_timestamp(
+                receipt.get("stagingExpiresAt"), field="receipt.stagingExpiresAt"
+            )
+            if staged_at > current_time:
+                raise RuntimeError("worker staging reset receipt is from the future")
+            counts_observed = _reset_bound_counts_evidence(
+                receipt.get("managedCountsEvidencePath"),
+                expected_digest=receipt.get("managedCountsEvidenceSha256"),
+                runtime_root=runtime_root,
+                binding=binding,
+                ledger=ledger,
+                now=current_time,
+            )
+            if expires <= current_time:
+                stale_reasons.append("staged_worker_receipt_expired")
+            if current_time - staged_at > WORKER_STAGING_MAX_EVIDENCE_AGE:
+                stale_reasons.append("staged_worker_receipt_stale")
+            if current_time - counts_observed > WORKER_STAGING_MAX_EVIDENCE_AGE:
+                stale_reasons.append("managed_counts_evidence_stale")
+
+        staged_plists = _validate_reset_worker_plists(
+            specs, home=base, receipt=receipt, now=current_time
+        )
+        if auth is not None and receipt is None:
+            raise RuntimeError("worker staging reset STAGED authorization has no receipt")
+        if staging is not None and staging.get("state") == "CONSUMED" and receipt is None:
+            raise RuntimeError("worker staging reset consumed authorization has no receipt")
+        if receipt is not None and staging is not None:
+            for receipt_key, staging_key in (
+                ("stagingNonce", "nonce"),
+                ("stagingIssuedAt", "issuedAt"),
+                ("stagingExpiresAt", "expiresAt"),
+                ("managedCountsEvidencePath", "managedCountsEvidencePath"),
+                ("managedCountsEvidenceSha256", "managedCountsEvidenceSha256"),
+            ):
+                if receipt.get(receipt_key) != staging.get(staging_key):
+                    raise RuntimeError("worker staging reset receipt authorization mismatch")
+            receipt_digest = stable_evidence_digest(receipt_path)
+            if staging.get("state") == "CONSUMED":
+                if (
+                    receipt.get("authorizationDigest") != staging.get("initialAuthorizationDigest")
+                    or staging.get("receiptSha256") != receipt_digest
+                ):
+                    raise RuntimeError("worker staging reset consumed proof mismatch")
+            elif receipt.get("authorizationDigest") != stable_evidence_digest(staging_path):
+                raise RuntimeError("worker staging reset active proof mismatch")
+        if (
+            auth is not None
+            and receipt is not None
+            and (
+                auth.get("stagedWorkerReceiptSha256") != stable_evidence_digest(receipt_path)
+                or auth.get("stagingNonce") != receipt.get("stagingNonce")
+            )
+        ):
+            raise RuntimeError("worker staging reset operational receipt mismatch")
+
+        existing = [
+            path
+            for path in (auth_path, staging_path, receipt_path)
+            if path.exists() or path.is_symlink()
+        ]
+        if not existing:
+            return {
+                "ok": True,
+                "reset": False,
+                "alreadyClear": True,
+                "releaseId": binding.get("releaseId"),
+                "ledgerTarget": ledger.get("target"),
+                "stagedPlists": staged_plists,
+                "workersUnloaded": True,
+                "pendingPublicationEffects": pending,
+            }
+        if not stale_reasons:
+            raise RuntimeError("worker staging reset refuses unexpired staging state")
+
+        removed: list[str] = []
+        # Removing STAGED full auth first makes activation impossible.  The
+        # receipt remains the new-stage blocker until the final commit step.
+        for path in (auth_path, staging_path, receipt_path):
+            if path.exists() or path.is_symlink():
+                _remove_private_and_fsync(path)
+                removed.append(path.name)
+        return {
+            "ok": True,
+            "reset": True,
+            "alreadyClear": False,
+            "releaseId": binding.get("releaseId"),
+            "ledgerTarget": ledger.get("target"),
+            "stagedPlists": staged_plists,
+            "workersUnloaded": True,
+            "pendingPublicationEffects": pending,
+            "removed": removed,
+            "staleReasons": sorted(set(stale_reasons)),
+        }

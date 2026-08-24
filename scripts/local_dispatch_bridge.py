@@ -2652,14 +2652,306 @@ def import_signed_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
     }
 
 
+LOW_INFORMATION_COMMENT_RE = re.compile(
+    r"\b(?:"
+    r"(?:i|we)\s+(?:would\s+like\s+to|want\s+to|can|could)\s+(?:work\s+on|take|pick\s+up)"
+    r"|can\s+(?:you\s+)?(?:please\s+)?assign"
+    r"|(?:please\s+)?assign\s+(?:this\s+issue\s+)?to\s+me"
+    r"|is\s+(?:this|it)\s+(?:still\s+)?(?:open|available|unassigned)"
+    r"|any\s+updates?"
+    r")\b",
+    re.IGNORECASE,
+)
+COMMENT_TECHNICAL_MARKER_RE = re.compile(
+    r"`|https?://|(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+|"
+    r"\b[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+\b|"
+    r"\b(?:stack\s*trace|traceback|exception|regression|test(?:ing)?|parser|handler|"
+    r"endpoint|request|response|payload|implementation|code\s+path)\b",
+    re.IGNORECASE,
+)
+GENERIC_TERMINAL_CODE_TERMS = {
+    "api",
+    "bug",
+    "callback",
+    "client",
+    "code",
+    "error",
+    "fails",
+    "hosted",
+    "issue",
+    "public",
+    "repository",
+    "server",
+    "service",
+}
+TERMINAL_SOURCE_SUFFIXES = (
+    ".py",
+    ".pyi",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".cc",
+    ".cpp",
+    ".c",
+    ".h",
+)
+TERMINAL_NON_PRODUCT_PARTS = {
+    ".github",
+    "__tests__",
+    "docs",
+    "documentation",
+    "example",
+    "examples",
+    "fixture",
+    "fixtures",
+    "test",
+    "tests",
+}
+
+
+def _is_low_information_comment(comment: dict[str, Any]) -> bool:
+    body = " ".join(str(comment.get("body") or "").split())
+    return bool(
+        body
+        and len(body) <= 180
+        and LOW_INFORMATION_COMMENT_RE.search(body)
+        and not COMMENT_TECHNICAL_MARKER_RE.search(body)
+    )
+
+
+def _issue_material_digest(issue: dict[str, Any]) -> str:
+    def names(values: Any, key: str) -> list[str]:
+        if not isinstance(values, list):
+            return []
+        normalized = []
+        for value in values:
+            if isinstance(value, dict):
+                text = str(value.get(key) or "").strip()
+            else:
+                text = str(value or "").strip()
+            if text:
+                normalized.append(text.casefold())
+        return sorted(set(normalized))
+
+    return sha256_json(
+        {
+            "state": str(issue.get("state") or "").casefold(),
+            "stateReason": str(issue.get("state_reason") or "").casefold(),
+            "title": str(issue.get("title") or "").strip(),
+            "body": str(issue.get("body") or "").replace("\r\n", "\n").rstrip(),
+            "labels": names(issue.get("labels"), "name"),
+            "assignees": names(issue.get("assignees"), "login"),
+        }
+    )
+
+
+def _technical_comments_digest(comments: Any) -> str:
+    material = []
+    for comment in comments if isinstance(comments, list) else []:
+        if not isinstance(comment, dict) or _is_low_information_comment(comment):
+            continue
+        user = comment.get("user") if isinstance(comment.get("user"), dict) else {}
+        material.append(
+            {
+                "id": comment.get("id"),
+                "author": str(user.get("login") or "").casefold(),
+                "association": str(comment.get("author_association") or "").upper(),
+                "body": str(comment.get("body") or "").replace("\r\n", "\n").rstrip(),
+            }
+        )
+    material.sort(key=lambda value: (str(value.get("id") or ""), value["author"], value["body"]))
+    return sha256_json(material)
+
+
+def _terminal_audit_evidence(row: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    try:
+        payload = json.loads(str(row.get("terminal_audit_payload_json") or "{}"))
+    except json.JSONDecodeError:
+        return {}, ""
+    live_audit = payload.get("liveAudit") if isinstance(payload, dict) else {}
+    evidence = live_audit.get("evidence") if isinstance(live_audit, dict) else {}
+    if not isinstance(evidence, dict):
+        return {}, ""
+    try:
+        terminal_payload = json.loads(str(row.get("terminal_payload_json") or "{}"))
+    except json.JSONDecodeError:
+        terminal_payload = {}
+    summary = (
+        str(terminal_payload.get("summary") or "") if isinstance(terminal_payload, dict) else ""
+    )
+    return evidence, summary
+
+
+def _terminal_code_terms(issue: dict[str, Any], summary: str) -> set[str]:
+    text = "\n".join(
+        (str(issue.get("title") or ""), str(issue.get("body") or ""), str(summary or ""))
+    )
+    quoted = re.findall(r"`([A-Za-z][A-Za-z0-9_.:/-]{2,})`", text)
+    identifiers = re.findall(r"\b[A-Za-z][A-Za-z0-9]*(?:[_./-][A-Za-z0-9]+)+\b", text)
+    branded = re.findall(r"\b(?:[A-Z]{2,}[A-Za-z0-9]*|[A-Z][a-z]+[A-Z][A-Za-z0-9]*)\b", text)
+    return {
+        value.casefold().strip("./")
+        for value in (*quoted, *identifiers, *branded)
+        if len(value.strip("./")) >= 4
+        and value.casefold().strip("./") not in GENERIC_TERMINAL_CODE_TERMS
+    }
+
+
+def _terminal_product_code_path(path: str) -> bool:
+    normalized = path.casefold().lstrip("./")
+    return normalized.endswith(TERMINAL_SOURCE_SUFFIXES) and not any(
+        part in TERMINAL_NON_PRODUCT_PARTS for part in normalized.split("/")[:-1]
+    )
+
+
+def _terminal_path_matches(path: str, *, code_paths: set[str], terms: set[str]) -> bool:
+    normalized = path.casefold().lstrip("./")
+    if not _terminal_product_code_path(normalized):
+        return False
+    if any(
+        normalized == candidate
+        or normalized.endswith(f"/{candidate}")
+        or candidate.endswith(f"/{normalized}")
+        for candidate in code_paths
+        if _terminal_product_code_path(candidate)
+    ):
+        return True
+    return any(term in normalized for term in terms)
+
+
+def _relevant_terminal_code_changed(
+    github: GitHubClient,
+    *,
+    repo: str,
+    evidence: dict[str, Any],
+    baseline_issue: dict[str, Any],
+    summary: str,
+    live_sha: str = "",
+) -> bool | None:
+    baseline_sha = str(
+        evidence.get("liveBaseSha")
+        or evidence.get("live_base_sha")
+        or evidence.get("selectedBaseSha")
+        or evidence.get("selected_base_sha")
+        or ""
+    )
+    default_branch = str(evidence.get("defaultBranch") or evidence.get("default_branch") or "")
+    if not baseline_sha or not default_branch:
+        return None
+    if not live_sha:
+        branch = github.branch(repo, default_branch)
+        commit = branch.get("commit") if isinstance(branch, dict) else {}
+        live_sha = str(commit.get("sha") or "") if isinstance(commit, dict) else ""
+    if not live_sha:
+        return None
+    if live_sha == baseline_sha:
+        return False
+    comparison = github.compare(repo, baseline_sha, live_sha)
+    if not isinstance(comparison, dict):
+        return None
+    if str(comparison.get("status") or "").casefold() == "identical":
+        return False
+    files = comparison.get("files")
+    if not isinstance(files, list):
+        return None
+    probe = evidence.get("repoProbeReceipt") or evidence.get("repo_probe_receipt") or {}
+    raw_paths = probe.get("codePaths") or probe.get("code_paths") or []
+    code_paths = {str(path).casefold().lstrip("./") for path in raw_paths if str(path).strip()}
+    # The terminal task summary identifies the code surface that was actually
+    # investigated. Fall back to the broader issue text only for older results
+    # that did not preserve those technical identifiers.
+    terms = _terminal_code_terms({}, summary) or _terminal_code_terms(baseline_issue, "")
+    for value in files:
+        if not isinstance(value, dict):
+            return None
+        filename = str(value.get("filename") or "").casefold().lstrip("./")
+        if _terminal_path_matches(filename, code_paths=code_paths, terms=terms):
+            return True
+        if not _terminal_product_code_path(filename):
+            continue
+        changed_text = f"{filename}\n{value.get('patch') or ''}".casefold()
+        if any(term in changed_text for term in terms):
+            return True
+    if len(files) >= 300:
+        try:
+            baseline_tree = {
+                str(item.get("path") or "").casefold().lstrip("./"): item.get("sha")
+                for item in github.repository_tree(repo, baseline_sha)
+                if item.get("type") == "blob" and str(item.get("path") or "")
+            }
+            live_tree = {
+                str(item.get("path") or "").casefold().lstrip("./"): item.get("sha")
+                for item in github.repository_tree(repo, live_sha)
+                if item.get("type") == "blob" and str(item.get("path") or "")
+            }
+        except (OSError, RuntimeError, ValueError):
+            return None
+        for filename in baseline_tree.keys() | live_tree.keys():
+            if baseline_tree.get(filename) == live_tree.get(filename):
+                continue
+            if _terminal_path_matches(filename, code_paths=code_paths, terms=terms):
+                return True
+    return False
+
+
+def _wrong_repo_terminal_materially_changed(
+    github: GitHubClient,
+    *,
+    row: dict[str, Any],
+    issue: dict[str, Any],
+    comments: list[dict[str, Any]] | None = None,
+    live_sha: str = "",
+) -> bool | None:
+    evidence, summary = _terminal_audit_evidence(row)
+    baseline_issue = evidence.get("issue") if isinstance(evidence.get("issue"), dict) else None
+    baseline_comments = evidence.get("comments")
+    if baseline_issue is None or not isinstance(baseline_comments, list):
+        return None
+    if _issue_material_digest(baseline_issue) != _issue_material_digest(issue):
+        return True
+    current_comments = (
+        comments
+        if comments is not None
+        else github.comments(str(row["repo"]), int(row["issue_number"]))
+    )
+    if _technical_comments_digest(baseline_comments) != _technical_comments_digest(
+        current_comments
+    ):
+        return True
+    return _relevant_terminal_code_changed(
+        github,
+        repo=str(row["repo"]),
+        evidence=evidence,
+        baseline_issue=baseline_issue,
+        summary=summary,
+        live_sha=live_sha,
+    )
+
+
+def _historical_wrong_repo_feedback(
+    store: RadarLedger, opportunity_key: str
+) -> dict[str, Any] | None:
+    for row in store.terminal_feedback():
+        if row.get("key") == opportunity_key and row.get("terminal_reason") == "WRONG_REPO":
+            return row
+    return None
+
+
 def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
     """Publish local terminal judgments into the integrity-checked cloud state."""
 
-    rows = ledger(args.ledger).terminal_feedback()
-    if not rows:
+    store = ledger(args.ledger)
+    rows = store.terminal_feedback()
+    recheck_rows = store.scanner_recheck_feedback()
+    if not rows and not recheck_rows:
         return {
             "ok": True,
             "published": 0,
+            "scannerRechecks": [],
             "stateChanged": False,
             "publishAttempts": 0,
             "deferred": [],
@@ -2667,9 +2959,10 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
             "errors": [],
         }
 
-    github = GitHubClient()
+    github = GitHubClient() if rows else None
     analyzed = iso_z(datetime.now(UTC))
     published: list[dict[str, Any]] = []
+    scanner_rechecks: list[dict[str, Any]] = []
     deferred: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
@@ -2677,6 +2970,7 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
     for row in rows:
         key = str(row["key"])
         try:
+            assert github is not None
             issue = github.issue(str(row["repo"]), int(row["issue_number"]))
             issue_updated = str(issue.get("updated_at") or "")
             terminal_recorded_at = str(
@@ -2691,8 +2985,25 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 issue_changed = parse_time(issue_updated) > parse_time(terminal_recorded_at)
             if issue_changed:
-                deferred.append({"key": key, "reason": "issue_updated_after_local_snapshot"})
-                continue
+                material_change = None
+                if str(row.get("terminal_reason") or "") == "WRONG_REPO":
+                    material_change = _wrong_repo_terminal_materially_changed(
+                        github,
+                        row=row,
+                        issue=issue,
+                    )
+                if material_change is not False:
+                    deferred.append(
+                        {
+                            "key": key,
+                            "reason": (
+                                "material_terminal_evidence_changed"
+                                if material_change is True
+                                else "issue_updated_after_local_snapshot"
+                            ),
+                        }
+                    )
+                    continue
             updates[key] = {
                 "analyzed": analyzed,
                 "status": CONTROLLER_TERMINAL_STATUS,
@@ -2711,6 +3022,28 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 errors.append({"key": key, "error": message})
 
+    for row in recheck_rows:
+        key = str(row["key"])
+        issue_updated = str(row.get("issue_updated_at") or "")
+        recorded_at = str(row.get("recheck_recorded_at") or "")
+        if not issue_updated or not recorded_at:
+            deferred.append({"key": key, "reason": "missing_state_drift_snapshot_time"})
+            continue
+        updates[key] = {
+            "analyzed": recorded_at,
+            "status": "state_drift",
+            "controller_stage": None,
+            "terminal_reason": None,
+            "issue_updated": issue_updated,
+            "scanner_version": SCANNER_DECISION_REVISION,
+            "decision_contract_digest": decision_contract_digest(),
+            "source_intent_id": row.get("intent_id"),
+            "stale_base_sha": row.get("stale_base_sha"),
+            "live_base_sha": row.get("live_base_sha"),
+        }
+        scanner_rechecks.append({"key": key, "intentId": row.get("intent_id")})
+        published.append({"key": key, "stage": "STATE_DRIFT_RECHECK_REQUIRED"})
+
     state_changed = False
     publish_attempts = 0
     if updates:
@@ -2718,6 +3051,7 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "ok": not errors,
         "published": len(published),
+        "scannerRechecks": scanner_rechecks,
         "stateChanged": state_changed,
         "publishAttempts": publish_attempts,
         "deferred": deferred,
@@ -2729,7 +3063,7 @@ def publish_terminal_feedback(args: argparse.Namespace) -> dict[str, Any]:
 def _publish_controller_feedback_updates(
     updates: dict[str, dict[str, Any]], max_attempts: int = 5
 ) -> tuple[bool, int]:
-    """Merge terminal updates without weakening the state branch stale-write guard."""
+    """Merge controller updates without weakening the state branch stale-write guard."""
 
     state_script = ROOT / "scripts" / "state_branch.py"
     feedback_path = STATE / "controller_terminal_feedback.json"
@@ -3528,6 +3862,71 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
                 "priorityWork": priority_work,
             }
     evidence, verdict = _audit_intent(intent)
+    historical_wrong_repo = _historical_wrong_repo_feedback(store, str(intent["key"]))
+    if historical_wrong_repo is not None and verdict.status == "ALLOW":
+        current_evidence = evidence.as_dict()
+        current_issue = (
+            current_evidence.get("issue")
+            if isinstance(current_evidence.get("issue"), dict)
+            else None
+        )
+        current_comments = current_evidence.get("comments")
+        material_change = None
+        if current_issue is not None and isinstance(current_comments, list):
+            try:
+                material_change = _wrong_repo_terminal_materially_changed(
+                    GitHubClient(),
+                    row=historical_wrong_repo,
+                    issue=current_issue,
+                    comments=current_comments,
+                    live_sha=str(
+                        current_evidence.get("liveBaseSha")
+                        or current_evidence.get("live_base_sha")
+                        or ""
+                    ),
+                )
+            except (OSError, RuntimeError, ValueError):
+                material_change = None
+        if material_change is None:
+            ManagedAdapter(ROOT, args.ledger).record_preflight_outcome(
+                intent=intent,
+                result_type="blocked_pre_task",
+                reason="WRONG_REPO_RECHECK_INCOMPLETE",
+                evidence=_audit_payload(evidence, verdict),
+            )
+            return {
+                "ok": True,
+                "authorized": False,
+                "auditDeferred": True,
+                "held": True,
+                "claimed": False,
+                "reason": "WRONG_REPO_RECHECK_INCOMPLETE",
+            }
+        if material_change is False:
+            terminal_verdict = replace(verdict, status="BLOCK", reason_code="WRONG_REPO")
+            ManagedAdapter(ROOT, args.ledger).record_preflight_outcome(
+                intent=intent,
+                result_type="task_no_go",
+                reason="WRONG_REPO",
+                evidence=_audit_payload(evidence, terminal_verdict),
+            )
+            store.record_stage(
+                intent["key"],
+                "AUDIT_NO_GO",
+                evidence={
+                    "authorization": terminal_verdict.as_dict(),
+                    "evidence": current_evidence,
+                    "historicalWrongRepoRevalidated": True,
+                },
+                reason="WRONG_REPO",
+                dedupe_key=f"{intent['intentId']}:{evidence.digest}:wrong-repo-recheck",
+            )
+            return {
+                "ok": True,
+                "authorized": False,
+                "claimed": False,
+                "decision": terminal_verdict.as_dict(),
+            }
     if verdict.status == "BLOCK":
         ManagedAdapter(ROOT, args.ledger).record_preflight_outcome(
             intent=intent,
@@ -3535,6 +3934,20 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
             reason=verdict.reason_code,
             evidence=_audit_payload(evidence, verdict),
         )
+        if verdict.reason_code == "STATE_DRIFT":
+            recheck = store.invalidate_state_drift_intent(
+                intent["key"],
+                intent_id=intent["intentId"],
+                evidence=evidence.as_dict(),
+            )
+            return {
+                "ok": True,
+                "authorized": False,
+                "claimed": False,
+                "recheckRequired": True,
+                "scannerRecheck": recheck,
+                "decision": verdict.as_dict(),
+            }
         store.record_stage(
             intent["key"],
             "AUDIT_NO_GO",
@@ -3716,6 +4129,42 @@ def reopen_false_terminal(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "ok": True,
         "key": args.key,
+        "stateChanged": published,
+        "publishAttempts": attempts,
+    }
+
+
+def reopen_state_drift(args: argparse.Namespace) -> dict[str, Any]:
+    """Reopen one historical pre-thread STATE_DRIFT misclassified as terminal."""
+
+    store = ledger(args.ledger)
+    recheck = store.invalidate_state_drift_intent(
+        args.key,
+        intent_id=args.intent_id,
+        historical_terminal=True,
+    )
+    published, attempts = _publish_controller_feedback_updates(
+        {
+            args.key: {
+                "analyzed": recheck["recordedAt"],
+                "status": "state_drift",
+                "controller_stage": None,
+                "terminal_reason": None,
+                "issue_updated": recheck.get("issueUpdatedAt"),
+                "scanner_version": SCANNER_DECISION_REVISION,
+                "decision_contract_digest": decision_contract_digest(),
+                "source_intent_id": args.intent_id,
+                "stale_base_sha": recheck.get("staleBaseSha"),
+                "live_base_sha": recheck.get("liveBaseSha"),
+            }
+        }
+    )
+    return {
+        "ok": True,
+        "key": args.key,
+        "intentId": args.intent_id,
+        "recheckRequired": True,
+        "ledgerChanged": recheck["changed"],
         "stateChanged": published,
         "publishAttempts": attempts,
     }
@@ -7206,10 +7655,39 @@ def implementation_followup_deliver(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def implementation_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
-    return ledger(args.ledger).reserve_implementation_followup(
-        thread_id=args.thread_id,
-        result_digest=args.result_digest,
+    store = ledger(args.ledger)
+    candidate = next(
+        (
+            item
+            for item in store.implementation_followup_candidates()
+            if item["threadId"] == args.thread_id and item["resultDigest"] == args.result_digest
+        ),
+        None,
     )
+    if candidate is None:
+        raise RuntimeError("implementation follow-up authorization is stale or invalid")
+    opportunity_key = str(candidate["key"])
+    with opportunity_action_guard(ledger_action_guard_root(Path(args.ledger)), opportunity_key):
+        _require_task_action_clear(store, opportunity_key)
+        context_path = write_task_context(
+            store,
+            issue_url=str(candidate["issueUrl"]),
+            thread_id=str(candidate["threadId"]),
+            cwd=Path(candidate["worktreePath"]),
+        )
+        context = json.loads(context_path.read_text(encoding="utf-8"))
+        if (
+            context.get("taskStage") != "IMPLEMENTATION_READY"
+            or context.get("probeLevel") != REPRODUCED_VALIDATED
+            or context.get("childMayEditFiles") is not True
+            or context.get("resultDigest") != args.result_digest
+            or not isinstance(context.get("reproductionReceipt"), dict)
+        ):
+            raise RuntimeError("implementation follow-up context is not authorized")
+        return store.reserve_implementation_followup(
+            thread_id=args.thread_id,
+            result_digest=args.result_digest,
+        )
 
 
 def pr_followup_deliver(args: argparse.Namespace) -> dict[str, Any]:
@@ -12213,6 +12691,11 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 continue
             receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+            task_stage = str(
+                context.get("taskStage")
+                or managed_candidate.get("taskStage")
+                or "REPRODUCTION_REQUIRED"
+            )
             if (
                 value.get("handoffMode") == "controller_commit_required"
                 and isinstance(receipt, dict)
@@ -12226,6 +12709,17 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 initial_digest = _task_result_digest(value, raw)
             digest_seen = store.task_result_digest_seen(candidate["key"], initial_digest)
+            pending_implementation_result = bool(
+                value.get("stage") == "FIX_READY"
+                and task_stage == "IMPLEMENTATION_READY"
+                and candidate["stage"] == "DISPATCHED"
+            )
+            if pending_implementation_result:
+                # A signed implementation handoff carries the reproduction
+                # digest until the controller binds the final commit receipt.
+                # That earlier reproduction event must not consume this
+                # distinct lifecycle result.
+                digest_seen = False
             initial_quality = value.get("quality")
             initial_review_recoverable = False
             if (
@@ -12265,11 +12759,6 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     )
                 continue
             controller_policy = _controller_policy_verification(context)
-            task_stage = str(
-                context.get("taskStage")
-                or managed_candidate.get("taskStage")
-                or "REPRODUCTION_REQUIRED"
-            )
             context_followup = context.get("prFollowup")
             prepared_head = (
                 str(context_followup.get("preparedHeadSha"))
@@ -12987,15 +13476,18 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             if isinstance(external_receipt, dict):
                 issue_url = str(request["issueUrl"])
                 match = ISSUE_URL.match(issue_url)
-                if not match or request.get("publicationKind") == "PR_UPDATE":
+                publication_kind = str(request.get("publicationKind") or "PR_CREATE")
+                external_pr_url = str(external_receipt.get("prUrl") or "")
+                if not match or (
+                    publication_kind == "PR_UPDATE"
+                    and external_pr_url != str(request.get("existingPrUrl") or "")
+                ):
                     raise RuntimeError(
                         "external publication receipt has an invalid request binding"
                     )
-                reservation_key = f"publication:{request_id}"
-                reconciled_request = dict(request) | {
-                    "requestId": request_id,
-                    "reservationKey": reservation_key,
-                }
+                reconciled_request = dict(request) | {"requestId": request_id}
+                if publication_kind != "PR_UPDATE":
+                    reconciled_request["reservationKey"] = f"publication:{request_id}"
                 managed_adapter.record_publication_receipt(
                     request=reconciled_request,
                     receipt=external_receipt,
@@ -14768,6 +15260,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         }
 
     terminalized: list[dict[str, Any]] = []
+    scanner_rechecks: list[dict[str, Any]] = []
     held: list[dict[str, Any]] = []
     owner = str(getattr(args, "owner", None) or "local-event-drain")
     for intent in list_pending(args.ledger).get("pending") or []:
@@ -14784,6 +15277,19 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         )
         if not claim.get("authorized"):
             decision = claim.get("decision") or {}
+            if claim.get("recheckRequired"):
+                recheck = claim.get("scannerRecheck") or {}
+                scanner_rechecks.append(
+                    {
+                        "key": intent.get("key"),
+                        "intentId": intent.get("intentId"),
+                        "reason": decision.get("reason_code")
+                        or decision.get("reasonCode")
+                        or "STATE_DRIFT",
+                        "recordedAt": recheck.get("recordedAt"),
+                    }
+                )
+                continue
             if decision.get("status") == "BLOCK":
                 terminalized.append(
                     {
@@ -14836,6 +15342,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "threadId": created.get("threadId"),
             "turnId": created.get("turnId"),
             "terminalized": terminalized,
+            "scannerRechecks": scanner_rechecks,
             "held": held,
             "deferredFollowups": deferred_followups,
             "restored": restored_items,
@@ -14847,6 +15354,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         "ok": True,
         "action": "none",
         "terminalized": terminalized,
+        "scannerRechecks": scanner_rechecks,
         "held": held,
         "deferredFollowups": deferred_followups,
         "restored": restored_items,
@@ -14915,6 +15423,9 @@ def main() -> int:
     reopen_parser.add_argument("--key", required=True)
     reopen_parser.add_argument("--expected-reason", required=True)
     reopen_parser.add_argument("--migration-reason", required=True)
+    state_drift_reopen_parser = subparsers.add_parser("reopen-state-drift")
+    state_drift_reopen_parser.add_argument("--key", required=True)
+    state_drift_reopen_parser.add_argument("--intent-id", required=True)
     commit = subparsers.add_parser("commit")
     commit.add_argument("--intent-id", required=True)
     commit.add_argument("--owner")
@@ -15205,6 +15716,8 @@ def main() -> int:
         result = release_claim(args)
     elif args.operation == "reopen-false-terminal":
         result = reopen_false_terminal(args)
+    elif args.operation == "reopen-state-drift":
+        result = reopen_state_drift(args)
     elif args.operation == "commit":
         result = commit_receipt(args)
     elif args.operation == "retry-dispatch":

@@ -1839,6 +1839,62 @@ def test_controller_terminal_feedback_does_not_override_newer_cloud_issue_revisi
     assert merged["a/b#2"]["status"] == "controller_terminal"
 
 
+def test_controller_state_drift_feedback_forces_recheck_without_revoking_dispatch():
+    merged = merge_controller_terminal_feedback(
+        {
+            "a/b#1": {
+                "status": "controller_terminal",
+                "analyzed": "2026-08-24T03:19:00Z",
+                "issue_updated": "2026-08-23T12:46:40Z",
+                "controller_stage": "AUDIT_NO_GO",
+                "terminal_reason": "STATE_DRIFT",
+            }
+        },
+        {
+            "a/b#1": {
+                "status": "state_drift",
+                "analyzed": "2026-08-24T04:00:00.123456Z",
+                "issue_updated": "2026-08-23T12:46:40Z",
+                "controller_stage": None,
+                "terminal_reason": None,
+                "source_intent_id": "intent-drift",
+            }
+        },
+    )
+
+    assert merged["a/b#1"]["status"] == "state_drift"
+    assert merged["a/b#1"]["controller_stage"] is None
+    assert merged["a/b#1"]["terminal_reason"] is None
+    assert select_seen_rechecks(merged) == [("a/b#1", merged["a/b#1"])]
+    assert controller_terminal_issue_outcomes(merged) == {}
+
+
+def test_completed_scanner_result_does_not_rearm_from_old_state_drift_feedback():
+    current = {
+        "a/b#1": {
+            "status": "notified",
+            "analyzed": "2026-08-24T05:00:00Z",
+            "issue_updated": "2026-08-23T12:46:40Z",
+            "scanner_version": SCANNER_VERSION,
+            "decision_contract_digest": decision_contract_digest(),
+        }
+    }
+    merged = merge_controller_terminal_feedback(
+        current,
+        {
+            "a/b#1": {
+                "status": "state_drift",
+                "analyzed": "2026-08-24T04:00:00.123456Z",
+                "issue_updated": "2026-08-23T12:46:40Z",
+                "source_intent_id": "intent-drift",
+            }
+        },
+    )
+
+    assert merged == current
+    assert select_seen_rechecks(merged) == []
+
+
 def test_controller_terminal_feedback_revokes_pending_dispatch_intents():
     outcomes = controller_terminal_issue_outcomes(
         {
