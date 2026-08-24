@@ -159,6 +159,35 @@
     ],
     "why": "The issue provides deep device-level evidence of a spin loop in the TMEM allocation path of the FlashMLA sparse-decode kernel, but explicitly states it is not a root-cause report and asks for maintainer guidance on the correct owner and diagnostic path. The root cause (phase mismatch, visibility, or hardware state) is undetermined, and the fix likely requires changes in FlashMLA or CUTLASS, not vLLM. The issue is a request for guidance, not a concrete patch proposal."
   },
+  "01730ac02f70b15e01b68abf1fbf1a15520578d3a6268d659c00a1aaba142722": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #53605 has semantic overlap but does not reference the issue; no direct contradiction."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "flashinfer_sparse_mla_warmup.py",
+      "gpu_model_runner.py"
+    ],
+    "risks": [
+      "Potential overlap with PR #53605 which may already address the issue; need to compare implementations before proceeding."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided launch command with max_model_len=33792 and verify that autotune cache contains extra_topk=384 entries and no tactic=-1 warnings during CUDA graph capture."
+    ],
+    "unknowns": [
+      "Whether PR #53605 fully resolves the issue or if additional changes are needed."
+    ],
+    "why": "Issue provides a precise root cause (warmup never simulates long-sequence decode, so extra_topk=384 is missing from autotune cache), a concrete reproduction command, and a clear validation path (checking cache entries and tactic=-1 warnings). The proposed fix is actionable and testable."
+  },
   "01a09a9ee3afaabe638e279effd06836ee4834b586ea07d28095b926ed7d06be": {
     "confidence": 0.8,
     "contradictions": [
@@ -1539,6 +1568,39 @@
       "Exact code path causing the premature healthy status"
     ],
     "why": "The issue describes a real bug in PD disaggregation where the router reports healthy before the prefill worker is ready, causing benchmark failures. However, the root cause is not precisely identified, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The deterministic gate requires HUMAN_REVIEW."
+  },
+  "08d50acf011ea0dc42e3a23e397512b61f1ac146ae7beb06fcdcd0fe04cb89c1": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix incorrect output for batch_size > 4 in Qwen3.5-2B generation, likely in recurrent state handling or CUDA graph scheduling",
+      "Add regression test for batch_size > 4 with CUDA graphs and > 14 without"
+    ],
+    "risks": [
+      "Root cause may be in complex interaction between CUDA graphs and recurrent state, requiring deep kernel-level changes",
+      "Fix may be model-specific and not generalize to other architectures"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided YAML and curl commands on L20 or RTX 4090 D, verify batch 4 passes and batch 5 fails with CUDA graphs enabled",
+      "Run ablation matrix (graph on/off, block reuse on/off) to confirm failure boundary",
+      "Add unit test comparing token outputs for batch sizes 1, 4, 5, 14, 15 with fixed seed and greedy decoding"
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; maintainer is still investigating layer-level divergence",
+      "Whether the fix requires changes to CUDA graph scheduling or recurrent state management"
+    ],
+    "why": "The issue provides a concrete, reproducible bug with clear expected vs actual outputs, a deterministic failure boundary (batch size > 4 with CUDA graphs, > 14 without), and extensive maintainer-led investigation narrowing the root cause to internal generation metadata or kernel behavior. The evidence includes executable reproduction commands, code anchors, and a clear validation path via ablation and token-level comparison."
   },
   "08db60d19da35ffb9576646e1f9e72a8eb3c4a3a41c9cfeda83448c4ca4ab2bc": {
     "confidence": 0.7,
@@ -15585,6 +15647,37 @@
     "wait_reason": null,
     "why": "Issue reports a concrete, reproducible bug in Cline's command execution: explicit sequential instruction ignored, unquoted shell paths cause Git Bash failure, and subsequent hang. This is actionable for agent infra, with clear repro steps and expected behavior. No competing PR found."
   },
+  "55a254b0f70fbf333e0e0f58c47441f2afb493a2b30bfe4ccb979a7cd83b1940": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Modify reset_tools schema generation to include active group status",
+      "Add regression tests for redundant activation scenario"
+    ],
+    "risks": [
+      "Potential maintainer preference for alternative representation",
+      "Risk of overlapping with existing PR #2414 if not differentiated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script to confirm redundant reset_tools call",
+      "Add unit test verifying reset_tools schema includes active group descriptions",
+      "Run existing toolkit tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Exact maintainer design preference for schema representation"
+    ],
+    "why": "The issue provides a clear root cause: the reset_tools schema does not reflect active tool groups, causing redundant model calls. It includes a concrete reproduction script and expected vs actual behavior, making the fix actionable. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
   "55da9ba2f74413c87a68d276301056a834cd5426e1d657baefb75b0ff3c074e7": {
     "confidence": 0.7,
     "contradictions": [],
@@ -17336,6 +17429,36 @@
       "Maintainer preference on handling empty documents vs. errors"
     ],
     "why": "Issue clearly identifies a bug in task_executor.py where a parser failure (progress -1) is overwritten by success when no chunks are returned. The root cause is precise and a fix pattern exists from PR #14220. However, the issue explicitly requests a maintainer decision on desired behavior for legitimately empty documents vs. errors, and the deterministic gate is HUMAN_REVIEW, so work should wait for maintainer confirmation."
+  },
+  "5f2d668a25794966408a6c5f5c1ef8724d59f399d403c1f9265c90ed712b9d5c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py",
+      "python/sglang/srt/dllm/mixin/scheduler.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #35645; need to ensure the fix is distinct and adds regression tests.",
+      "Risk of altering scheduler behavior in unexpected ways if not carefully scoped."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a unit test that sets Scheduler.chunked_req to consume all remaining chunk budget, adds a waiting request, and asserts that the waiting queue is not scanned after the chunked request is resumed.",
+      "Run the targeted scheduler unit tests and static checks."
+    ],
+    "unknowns": [
+      "Whether the existing PR #35645 will be updated with tests and root-cause coverage, which could affect the need for a competing PR."
+    ],
+    "why": "The issue provides a clear root cause: after resuming a chunked request, the scheduler fails to check the updated chunk budget before scanning the waiting queue, leading to unnecessary cache matching and potential host-cache load-back. The reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
   "5f3c9f75fdcc6173cbe44d467671bbc9e118226481b3bdf8d184ab2764be1a80": {
     "confidence": 0.85,
@@ -25570,6 +25693,32 @@
     "wait_reason": null,
     "why": "Issue reports a concrete user-visible bug: reasoning_content is null when using the sgl-model-gateway with --reasoning-parser qwen3, while the worker-side parser works. Reproduction steps and environment are provided, making it actionable. No competing PR or issue found. The root cause is likely in the gateway's parser implementation or integration, but not yet identified."
   },
+  "8706e43270547f8f66c48ef88cdc94dadc82f1d80923f21c5a1cf7e298bde7d6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "deploy/inference-gateway/ext-proc/src/server.rs",
+      "agentgateway protocol_config or Rust EPP compatibility mode"
+    ],
+    "risks": [
+      "Blanket relaxation could hide real deadlocks with Envoy; must ensure the fix is opt-in or targeted to agentgateway."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that reproduces the ProtocolConfiguration mismatch with send_body_without_waiting=false and FULL_DUPLEX_STREAMED modes, verifying the stream is accepted or the failure is explicit."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer fixing agentgateway upstream or adding a compatibility mode in Rust EPP."
+    ],
+    "why": "The issue provides a clear root cause: agentgateway's protocol_config omits send_body_without_waiting_for_header_response, causing the Rust EPP to reject the stream. The suggested fix is concrete and the validation path is well-defined. The open PR #13700 lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
   "870fe6b71eafd806a4db3956b4911b399c68bcdad6edebb8cd49ed59247fee83": {
     "confidence": 0.85,
     "contradictions": [],
@@ -26582,6 +26731,34 @@
       "Exact fix approach (skip vs. reject) not yet decided; maintainer approval is conditional on PR review."
     ],
     "why": "Issue provides a precise, reproducible bug in ZeRO-1/2 with a clear root cause: zero-sized trainable parameters are omitted from param_to_partition_ids but still enter gradient reduction, causing KeyError. The fix is a small, well-scoped change in stage_1_and_2.py with a concrete validation path (reproducer and regression test)."
+  },
+  "8c7314510f29f907af540e2b90b90a3c34b9a9139293cfe987d4c2030364ac03": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py",
+      "vllm/_custom_ops.py",
+      "csrc/libtorch_stable/gdn/fused_gdn_decode_kernel.cu"
+    ],
+    "risks": [
+      "The fix may require rebuilding the kernel for sm_110a, which could be complex; runtime fallback may mask other issues."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction command on Jetson Thor (sm_110a) with MTP speculative decoding and verify no crash; add a regression test that checks the guard falls back to Triton when the cubin lacks the device arch."
+    ],
+    "unknowns": [
+      "Whether the maintainers prefer building the kernel for sm_110a or implementing a runtime fallback; exact build configuration for the wheel."
+    ],
+    "why": "The issue identifies a concrete root cause: the capability guard checks symbol presence and device capability but not cubin arch coverage, causing the fused MTP kernel to be selected on sm_110a where no kernel image exists. The reproduction is clear, a workaround is verified, and the suggested fixes are actionable."
   },
   "8cb3b7bcaaf3c6c8ffef73796514f44617eeb168c098602a4df55d7a997ce1f8": {
     "confidence": 0.7,
@@ -35746,6 +35923,36 @@
     ],
     "why": "Issue clearly describes a silent truncation bug in RemoteA2aAgent when A2A stream ends before terminal state, with reproduction steps and expected fixes. However, the deterministic gate requires HUMAN_REVIEW, and the submission policy needs assignment, so work should wait for maintainer confirmation."
   },
+  "c3f6939e4fc4b42a5f49f7b72ebf12559fb9a1763336a39fb6fb474c80c17725": {
+    "confidence": 0.85,
+    "contradictions": [
+      "One comment reports recovery on zen/v1 while another reports continued failure on zen/go/v1"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "restore Ox Alpha tool adapter on zen/v1 and zen/go/v1",
+      "add regression test for tools request on x-preview-f-free/ox-alpha-free"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach",
+      "Scope creep if API behavior changes beyond the tool path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl repro against zen/v1 and zen/go/v1 with tools array; expect valid tool_calls",
+      "Add a unit/integration test in the relevant provider/runtime package that sends a tools request to the Ox Alpha free model and asserts non-empty tool_calls"
+    ],
+    "unknowns": [
+      "Exact backend routing/migration cause for the tool-specific failure",
+      "Whether the Go route failure persists after the reported recovery"
+    ],
+    "why": "Issue provides a minimal curl repro, control models, and recent regression timeline; root cause is specific to Ox Alpha free tool path on both Zen routes. Evidence includes multiple independent reproductions and a recovery report for one route, leaving the Go route unresolved."
+  },
   "c3f78a681f81afa1bef33e26eade2053698086618a3a917735d715094b46ea35": {
     "confidence": 0.8,
     "contradictions": [],
@@ -35857,6 +36064,36 @@
       "Maintainer preference on the suggested fix approach; whether a fix is already in progress."
     ],
     "why": "The issue provides a clear, reproducible bug with a detailed root cause analysis and a suggested fix direction. However, the deterministic gate requires HUMAN_REVIEW, and the issue explicitly requests design confirmation. The existing PR #7546 is not a direct competitor, but maintainer input is needed to avoid conflicting with ongoing work."
+  },
+  "c46158808747bd687ff5a8e2af0cac20fd87944dad949fdfcf74ca6ded7d3094": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/multimodal_gen/configs/models/encoders/qwen3.py",
+      "python/sglang/multimodal_gen/runtime/models/encoders/qwen3.py",
+      "python/sglang/kernels/aot/csrc/cpu/model/qwen3.cpp"
+    ],
+    "risks": [
+      "The fix may require changes to sampling or logits processing that could affect other models; need to ensure no broad behavior change.",
+      "The issue mentions NVFP4 quantization and DFLASH, but the bug reproduces without them, so the fix should be validated across configurations."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl command to reproduce the token loop on 0.5.17, then run the same command on the candidate fix to verify clean output.",
+      "Add a regression test that runs a short generation with the Qwen3.5 model and asserts no repetitive token loops."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; may require bisecting between 0.5.6.dev and 0.5.17 to pinpoint the regression commit."
+    ],
+    "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, pointing to a generation-level bug in the Qwen3.5 architecture. The root cause is not yet identified but the evidence is sufficient to start a bisect and targeted fix."
   },
   "c476e2df3a394a6debacad1d5ee675c9994e581ddc20928612e10c18afe11cb7": {
     "confidence": 0.8,
@@ -45464,6 +45701,39 @@
       "Maintainer's preferred design for handling invalid_encrypted_content"
     ],
     "why": "Issue provides a clear, reproducible failure scenario with concrete error, affected sessions, and a workaround. It identifies a plausible root cause (replaying stale reasoning metadata) and suggests a minimal fix. The track is agent_ai_infra, and the issue is actionable for a maintainer to implement a targeted fix."
+  },
+  "efd0dff793ac377145ad1d916fc41b51113162e65a8c4c3d10e29e7547554b3d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue claims multiple endpoints leak info, but Dosu notes some are already fixed or intentional (ValueError handler)"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Centralized error handler in api/libs/external_api.py",
+      "Fix datasets_segments.py to avoid returning str(e)",
+      "Audit and fix inner_api/plugin.py and other controllers returning str(e)"
+    ],
+    "risks": [
+      "Potential behavior change for clients relying on detailed error messages",
+      "Scope creep if not limited to remaining gaps"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that triggers an exception in datasets_segments.py and asserts the response does not contain stack trace or internal paths",
+      "Run existing test suite for affected controllers"
+    ],
+    "unknowns": [
+      "Exact list of endpoints still vulnerable after existing PRs",
+      "Maintainer preference on error message format"
+    ],
+    "why": "Issue identifies a concrete security flaw (verbose error responses leaking internal details) with specific code anchors and a clear root cause. The Dosu comment confirms remaining gaps (e.g., datasets_segments.py, external_api.py fallback) and suggests scoping, making the work actionable. No blocking unknowns; existing PR #41102 partially overlaps but does not cover all identified paths."
   },
   "efe2191324ee83c82d554a928f92abe1fa26645dd7013153c884645126f25aed": {
     "confidence": 0.85,
