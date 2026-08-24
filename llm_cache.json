@@ -3586,6 +3586,37 @@
     "wait_reason": null,
     "why": "Issue provides a clear root cause (bytes_per_page=0 from LogicalHostPool) and a reproducible ZeroDivisionError with exact code paths. No competing PR or issue found. The fix is a minimal guard or proper handling of logical pools in the HF3FS backend, with a clear regression test path."
   },
+  "14ac0d94fd39255cb14a3008b05439b5edf4e0c5c33231eebad3048dfaf4ef31": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #35645 claims to fix the issue but lacks tests and root-cause coverage, while the issue provides a clear root cause and reproduction."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py",
+      "python/sglang/multimodal_gen/runtime/managers/scheduler.py",
+      "python/sglang/srt/dllm/mixin/scheduler.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #35645; need to ensure the fix is distinct and adds regression tests.",
+      "Risk of altering scheduler behavior in unexpected ways if not carefully scoped."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that sets Scheduler.chunked_req to consume all remaining chunk budget, places a request in waiting_queue, and asserts that get_new_batch_prefill() does not perform cache matching or init_load_back() for the waiting request.",
+      "Run targeted scheduler unit tests and static checks."
+    ],
+    "unknowns": [
+      "Whether the existing PR #35645 will be updated with tests and root-cause coverage, which could affect the value of a competing contribution."
+    ],
+    "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to check the updated chunk budget before scanning the waiting queue, leading to unnecessary cache matching and host-cache load-back. The reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
   "150fc25a81cebf519c84fbf5ebf5bb4084f6a8d4fdba5ebbb102e8f838fb12f0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -5691,6 +5722,35 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "Issue is a well-scoped correctness fix with confirmed root causes (inverted version-read condition and missing Profile save) and maintainer approval of the proposal and SPEC. However, the repository requires assignment and the contributor must complete AI disclosure/review before implementation, and the design issue #4534 is pending maintainer approval."
+  },
+  "21843ee8d3c55a76ae4253a1029862bf080f1ea1db5f65a64ec71fe8520d0338": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/openai/protocol.py: change strict field to Optional[bool] with default False for ResponseTool and FunctionTool",
+      "Add regression tests for /v1/responses and /v1/chat/completions accepting strict: null"
+    ],
+    "risks": [
+      "Potential behavior change if downstream code expects strict to always be a bool; ensure null is normalized to False before use",
+      "May need to update OpenAPI schema generation if it derives from pydantic models"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl command against a local server with strict: null and assert 200 response",
+      "Add unit tests in test_openai_protocol.py to validate that strict: null is accepted and treated as false for both endpoints"
+    ],
+    "unknowns": [
+      "No maintainer confirmation on preferred implementation, but not blocking as the fix is clear and minimal"
+    ],
+    "why": "Issue provides a clear, reproducible bug with exact curl command and error output, identifies the root cause in protocol.py where strict is declared as non-optional bool, and cites OpenAI spec requiring nullable strict. The fix is straightforward: make strict Optional[bool] and treat null as false. No competing open PR or duplicate issue found."
   },
   "21a031fef4f849318371f3a071e2de07143b89abd124b36248a1c3ab7011b7f1": {
     "confidence": 0.7,
@@ -10040,6 +10100,31 @@
     ],
     "why": "The issue identifies specific unreferenced asyncio tasks in multiple files, but lacks a concrete reproduction or test. An existing PR #33048 partially addresses the same pattern and is open, so a new PR may duplicate or conflict. Maintainer confirmation is needed."
   },
+  "392a1f7c70cd2a17ec96bb15a6e1c29f82f891852d154c395fa635548a01552f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Agent Canvas sidebar token panel",
+      "frontend token usage accumulation logic"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different data source; need to confirm no API behavior changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with npx @openhands/agent-canvas and the provided curl command; add a regression test verifying sidebar displays nonzero cache_read_tokens when backend reports nonzero."
+    ],
+    "unknowns": [
+      "Exact frontend code location for the sidebar token panel; whether maintainers have a preferred implementation approach."
+    ],
+    "why": "The issue provides a clear frontend-only bug with a concrete reproduction command, expected vs actual behavior, and a specific root cause (sidebar reads from null metrics field instead of populated stats.usage_to_metrics). Acceptance criteria include a regression test, making the fix actionable."
+  },
   "39623a7055c96323e82179963412ddbdbb4fd4b4f02bb095b83c432253f14e51": {
     "confidence": 0.9,
     "contradictions": [],
@@ -11145,6 +11230,33 @@
       "Exact implementation details of the Bash tool's command execution (e.g., whether it uses shell string or spawn) are not provided, but the suggested fix is clear."
     ],
     "why": "The issue identifies a concrete, user-visible bug in the Bash tool's cwd handling: prepending 'cd' textually breaks when the command starts with '&', causing silent wrong-directory execution. The root cause is clearly explained with a minimal repro and a suggested fix (spawn with cwd option). This is a high-impact correctness bug in an agent infrastructure path, with no competing PR or issue found."
+  },
+  "401e2c09478e00708d84f5cf1f612c9dbe7a7e79e2ccb2e772648f487531af46": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/srt/sampling/sampling_batch.py",
+      "python/sglang/srt/managers/scheduler.py"
+    ],
+    "risks": [
+      "Root cause may be in a dependency or kernel not covered by the listed code paths; fix may require broader changes."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl command against a local server with the Qwen3.8-27B model on v0.5.17 to reproduce the token loop, then run the same command on v0.5.6.dev to confirm regression. Add a regression test that checks for non-repetitive output and correct finish_reason."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; maintainer preference for fix approach unknown."
+    ],
+    "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, indicating a generation-level bug in v0.5.17 for Qwen3.5-arch models. Root cause is not yet identified, but the evidence is sufficient to start a bisect and targeted fix. No duplicate or competing PR covers this issue."
   },
   "40ad962269698172e44078a70005acb7baa10cfa208866a52ca8b3254d9e9233": {
     "confidence": 0.7,
@@ -26333,6 +26445,32 @@
     ],
     "why": "Issue reports stale get_episodes data; maintainer attributes to queue latency, but a commenter identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent. Existing PR #1726 claims to fix this but has failing CI/check and lacks evidence of root-cause analysis. A materially better PR with proper tests and root-cause explanation is plausible."
   },
+  "8c238c048c0c7bed1e10d2c4abaac29ef26e699dce8606ae6416a6284e06c82f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/durable/evented-agent.ts",
+      "possibly packages/core/src/agent/durable/durable-agent.ts"
+    ],
+    "risks": [
+      "Potential design preference for a more global fix in endWorkflow() rather than EventedAgent-local; need maintainer confirmation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Write a failing test that creates an evented agent with persistent storage, runs a turn to completion, and asserts listActiveRuns() does not include the finished run. Also test recoverActiveRuns() does not re-drive it."
+    ],
+    "unknowns": [
+      "Exact maintainer preference on fix location (EventedAgent-local vs global endWorkflow change)."
+    ],
+    "why": "Issue provides a clear root cause (EventedAgent overrides executeWorkflow and never calls deleteRunSnapshots), a concrete reproduction path with expected/actual behavior, and a suggested fix direction. The bug is user-visible and impactful, with no duplicate PRs or issues found."
+  },
   "8c47761129f72eab6a141a725f87254a51e24d5393db6f3fe4fb2fb528cf3bbe": {
     "confidence": 0.7,
     "contradictions": [
@@ -34035,6 +34173,36 @@
       "Maintainer preference on whether to patch upstream or workaround locally"
     ],
     "why": "Issue provides a clear root cause and minimal reproducer, but the fix requires coordination with upstream blockbuster and maintainer preference on test ordering vs. upstream patch. No existing PR, but the deterministic gate says HUMAN_REVIEW, so we wait for maintainer direction."
+  },
+  "bc602dcdfefdbf38fb72eea05670dba3d82d554ca6b985dea4f51f2eb3f9aec4": {
+    "confidence": 0.85,
+    "contradictions": [
+      "virajchoudhary reports zen/v1 recovered, but hwong103 and jkir4n report ongoing failures on Go route and via router"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "restore Ox Alpha tool adapter on zen/v1 and zen/go/v1",
+      "fix routing/migration for x-preview-f-free/ox-alpha-free"
+    ],
+    "risks": [
+      "Potential maintainer preference for backend fix vs client-side workaround",
+      "Partial recovery may indicate transient issue; need to confirm Go route still failing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use provided curl with tools array against both endpoints to reproduce failure",
+      "Run regression test with control models (nemotron, deepseek) to ensure no general tools regression"
+    ],
+    "unknowns": [
+      "Whether the Go route failure is still reproducible at time of review",
+      "Exact backend configuration or adapter code responsible for tool handling"
+    ],
+    "why": "Issue provides a minimal curl repro, control models, and recent regression timeline; root cause is specific to Ox Alpha free model's tool path on both Zen routes. Evidence shows partial recovery on one route but Go route still failing, so actionable fix remains."
   },
   "bc9e9b7e51aff67e8c703b161a3a170dd939e572895bce7983a072347d187207": {
     "confidence": 0.7,
