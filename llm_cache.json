@@ -2364,6 +2364,36 @@
     ],
     "why": "Issue provides a clear user-visible bug with detailed reproduction steps, expected vs actual behavior, and a specific root cause: cancellation state is not propagated from the original HTTP context to the remote Prefill context, and the SGLang cancellation monitor cannot abort before the first output. The proposed lifecycle fix is concrete and testable."
   },
+  "0f293a52b253dc71c66a7209719eed7071c0f8e9ea25c7859466d1ff98757151": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Original issue mentions AllowConcurrentInvocation in 1.15.0-preview, but comment says it's not exposed in that version"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Hosted MCP orchestration path in Foundry Responses",
+      "Documentation for AllowConcurrentInvocation and AllowMultipleToolCalls scope"
+    ],
+    "risks": [
+      "Root cause may be in external Foundry service, requiring cross-repo coordination",
+      "Potential API behavior change if concurrency is enabled for hosted MCP"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided reproduction steps to create a failing test that asserts both MCP calls enter in_progress before any completed event",
+      "Run the existing Hosted-McpTools sample with the specified configuration and capture lifecycle timestamps"
+    ],
+    "unknowns": [
+      "Whether the Foundry service can support concurrent hosted MCP calls",
+      "Maintainer preference for fix vs documentation update"
+    ],
+    "why": "The issue provides a clear behavioral bug with reproduction steps, expected vs actual behavior, and timing evidence. Recent comments confirm correct serialization of parallel_tool_calls and local concurrency flags, isolating the issue to provider-hosted MCP orchestration. This is actionable for a fix or documentation update."
+  },
   "0f3d1f5102ea8fde2428e32a4807062b069511a426173083d5ad88051c0741d5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -15654,6 +15684,42 @@
     ],
     "why": "Issue provides a concrete, reproducible failure (curl commands) with clear evidence that the failure is specific to the Ox Alpha free model's tool path, not the key, route, or general tools handling. Root cause is likely a routing/migration issue for that backend, with code anchors in tool-related modules. The issue is actionable for a fix and validation."
   },
+  "57ac910aed6ae62e0a2d601c8bb35d3b1484aa9a73249d58c739014430d9cef8": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #33182 title suggests T2I support, but semantic overlap with CUDA/Qwen3 may be coincidental; need manual review"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix CUDA graph capture for hybrid GDN models (breakable/tc_piecewise)",
+      "Resolve dtype mismatch in AWQ path (gdn_backend.py:559)",
+      "Adjust MTP memory allocation to allow request slots on 32GB GPUs"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #33182 which may already address parts of the issue; need to compare implementation boundaries",
+      "Fixes may be hardware-specific (SM89) and require testing on Ada GPUs",
+      "Numerical tolerance tests needed to distinguish real fixes from floating-point noise"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided docker command and curl request; verify decode CUDA graph capture completes without hang",
+      "Run with --cuda-graph-backend-decode breakable and tc_piecewise to confirm fix",
+      "Test AWQ with default BF16 Mamba cache to ensure no dtype error",
+      "Test native MTP with reduced memory settings to ensure at least one request slot"
+    ],
+    "unknowns": [
+      "Whether PR #33182 actually fixes the root cause; no direct link to issue",
+      "Exact cause of CUDA graph hang (kernel incompatibility vs. memory issue) not fully isolated",
+      "Whether maintainers have already started work on this issue"
+    ],
+    "why": "The issue provides a concrete, reproducible bug with clear root causes: CUDA graph capture hangs for hybrid GDN models, dtype mismatch in AWQ path, and MTP memory allocation failure. It includes executable commands and environment details, enabling a reference-vs-implementation test. The track is llm_algorithm with mechanisms in model_architecture and numerics_quantization, satisfying the requirement for a concrete validation path."
+  },
   "57c3c54411085929c2a2fb61d71a6c31972612d6379db7d08a70e3208c96c6d3": {
     "confidence": 0.8,
     "contradictions": [
@@ -24448,6 +24514,32 @@
     "wait_reason": "ASSIGNMENT",
     "why": "The design is technically sound and actionable, with clear root cause and test plan. However, the repository requires assignment before implementation, and the issue is a design proposal that has been approved but not yet assigned for implementation. The gate decision is HUMAN_REVIEW, and the submission policy requires assignment and AI disclosure confirmation, which are not yet satisfied."
   },
+  "83baa694c7212751bcd83b7edfd27578ff95b2856700a17ae21f6128961e8621": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "observer-runner.ts",
+      "message-utils.ts",
+      "observational-memory processors"
+    ],
+    "risks": [
+      "Potential behavior change in how system reminders are handled; need to ensure temporal-gap reminders are preserved."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for single-thread and multi-thread observer runs, reminder filtering, and temporal-gap preservation; run existing unit tests and typecheck/lint/build."
+    ],
+    "unknowns": [
+      "Exact maintainer design preference for the fix approach."
+    ],
+    "why": "The issue provides a clear root cause: observer control prompts are sent as user-role messages and system-reminder filtering is missing, leading to memory pollution. A contributor has prepared a narrow fix with regression tests and validation, indicating actionable code work."
+  },
   "840f049b1af16ab1fa4991aef344f33ec427b5b1aea0d59a178b2fa50e231455": {
     "confidence": 0.7,
     "contradictions": [
@@ -25524,6 +25616,31 @@
       "Whether existing PRs (e.g., #6324) already partially address this issue in overlapping code paths."
     ],
     "why": "Issue clearly identifies a real bug with a verified repro and a precise two-statement fix, but it is explicitly gated on #6886 which awaits a maintainer design decision on the return channel for usage under durable execution. The fix must be coordinated across three paths and must not silently fail under Temporal. Existing PRs overlap semantically but none directly address this issue, so a new PR could be valuable, but the design dependency and need for maintainer confirmation make it premature to start."
+  },
+  "898d077cf21338dfb43a975c48cfcb85846d2c03476acafcee5ece19702ba674": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/controllers/mcp/mcp.py session management"
+    ],
+    "risks": [
+      "Potential behavior change in session commit semantics; need to ensure no other code paths rely on auto-commit."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test that calls MCP tool via n8n-like client and asserts no closed-transaction error; run existing MCP controller tests."
+    ],
+    "unknowns": [
+      "Exact Dify Cloud infrastructure configuration; whether fix requires cloud-side deployment."
+    ],
+    "why": "Issue provides a clear regression with exact error message, reproduction steps, and root cause identified by Dosu: SQLAlchemy session transaction closed prematurely in MCP controller due to PR #34281. Code anchor and fix pattern are known."
   },
   "89c2c47063fac8e1d3469fa0963a9fc7206d6765cdc1e27e4bb3d9949c27666d": {
     "confidence": 0.8,
@@ -29474,6 +29591,36 @@
     ],
     "why": "Issue reports three concrete correctness defects in createInngestAgent resume() with clear code paths and expected behavior. No competing PR or issue found. Maintainer labeled for triage, indicating interest. The proposed changes are actionable and testable."
   },
+  "a247e1fa1b3560fdba212284f7cb696d218bc6e74e373e3f11e3fdd081f297e3": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py",
+      "python/sglang/multimodal_gen/runtime/managers/scheduler.py",
+      "python/sglang/srt/dllm/mixin/scheduler.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #35645; need to ensure the fix is distinct and adds regression tests.",
+      "Risk of altering scheduler behavior in unexpected ways if not carefully scoped."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a unit test that sets Scheduler.chunked_req to a request whose next chunk consumes all remaining chunked_prefill_size, places another request in waiting_queue, runs get_new_batch_prefill(), and asserts that the waiting request is not processed for cache matching or load-back."
+    ],
+    "unknowns": [
+      "Exact code path in the scheduler where the budget check should be inserted; maintainer preference for implementation approach."
+    ],
+    "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to check the updated chunk budget before scanning the waiting queue, leading to unnecessary cache matching and host-cache load-back. Reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. The existing PR #35645 addresses the same issue but lacks tests, leaving room for a more complete contribution."
+  },
   "a2606998dd2b41811eb2a78e41d91f2716e44cced715c67fe284a4c612af1be3": {
     "confidence": 0.7,
     "contradictions": [
@@ -29834,6 +29981,35 @@
       "Exact LiteLLM version and behavior of modify_params in async contexts"
     ],
     "why": "Issue identifies a clear performance bug: a class-level threading.Lock serializes all LLM calls, causing severe GPU idle time for local models. Root cause is precisely located in code, with concrete proposed solutions and a reproducible scenario. No competing PR or issue found, and the fix is localized and testable."
+  },
+  "a55076b244e5ea904272effa08606eb076e0ad9d784cdc0e4648c9ed155ee5c7": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/multimodal_gen/configs/models/encoders/qwen3.py",
+      "python/sglang/multimodal_gen/runtime/models/encoders/qwen3.py",
+      "python/sglang/kernels/aot/csrc/cpu/model/qwen3.cpp"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach; risk of unintended behavior changes in generation pipeline."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl command with the specified model and flags to reproduce the token-loop on v0.5.17, then verify the fix produces a clean answer and correct finish_reason.",
+      "Add a regression test that runs a short generation with the Qwen3.5-arch model and asserts no repetitive token loops and expected output."
+    ],
+    "unknowns": [
+      "Exact root cause commit or code change between 0.5.6.dev and 0.5.17 is not identified; maintainer design preference not confirmed."
+    ],
+    "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolated variables (DFLASH on/off, reasoning parser on/off, tools on/off), and identifies a working baseline version. The root cause is localized to generation-level behavior for Qwen3.5-arch models in v0.5.17, with code anchors in the model and parser files. This is actionable for a fix and regression test."
   },
   "a551971f231973f231bb8f91fde810c4dd85dd2ee5edb3183d8c1d9a7651227e": {
     "confidence": 0.9,
@@ -38471,6 +38647,31 @@
     ],
     "why": "Issue provides a clear root cause: native aarch64 build without toolchain file leaves AARCH64_BUILD unset, causing CMake to select SM80/86/89 instead of SM87 for XQA kernels, leading to runtime GQA kernel failure. Concrete reproduction steps and a validated workaround are supplied, making the fix actionable."
   },
+  "d4a877e9daf642fc612ca284fb7f448575cb9517b8ae251a201da6e009992335": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "packages/openai-compatible/src/chat/openai-compatible-chat-language-model.ts"
+    ],
+    "risks": [
+      "Potential behavior change for existing users relying on the current drop behavior; need to ensure it matches xai's implementation and doesn't break other reasoning values."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that verifies reasoning: 'none' results in reasoning_effort: 'none' in the request body for openai-compatible chat models."
+    ],
+    "unknowns": [
+      "Whether the existing PR #19312 actually addresses this issue or is unrelated; maintainer preference on implementation details."
+    ],
+    "why": "The issue clearly identifies a bug in the openai-compatible provider where top-level reasoning 'none' is dropped instead of forwarded as reasoning_effort 'none'. It provides a concrete reproduction, expected vs actual request bodies, and points to the exact code line causing the issue. The fix is straightforward and aligns with a previously fixed similar bug in xai."
+  },
   "d4ccf82713410fd1d27a196f14591ed86ce9b70af698f8a2729553f628ce3887": {
     "confidence": 0.6,
     "contradictions": [],
@@ -46680,6 +46881,37 @@
       "Maintainer interest or design confirmation for the proposed approach"
     ],
     "why": "Issue provides a detailed root cause, quantified impact (26.7% of GGUF repos dropped), and a concrete proposed design. Existing PR #11005 is a draft with material gaps (still draft, no maintainer approval), leaving room for a stronger, more complete implementation."
+  },
+  "f9bc8a43e7a33668697d3ef6f180d0fca3ca9d6ab117268f425be46527dbcd85": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #53367 claims to fix the same issue but lacks tests and root cause coverage; issue body provides root cause and proposed fix."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()",
+      "vllm/config/vllm.py: ensure VllmConfig.compute_hash() propagates the updated speculative hash"
+    ],
+    "risks": [
+      "Potential hash collisions if other config fields are also omitted; need to ensure all shape-affecting fields are included.",
+      "Changing the hash may invalidate existing caches, causing recompilation overhead for users."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that constructs SpeculativeConfig with different num_speculative_tokens values and asserts distinct compute_hash() outputs.",
+      "Add an integration test that runs the reproduction steps with k=9 then k=7 and verifies no assertion error and correct outputs."
+    ],
+    "unknowns": [
+      "Whether the proposed fix is already implemented in PR #53367 and if it is complete; the PR lacks tests and has CI failures."
+    ],
+    "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction, expected vs actual behavior, and a proposed fix. The track is llm_algorithm with a concrete mechanism (model_architecture, distributed_training) and a validation path via numerical regression or controlled experiment."
   },
   "f9d42edbf321d592b6a3944529b7cb43cb35297eadc509d9782e2530f47ce7a4": {
     "confidence": 0.9,
