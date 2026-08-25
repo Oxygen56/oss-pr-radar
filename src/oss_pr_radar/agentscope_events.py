@@ -777,7 +777,7 @@ class EventLane:
         timeout = self.turn_timeout_seconds if timeout_seconds is None else max(1, timeout_seconds)
         with self.writer() as db:
             rows = db.execute(
-                "SELECT event_id,event_key,receipt_json FROM event_lane_turns "
+                "SELECT event_id,event_key,status,receipt_json FROM event_lane_turns "
                 "WHERE status IN ('reserved','started') AND created_at<=?",
                 (current - timeout,),
             ).fetchall()
@@ -796,7 +796,15 @@ class EventLane:
                 if pid and _event_bridge_process_alive(pid):
                     continue
                 expired += 1
-                receipt["terminalReason"] = "handler_turn_timeout"
+                retry_reservation = (
+                    str(row["status"]) == "reserved"
+                    and receipt.get("turnStarted") is not True
+                )
+                receipt["terminalReason"] = (
+                    "handler_reservation_timeout_retry"
+                    if retry_reservation
+                    else "handler_turn_timeout"
+                )
                 receipt_json = json.dumps(receipt, sort_keys=True)
                 db.execute(
                     "UPDATE event_lane_turns SET status='needs_reconcile',receipt_json=? "
@@ -815,12 +823,21 @@ class EventLane:
                 ).fetchone()
                 if event_row:
                     payload = json.loads(event_row["payload_json"])
-                    payload["terminalReason"] = "handler_turn_timeout"
-                    db.execute(
-                        "UPDATE event_lane_events SET status='needs_reconcile',payload_json=?,"
-                        "delivered_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL WHERE event_id=?",
-                        (json.dumps(payload, sort_keys=True), current, row["event_id"]),
-                    )
+                    payload["terminalReason"] = receipt["terminalReason"]
+                    if retry_reservation:
+                        db.execute(
+                            "UPDATE event_lane_events SET status='pending',payload_json=?,"
+                            "delivered_at=NULL,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+                            "WHERE event_id=?",
+                            (json.dumps(payload, sort_keys=True), row["event_id"]),
+                        )
+                    else:
+                        db.execute(
+                            "UPDATE event_lane_events SET status='needs_reconcile',payload_json=?,"
+                            "delivered_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+                            "WHERE event_id=?",
+                            (json.dumps(payload, sort_keys=True), current, row["event_id"]),
+                        )
             return expired
 
     def terminalize_github_events_before(
@@ -921,6 +938,22 @@ class EventLane:
                 "SELECT * FROM event_lane_turns WHERE event_id=?", (str(event_id),)
             ).fetchone()
             if row:
+                if str(row["status"]) == "needs_reconcile":
+                    db.execute(
+                        "UPDATE event_lane_turns SET event_key=?,client_user_message_id=?,"
+                        "thread_id='',turn_id=NULL,status='reserved',receipt_json='{}',created_at=? "
+                        "WHERE event_id=? AND status='needs_reconcile'",
+                        (
+                            str(event_key),
+                            str(client_user_message_id),
+                            time.time(),
+                            str(event_id),
+                        ),
+                    )
+                    row = db.execute(
+                        "SELECT * FROM event_lane_turns WHERE event_id=?",
+                        (str(event_id),),
+                    ).fetchone()
                 return dict(row)
             db.execute(
                 "INSERT INTO event_lane_turns(event_id,event_key,client_user_message_id,created_at) "
@@ -932,6 +965,24 @@ class EventLane:
             ).fetchone()
         assert row is not None
         return dict(row)
+
+    def release_handler_reservation(
+        self,
+        event_id: str,
+        receipt: dict[str, Any],
+        *,
+        reason: str,
+    ) -> bool:
+        """Release a turn that failed before a real Codex turn was received."""
+        value = dict(receipt)
+        value["terminalReason"] = str(reason)
+        with self.writer() as db:
+            result = db.execute(
+                "UPDATE event_lane_turns SET status='needs_reconcile',receipt_json=? "
+                "WHERE event_id=? AND status='reserved'",
+                (json.dumps(value, sort_keys=True), str(event_id)),
+            )
+            return result.rowcount == 1
 
     def active_handler_turn(self, event_key: str) -> dict[str, Any] | None:
         """Return the one currently running turn for an event key, if any."""

@@ -138,9 +138,15 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
     event_id = str(event["eventId"])
     lane.expire_handler_turns()
     existing_turn = lane.handler_turn(event_id)
-    if existing_turn and str(existing_turn.get("status") or "") in {"reserved", "started"}:
+    if existing_turn and str(existing_turn.get("status") or "") == "started":
         # A delayed retry for the same event is idempotent.
         return
+    if existing_turn and str(existing_turn.get("status") or "") == "reserved":
+        lane.defer_event(
+            event_id,
+            lease_token=str(event.get("leaseToken") or ""),
+        )
+        raise RuntimeError("event_turn_reserved")
     active_turn = lane.active_handler_turn(key)
     if active_turn and str(active_turn.get("event_id") or "") != event_id:
         lane.defer_event(event_id, lease_token=str(event.get("leaseToken") or ""))
@@ -200,26 +206,43 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
         "design_wait must include waitStartedAt and waitUntil no more than 24 hours apart."
     )
     prompt += outcome_instruction
-    result = run_bridge(
-        root,
-        "agentscope-event-create",
-        timeout=75,
-        code_root=ROOT,
-        inactive_release=True,
-        extra_args=[
-            "--event-id", event_id,
-            "--event-key", key,
-            "--thread-id", str(binding.get("thread_id") or "") if binding else "",
-            "--client-user-message-id", client_message_id,
-            "--cwd", str(central_cwd),
-            "--prompt", prompt,
-            "--receipt", str(receipt),
-            "--outcome-receipt", str(outcome_path),
-            "--design-wait-until", str(event.get("designWaitUntil") or ""),
-            "--design-wait-started-at", str(event.get("designWaitStartedAt") or event.get("updatedAt") or ""),
-        ],
-    )
+    try:
+        result = run_bridge(
+            root,
+            "agentscope-event-create",
+            timeout=75,
+            code_root=ROOT,
+            inactive_release=True,
+            extra_args=[
+                "--event-id", event_id,
+                "--event-key", key,
+                "--thread-id", str(binding.get("thread_id") or "") if binding else "",
+                "--client-user-message-id", client_message_id,
+                "--cwd", str(central_cwd),
+                "--prompt", prompt,
+                "--receipt", str(receipt),
+                "--outcome-receipt", str(outcome_path),
+                "--design-wait-until", str(event.get("designWaitUntil") or ""),
+                "--design-wait-started-at", str(event.get("designWaitStartedAt") or event.get("updatedAt") or ""),
+            ],
+        )
+    except Exception as exc:
+        lane.release_handler_reservation(
+            event_id,
+            {"error": f"{type(exc).__name__}:{str(exc)[:300]}"},
+            reason="handler_start_exception",
+        )
+        lane.defer_event(
+            event_id,
+            lease_token=str(event.get("leaseToken") or ""),
+        )
+        raise
     if central_thread and str(result.get("threadId") or central_thread) != central_thread:
+        lane.release_handler_reservation(
+            event_id,
+            result,
+            reason="central_task_thread_receipt_mismatch",
+        )
         _quarantine_event(root, lane, event, reason="central_task_thread_receipt_mismatch")
         return
     if result.get("pending") and result.get("turnId"):
@@ -231,6 +254,17 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
             lane.mark_design_wait(event_id)
         return
     if not result.get("ok") or not result.get("turnId"):
+        lane.release_handler_reservation(
+            event_id,
+            result,
+            reason="handler_start_retryable"
+            if result.get("retryable")
+            else "handler_start_failed",
+        )
+        lane.defer_event(
+            event_id,
+            lease_token=str(event.get("leaseToken") or ""),
+        )
         if result.get("retryable"):
             handoff = root / "state" / "agentscope-event-handoffs.jsonl"
             handoff.parent.mkdir(parents=True, exist_ok=True)

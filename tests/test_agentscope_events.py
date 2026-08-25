@@ -504,6 +504,42 @@ def test_stale_handler_turn_is_terminalized_and_releases_central_slot(tmp_path):
     assert json.loads(row["receipt_json"])["terminalReason"] == "handler_turn_timeout"
 
 
+def test_stale_prestart_reservation_returns_event_to_pending(tmp_path):
+    lane = EventLane(tmp_path / "events.db", turn_timeout_seconds=10)
+    event = {
+        "eventId": "reserved-event",
+        "repo": "agentscope-ai/agentscope",
+        "number": 1,
+    }
+    lane.append(event)
+    lane.claim(now=0)
+    lane.reserve_handler_turn(
+        "agentscope-ai/agentscope#1",
+        event["eventId"],
+        "client:reserved",
+    )
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_turns SET created_at=0 WHERE event_id='reserved-event'"
+        )
+    assert lane.expire_handler_turns(now=11) == 1
+    with lane.connect() as db:
+        event_row = db.execute(
+            "SELECT status,payload_json FROM event_lane_events "
+            "WHERE event_id='reserved-event'"
+        ).fetchone()
+        turn_row = db.execute(
+            "SELECT status,receipt_json FROM event_lane_turns "
+            "WHERE event_id='reserved-event'"
+        ).fetchone()
+    assert event_row["status"] == "pending"
+    assert turn_row["status"] == "needs_reconcile"
+    assert (
+        json.loads(turn_row["receipt_json"])["terminalReason"]
+        == "handler_reservation_timeout_retry"
+    )
+
+
 def test_active_long_bridge_turn_is_not_reclaimed(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "oss_pr_radar.agentscope_events._event_bridge_process_alive",
@@ -601,6 +637,51 @@ def test_busy_central_wakeup_remains_pending_until_turn_is_free(tmp_path, monkey
     })
     result = dispatch_once(lane, lambda item: worker.issue_handler_delivery(tmp_path, lane, item), limit=1)
     assert result["delivered"] == 1
+
+
+def test_retryable_start_failure_releases_reservation_and_retries(
+    tmp_path, monkeypatch
+):
+    worker = _event_worker_module()
+    _configure_manifest(worker, tmp_path, monkeypatch)
+    event = {
+        "eventId": "retryable-start",
+        "repo": "agentscope-ai/agentscope",
+        "number": 5,
+        "issue": {
+            "state": "open",
+            "html_url": "https://github.com/agentscope-ai/agentscope/issues/5",
+        },
+    }
+    lane = EventLane(tmp_path / "events.db")
+    lane.append(event)
+    results = iter(
+        [
+            {"ok": False, "retryable": True, "turnStarted": False},
+            {"ok": True, "threadId": CENTRAL_THREAD, "turnId": "turn-retry"},
+        ]
+    )
+    monkeypatch.setattr(worker, "run_bridge", lambda *_args, **_kwargs: next(results))
+
+    first = dispatch_once(
+        lane,
+        lambda item: worker.issue_handler_delivery(tmp_path, lane, item),
+        limit=1,
+    )
+    assert first["claimed"] == 1
+    assert first["delivered"] == 0
+    assert first["pending"] == 1
+    assert lane.handler_turn(event["eventId"])["status"] == "needs_reconcile"
+
+    second = dispatch_once(
+        lane,
+        lambda item: worker.issue_handler_delivery(tmp_path, lane, item),
+        limit=1,
+    )
+    assert second["delivered"] == 1
+    turn = lane.handler_turn(event["eventId"])
+    assert turn["status"] == "started"
+    assert turn["thread_id"] == CENTRAL_THREAD
 
 
 def test_runtime_root_manifest_and_foreign_event_fail_closed(tmp_path, monkeypatch):
