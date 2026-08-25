@@ -16711,6 +16711,41 @@
     ],
     "why": "Issue provides a precise root cause in stream_chunk_builder ignoring choice index, a minimal Python repro, and proxy-level evidence showing logging/spend corruption. The fix is well-scoped and testable."
   },
+  "574332ce17bcd8682a6c071f5709cf6969856c0b673bb24aa00b0ded3a74deb6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #18691 claims to fix misleading message but does not address root cause; issue expects more comprehensive fix"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "dataset_wiki_generator.py",
+      "compilation_template_group_api.py",
+      "api_utils.py",
+      "Artifacts page UI validation"
+    ],
+    "risks": [
+      "Potential overlap with PR #18691 and #18695; need to ensure no duplicate work",
+      "Changing error messages may affect existing tests or user expectations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test for Built-in dataset wiki generation producing actionable error",
+      "Test API validation for compilation-template-groups with correct Content-Type",
+      "Test dataset pipeline binding with parse_type=2"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a minimal fix or a broader behavior change",
+      "Exact scope of API defects (1-3) and whether they are separate issues"
+    ],
+    "why": "Issue provides a clear root cause (wiki eligibility requires compilation template resolution, absent for Built-in datasets) and a concrete reproduction path. The candidate is actionable: improve error messaging and pre-validation. Existing PR #18691 partially addresses the misleading message but does not cover the root cause, leaving room for a more complete fix."
+  },
   "5754c8a955d38adc9f5830ca287790d00d79c773f451748793d5e1272b02fd63": {
     "confidence": 0.8,
     "contradictions": [
@@ -34488,6 +34523,39 @@
       "whether the fix is purely backend-side or requires client changes"
     ],
     "why": "Issue provides a minimal curl repro, control models, and multiple independent confirmations; root cause is isolated to the Ox Alpha free model's tool path on both Zen routes. The failure is reproducible and specific, making it actionable for a code fix."
+  },
+  "b16344c76df10befd7a1af96b449b4934d1351b55ad4a003d0fde2fdd5fe893e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Triage notes current behavior is documented intent (enhancement) while reporter frames as bug"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Propagate MCP provenance structurally to the UI collapse decision point",
+      "Update CompactToolGroupDisplay.tsx and ToolMessage.tsx to use the provenance flag",
+      "Extend detailedDisplay gate in useReactToolScheduler.ts to include MCP tools",
+      "Set provenance flag in resumeHistoryUtils.ts for persisted history"
+    ],
+    "risks": [
+      "Changing documented behavior may require maintainer acceptance; ensure errors and in-progress calls remain expanded",
+      "Potential regression in detailed display extraction if gate not extended correctly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the official filesystem MCP server reading an 81-line file; verify MCP result collapses to one line and full payload appears on Ctrl+O",
+      "Add unit tests for isCollapsibleTool with MCP display names and provenance flag",
+      "Test resume path: persist a session with MCP tool results, resume, and verify collapse behavior"
+    ],
+    "unknowns": [
+      "Maintainer decision on accepting the behavior change is pending"
+    ],
+    "why": "Issue provides a precise root cause with code anchors, a concrete reproduction using a public MCP server, and a clear expected behavior. The triage confirms the static analysis and identifies implementation dependencies. The proposed fix direction is sound and actionable."
   },
   "b23458a086727897c48c5afb097272de6041089847c1ce2260ffeff3434407ee": {
     "confidence": 0.85,
