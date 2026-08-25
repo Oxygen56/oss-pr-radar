@@ -3125,6 +3125,30 @@
     "wait_reason": null,
     "why": "Issue clearly identifies a concrete bug: RequestTraceSink::shutdown is a no-op for JsonlGzipRequestTraceSink, causing buffered records to be lost on shutdown. Root cause is well-localized with code anchors and a deterministic reproducer is proposed. No competing PR addresses this path."
   },
+  "10d4d9d8d2753a9e1e70976c36f97ccb1cfb2c23fb2912e1419d1b28841728a8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/tokenizer_manager.py: modify generate_request exception handling and abort_request force flag"
+    ],
+    "risks": [
+      "Potential behavior change in abort_request could affect other callers; need to ensure force flag is only used from create_abort_task."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a streaming request, disconnects the client mid-generation, and asserts the request is aborted within the abort window and no 'state was deleted' errors are logged."
+    ],
+    "unknowns": [
+      "Whether the existing PR #35936 fully resolves the issue; must compare its implementation with the suggested fix before proceeding."
+    ],
+    "why": "Issue provides a clear root cause (regression from revert #34160), a verified minimal fix, and a concrete reproduction path. The bug is user-visible and performance-critical, and the proposed changes are actionable."
+  },
   "10dabe9ada907634e3bf4f157d76a7200337065f020387ba07a3246607e80ca9": {
     "confidence": 0.7,
     "contradictions": [],
@@ -4240,6 +4264,39 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The issue reports a UI bug in Agent V2 logs, but the bot's analysis indicates the behavior is intentional (log icon hidden by design) and the real gap is missing per-message trace details. This requires product/design confirmation on whether to restore the modal or add trace features. No maintainer has confirmed the desired behavior."
+  },
+  "163570de939eb00e618b7ac5c46581395a0130b93836e8bf9dff5870b03d4db6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The open PR #53367 claims to fix the issue but lacks tests and root cause coverage; the issue itself provides a proposed fix that may differ in implementation details."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()",
+      "vllm/config/vllm.py: ensure VllmConfig.compute_hash() propagates the updated speculative config hash"
+    ],
+    "risks": [
+      "Potential hash collisions if other config fields are also omitted; need to ensure all shape-affecting fields are included.",
+      "Changing the hash may invalidate existing caches, causing recompilation overhead for users."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that constructs SpeculativeConfig with different num_speculative_tokens values and asserts distinct compute_hash() outputs.",
+      "Add an integration test that runs the minimal reproduction: start server with k=9, stop, start with k=7, and verify no assertion error and correct recompilation."
+    ],
+    "unknowns": [
+      "Whether the proposed fix is already implemented in PR #53367 and if so, whether it is complete and correct.",
+      "Whether the maintainers prefer a different approach, such as including additional config fields in the hash."
+    ],
+    "why": "The issue provides a clear root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm and the issue involves model architecture and distributed training mechanisms, with a clear validation path via numerical regression or runtime assertion checks."
   },
   "16519cf5533c5654742400de797e7d911887310a0a6b24e3edbbb4325f9395cb": {
     "confidence": 0.7,
@@ -10757,6 +10814,33 @@
     "unknowns": [],
     "why": "The issue is a GitHub Actions workflow bug with a clear one-line fix, but it is infrastructure/CI configuration work, not an algorithm or core agent behavior. The track is agent_ai_infra, which requires algorithm-level contributions; this is ordinary API/plumbing work and thus not actionable for this radar."
   },
+  "3825b0513a6748e2bb5ae7500f5678bcc95f4a0b5c596eeb78b6117d9dca809e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "agentscope/model/_openai_response/_model.py",
+      "src/agentscope/formatter/_openai_response_formatter.py"
+    ],
+    "risks": [
+      "Potential overlap with PR #1937; need to compare implementation boundaries.",
+      "Changing formatter behavior may affect other upstreams that rely on current reconstruction."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that replays a reasoning item with encrypted_content in a multi-turn conversation and asserts no 400 error.",
+      "Use the provided curl evidence to simulate stateless upstream behavior."
+    ],
+    "unknowns": [
+      "Whether PR #1937 already fixes this exact issue; requires manual comparison."
+    ],
+    "why": "Issue provides a clear root cause (formatter drops encrypted_content from reasoning items), a verified local fix, and a concrete reproduction path. The code anchors and suggested patch make the work actionable. Existing PR #1937 overlaps but does not directly address this issue, so a new contribution is still valuable."
+  },
   "382c7099cc7c3363aa22dc9e9bc238dd24191def296be5eba37e4091c306a35c": {
     "confidence": 0.7,
     "contradictions": [
@@ -13588,6 +13672,34 @@
     ],
     "wait_reason": null,
     "why": "The issue describes a concrete LLM serving bug where NIXL HMA receive failures are not propagated, causing the request to return HTTP 200 with corrupted tokens. The root cause is clearly identified: HMA block IDs are omitted from invalid_block_ids, so the scheduler receives no failure signal. The issue includes a reproduction with specific hardware, model, and block sizes, and references a related PR (#52232) that fixes the propagation and yields HTTP 500. This is a kernel/algorithm-level correctness issue in the KV transfer path, with a clear validation path via the reproduction and regression test."
+  },
+  "47ee6d2864a0ae849e6e1486f26ad632b1e20ec4ac853dccaa0c1292b43adb71": {
+    "confidence": 0.85,
+    "contradictions": [
+      "No contradictions found in the supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix in Qwen3NextFullAttentionDecoderLayer layer 3, likely in attention or MLP submodule, to correct batch-size-dependent output corruption."
+    ],
+    "risks": [
+      "The root cause is localized to a whole layer, not yet a specific kernel; further isolation may be needed. The fix may involve subtle numerical or state-management issues that are hard to validate without exact hardware."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided prompt and configuration, run concurrency 1 vs 8, compare token outputs and logprobs at divergence index 9, and verify fix restores identical outputs across batch sizes."
+    ],
+    "unknowns": [
+      "Exact internal sub-boundary within layer 3 causing the bug is not yet identified; the next step is to split layer 3 into sub-boundaries."
+    ],
+    "why": "The issue provides a concrete, reproducible bug with a clear expected vs actual output, and the comments include a detailed root-cause localization to layer 3 of the Qwen3.5 model, with a proposed next step to isolate internal sub-boundaries. This is a valid LLM algorithm bug with a clear validation path."
   },
   "481ab1efdd4bc763df9caf7515bcccb4d1ceb77282b497c9ab34b4659640fe40": {
     "confidence": 0.7,
@@ -17347,6 +17459,37 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "Issue is a well-reproduced, high-impact bug with a clear root cause (hardcoded FAST_SKIP_DIRS in discover.c) and maintainer acknowledgment, but the repository requires assignment and no maintainer has assigned the issue, so work should not start without assignment."
+  },
+  "582cb224371c3dff946a3bf108e5137eb045abcc860d25d4fb9e5cb9e52ba3b1": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "PrefillRouter::generate cancellation propagation",
+      "SGLang cancellation monitor request ID handling",
+      "Chunked prefill cancellation boundary logic"
+    ],
+    "risks": [
+      "Existing PR #13703 may already address the issue; need to compare and avoid duplication.",
+      "Changes to cancellation lifecycle may affect decode-phase cancellation or KV-transfer cleanup; need careful testing."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided steps: cold streaming request with long prompt, disconnect before first token, then send short request and measure latency; verify short request is not delayed.",
+      "Add regression test for prefill cancellation before first output, asserting abort_request is called after registration and scheduler state returns to idle."
+    ],
+    "unknowns": [
+      "Whether the existing PR #13703 fully fixes the issue or has gaps that this candidate would address."
+    ],
+    "why": "The issue provides a clear bug description with reproduction steps, expected vs actual behavior, and a detailed root-cause analysis identifying specific lifecycle gaps in cancellation propagation and SGLang request registration. The candidate includes code anchors and a concrete validation path, making it actionable despite an existing open PR with incomplete evidence."
   },
   "5835357fafa438b6672dc8786248a76d079acc0ab8495c1414126704fa235397": {
     "confidence": 0.8,
@@ -37714,6 +37857,36 @@
     ],
     "why": "The issue reports a concrete FP8 tensor-parallel weight_loader assertion, but the root cause is not fully diagnosed; an existing PR #47023 directly targets the same code path but is stale and lacks maintainer approval, and a merged PR #49805 may already address related weight_loader logic. The deterministic gate requires HUMAN_REVIEW, and the AI disclosure conflict blocks automated action."
   },
+  "bd5f5d0e36b8e7ad48f0e8e0ce418a7b89321c19dc73810d335b20291c570a83": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "CustomStreamWrapper generic chunk path",
+      "response_id pinning for GenericStreamingChunk",
+      "streaming chunk id generation"
+    ],
+    "risks": [
+      "Potential behavior change for providers that intentionally vary chunk ids",
+      "Need to ensure compatibility with existing response_id pinning logic"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that streams a GenericStreamingChunk-based provider and asserts all chunks share the same top-level id",
+      "Run existing streaming tests for affected providers"
+    ],
+    "unknowns": [
+      "Exact code location for the generic chunk branch in current codebase",
+      "Whether maintainers prefer a specific implementation approach"
+    ],
+    "why": "Issue provides a clear root cause (GenericStreamingChunk branch does not pin response_id, causing new uuid per chunk) and a concrete repro via GigaChat streaming. The fix is localized to the generic streaming path and aligns with existing behavior for OpenAI chunks. An open PR exists but lacks root-cause coverage and has CI failures, leaving room for a more complete contribution."
+  },
   "bd87ffcd99fed6039d974e198646eff75345e2be5c33db657867b246a740a9ae": {
     "confidence": 0.85,
     "contradictions": [
@@ -41009,6 +41182,35 @@
     ],
     "why": "Issue reports stale data in get_episodes; maintainer attributes to queue latency, but a user comment identifies a concrete root cause: keyset pagination hardcodes ORDER BY uuid DESC, returning arbitrary stable subset. Existing PR #1726 addresses this but has failing CI and lacks explicit issue link. A materially better PR with robust tests and clear root-cause fix is plausible."
   },
+  "cb6d814e4cb04350509c39cc8267605af08c3ce809e60450b47ffc1abea6701a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comment states exact five-card flow passes on main, but issue reports production failure; may require a more precise reproducer."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "hitl.js",
+      "interactions.js",
+      "Slack channel approval resolution logic"
+    ],
+    "risks": [
+      "Potential concurrency changes may affect other channels or introduce race conditions if not carefully synchronized."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that simulates multiple concurrent tool-approval requests in the same Slack thread and verifies that approving one does not deny another."
+    ],
+    "unknowns": [
+      "Exact server-side code path for settling concurrent approvals and whether a maintainer has a preferred fix design."
+    ],
+    "why": "Issue provides a concrete user-visible race condition with reproduction steps, expected/actual behavior, suspected root cause in non-atomic read-modify-write on pending approvals, and code anchors. The suggested fix direction is actionable and testable."
+  },
   "cbaf30d88c9d462560ca08d1a797d0074945d57108a2d4f5ec08ae49a7024128": {
     "confidence": 0.7,
     "contradictions": [],
@@ -43788,6 +43990,30 @@
       "Maintainer design preference for handling long-argument streaming performance."
     ],
     "why": "The issue provides a precise root cause (arg_structural_chars filtering) and a minimal parser-only reproduction with expected behavior, making it actionable for a targeted fix."
+  },
+  "d82da0255ccf7ee87fa0a36396436b4710c4c8293b35ba3bdadd0dd5934e812e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "StdioClientTransport.cs",
+      "StdioClientSessionTransport.cs"
+    ],
+    "risks": [
+      "Closing stdin may cause servers that do not handle EOF gracefully to exit prematurely, but the spec expects EOF as the shutdown signal."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a minimal stdio server, issue a tool call, dispose the client, and assert that dispose returns well below ShutdownTimeout (e.g., < 1s) instead of ~5s."
+    ],
+    "unknowns": [
+      "No maintainer confirmation on preferred implementation details, but this does not block actionability."
+    ],
+    "why": "The issue provides a clear root cause: the stdio client never closes the server's stdin, causing every dispose to wait the full ShutdownTimeout and force-kill the server. The suggested fix is concrete and minimal, with a clear validation path via timing the dispose."
   },
   "d836701ae2f697fd1928df83add0e74039aaa48cfa24489081ffbd96690df112": {
     "confidence": 0.6,
@@ -47835,6 +48061,33 @@
       "Maintainer design preference for cookie handling; whether a PR would be accepted."
     ],
     "why": "Issue reports a clear bug: Azure Functions adds Domain attribute to __Host- cookie, causing browser rejection and 403. Root cause is well understood and reproducible. However, the deterministic gate says HUMAN_REVIEW, and there is no maintainer approval or help-wanted signal. The fix may involve design choices about cookie handling, so maintainer confirmation is needed."
+  },
+  "e727c890c1b5ef339351c2daed80e33bcdb2c9d72c3b2b2b6fb66a2462eb4484": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "gdn_attn.py",
+      "dump_input.py",
+      "attention backend metadata builder",
+      "scheduler dumps"
+    ],
+    "risks": [
+      "Hardware-specific (RTX 3090) may not reproduce on other GPUs; root cause may be in external FlashInfer or CUDA runtime."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use provided reproducer steps to reproduce IMA; instrument FlashInfer plan/workspace staleness, draft-slot padding, and GDN recurrent-state page arithmetic; add regression test with mixed traffic and long generation crossing ~23.6K computed boundary."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; whether maintainer has design preference or known fix beyond listed PRs."
+    ],
+    "why": "Issue provides detailed reproduction steps, environment, and ruled-out fixes, but root cause is not yet identified. The ask is for guidance on instrumentation, not a concrete fix. However, the evidence includes code anchors and a clear validation path (reproducer), making it actionable for investigation and potential fix."
   },
   "e74dc45663b1c93c92111a327a13850493c8b709c21fb20bf14e3c862b61a0d7": {
     "confidence": 0.7,
