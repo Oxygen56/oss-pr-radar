@@ -831,7 +831,9 @@ class ManagedAdapter:
             value.get("validation") if isinstance(value.get("validation"), dict) else quality
         )
         context_publication_receipt = candidate.get("publicationReceipt")
-        published_managed_task = ledger.read_task(task_id)
+        published_managed_task = (
+            ledger.read_task(task_id) if stage in PUBLISHED_RESULT_STAGES else None
+        )
         if (
             stage in PUBLISHED_RESULT_STAGES
             and published_managed_task is not None
