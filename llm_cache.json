@@ -3008,6 +3008,32 @@
     ],
     "why": "The issue describes a concrete bug in message history persistence with a clear root cause (incoming duplicate IDs win upsert) and a proposed fix direction. However, the track is llm_algorithm, which requires a concrete training objective, model mechanism, or numerical method. This issue is about application-level message persistence logic, not an LLM algorithm. The algorithm_evidence is weak (only 'adapter' matched, no real PEFT mechanism). The proposed fix is a design change requiring maintainer confirmation, and the issue is not assigned or approved. Thus, it is not a clean candidate for algorithmic work."
   },
+  "102dc6cbbaf7eb96fca2a5c819ae326fee4afd938748bfa63e661c2a01fe7419": {
+    "confidence": 0.85,
+    "contradictions": [
+      "No contradictions in the supplied evidence; all comments consistently confirm the bug and localization"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix in Qwen3NextFullAttentionDecoderLayer layer 3, likely in attention kernel or MLP path, to ensure batch-size invariance"
+    ],
+    "risks": [
+      "The root cause may be in a specific kernel or interaction with CUDA graph padding; fix may require careful handling of batch-size-dependent state"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided Qwen3.5-2B config and prompt, run concurrency 1 vs 8, compare token sequences; add regression test for batch_size > 4 with CUDA graph enabled"
+    ],
+    "unknowns": [
+      "Exact internal sub-boundary within layer 3 not yet isolated; whether the fix is in attention kernel, MLP, or normalization is unknown"
+    ],
+    "why": "The issue provides a concrete, reproducible LLM algorithm bug: Qwen3.5-2B produces incorrect outputs for batch_size > 4 under CUDA graph, with deterministic token divergence at index 9. The reporter and commenters have isolated the failure to a whole-decoder-layer boundary (layer 3) and provided a clear validation path via controlled experiments (batch size thresholds, graph on/off, block reuse on/off). This is a genuine model correctness issue with a reference-vs-implementation test (single-request vs batched outputs)."
+  },
   "103f0c85331ffb3c79b13f5fd2e130f77509da3ca4606cfa3301dbf7747d2dee": {
     "confidence": 0.7,
     "contradictions": [
@@ -6656,6 +6682,43 @@
       "Exact desired limit values and error codes"
     ],
     "why": "The issue identifies a clear root cause (unconfigured WebSocket limits) and impact, but the fix location is ambiguous: upstream in agent-client-protocol-http vs Goose-side. The reporter has asked for maintainer preference and is awaiting direction. No maintainer has responded, so design confirmation is needed before work starts."
+  },
+  "22db62978d916a17560fe40b3d3ec2a91f3c176caf7a43141d79a195c6ca4fba": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #4536 is titled 'feat(release): make Wasm plugin OCI layouts Envoy-verifiable before promotion' but is flagged as semantically overlapping with response-cache; direct code overlap is false, so this may be a false positive.",
+      "Issue #4568 is a potential duplicate but the design explicitly references it as the proposal, so it is not a contradiction but a linked chain."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/response-cache/main.go",
+      "plugins/wasm-go/extensions/response-cache/main_test.go"
+    ],
+    "risks": [
+      "Potential hang if dispatch succeeds but callback never fires; mitigated by synchronous-error branch and explicit resume on miss/error.",
+      "Double resume risk; covered by focused callback assertions and per-request upstream counts.",
+      "Semantic overlap with PR #4536 and issue #4568 requires manual comparison to avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit tests for successful dispatch returning HeaderStopAllIterationAndWatermark, synchronous dispatch error preserving side effects and returning ActionContinue, hit/miss/error/empty resume behavior, and unchanged empty-header and body-key paths.",
+      "Run go test ./... -count=1, go test -race ./... -count=20, go vet ./..., and GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared.",
+      "Execute the real Envoy/proxy-Wasm red-green verification with baseline and fixed Wasm modules, Redis fixture with release barrier, and upstream fixture to assert zero upstream arrivals on hits and exactly one on miss/error."
+    ],
+    "unknowns": [
+      "Whether the current SDK host can inject a synchronous Redis dispatch error or observe resume count directly; the design acknowledges this and requests a maintainer decision if not possible.",
+      "Whether the overlapping PR #4536 actually covers the root cause; the assessment indicates root_cause_coverage is false, but manual comparison is required."
+    ],
+    "why": "The issue provides a detailed design with a clear root cause (request continues before async Redis lookup resolves), a concrete fix (return HeaderStopAllIterationAndWatermark after successful dispatch), and a comprehensive verification plan including unit and Envoy-level tests. Maintainer review comments recommend approval with only minor P2 items, and the design explicitly requires maintainer approval before implementation, which is already indicated as approved in the evidence."
   },
   "22f04d9a6b86f466bd1846ef3f54391e0a2227e23179442d6d4d44144fb6d444": {
     "confidence": 0.8,
@@ -21939,6 +22002,39 @@
     ],
     "why": "Issue reports a reproducible teardown bug with a plausible root cause (TMS paused-free) and a maintainer has outlined a multi-step plan, but the fix depends on upstream TMS changes and maintainer guidance on scope. Existing PR #1571 is draft and incomplete, leaving room for a better PR, but actionability is blocked by pending upstream and design confirmation."
   },
+  "69b0133a40169659cce88f5051dae209a00ce9206c93a35b017e7dc6738151a6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue title mentions MXFP4, but comments confirm the bug also occurs with FP8 and on ROCm, indicating it is not quantization-specific."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/engine/core.py",
+      "vllm/v1/worker/gpu_model_runner.py",
+      "speculative decoding token assembly logic"
+    ],
+    "risks": [
+      "The bug is intermittent and may be hard to reproduce deterministically in CI.",
+      "The fix may involve complex interaction between speculative decoding and guided decoding, requiring careful design."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that runs a small model with speculative decoding and tool-call parsing, verifying that tool call names and arguments are correctly formed in streaming and non-streaming modes.",
+      "Add a test that reproduces the intermittent corruption by running a long session with repeated tool calls and checking for null names or empty arguments."
+    ],
+    "unknowns": [
+      "The exact root cause in the code has not been pinpointed, though a bisected commit is mentioned.",
+      "Whether the fix should disable speculative decoding when guided decoding is active or make them compatible is unclear."
+    ],
+    "why": "The issue reports a concrete bug where speculative decoding (MTP) causes malformed tool calls, with multiple user confirmations and a clear reproduction path. The root cause is likely in the interaction between speculative decoding and guided/structured output generation, affecting token stream assembly. The evidence includes code paths in the v1 engine and a bisected commit, providing a strong basis for actionable code work."
+  },
   "69d660d7e6e16cccfe43369ca281d7cafb99a02eb25aab6b3134df85e1bd6ecb": {
     "confidence": 0.8,
     "contradictions": [
@@ -22055,6 +22151,37 @@
       "Whether PR #33458 will be updated to pass CI and fully resolve the issue."
     ],
     "why": "Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#33458) has failed CI checks, so maintainer confirmation is needed before starting new work."
+  },
+  "6a4d91735fb273ff31c2a366586272ceb1db4cefcdd22f199d6766ca68c49e32": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "server_args.py validation for speculative algorithm and attention backend combination",
+      "possibly ngram_worker.py or forward_batch_info.py if supporting the combination is intended"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #31247 or issue #36326; need to compare implementation boundaries",
+      "If maintainers prefer supporting the combination, the fix scope expands to correct prefix length handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that launches server with NGRAM and torch_native and expects a clear startup error",
+      "Run existing server_args tests and relevant speculative decoding tests"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer rejecting the combination or supporting it; this affects the implementation approach but does not block actionability since the issue suggests a clear minimal fix"
+    ],
+    "why": "Issue provides a clear, reproducible bug with a detailed root-cause analysis and a concrete validation path. The proposed fix (argument validation) is actionable and aligns with existing patterns. No material unknowns block implementation."
   },
   "6ac2865ae12bfe60534e5c91fad292d48acf9c9eabd55fff23038353e0f25831": {
     "confidence": 0.7,
@@ -31576,6 +31703,38 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The design is technically sound and addresses a real bug in local-docker upgrade version metadata persistence. It includes concrete mechanisms (strict version read, re-read stored Profile, narrow write) and a detailed verification plan. However, the maintainer explicitly requested revisions and approval before implementation starts; the latest update claims revisions but the maintainer has not yet re-reviewed. The gate decision is HUMAN_REVIEW, and the submission policy requires assignment and AI disclosure confirmation, which are not yet satisfied."
   },
+  "99eab2edc31a3ac702fff1d30cc640fad4373d496cb2224f9aac79f626043ab1": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The open PR #53367 claims to fix the same issue but lacks tests; the issue itself provides a proposed fix but no implementation. No direct contradiction."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()",
+      "vllm/config/vllm.py: ensure VllmConfig.compute_hash() incorporates the updated speculative hash"
+    ],
+    "risks": [
+      "The fix may need to consider other config fields that affect compiled graph shapes, but the issue focuses on num_speculative_tokens.",
+      "Potential performance impact: recompilation when k changes is expected but may increase startup time for users who sweep k."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the bug by running the provided minimal reproduction steps with k=9 then k=7 without clearing cache, expecting the assertion failure.",
+      "Add a unit test for SpeculativeConfig.compute_hash() verifying that different num_speculative_tokens values produce different hashes.",
+      "Add a regression test that runs the reproduction scenario in CI (if feasible) to ensure the fix prevents cache collision."
+    ],
+    "unknowns": [
+      "Whether the proposed fix has been implemented in any PR beyond #53367, and whether maintainers have accepted a particular approach.",
+      "Whether the issue's proposed fix is complete (e.g., if other config fields like `draft_tensor_parallel_size` also affect shapes)."
+    ],
+    "why": "The issue provides a clear root cause: `num_speculative_tokens` is missing from the `SpeculativeConfig.compute_hash()` cache key, causing torch.compile artifacts to collide across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm, and the issue involves a concrete mechanism (cache key computation affecting compiled graph correctness) with a clear validation path via reproduction and regression test."
+  },
   "99fc098976f2fec9f2b7a8712b092b6be3edd26d4b67f88a3b1b16c60c975419": {
     "confidence": 0.85,
     "contradictions": [],
@@ -31600,6 +31759,26 @@
       "Maintainer design preference for the fix approach (TTL increase vs. explicit refresh vs. lifecycle-based cleanup)."
     ],
     "why": "The issue describes a concrete bug in DurableAgent where active runs are evicted during long tool calls due to a fixed TTL, with a clear root cause and a deterministic test plan using fake timers. The suggested fixes are actionable and align with the agent_ai_infra track."
+  },
+  "9a039cef7d9983954e0e28d7e5eb83d2813f02a104b7ba7adaf4ea079bc350cf": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "No clear code surface to modify; may be a configuration or provider-side issue."
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "RETRY",
+    "test_plan": [],
+    "unknowns": [
+      "Missing reproduction steps, relevant configuration, and whether this is a bug in Continue or external service."
+    ],
+    "why": "Issue reports a rate-limit error from a custom provider, but lacks reproduction steps, code anchors, and root-cause analysis. No evidence of a concrete code defect or actionable fix path."
   },
   "9a1d3922359df42df141f9bd969988ebe3add0e642ef3ddcb5923727ab1ffb21": {
     "confidence": 0.8,
@@ -32183,6 +32362,37 @@
       "Feasibility of adding timeouts/diagnostics to ptxas-generated loops"
     ],
     "why": "The issue is a detailed evidence dump of a rare device-side wedge in FlashMLA's TMEM allocation spin loops, but it explicitly asks for maintainer guidance on the correct owner and diagnostic path, not a concrete code change. The root cause is undetermined (phase mismatch vs. visibility vs. hardware), and the proposed fix (adding timeouts/diagnostics) is in ptxas-generated code, not directly actionable in vLLM. The track requires a concrete algorithm mechanism and validation path; while kernel and numerics are involved, the issue lacks a specific implementation proposal and a reproducible test. Existing PRs are not direct competition, but maintainer input is needed to identify the right layer (FlashMLA/CUTLASS) and to confirm the diagnostic approach."
+  },
+  "9c43af5f67873ee9c3846f1a9e464cc8ee1f6a341fc19a4cc9e693671de70a65": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comment from virajchoudhary indicates the free/anonymous route recovered, but raymelon reports continued failures, suggesting intermittent or session-dependent behavior"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "provider routing/adapter for x-preview-f-free and ox-alpha-free",
+      "tool-call handling in Zen API gateway"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach",
+      "Risk of changing API behavior for other models if fix is too broad"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl command with tools array against both zen/v1 and zen/go/v1 endpoints and assert HTTP 200 with valid tool_calls",
+      "Add regression test for tool-call serialization and routing for the affected models"
+    ],
+    "unknowns": [
+      "Exact upstream cause of the endpoint unavailability",
+      "Whether the Go route remains broken after the reported recovery"
+    ],
+    "why": "The issue provides a minimal curl reproduction, control experiments, and multiple independent confirmations, establishing a clear root cause: the Ox Alpha free model's tool path fails on both Zen routes. The failure is deterministic and specific to the presence of tools, with a concrete validation path via the provided curl command."
   },
   "9c80e14fc2f53885dea21941fdc211baeb7d3c6cf53be248a907561b8bf389e5": {
     "confidence": 0.7,
@@ -41360,6 +41570,30 @@
       "Exact internal structure of activations_hlsmodel and how model.trace expects input; maintainer preference on handling multi-input profiling."
     ],
     "why": "The issue clearly identifies a bug in profiling.numerical() for multi-input models, with a reproducible traceback showing np.ascontiguousarray(X) fails on a list of arrays with different shapes. The fix is localized to the profiling code path, and no competing PR exists."
+  },
+  "c9a142261139de16ef33d5284dda403ffaba09f5d856b6ea01d1efadf5e52895": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/tokenizer_manager.py: modify generate_request to handle cancellation separately and add force flag to abort_request"
+    ],
+    "risks": [
+      "Potential behavior change in abort_request could affect other callers; need to ensure force flag is only used in the intended path."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by launching server, starting a streaming request, killing client mid-stream, and verifying the request is aborted within 2s and no 'state was deleted' logs appear."
+    ],
+    "unknowns": [
+      "Whether the existing PR #35936 fully resolves the issue; however, the issue itself is actionable and the suggested fix is independent."
+    ],
+    "why": "Issue provides a clear root cause (regression from revert #34160), a concrete reproduction with commands, and a suggested minimal fix. The bug is user-visible and impactful, and the validation path is well-defined."
   },
   "c9af5972f65bae1463e2a6ead9d79cc1cb8ef92d13d0fda8872d7cad6cce01c1": {
     "confidence": 0.85,
@@ -52302,6 +52536,37 @@
     ],
     "wait_reason": null,
     "why": "Issue identifies a concrete int32 overflow in XPU qnorm/rope kernel address computation, with a clear root cause and a minimal fix. The bug is user-visible and affects large prefill shapes. No competing PR or issue found, and the fix is localized and testable."
+  },
+  "f6d12f2aec4881717ff3880180ae3d96f1aba0ac8af5b44f7bc5f5caa7da0a1e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "openhands/agent_server/event_service.py: add workspace hooks fallback in ConversationEventService.start()",
+      "possibly agent-canvas UI to send hook_config, but server-side fix is primary"
+    ],
+    "risks": [
+      "Potential behavior change for clients that intentionally omit hook_config to disable hooks; need to ensure explicit empty config still wins.",
+      "load_hooks_from_workspace may have side effects or performance impact; need to verify it is safe to call on every start."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a workspace with .openhands/hooks.json containing a session_start hook, start a conversation via Agent Canvas, and assert HookExecutionEvent appears and base_state.json has hook_config set.",
+      "Add a unit test for event_service.start() that verifies fallback to load_hooks_from_workspace when stored.hook_config is None, and that explicit hook_config takes precedence."
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for the fallback (e.g., config flag to disable).",
+      "Exact behavior of load_hooks_from_workspace when workspace has no hooks file (returns None per issue)."
+    ],
+    "why": "Issue provides a clear root cause (event_service only uses request payload hook_config, no workspace fallback) and a concrete fix with code anchor and validation path (acceptance criteria). The bug is user-visible and affects a documented feature. No duplicate PRs or issues found. The only blocker is the repository's AI disclosure conflict, which is a policy constraint, not a technical blocker."
   },
   "f6d48dec254e93b0da0e08b577d87965fbe363585b80177d2ade154381293bdf": {
     "confidence": 0.7,
