@@ -4831,6 +4831,17 @@ def test_publication_work_items_keeps_durable_receipt_reconciliation_visible_und
     assert items[0]["externalPublicationReceipt"]["prUrl"] == pr_url
 
 
+def test_publication_work_items_skip_opportunity_that_is_no_longer_submit_ready(tmp_path):
+    store = RadarLedger(tmp_path / "stale-stage.sqlite3")
+    insert_publication_preflight(store)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE opportunities SET stage='VALIDATION_PENDING' WHERE key='a/b#1'"
+        )
+
+    assert store.publication_work_items() == []
+
+
 def test_publication_safe_shrink_is_allowed_under_active_quarantine(tmp_path):
     store = RadarLedger(tmp_path / "safe-shrink.sqlite3")
     insert_publication_preflight(store)

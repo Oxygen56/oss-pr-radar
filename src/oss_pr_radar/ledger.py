@@ -5674,11 +5674,16 @@ class RadarLedger:
                              AND e.status='SUCCEEDED'
                            ORDER BY e.updated_at DESC LIMIT 1) AS external_receipt_json
                    FROM publication_requests r
+                   JOIN opportunities opportunity
+                     ON opportunity.key=r.opportunity_key
                    WHERE (
                      NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
-                       WHERE quarantine.opportunity_key=r.opportunity_key
-                         AND quarantine.status='ACTIVE'
+                         WHERE quarantine.opportunity_key=r.opportunity_key
+                           AND quarantine.status='ACTIVE'
+                     )
+                     AND opportunity.stage IN (
+                       'FIX_READY','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
                      )
                      AND (r.status IN ('PENDING','GRANTED') OR (
                        r.status='BLOCKED'
