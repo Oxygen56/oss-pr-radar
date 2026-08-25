@@ -4,6 +4,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -507,12 +508,46 @@ def test_active_long_bridge_turn_is_not_reclaimed(tmp_path):
     lane.reserve_handler_turn("agentscope-ai/agentscope#2", "long-event", "client:long")
     lane.bind_handler_turn(
         "agentscope-ai/agentscope#2", "long-event", CENTRAL_THREAD, "turn-long",
-        {"turnStarted": True}, status="started"
+        {"turnStarted": True, "workerPid": os.getpid()}, status="started"
     )
     with lane.writer() as db:
         db.execute("UPDATE event_lane_turns SET created_at=0 WHERE event_id='long-event'")
     assert lane.expire_handler_turns(now=11) == 0
     assert lane.active_handler_thread(CENTRAL_THREAD)["event_id"] == "long-event"
+
+
+def test_dead_started_bridge_turn_is_reclaimed(tmp_path):
+    lane = EventLane(tmp_path / "events.db", turn_timeout_seconds=10)
+    lane.reserve_handler_turn("agentscope-ai/agentscope#3", "dead-event", "client:dead")
+    lane.bind_handler_turn(
+        "agentscope-ai/agentscope#3",
+        "dead-event",
+        CENTRAL_THREAD,
+        "turn-dead",
+        {"turnStarted": True, "workerPid": 1_000_000_000},
+        status="started",
+    )
+    with lane.writer() as db:
+        db.execute("UPDATE event_lane_turns SET created_at=0 WHERE event_id='dead-event'")
+    assert lane.expire_handler_turns(now=11) == 1
+    assert lane.active_handler_thread(CENTRAL_THREAD) is None
+
+
+def test_started_bridge_without_pid_is_reclaimed(tmp_path):
+    lane = EventLane(tmp_path / "events.db", turn_timeout_seconds=10)
+    lane.reserve_handler_turn("agentscope-ai/agentscope#4", "pidless-event", "client:pidless")
+    lane.bind_handler_turn(
+        "agentscope-ai/agentscope#4",
+        "pidless-event",
+        CENTRAL_THREAD,
+        "turn-pidless",
+        {"turnStarted": True},
+        status="started",
+    )
+    with lane.writer() as db:
+        db.execute("UPDATE event_lane_turns SET created_at=0 WHERE event_id='pidless-event'")
+    assert lane.expire_handler_turns(now=11) == 1
+    assert lane.active_handler_thread(CENTRAL_THREAD) is None
 
 
 def test_busy_central_wakeup_remains_pending_until_turn_is_free(tmp_path, monkeypatch):

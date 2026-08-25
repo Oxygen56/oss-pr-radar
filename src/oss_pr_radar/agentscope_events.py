@@ -756,15 +756,18 @@ class EventLane:
                     receipt = json.loads(row["receipt_json"] or "{}")
                 except (TypeError, ValueError, json.JSONDecodeError):
                     receipt = {}
-                pid = receipt.get("pid") or receipt.get("processId") or receipt.get("launchPid")
+                pid = (
+                    receipt.get("workerPid")
+                    or receipt.get("pid")
+                    or receipt.get("processId")
+                    or receipt.get("launchPid")
+                )
                 if pid:
                     try:
                         os.kill(int(pid), 0)
                         continue
                     except (OSError, TypeError, ValueError):
                         pass
-                if receipt.get("turnStarted") is True and not receipt.get("turnStatus"):
-                    continue
                 expired += 1
                 receipt["terminalReason"] = "handler_turn_timeout"
                 receipt_json = json.dumps(receipt, sort_keys=True)
