@@ -16762,6 +16762,15 @@ def test_validation_followup_allows_a_revision_to_remove_rejected_files(tmp_path
     assert finalized["controllerCommitChangedFiles"] == ["replacement.py", "runtime.py"]
     assert finalized["changedFiles"] == ["replacement.py"]
 
+    projected, _raw = _finalize_controller_commit_for_test(
+        candidate={"worktreePath": str(worktree)},
+        context=context | {"stage": "FIX_READY"},
+        value=finalized,
+        result_path=result_path,
+        write_if_unchanged=False,
+    )
+    assert projected == finalized
+
 
 def test_validation_followup_recovers_a_committed_cumulative_file_handoff(tmp_path):
     store, worktree, result_path = _controller_commit_result(

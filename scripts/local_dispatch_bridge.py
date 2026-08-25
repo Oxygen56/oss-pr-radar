@@ -10057,11 +10057,26 @@ def _validation_publication_changed_files(
         return cumulative
     if context.get("stage") != "VALIDATION_PENDING":
         return commit_changed_files
-    base_branch = _prepared_base_branch(worktree, context)
-    if not base_branch:
-        raise RuntimeError("validation continuation lacks a prepared base branch")
-    tracking_ref = f"refs/remotes/origin/{base_branch}"
-    base = command(["git", "merge-base", "HEAD", tracking_ref], cwd=worktree)
+    return _target_base_publication_changed_files(worktree=worktree, context=context)
+
+
+def _target_base_publication_changed_files(
+    *, worktree: Path, context: dict[str, Any]
+) -> list[str]:
+    target_value = context.get("targetBase")
+    if isinstance(target_value, dict):
+        target = validate_target_base(target_value)
+        base = str(target["sha"])
+        command(["git", "cat-file", "-e", f"{base}^{{commit}}"], cwd=worktree)
+        command(["git", "merge-base", "--is-ancestor", base, "HEAD"], cwd=worktree)
+    else:
+        base_branch = _prepared_base_branch(worktree, context)
+        if not base_branch:
+            raise RuntimeError("cumulative publication diff lacks a prepared target base")
+        base = command(
+            ["git", "merge-base", "HEAD", f"refs/remotes/origin/{base_branch}"],
+            cwd=worktree,
+        )
     cumulative = _validated_changed_files(
         [
             line
@@ -10203,7 +10218,14 @@ def _finalize_controller_commit(
             commit_changed_files = declared_commit_files
             publication_changed_files = _validated_changed_files(value.get("changedFiles"))
             if not set(commit_changed_files).issubset(publication_changed_files):
-                raise RuntimeError("controller commit files are missing from publication evidence")
+                cumulative_publication_files = _target_base_publication_changed_files(
+                    worktree=worktree,
+                    context=context,
+                )
+                if publication_changed_files != cumulative_publication_files:
+                    raise RuntimeError(
+                        "controller commit files are missing from publication evidence"
+                    )
         finalized = dict(value)
         finalized["commitSha"] = head_sha
         finalized["branch"] = command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
