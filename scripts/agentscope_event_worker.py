@@ -38,6 +38,29 @@ def _is_agentscope_record(value: dict) -> bool:
     return False
 
 
+EVENT_LANE_MANIFEST = "event-lane-manifest.json"
+
+
+def _active_task_thread(root: Path, repo: str) -> str:
+    """Read the configured central contributor task; never invent a thread."""
+    candidates = [root / EVENT_LANE_MANIFEST, ROOT / EVENT_LANE_MANIFEST]
+    manifest_path = next((path for path in candidates if path.is_file() and not path.is_symlink()), None)
+    if manifest_path is None:
+        raise RuntimeError(f"event-lane manifest is unavailable for {repo}")
+    try:
+        value = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("event-lane manifest is invalid") from exc
+    if not isinstance(value, dict) or value.get("schemaVersion") != "oss-pr-radar-event-lane-v1":
+        raise RuntimeError("event-lane manifest schema is invalid")
+    repositories = value.get("repositories")
+    entry = repositories.get(repo) if isinstance(repositories, dict) else None
+    thread_id = str(entry.get("activeThreadId") or "") if isinstance(entry, dict) else ""
+    if not thread_id:
+        raise RuntimeError(f"central active task thread is not configured for {repo}")
+    return thread_id
+
+
 def _public_active_keys(root: Path, store: RadarLedger, lane: EventLane) -> set[str]:
     """Count durable public work, including ledger work without a live thread."""
     active: set[str] = set()
@@ -78,28 +101,6 @@ def _resolve_event_target(root: Path, event: dict) -> dict[str, object]:
     is_pr = bool(event.get("kind") == "pr_update" or issue.get("pull_request"))
     key = f"{repo}#{number}"
     if not is_pr:
-        # An event must wake an already-created task when one exists.  The
-        # listener is not allowed to create a parallel task merely because its
-        # durable lane has not seen the original queue row.
-        try:
-            store = RadarLedger(runtime_ledger_path(root))
-            candidates = getattr(store, "task_context_candidates", lambda: [])()
-            for candidate in candidates:
-                if str(candidate.get("key") or "") != key:
-                    continue
-                thread_id = str(candidate.get("threadId") or candidate.get("thread_id") or "")
-                worktree = candidate.get("worktreePath") or candidate.get("worktree_path")
-                if thread_id and worktree:
-                    return {
-                        "key": key,
-                        "kind": "issue",
-                        "mapped": True,
-                        "candidate": candidate,
-                        "threadId": thread_id,
-                        "worktreePath": worktree,
-                    }
-        except (OSError, RuntimeError, ValueError, TypeError):
-            pass
         return {"key": key, "kind": "issue", "mapped": False}
     pr_url = str(issue.get("html_url") or issue.get("pull_request", {}).get("html_url") or "")
     ledger = RadarLedger(runtime_ledger_path(root))
@@ -204,6 +205,17 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
         # the same issue/thread.  The active task remains authoritative.
         lane.terminalize_event(event_id, status="coalesced", reason="active_task_already_running")
         return
+    central_thread = None
+    if target.get("kind") in {"issue", "issue_closeout", "pr_watch"}:
+        try:
+            central_thread = _active_task_thread(root, str(event.get("repo") or ""))
+        except RuntimeError as exc:
+            _quarantine_event(root, lane, event, reason=str(exc))
+            return
+        central_active = lane.active_handler_thread(central_thread)
+        if central_active and str(central_active.get("event_id") or "") != event_id:
+            lane.terminalize_event(event_id, status="coalesced", reason="central_task_already_running")
+            return
     if target.get("kind") == "pr_followup":
         pr_url = str(target.get("prUrl") or issue.get("html_url") or issue.get("pull_request", {}).get("html_url") or "")
         try:
@@ -212,6 +224,8 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
             _quarantine_event(root, lane, event, reason=str(exc))
             return
     binding = lane.handler_thread(key)
+    if central_thread:
+        binding = {"thread_id": central_thread}
     if binding is None and target.get("threadId"):
         binding = {"thread_id": str(target["threadId"])}
     binding_active = binding and str(binding.get("status") or "") in {"reserved", "started"}
@@ -286,6 +300,9 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
             "--design-wait-started-at", str(event.get("designWaitStartedAt") or event.get("updatedAt") or ""),
         ],
     )
+    if central_thread and str(result.get("threadId") or central_thread) != central_thread:
+        _quarantine_event(root, lane, event, reason="central_task_thread_receipt_mismatch")
+        return
     if result.get("pending") and result.get("turnId"):
         pending_thread = str(result.get("threadId") or (binding or {}).get("thread_id") or "")
         lane.bind_handler_turn(
@@ -402,48 +419,18 @@ def production_queue_snapshot(root: Path) -> dict:
 
 
 def bridge_delivery(root: Path, lane: EventLane, event: dict) -> None:
-    """Use the existing serialized drain, whose bridge performs App Server turns."""
+    """Deliver only GitHub observations; the central controller owns queue work."""
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
     queue_kinds = {"intents", "prFollowups", "followups", "slowWorkRequests"}
-    task_id = ""
     if event.get("kind") in queue_kinds:
-        key = str(event.get("targetKey") or payload.get("key") or payload.get("opportunityKey") or "")
-        task_id = str(event.get("taskId") or payload.get("taskId") or payload.get("intentId") or "")
-        target = {"key": key, "kind": "queue", "mapped": True, "taskId": task_id}
-    else:
-        target = _resolve_event_target(root, event)
-        key = str(target.get("key") or "")
-    mapped = bool(target.get("mapped"))
+        return
+    target = _resolve_event_target(root, event)
     if event.get("kind") == "outcome_reconcile":
         target = {"key": str(event.get("eventKey") or payload.get("publicKey") or ""),
                   "kind": "outcome_reconcile", "mapped": False}
         issue_handler_delivery(root, lane, event, target=target)
         return
-    if event.get("kind") == "pr_update" or (not mapped and event.get("kind") not in queue_kinds):
-        issue_handler_delivery(root, lane, event, target=target)
-        return
-    result = run_bridge(root, "drain-once", timeout=300)
-    if not result.get("ok") or result.get("busy"):
-        raise RuntimeError(f"event drain not committed: {result}")
-    if key and result.get("key") != key:
-        raise RuntimeError(f"event drain consumed {result.get('key')!r}, expected {key!r}")
-    if not key and task_id and str(result.get("taskId") or result.get("intentId") or "") != task_id:
-        raise RuntimeError("event drain did not consume this queue task")
-    if result.get("action") not in {
-        "issue_task_dispatched",
-        "pr_followup_dispatched",
-        "implementation_followup_dispatched",
-        "publication_feedback_dispatched",
-        "recovery_dispatched",
-    }:
-        raise RuntimeError("event drain produced no task receipt for this event")
-    delivery = result.get("delivery") or {}
-    if delivery.get("requiresReconciliation") or delivery.get("requiresDesktopHandoff"):
-        handoff = root / "state" / "agentscope-event-handoff.jsonl"
-        handoff.parent.mkdir(parents=True, exist_ok=True)
-        with handoff.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps({"event": event, "result": result}, sort_keys=True) + "\n")
-        raise RuntimeError("event drain requires durable handoff/reconciliation")
+    issue_handler_delivery(root, lane, event, target=target)
 
 
 def _load_json(path: Path) -> dict:
@@ -583,12 +570,11 @@ def run_once(
             "schemaVersion": "agentscope_reconcile_v1",
             "lastCompletedAt": current.isoformat().replace("+00:00", "Z"),
         })
-    queue_payload = queue if queue is not None else production_queue_snapshot(root)
-    queue_result = (
-        lane.import_queue(queue_payload)
-        if queue_payload
-        else {"imported": 0, "woken": 0}
-    )
+    # Queue work belongs exclusively to the shared Radar controller.  Older
+    # event releases mirrored that queue; retire those rows once rather than
+    # draining them or starting issue-specific tasks.
+    queue_result = {"imported": 0, "woken": 0}
+    legacy_queue_retired = lane.retire_queue_events()
     # Reviews/CI and PR changes outrank issue discovery.  The worker does not
     # make a claim here; claim eligibility remains the existing bridge policy.
     inserted = 0
@@ -639,6 +625,7 @@ def run_once(
         "receiptsReconciled": receipts_reconciled,
         "queueImported": queue_result["imported"],
         "queueWoken": queue_result["woken"],
+        "legacyQueueRetired": legacy_queue_retired,
         "claimsExpired": expired,
         "fullReconciliation": bool(full_result is not None),
         "fullReconciliationEvents": len(full_result.events) if full_result is not None else 0,

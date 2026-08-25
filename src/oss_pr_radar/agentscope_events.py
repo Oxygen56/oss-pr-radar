@@ -845,6 +845,16 @@ class EventLane:
             ).fetchone()
         return dict(row) if row else None
 
+    def active_handler_thread(self, thread_id: str) -> dict[str, Any] | None:
+        """Return the one currently running turn for a central thread."""
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM event_lane_turns WHERE thread_id=? "
+                "AND status IN ('reserved','started') ORDER BY created_at DESC LIMIT 1",
+                (str(thread_id),),
+            ).fetchone()
+        return dict(row) if row else None
+
     def terminalize_event(self, event_id: str, *, status: str = "needs_reconcile", reason: str = "") -> bool:
         """Stop a deterministic failure without manufacturing a success receipt."""
         if status not in {"needs_reconcile", "coalesced", "watch_only", "baseline"}:
@@ -943,7 +953,7 @@ class EventLane:
                 target_key = str(value.get("key") or value.get("opportunityKey") or value.get("opportunity_key") or "")
                 event = {"version": EVENT_VERSION, "kind": key, "taskId": task_id,
                          "targetKey": target_key, "repo": value.get("repo"), "payload": value,
-                         "eventId": f"queue:{_digest({key: key, 'taskId': task_id, 'payload': value})}"}
+                         "eventId": f"queue:{_digest({'kind': key, 'taskId': task_id})}"}
                 if value.get("designWait") or value.get("design_wait"):
                     event["designWait"] = True
                 if value.get("priority") is not None:
@@ -955,6 +965,32 @@ class EventLane:
             for task_id in sorted(task_ids):
                 wake({"taskId": task_id, "reason": "queue_import"})
         return {"imported": imported, "woken": len(task_ids)}
+
+    def retire_queue_events(self, *, now: float | None = None) -> int:
+        """Retire queue mirrors from older releases without executing them."""
+        current = time.time() if now is None else now
+        retired = 0
+        with self.writer() as db:
+            rows = db.execute(
+                "SELECT event_id,payload_json FROM event_lane_events "
+                "WHERE status IN ('pending','leased') AND event_id LIKE 'queue:%'"
+            ).fetchall()
+            for row in rows:
+                try:
+                    payload = json.loads(row["payload_json"])
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if payload.get("kind") not in {
+                    "intents", "prFollowups", "followups", "slowWorkRequests"
+                }:
+                    continue
+                db.execute(
+                    "UPDATE event_lane_events SET status='delivered',delivered_at=?,"
+                    "lease_until=NULL,lease_owner=NULL,lease_token=NULL WHERE event_id=?",
+                    (current, row["event_id"]),
+                )
+                retired += 1
+        return retired
 
     def expire_claims(self, *, now: float | None = None) -> int:
         current = time.time() if now is None else now

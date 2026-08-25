@@ -256,10 +256,30 @@ def test_production_queue_snapshot_imports_pr_followup_once(tmp_path, monkeypatc
     delivered = []
     first = worker.run_once(tmp_path, deliver=delivered.append)
     second = worker.run_once(tmp_path, deliver=delivered.append)
-    assert first["queueImported"] == 1
-    assert first["drain"]["delivered"] == 1
+    assert first["queueImported"] == 0
+    assert first["drain"]["delivered"] == 0
+    assert first["legacyQueueRetired"] == 0
     assert second["queueImported"] == 0
-    assert len(delivered) == 1
+    assert delivered == []
+
+
+def test_queue_identity_is_stable_and_legacy_rows_retire_once(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    first = {"intents": [{"intentId": "intent-2413", "key": "agentscope-ai/agentscope#2413", "title": "old"}]}
+    changed = {"intents": [{"intentId": "intent-2413", "key": "agentscope-ai/agentscope#2413", "title": "new", "status": "CREATING"}]}
+    assert lane.import_queue(first)["imported"] == 1
+    assert lane.import_queue(changed)["imported"] == 0
+    lane.append({
+        "eventId": "queue:legacy-payload-digest",
+        "kind": "intents",
+        "taskId": "legacy",
+        "payload": {"intentId": "legacy", "title": "mutable"},
+    })
+    assert lane.retire_queue_events(now=10) == 2
+    assert lane.retire_queue_events(now=11) == 0
+    with lane.connect() as db:
+        statuses = {row["status"] for row in db.execute("SELECT status FROM event_lane_events")}
+    assert statuses == {"delivered"}
 
 
 def _write_bootstrap_seed(root: Path, boundary: str) -> None:
@@ -381,11 +401,11 @@ def test_unmapped_event_uses_explicit_independent_release_bridge(tmp_path, monke
     calls = []
 
     def fake_bridge(root, operation, **kwargs):
-        calls.append((root, operation, kwargs))
-        return {
-            "ok": True,
-            "threadId": "thread-new",
-            "turnId": "turn-new",
+            calls.append((root, operation, kwargs))
+            return {
+                "ok": True,
+                "threadId": "01a032a7-5288-70a0-9faf-0b1d1e8161f0",
+                "turnId": "turn-new",
             "turnStarted": True,
         }
 
@@ -397,11 +417,49 @@ def test_unmapped_event_uses_explicit_independent_release_bridge(tmp_path, monke
         "number": 10,
         "issue": {"html_url": "https://github.com/agentscope-ai/agentscope/issues/10"},
     }
+    (tmp_path / worker.EVENT_LANE_MANIFEST).write_text(json.dumps({
+        "schemaVersion": "oss-pr-radar-event-lane-v1",
+        "repositories": {"agentscope-ai/agentscope": {
+            "activeThreadId": "01a032a7-5288-70a0-9faf-0b1d1e8161f0"
+        }},
+    }), encoding="utf-8")
     worker.issue_handler_delivery(tmp_path, lane, event)
     assert calls[0][1] == "agentscope-event-create"
     assert calls[0][2]["inactive_release"] is True
     assert calls[0][2]["code_root"] == worker.ROOT
-    assert lane.handler_thread("agentscope-ai/agentscope#10")["thread_id"] == "thread-new"
+    extra = calls[0][2]["extra_args"]
+    assert extra[extra.index("--thread-id") + 1] == "01a032a7-5288-70a0-9faf-0b1d1e8161f0"
+    assert lane.handler_thread("agentscope-ai/agentscope#10")["thread_id"] == "01a032a7-5288-70a0-9faf-0b1d1e8161f0"
+    assert all(operation != "drain-once" for _, operation, _ in calls)
+
+
+def test_central_thread_receipt_mismatch_is_quarantined_without_success(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    manifest = {
+        "schemaVersion": "oss-pr-radar-event-lane-v1",
+        "repositories": {"agentscope-ai/agentscope": {
+            "activeThreadId": "01a032a7-5288-70a0-9faf-0b1d1e8161f0"
+        }},
+    }
+    (tmp_path / worker.EVENT_LANE_MANIFEST).write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(worker, "run_bridge", lambda *_args, **_kwargs: {
+        "ok": True, "threadId": "issue-specific-thread", "turnId": "turn-1"
+    })
+    lane = EventLane(tmp_path / "events.db")
+    event = {
+        "eventId": "central-mismatch",
+        "repo": "agentscope-ai/agentscope",
+        "number": 11,
+        "issue": {"state": "open", "html_url": "https://github.com/agentscope-ai/agentscope/issues/11"},
+    }
+    lane.append(event)
+    lane.claim(now=0)
+    worker.issue_handler_delivery(tmp_path, lane, event)
+    with lane.connect() as db:
+        row = db.execute("SELECT status,payload_json FROM event_lane_events WHERE event_id=?", ("central-mismatch",)).fetchone()
+    assert row["status"] == "needs_reconcile"
+    assert "central_task_thread_receipt_mismatch" in row["payload_json"]
+    assert lane.handler_thread("agentscope-ai/agentscope#11") is None
 
 
 def test_pr_detail_failure_does_not_emit_shrunken_snapshot(tmp_path):
@@ -524,9 +582,20 @@ def test_invalid_outcome_creates_durable_recovery_event(tmp_path):
     with lane.connect() as db:
         row = db.execute("SELECT payload_json FROM event_lane_events WHERE event_id LIKE 'outcome-reconcile:%'").fetchone()
     assert json.loads(row["payload_json"])["kind"] == "outcome_reconcile"
-    delivered = []
-    assert dispatch_once(lane, delivered.append, limit=1)["delivered"] == 1
-    assert delivered[0]["kind"] == "outcome_reconcile"
+    recovery_event = {
+        "eventId": "outcome-reconcile:event-invalid",
+        "eventKey": "agentscope-ai/agentscope#1",
+        "kind": "outcome_reconcile",
+    }
+    lane.append(recovery_event)
+    worker.issue_handler_delivery(tmp_path, lane, recovery_event)
+    assert (tmp_path / "state" / "agentscope-event-handoffs.jsonl").exists()
+    with lane.connect() as db:
+        status = db.execute(
+            "SELECT status FROM event_lane_events WHERE event_id=?",
+            ("outcome-reconcile:event-invalid",),
+        ).fetchone()["status"]
+    assert status == "needs_reconcile"
 
 
 def test_foreign_pr_is_not_an_event_source_and_closed_issue_is_noop(tmp_path):
