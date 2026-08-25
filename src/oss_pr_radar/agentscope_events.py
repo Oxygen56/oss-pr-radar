@@ -525,11 +525,22 @@ class GitHubIssuePoller:
 class EventLane:
     """SQLite event inbox with one writer, leases, priority and wake receipts."""
 
-    def __init__(self, path: Path, *, lease_seconds: int = 120, ttl_seconds: int = 86400) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        lease_seconds: int = 120,
+        ttl_seconds: int = 86400,
+        max_attempts: int = 3,
+    ) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lease_seconds = max(1, lease_seconds)
         self.ttl_seconds = max(1, ttl_seconds)
+        # A broken bridge must not turn one event into an immortal lease.  A
+        # terminal reconciliation record is safer than repeatedly waking a
+        # second task from the same stale event.
+        self.max_attempts = max(1, max_attempts)
         with self.connect() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS event_lane_events (
@@ -680,8 +691,9 @@ class EventLane:
         current = time.time() if now is None else now
         with self.writer() as db:
             rows = db.execute(
-                "SELECT * FROM event_lane_events WHERE (status='pending' OR (status='leased' AND lease_until<=?)) "
-                "ORDER BY priority DESC, created_at ASC LIMIT ?", (current, limit)
+                "SELECT * FROM event_lane_events WHERE attempts<? AND "
+                "(status='pending' OR (status='leased' AND lease_until<=?)) "
+                "ORDER BY priority DESC, created_at ASC LIMIT ?", (self.max_attempts, current, limit)
             ).fetchall()
             result = []
             until = current + self.lease_seconds
@@ -823,6 +835,37 @@ class EventLane:
         assert row is not None
         return dict(row)
 
+    def active_handler_turn(self, event_key: str) -> dict[str, Any] | None:
+        """Return the one currently running turn for an event key, if any."""
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM event_lane_turns WHERE event_key=? "
+                "AND status IN ('reserved','started') ORDER BY created_at DESC LIMIT 1",
+                (str(event_key),),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def terminalize_event(self, event_id: str, *, status: str = "needs_reconcile", reason: str = "") -> bool:
+        """Stop a deterministic failure without manufacturing a success receipt."""
+        if status not in {"needs_reconcile", "coalesced", "watch_only", "baseline"}:
+            raise ValueError("invalid event terminal status")
+        with self.writer() as db:
+            row = db.execute(
+                "SELECT payload_json FROM event_lane_events WHERE event_id=?", (str(event_id),)
+            ).fetchone()
+            if row is None:
+                return False
+            payload = json.loads(row["payload_json"])
+            if reason:
+                payload["terminalReason"] = str(reason)
+            db.execute(
+                "UPDATE event_lane_events SET status=?,payload_json=?,delivered_at=?,"
+                "lease_until=NULL,lease_owner=NULL,lease_token=NULL WHERE event_id=? "
+                "AND status IN ('pending','leased')",
+                (status, json.dumps(payload, sort_keys=True), time.time(), str(event_id)),
+            )
+            return db.total_changes > 0
+
     def bind_handler_turn(
         self,
         event_key: str,
@@ -869,6 +912,7 @@ class EventLane:
         """Import intents and PR follow-up records, then wake each unique task once."""
         imported = 0
         task_ids: set[str] = set()
+        current = time.time()
         for key in ("intents", "prFollowups", "followups", "slowWorkRequests"):
             values = queue.get(key) or []
             if isinstance(values, dict):
@@ -876,6 +920,25 @@ class EventLane:
             for value in values:
                 if not isinstance(value, dict):
                     continue
+                status = str(value.get("ledgerStatus") or value.get("status") or "").upper()
+                if status in {"EXPIRED", "SUPERSEDED", "REJECTED", "CLOSED"}:
+                    continue
+                expires = value.get("expiresAt") or value.get("expires_at")
+                if expires:
+                    try:
+                        if _parse_time(str(expires)).timestamp() <= current:  # type: ignore[union-attr]
+                            continue
+                    except (AttributeError, TypeError, ValueError):
+                        # A malformed expiry must not become an authorization
+                        # to wake work; leave it for controller reconciliation.
+                        continue
+                lease_until = value.get("leaseUntil") or value.get("lease_until")
+                if status == "LEASED" and lease_until:
+                    try:
+                        if _parse_time(str(lease_until)).timestamp() <= current:  # type: ignore[union-attr]
+                            continue
+                    except (AttributeError, TypeError, ValueError):
+                        continue
                 task_id = str(value.get("taskId") or value.get("intentId") or value.get("threadId") or _digest(value))
                 target_key = str(value.get("key") or value.get("opportunityKey") or value.get("opportunity_key") or "")
                 event = {"version": EVENT_VERSION, "kind": key, "taskId": task_id,
@@ -918,7 +981,24 @@ class EventLane:
                         "UPDATE event_lane_public_work SET status='watch_only',updated_at=? WHERE event_key=?",
                         (current, event_key),
                     )
-            return len(rows)
+            # Expired bridge leases are not a reason to create another task.
+            # Keep a durable reconciliation marker after bounded retries.
+            exhausted = db.execute(
+                "SELECT event_id,payload_json FROM event_lane_events "
+                "WHERE attempts>=? AND (status='pending' OR "
+                "(status='leased' AND lease_until<=?))",
+                (self.max_attempts, current),
+            ).fetchall()
+            for row in exhausted:
+                payload = json.loads(row["payload_json"])
+                payload["terminalReason"] = "lease_attempts_exhausted"
+                db.execute(
+                    "UPDATE event_lane_events SET status='needs_reconcile',payload_json=?,"
+                    "delivered_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+                    "WHERE event_id=?",
+                    (json.dumps(payload, sort_keys=True), current, row["event_id"]),
+                )
+            return len(rows) + len(exhausted)
 
     def mark_design_wait(self, event_id: str) -> bool:
         """Persist the machine-readable 24h design wait state."""
@@ -930,6 +1010,15 @@ class EventLane:
                 return False
             payload = json.loads(row["payload_json"])
             payload["designWait"] = True
+            wait_until = payload.get("designWaitUntil")
+            if not wait_until:
+                outcome = payload.get("outcome") if isinstance(payload.get("outcome"), dict) else {}
+                wait_until = outcome.get("waitUntil")
+            try:
+                watch_until = datetime.fromisoformat(str(wait_until).replace("Z", "+00:00")).timestamp()
+            except (TypeError, ValueError):
+                watch_until = time.time() + self.ttl_seconds
+            payload["designWaitUntil"] = datetime.fromtimestamp(watch_until, UTC).isoformat().replace("+00:00", "Z")
             db.execute(
                 "UPDATE event_lane_events SET payload_json=? WHERE event_id=?",
                 (json.dumps(payload, sort_keys=True), str(event_id)),
@@ -938,19 +1027,30 @@ class EventLane:
             if event_key:
                 db.execute(
                     "INSERT INTO event_lane_public_work(event_key,status,watch_until,updated_at) VALUES(?,?,?,?) "
-                    "ON CONFLICT(event_key) DO UPDATE SET status='design_wait',updated_at=excluded.updated_at",
-                    (event_key, "design_wait", time.time() + self.ttl_seconds, time.time()),
+                    "ON CONFLICT(event_key) DO UPDATE SET status='design_wait',watch_until=excluded.watch_until,updated_at=excluded.updated_at",
+                    (event_key, "design_wait", watch_until, time.time()),
+                )
+                db.execute(
+                    "UPDATE event_lane_threads SET status='design_wait' WHERE event_key=? "
+                    "AND status IN ('reserved','started')",
+                    (event_key,),
                 )
             return True
 
     def active_work_keys(self) -> set[str]:
-        with self.connect() as db:
+        current = time.time()
+        with self.writer() as db:
+            db.execute(
+                "UPDATE event_lane_public_work SET status='watch_only',updated_at=? "
+                "WHERE status='design_wait' AND watch_until IS NOT NULL AND watch_until<=?",
+                (current, current),
+            )
             rows = db.execute(
                 "SELECT event_key FROM event_lane_threads WHERE status IN ('reserved','started')"
             ).fetchall()
             public = db.execute(
                 "SELECT event_key FROM event_lane_public_work WHERE status IN ('active','design_wait') "
-                "AND (watch_until IS NULL OR watch_until>?)", (time.time(),)
+                "AND (status='active' OR (watch_until IS NOT NULL AND watch_until>?))", (current,)
             ).fetchall()
         return {str(row["event_key"]) for row in rows + public if row["event_key"]}
 
@@ -962,6 +1062,10 @@ class EventLane:
         return str(row["status"]) if row else None
 
     def register_public_work(self, event_key: str, *, status: str = "active", watch_until: float | None = None, source: str = "event-lane") -> None:
+        if status == "design_wait" and watch_until is None:
+            watch_until = time.time() + self.ttl_seconds
+        if status == "design_wait" and watch_until is not None and watch_until <= time.time():
+            status = "watch_only"
         with self.writer() as db:
             db.execute(
                 "INSERT INTO event_lane_public_work(event_key,status,watch_until,source,updated_at) VALUES(?,?,?,?,?) "

@@ -76,8 +76,31 @@ def _resolve_event_target(root: Path, event: dict) -> dict[str, object]:
     number = _pr_number(event)
     issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
     is_pr = bool(event.get("kind") == "pr_update" or issue.get("pull_request"))
+    key = f"{repo}#{number}"
     if not is_pr:
-        return {"key": f"{repo}#{number}", "kind": "issue", "mapped": False}
+        # An event must wake an already-created task when one exists.  The
+        # listener is not allowed to create a parallel task merely because its
+        # durable lane has not seen the original queue row.
+        try:
+            store = RadarLedger(runtime_ledger_path(root))
+            candidates = getattr(store, "task_context_candidates", lambda: [])()
+            for candidate in candidates:
+                if str(candidate.get("key") or "") != key:
+                    continue
+                thread_id = str(candidate.get("threadId") or candidate.get("thread_id") or "")
+                worktree = candidate.get("worktreePath") or candidate.get("worktree_path")
+                if thread_id and worktree:
+                    return {
+                        "key": key,
+                        "kind": "issue",
+                        "mapped": True,
+                        "candidate": candidate,
+                        "threadId": thread_id,
+                        "worktreePath": worktree,
+                    }
+        except (OSError, RuntimeError, ValueError, TypeError):
+            pass
+        return {"key": key, "kind": "issue", "mapped": False}
     pr_url = str(issue.get("html_url") or issue.get("pull_request", {}).get("html_url") or "")
     ledger = RadarLedger(runtime_ledger_path(root))
     candidates = ledger.pr_followup_candidates()
@@ -113,10 +136,55 @@ def _resolve_event_target(root: Path, event: dict) -> dict[str, object]:
     return {"key": f"{repo}#{number}", "kind": "pr_watch", "mapped": False, "prUrl": pr_url}
 
 
+def _validate_pr_followup_binding(target: dict[str, object], *, key: str, pr_url: str) -> None:
+    """Require the PR event to point at the exact task context it will resume."""
+    thread_id = str(target.get("threadId") or "")
+    worktree_value = str(target.get("worktreePath") or "")
+    if not thread_id or not worktree_value:
+        raise RuntimeError("PR follow-up task context binding is incomplete")
+    worktree = Path(worktree_value).resolve()
+    context_path = worktree / ".oss-pr-radar" / "task-context.json"
+    try:
+        context = json.loads(context_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("PR follow-up task context is unavailable") from exc
+    if not isinstance(context, dict):
+        raise RuntimeError("PR follow-up task context is invalid")
+    if str(context.get("threadId") or "") != thread_id:
+        raise RuntimeError("PR follow-up task context/thread mismatch")
+    if str(context.get("key") or "") != key:
+        raise RuntimeError("PR follow-up task context/key mismatch")
+    followup = context.get("prFollowup")
+    if not isinstance(followup, dict):
+        raise RuntimeError("PR follow-up task context has no prFollowup")
+    candidate = target.get("candidate") if isinstance(target.get("candidate"), dict) else {}
+    candidate_wake = str(candidate.get("wakeDigest") or candidate.get("wake_digest") or "")
+    context_wake = str(followup.get("wakeDigest") or "")
+    if candidate_wake and context_wake and candidate_wake != context_wake:
+        raise RuntimeError("PR follow-up wake binding mismatch")
+    receipt = context.get("publicationReceipt")
+    bound_url = str((receipt or {}).get("prUrl") or "") if isinstance(receipt, dict) else ""
+    expected_url = str(pr_url or target.get("prUrl") or "").rstrip("/")
+    if not bound_url or not expected_url or bound_url.rstrip("/") != expected_url:
+        raise RuntimeError("PR follow-up task context/PR mismatch")
+
+
+def _quarantine_event(root: Path, lane: EventLane, event: dict, *, reason: str) -> None:
+    """Persist a private reconciliation handoff and stop this event lease."""
+    handoff = root / "state" / "agentscope-event-handoffs.jsonl"
+    handoff.parent.mkdir(parents=True, exist_ok=True)
+    with handoff.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"event": event, "reason": reason}, sort_keys=True) + "\n")
+    lane.terminalize_event(str(event.get("eventId") or ""), reason=reason)
+
+
 def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: dict[str, object] | None = None) -> None:
     """Start/resume the detached bridge worker and receipt its turn before ack."""
     target = target or _resolve_event_target(root, event)
     key = str(target.get("key") or f"{event.get('repo')}#{event.get('number')}")
+    if target.get("kind") == "outcome_reconcile":
+        _quarantine_event(root, lane, event, reason="outcome_requires_reconciliation")
+        return
     issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
     public_status = lane.public_status(key)
     if str(issue.get("state") or "open").casefold() != "open" and public_status not in {"active", "watch_only"}:
@@ -125,6 +193,24 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
     if str(issue.get("state") or "open").casefold() != "open" and target.get("kind") == "issue":
         target = dict(target)
         target["kind"] = "issue_closeout"
+    event_id = str(event["eventId"])
+    existing_turn = lane.handler_turn(event_id)
+    if existing_turn and str(existing_turn.get("status") or "") in {"reserved", "started"}:
+        # A delayed retry for the same event is idempotent.
+        return
+    active_turn = lane.active_handler_turn(key)
+    if active_turn and str(active_turn.get("event_id") or "") != event_id:
+        # Coalesce the event instead of creating a second execution task for
+        # the same issue/thread.  The active task remains authoritative.
+        lane.terminalize_event(event_id, status="coalesced", reason="active_task_already_running")
+        return
+    if target.get("kind") == "pr_followup":
+        pr_url = str(target.get("prUrl") or issue.get("html_url") or issue.get("pull_request", {}).get("html_url") or "")
+        try:
+            _validate_pr_followup_binding(target, key=key, pr_url=pr_url)
+        except RuntimeError as exc:
+            _quarantine_event(root, lane, event, reason=str(exc))
+            return
     binding = lane.handler_thread(key)
     if binding is None and target.get("threadId"):
         binding = {"thread_id": str(target["threadId"])}
@@ -133,7 +219,6 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
         active = _public_active_keys(root, RadarLedger(runtime_ledger_path(root)), lane)
         if key not in active and len(active) >= 3:
             raise RuntimeError("AgentScope handler capacity is full")
-    event_id = str(event["eventId"])
     client_message_id = f"oss-pr-radar:agentscope-event:{event_id}"
     lane.reserve_handler_turn(key, event_id, client_message_id)
     if target.get("kind") == "pr_followup":
