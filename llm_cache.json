@@ -3551,6 +3551,26 @@
     ],
     "why": "Issue provides a precise root cause and a concrete fix (route split + frontend update). Existing PR #40029 is weak: no tests, minimal changes, and lacks regression coverage. A materially better PR with tests and complete frontend changes is plausible."
   },
+  "12bdcdb5b1a3f27b3363b26a11ff3e473ae84754cf9930ca7e9d89249556e873": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "May be a non-code issue (rate limit configuration) or environment-specific; code changes could be unnecessary."
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [],
+    "unknowns": [
+      "Whether the error is reproducible in a minimal environment; whether it is a code bug or configuration issue; which code path (provider, runtime, scheduler) is implicated."
+    ],
+    "why": "Issue reports a rate-limit error from a custom provider, but lacks a minimal reproduction, root-cause analysis, or code-level anchor. The error is external (rate limit exceeded) and may be configuration or environment-specific, not a code defect. No maintainer confirmation or design direction. Actionability is low without a clear code path to fix."
+  },
   "12cf02eb16f58d4b78039d02ded0e299a3aaf80d88d376f30342b878aa5ba2bc": {
     "confidence": 0.7,
     "contradictions": [],
@@ -22842,6 +22862,37 @@
     "wait_reason": null,
     "why": "Issue describes a concrete protocol inconsistency in the Responses streaming path: commentary SSE frames are dropped while the terminal payload retains the item. The expected behavior is clearly specified with two policy options, and a validation plan with a recorded fixture is provided. No competing PR or issue found, and the gate allows work."
   },
+  "70c77596f8308c4e3f5ee70a0cbfcd7b1ef0358efa267b3a92d85d6366a62624": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()",
+      "Add regression test verifying distinct cache keys for different num_speculative_tokens"
+    ],
+    "risks": [
+      "The fix may need to consider other config fields that affect shapes (e.g., draft_tensor_parallel_size) to avoid future collisions.",
+      "Changing the hash may invalidate existing caches, causing recompilation overhead for users."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the bug by running vllm serve with num_speculative_tokens=9 then 7 using the same cache root, expecting the assert_size_stride failure; after fix, verify no failure and that cache keys differ.",
+      "Add a unit test for SpeculativeConfig.compute_hash() asserting different hashes for different num_speculative_tokens values."
+    ],
+    "unknowns": [
+      "Whether the open PR #53367 will be merged or updated with tests; if it is, the contribution may be redundant."
+    ],
+    "why": "The issue precisely identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction (two server launches with different k values) and a clear expected behavior (distinct cache keys). The proposed fix is minimal and directly addresses the root cause. Although an open PR #53367 exists with a similar fix, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
   "713b7f53871159ecf64b9d112afc33617674b73019e58e00dead20668f25d7d8": {
     "confidence": 0.85,
     "contradictions": [
@@ -27186,6 +27237,36 @@
     ],
     "why": "Issue identifies a clear root cause: version skew between baked flashinfer-jit-cache and upgraded flashinfer-python causes serve-time registry failure. Evidence includes reproduction command, observed error, and verified workaround. Maintainer triage engaged and current image no longer reproduces, but structural hazard remains latent. Open PR #13650 has semantic overlap but does not cover root cause. Actionable fix: couple package versions or document unsupported workflow."
   },
+  "862c229ff5206b7d1858dcfa187b2680ea534a62639c0eb6c164917652133880": {
+    "confidence": 0.8,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "docs note on which providers hooks attach to",
+      "optional hooks-UI warning when provider-executed-tools provider is selected",
+      "docs fixes: redirect, read_file vs read_files, name mapping, stale global path"
+    ],
+    "risks": [
+      "Low risk: documentation and UI changes only; no core runtime behavior changes",
+      "Potential maintainer preference on UI warning placement or wording"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Manual verification: enable hooks with Claude Code provider, confirm UI warning appears and docs note is accurate",
+      "Regression test for docs links and examples if automated docs tests exist"
+    ],
+    "unknowns": [
+      "Exact implementation details for UI warning (e.g., where to place, wording) are not specified, but this is normal implementation uncertainty"
+    ],
+    "why": "The issue clearly identifies a documentation and UI disclosure gap: hooks appear enabled but do not attach for provider-executed tools (e.g., Claude Code). Maintainers have confirmed the root cause and decided on disclosure as the direction. The remaining work is well-scoped: add docs note and optional UI warning, plus minor docs fixes. This is actionable and valuable for user trust."
+  },
   "86364f8cc8f6ba00b87e85de66d2dbf7432b6d644d05e1c78c7800d67c67b70f": {
     "confidence": 0.85,
     "contradictions": [
@@ -28209,6 +28290,36 @@
       "Status of PR #7604's failed CI checks and whether maintainer will merge or request changes."
     ],
     "why": "Issue provides a clear root cause and repro, but a maintainer (roboomp) is actively investigating and has already submitted PR #7604 with a fix and regression tests. The PR has failed CI checks, so it may be weak, but the maintainer's involvement and existing PR make a new candidate premature until the PR is reviewed or closed."
+  },
+  "8b21f098c9b82c009f57ce68f361aa25dda6684708e86aed0740f0c251ba9dfb": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #53647 claims to fix the tie issue but does not reference this issue; need to compare implementations."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "tests/v1/sample/test_logprobs.py",
+      "GPU memory gate configuration"
+    ],
+    "risks": [
+      "Changing min_gb may affect other tests if the threshold is shared; need to verify no other tests rely on the 32GB gate.",
+      "The tie-aware assertion may require careful handling of floating-point ties to avoid flakiness."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run test_spec_decode_logprobs on an 18GB MIG slice with min_gb lowered to 8 or 12 to verify it executes.",
+      "Add a regression test that compares logprobs by token id and handles top-k ties deterministically, using fixed seeds and synthetic data."
+    ],
+    "unknowns": [
+      "Whether PR #53647 fully addresses the assertion problem or only partially; need to review its changes."
+    ],
+    "why": "The issue provides a detailed root cause analysis with measured memory footprints and bit-level logits comparisons, establishing concrete validation paths for both the CI skip and the ill-defined assertion. The proposed fixes are actionable and testable."
   },
   "8b34c6eceb4ddfd84d331d4200fe87cd491a42144e6fb5e7ed6363bf5fd13c0c": {
     "confidence": 0.7,
@@ -35435,6 +35546,37 @@
       "Whether the Go route failure is still present at the time of implementation"
     ],
     "why": "Issue provides a concrete, reproducible failure (tools array triggers 'Endpoint is unavailable' on specific free model routes) with control experiments showing other models work. Recent comments indicate partial recovery on one route but persistent failure on the Go route, and a duplicate issue confirms the pattern. Root cause is likely a routing/adapter issue for the Ox Alpha free model's tool path, but exact code location is not yet identified."
+  },
+  "b48de13dd80ba1a4ea8a03b4297e5e523d8f3b68bdf38f85c6f06bc89dd230fa": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #13703 is marked as technical_complete but root_cause_coverage is false, while the issue provides root cause analysis; this is not a direct contradiction but indicates incomplete coverage."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "PrefillRouter::generate context linking",
+      "SGLang cancellation monitor request ID handling",
+      "abort_request dispatch logic"
+    ],
+    "risks": [
+      "Potential interaction with existing PR #13703 which may already address the issue; need to compare and avoid duplication.",
+      "Changes to cancellation lifecycle may affect decode-phase behavior or KV-transfer cleanup."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided steps: deploy disaggregated SGLang with NIXL, send long prompt with max_tokens=1, disconnect client, then send short request and measure latency. Add a regression test that simulates client disconnect before first token and verifies prompt cancellation and subsequent request latency."
+    ],
+    "unknowns": [
+      "Whether the existing PR #13703 already implements the required fix and whether it is mergeable; the issue does not reference it.",
+      "Exact code locations for the cancellation monitor and context linking are not fully specified, but the issue provides sufficient anchors."
+    ],
+    "why": "The issue provides a clear bug description with reproduction steps, expected vs actual behavior, and a detailed code-path analysis identifying two lifecycle gaps. The root cause is well-defined: cancellation state is not shared between the original HTTP context and the remote Prefill context, and the SGLang cancellation monitor cannot abort before the first output. This is actionable for a code contribution."
   },
   "b4ad55a4b4d9145dd97b93a70b54f728b49ea84d734a229fe259d547fca3b53e": {
     "confidence": 0.7,
@@ -50417,6 +50559,37 @@
       "Whether maintainers prefer a dependency pin or a code fix; whether PR #22557 already addresses this issue."
     ],
     "why": "The issue reports an ImportError due to a missing symbol in qdrant-client 1.17.0, with a clear workaround and likely fix (pin dependency or adjust import). However, the deterministic gate requires HUMAN_REVIEW, and there is an existing PR (#22557) with semantic overlap that needs manual comparison. The fix is straightforward but requires maintainer confirmation on the preferred approach (dependency pin vs code change)."
+  },
+  "f4946079aa1896e467c5eddaba7c4fed495a4497239244a000413040c2e35767": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The triage notes that the current behavior is documented intent (MCP tools are deliberately non-collapsible), which conflicts with the reporter's framing as a bug."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/components/messages/CompactToolGroupDisplay.tsx",
+      "packages/cli/src/ui/components/messages/ToolMessage.tsx",
+      "packages/cli/src/ui/utils/resumeHistoryUtils.ts",
+      "packages/core/src/tools/mcp-tool.ts"
+    ],
+    "risks": [
+      "Changing collapse behavior for MCP tools may affect users who rely on seeing full MCP output inline; need to ensure the detailed-display gate is extended so collapsed payloads remain accessible via Ctrl+O."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that simulates an MCP tool result and verifies it collapses in the transcript, with full payload available via Ctrl+O.",
+      "Verify that built-in tools still collapse and that errors/in-progress states remain expanded."
+    ],
+    "unknowns": [
+      "Maintainer acceptance of the behavior change is pending; no explicit approval or design confirmation has been given."
+    ],
+    "why": "Issue provides a clear root cause with code anchors and a concrete fix direction (propagate MCP provenance structurally). The triage confirms the root cause and identifies additional implementation dependencies (detailed-display gate and resume path). The proposed change is a UI enhancement with a well-defined validation path."
   },
   "f5291b3ed368cc09ca3498995c556dec0398d2df5c2d30593fe2d8af01bb5f77": {
     "confidence": 0.8,
