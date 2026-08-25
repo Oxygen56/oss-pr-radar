@@ -1954,6 +1954,43 @@
     ],
     "why": "Issue reports a tool call error when switching moe-runner-backend from marlin to flashinfer_mxfp4, but lacks a minimal reproduction and root cause analysis. Open PR lookup timed out, and related PRs may overlap. Maintainer input needed."
   },
+  "0b57be0d821b6ce7495694c22f19b3608a7589e500f2271afa56a705de285b91": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue initially suspected connector-conditional lookup, but commenter's fix and subsequent testing ruled that out as sole cause, shifting root cause to connector presence under spec decode."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py",
+      "vllm/v1/core/kv_cache_manager.py",
+      "vllm/v1/core/spec_decode/",
+      "tests/v1/core/prefix_cache/test_partial_prefix_cache_hits.py",
+      "tests/v1/core/test_scheduler.py"
+    ],
+    "risks": [
+      "Potential overlap with open PRs #53298, #53479, #50457 that touch similar code paths; need to compare implementations to avoid duplicate work.",
+      "Root cause may involve subtle interaction between connector per-step calls and mamba spec-verify rollback, requiring deep debugging."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided experiment matrix: DFlash2 spec decode + LMCacheMPConnector attached, zero retrieved tokens, long agent sessions with shared prefix and partial hits.",
+      "Add a regression test that runs the same workload and asserts no corruption (e.g., output length bounded, no garbage tokens).",
+      "Run existing tests: tests/v1/core/prefix_cache/test_partial_prefix_cache_hits.py and tests/v1/core/test_scheduler.py with connector-related filters."
+    ],
+    "unknowns": [
+      "Whether the corruption reproduces on latest main after recent changes (commenter plans to test nightly).",
+      "Exact mechanism by which connector presence affects spec-verify rollback."
+    ],
+    "why": "Issue provides a detailed experiment matrix isolating the bug to speculative decoding with any KV connector attached, even with zero retrieved tokens, and identifies a suspected code path. Recent comments confirm the corruption persists after applying a known fix, narrowing the root cause to connector presence interacting with spec-verify rollback. The issue includes concrete reproduction steps and code anchors, making it actionable."
+  },
   "0b843c25785449fc52f4f4c82f486ae158019b361169280e169554d766fd3d2f": {
     "confidence": 0.85,
     "contradictions": [],
@@ -4352,6 +4389,35 @@
       "Exact implementation details of the existing PR #13703 and its gaps"
     ],
     "why": "The issue provides a detailed root cause analysis with specific code paths (PrefillRouter::generate, Context::with_id_and_metadata, cancellation monitor) and a clear reproduction scenario. The expected lifecycle is well-defined, and the proposed fix is actionable. Although an open PR exists, it lacks root-cause coverage and has CI failures, leaving room for a more complete contribution."
+  },
+  "1a382a89c34b2429e525fb9fb1b04831eeea49cc94d94678be3df3f5b09eb270": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue claims 1.15.0 does not fix the problem, but maintainer comment indicates #7305 landed and fixed the cross-task ContextVar issue; however, the remaining gap for kwargs-dependent providers on ambient requests is acknowledged."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/packages/core/agent_framework/_mcp.py",
+      "python/packages/core/tests/core/test_mcp.py"
+    ],
+    "risks": [
+      "Potential API design change if introducing a separate connect-time header hook; maintainer preference may differ."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that uses a kwargs-dependent header_provider and asserts the connect/initialize request includes the expected headers, or that a server requiring auth on connect receives them. Use the existing mock server test pattern from test_mcp_streamable_http_tool_header_provider_*."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a separate connect-time header hook versus documenting a static-provider convention; exact scope of the remaining fix."
+    ],
+    "why": "The issue provides a clear root cause (header_provider headers not applied during connect handshake due to ContextVar scoping) and a concrete validation path (live reproduction against a real server, plus existing test infrastructure). The maintainer comment confirms the core delivery mechanism is fixed but identifies a remaining gap for kwargs-dependent providers on ambient requests, which aligns with the issue's suggested fix. This is actionable and valuable."
   },
   "1a529736c5274daa720ebf934fbade8a20e08166bed3ceb0958eae778b531109": {
     "confidence": 0.8,
@@ -10458,6 +10524,38 @@
       "Whether maintainers have a preferred fix approach"
     ],
     "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, pointing to a generation-level bug in the Qwen3.5 architecture on sglang 0.5.17. The root cause is not yet identified but the evidence is sufficient to start a bisect and add a regression test. No competing PR covers the same code path."
+  },
+  "398654ceed444d1e4447258e77cf02e95cc68ec42f7829c0f9b75aa54f04e99e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #51366 is open and semantically overlaps but does not reference the issue; its technical completeness is false and lacks tests."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints/openai/api_server.py",
+      "model_hosting_container_standards integration",
+      "logging configuration handling"
+    ],
+    "risks": [
+      "Potential overlap with PR #51366; need to compare implementation boundaries and avoid duplicate work.",
+      "Changing import behavior may affect other integrations or startup performance."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sets VLLM_LOGGING_CONFIG_PATH with a shared handler for root and vllm loggers, imports vllm.entrypoints.openai.api_server, and asserts INFO/DEBUG logs are not suppressed.",
+      "Run targeted unit tests for logging configuration and API server import."
+    ],
+    "unknowns": [
+      "Whether PR #51366 fully fixes the root cause or only mitigates the symptom.",
+      "Maintainer preference for lazy import vs. defensive logging configuration."
+    ],
+    "why": "Issue provides a clear root cause: model_hosting_container_standards.logging_config.configure_root_logger() mutates shared root handler levels to ERROR, suppressing vLLM startup logs when a custom VLLM_LOGGING_CONFIG_PATH reuses the same handler. The reproduction is concrete (scheduler message missing despite branch executing) and code anchors are identified. An open PR (#51366) proposes a lazy-import fix but lacks regression tests and does not reference the issue, so the contribution remains actionable."
   },
   "39b8afea33d4e2af07c50541daf707acfbc5de9d7ccb90352c9967e50458c27c": {
     "confidence": 0.7,
@@ -33868,6 +33966,37 @@
     ],
     "why": "Issue provides a clear reproduction command, full traceback, and environment details. Root cause is evident: CPU inference path invokes a Triton kernel that requires a GPU driver, causing RuntimeError. Existing PR #35677 addresses the same root cause but lacks tests and has CI failures, leaving room for a more complete contribution."
   },
+  "b48c9b2dd2505d07d3951dd87b8cc4fedd07258582f22a4bf0bb50441e308323": {
+    "confidence": 0.8,
+    "contradictions": [
+      "One comment reports recovery on zen/v1 while another reports ongoing failure on zen/go/v1"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Restore or fix the Ox Alpha free model tool adapter on zen/v1 and zen/go/v1 routes",
+      "Possibly adjust routing logic for the renamed model"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach",
+      "The issue may be partially resolved, requiring verification of current state on both routes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl command with tools array to reproduce the failure on both routes",
+      "Add a regression test that sends a tools request to the affected model and asserts a successful tool call response",
+      "Run existing test suite for the relevant provider/runtime packages"
+    ],
+    "unknowns": [
+      "Exact code path responsible for the tool-specific failure",
+      "Whether the Go route failure is still present at the time of implementation"
+    ],
+    "why": "Issue provides a concrete, reproducible failure (tools array triggers 'Endpoint is unavailable' on specific free model routes) with control experiments showing other models work. Recent comments indicate partial recovery on one route but persistent failure on the Go route, and a duplicate issue confirms the pattern. Root cause is likely a routing/adapter issue for the Ox Alpha free model's tool path, but exact code location is not yet identified."
+  },
   "b4ad55a4b4d9145dd97b93a70b54f728b49ea84d734a229fe259d547fca3b53e": {
     "confidence": 0.7,
     "contradictions": [
@@ -35569,6 +35698,32 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a runtime 400 error when using extra_body thinking with DeepSeek via react_agent, but lacks a minimal reproducible example and exact code. Comments suggest possible conversion issue but no confirmed root cause. Existing PR #8580 is closed and not merged, and repository requires assignment. No maintainer confirmation or design direction."
+  },
+  "bcbd1c3b81b190f049517259d8ff10692cb63e206a3a8e969f033c9d144b6046": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/mem_cache/radix_cache.py",
+      "python/sglang/srt/mem_cache/flush_cache.py"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach; need to avoid duplicating existing PRs."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that pauses generation with mode='retract', verifies all KV pages are released, and ensures no prefix matching occurs after a weight update."
+    ],
+    "unknowns": [
+      "Exact maintainer design preference for retract semantics; whether the existing merged PR #31962 fully resolves the issue."
+    ],
+    "why": "The issue provides a detailed root cause analysis with code anchors and measured impact, establishing a clear bug in retract mode's KV release. The suggested fix is concrete and testable, and the existing PRs are incomplete, leaving room for a valuable contribution."
   },
   "bd16fa6543025bd6e070c62faf33f5c43b5d15c9729c875c43b6b745771465d4": {
     "confidence": 0.7,
@@ -37646,6 +37801,36 @@
       "Exact code location and maintainer preference for fix implementation; whether the existing PR #35645 will be updated with tests."
     ],
     "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to re-check the updated chunk budget before scanning the waiting queue, causing unnecessary cache matching and host-cache load-back. Reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. An open PR exists but lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
+  "c6824b58e9523d67fd0b08ff5936eb201be741117ffd6e67be61c2f4a58aee9b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The error hint suggests DISABLE_VERSION_CHECK=1 but the comment notes it does not bypass this check."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/llamafactory/train/ppo/trainer.py",
+      "pyproject.toml"
+    ],
+    "risks": [
+      "Changing the TRL version range may break compatibility with the legacy PPO API; need to ensure the code actually works with the new TRL version.",
+      "Updating the error message or version check may not address underlying API changes in TRL 0.24.0."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Install trl==0.24.0 and run PPO training with a small model to reproduce the ImportError.",
+      "After fix, run PPO training with trl==0.24.0 to verify it starts successfully.",
+      "Add a unit test that checks the version requirement logic or dependency range consistency."
+    ],
+    "unknowns": [
+      "Whether the PPO code can be adapted to work with TRL 0.24.0 or if the dependency range should be pinned to the legacy version."
+    ],
+    "why": "Issue provides a clear traceback showing PPO fails due to TRL version mismatch: code requires trl>=0.8.6,<=0.9.6 but installed trl==0.24.0. Comment identifies root cause: pyproject.toml allows trl>=0.18.0,<=0.24.0, and the version check uses transformers.utils.versions.require_version which ignores DISABLE_VERSION_CHECK. This is a concrete, actionable bug in dependency/version handling for the PPO training path."
   },
   "c68be7c4e33146174afd7d0e2471e65c041174db6749499bd57cacd176dd0520": {
     "confidence": 0.7,
@@ -43575,6 +43760,39 @@
     ],
     "why": "The issue precisely identifies a gap in the FC agent runner where a terminal answer with zero tool calls is accepted when tools were offered, and the code path is confirmed by maintainer bot with exact line references. The proposed fix (detect empty tool_responses and function_call_state False with non-empty prompt_messages_tools, then error or retry) is actionable and testable."
   },
+  "e0edf25a86ce5e6ecc5454c4789fd4418f598e652db461da93374e83682d103b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #35645 claims to fix the issue but lacks tests and root-cause coverage, while issue provides clear root cause and reproduction."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py",
+      "python/sglang/multimodal_gen/runtime/managers/scheduler.py",
+      "python/sglang/srt/dllm/mixin/scheduler.py"
+    ],
+    "risks": [
+      "Potential overlap with open PR #35645; need to ensure contribution adds regression tests and root-cause coverage to be competitive.",
+      "Possible duplicate issue #36226 with shared scheduler behavior; verify scope to avoid duplication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that sets Scheduler.chunked_req to consume all remaining chunk budget, places a waiting request, and asserts that get_new_batch_prefill() does not process the waiting request (no cache matching or load-back).",
+      "Run existing scheduler tests and static checks."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific implementation approach or have design preferences.",
+      "Whether issue #36226 covers the same root cause and would make this contribution redundant."
+    ],
+    "why": "Issue provides a clear root cause: scheduler fails to check chunk budget after resuming a chunked request, causing unnecessary waiting-queue scans and potential host-cache load-back. Reproduction steps are concrete and deterministic at scheduler level, and existing budget_state() provides a clear fix point. Although an open PR (#35645) targets the same issue, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
   "e10483c36a1037ceb0360bcce858f8ac2fe3cf728fe83b8493fd099a341fd974": {
     "confidence": 0.85,
     "contradictions": [
@@ -45440,6 +45658,35 @@
     ],
     "why": "The issue reports a concrete NIXL handshake failure in asymmetric TP PD disaggregation, with a plausible root cause (block count mismatch) and a commenter claiming to work on a fix. However, the track requires a concrete LLM algorithm mechanism; the evidence only shows distributed training invariants at medium depth, and the fix is likely a local normalization in NIXL worker code, not a novel algorithm. The presence of an active contributor and lack of maintainer confirmation suggest waiting for assignment or design confirmation."
   },
+  "e8ec3de4d9c1fde35544292bb0721dffd94783400c616018d0db0cdd9565d1c6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "PrefillRouter::generate and context linking",
+      "SGLang cancellation monitor to handle pre-registration cancellation",
+      "Request cancellation propagation and lifecycle handling"
+    ],
+    "risks": [
+      "Potential race conditions in request registration and cancellation dispatch",
+      "Changes may affect existing PD protocol cleanup and KV-transfer draining"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the issue using the provided steps with a long prompt and client disconnect before first token, then verify the short request is not delayed.",
+      "Add a regression test that simulates client disconnect during prefill and asserts abort_request is called and scheduler state returns to idle."
+    ],
+    "unknowns": [
+      "Exact implementation details of the existing PR #13703 and whether it fully addresses the root cause"
+    ],
+    "why": "Issue provides a clear bug report with reproduction steps, expected vs actual behavior, and a detailed root-cause analysis identifying two lifecycle gaps: lack of cancellation propagation between contexts and the cancellation monitor not being able to abort before first output. The evidence includes code anchors and a concrete validation path via the described reproduction. Although an open PR exists, it lacks root-cause coverage and complete validation, leaving room for a more thorough fix."
+  },
   "e90336b81d5c388b203def18fbc782d832d7f606ab07d3677dbf11cd19c6a5ce": {
     "confidence": 0.7,
     "contradictions": [
@@ -46822,6 +47069,34 @@
       "Whether the proposed fix is already implemented in the open PR #53367 and whether that PR is complete enough to supersede the issue."
     ],
     "why": "The issue provides a clear root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm and the issue involves a concrete model mechanism (cache key computation affecting compiled graph shapes) with a clear validation path via reproduction and regression test."
+  },
+  "ee9ca967b4a3f572330da635c064f5b31abd4abcbde87b3197d5a94d547ca459": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/multimodal_gen/configs/models/encoders/qwen3.py",
+      "python/sglang/multimodal_gen/runtime/models/encoders/qwen3.py",
+      "python/sglang/kernels/aot/csrc/cpu/model/qwen3.cpp"
+    ],
+    "risks": [
+      "Root cause may be in a shared component affecting other architectures; fix must be scoped to avoid regressions."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the token loop using the provided curl command and model on 0.5.17, then run the same on 0.5.6.dev to confirm regression. Add a regression test that checks for non-repetitive output on a small Qwen3.5 model."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; maintainer preference for fix approach unknown."
+    ],
+    "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, indicating a generation-level bug in the Qwen3.5 architecture on version 0.5.17. The root cause is not yet identified, but the evidence is sufficient to start a bisect and targeted fix. No duplicate or overlapping PR covers this issue."
   },
   "eeb331e4d04c4a62b4c7a6a861339e28da8237f83f6c57e2e2c84f98fca527a7": {
     "confidence": 0.85,
