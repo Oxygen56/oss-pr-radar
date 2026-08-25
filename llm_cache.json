@@ -12302,6 +12302,38 @@
     ],
     "why": "Issue provides a clear root cause (drafter fc built with quant_config despite unquantized MTP weights), a concrete reproducer, and suggested fix directions. The code path is identified (qwen3_5_mtp.py). The bug is user-visible and actionable."
   },
+  "3da258d1b102fb2932f4bfcee6765694c11ea464a48afcf6acd1e93f68c0e262": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/third_party/flash_linear_attention/ops/chunk_o.py",
+      "vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py",
+      "vllm/v1/core/sched/scheduler.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #52244 or #50505; need to compare implementation boundaries before duplicating work.",
+      "Memory regression may involve multiple factors; isolating root cause requires careful profiling."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided docker command and 16k-token prompt to confirm OOM and KeyError; then run long-prefill benchmark (176k tokens) comparing tok/s and memory usage between builds; add regression test for scheduler handling missing req_id."
+    ],
+    "unknowns": [
+      "Whether existing PR #52244 or #50505 already fixes the root cause; requires manual comparison.",
+      "Exact cause of throughput regression not isolated; may require deeper profiling."
+    ],
+    "why": "Issue provides concrete, reproducible regressions with exact measurements, code paths, and a clear root-cause hypothesis for memory regression (transient allocation in chunk_o.py) and a separate worker OOM masking bug. The algorithm track is satisfied with concrete mechanisms (model_architecture, distributed_training, numerics_quantization, evaluation_method) and a validation path via reference-vs-implementation comparison."
+  },
   "3db84fbee4d2fe729438f1634524fe82276d1bbe33298a8b27f63662847b4c23": {
     "confidence": 0.9,
     "contradictions": [],
@@ -22480,6 +22512,37 @@
     ],
     "why": "Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#33458) has failed CI checks, so maintainer confirmation is needed before starting new work."
   },
+  "6a3996d641c6b3f46f8220916b6213bf2d396f6cb485aa02a5aa9a3b3843ce79": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue title and initial report attribute failure to presence of tools, but later comments suggest session-sticky routing or context window limits, indicating multiple possible causes."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "provider routing/failover logic for x-preview-f-free/ox-alpha-free",
+      "tool request handling in Zen API gateway"
+    ],
+    "risks": [
+      "Potential fix may be in upstream provider configuration rather than code, limiting code-level actionability.",
+      "Changing routing/failover behavior could affect other models or introduce regressions."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the provided curl reproduction to assert tool requests to x-preview-f-free do not return 'Endpoint is unavailable'.",
+      "Run existing provider routing tests and add a test for stickyProvider/failover behavior."
+    ],
+    "unknowns": [
+      "Exact upstream provider configuration or shard health status.",
+      "Whether the issue is reproducible in a local development environment or requires access to the production Zen API."
+    ],
+    "why": "Issue provides a concrete curl reproduction and strong evidence that the failure is specific to the Ox Alpha free model's tool path, with a clear control (other models work). The root cause is not fully pinpointed but the evidence is sufficient to start a targeted fix and regression test."
+  },
   "6a4d91735fb273ff31c2a366586272ceb1db4cefcdd22f199d6766ca68c49e32": {
     "confidence": 0.85,
     "contradictions": [
@@ -29842,6 +29905,35 @@
     ],
     "why": "The issue identifies a concrete root cause: the capability guard checks symbol presence and device capability but not cubin arch coverage, causing the fused MTP kernel to be selected on sm_110a where no kernel image exists. The reproduction is clear, a workaround is verified, and the suggested fixes are actionable."
   },
+  "8c731f86f4e853bad101dfe7630a883e3e5fc3f352a234f40e68084e20035a20": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()"
+    ],
+    "risks": [
+      "Potential hash collisions with other config fields if not carefully combined; ensure the hash includes all shape-affecting parameters.",
+      "The fix may require recompilation for each k, which is expected but could impact performance if many k values are used."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided minimal reproduction: start server with num_speculative_tokens=9, then with 7 without clearing cache, and assert no assertion failure after fix.",
+      "Add a unit test for SpeculativeConfig.compute_hash() that verifies different num_speculative_tokens produce different hashes."
+    ],
+    "unknowns": [
+      "Whether the proposed fix has been implemented in any open PR; the open PR #53367 appears to address the same issue but lacks tests, and its status is unclear."
+    ],
+    "why": "The issue provides a clear root cause: `num_speculative_tokens` is missing from the `SpeculativeConfig.compute_hash()` cache key, causing torch.compile artifacts to collide across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm and the issue qualifies as a kernel/algorithmic bug with a numerical validation path (reproduce the assertion failure and verify the fix prevents it)."
+  },
   "8c9646213c2ecb164a8413ddc74cc7aeda173e35c0cf488a2c056a7ce0fe9107": {
     "confidence": 0.85,
     "contradictions": [],
@@ -33603,6 +33695,34 @@
       "Whether any of the overlapping PRs (#53479, #50457, #52244) already fix the root cause, requiring manual comparison."
     ],
     "why": "The issue provides a detailed experiment matrix isolating the corruption to speculative decoding with a KV connector attached, even with zero token transfer, and identifies a suspected code path. Recent comments confirm the corruption persists after applying the suggested fix, narrowing the root cause to connector presence interacting with mamba spec-verify rollback. The evidence includes concrete reproduction steps and a clear validation path via targeted tests."
+  },
+  "a14073ccb5926b61a91645488c2e33098b1e779de48be31c81271a1ae6a28c69": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Add vLLM-Omni videos API support to LiteLLM proxy",
+      "Handle /v1/videos endpoint translation"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #38148; need to ensure no duplicate implementation",
+      "API behavior changes might affect existing video generation flows"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl commands to reproduce the 400 error",
+      "Run existing tests in PR #38148 and add regression test for /v1/videos endpoint"
+    ],
+    "unknowns": [
+      "Exact error response body from the 400 error is not fully visible in the issue text"
+    ],
+    "why": "Issue reports a concrete 400 error when using LiteLLM proxy for vLLM-Omni video generation, with a working transparent path and failing standard path. Root cause is missing support for vLLM-Omni videos API in LiteLLM, and an open PR #38148 directly addresses this. The evidence provides a clear reproduction and validation path."
   },
   "a1516340c6f844f7b2607e4153e633939178ca9061145ac91d185d606326cb8e": {
     "confidence": 0.8,
@@ -39264,6 +39384,36 @@
     ],
     "why": "Issue provides a clear, reproducible OAuth2 token-exchange failure with a likely root cause (TikTok requires client_key instead of client_id and returns access_token at top level). The reproduction steps and minimal example are concrete, and the code path is identifiable (custom-auth OAuth2 flow). No competing PR or duplicate issue covers the fix."
   },
+  "be1e67add2ca7e7b66c10b7e4ab922d374d4ce5f44cdf1ca4450fe3721e42503": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/fused_moe/experts/flashinfer_b12x_moe.py",
+      "vllm/v1/worker/gpu_model_runner.py",
+      "flashinfer/fused_moe/cute_dsl/blackwell_sm12x/moe_dispatch.py"
+    ],
+    "risks": [
+      "Fix may shift memory pressure to other phases; need to ensure profiling baseline accurately accounts for workspace without over-reserving."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce OOM with provided command on 2x RTX 5070 Ti or single RTX 5090; verify fix by booting with flashinfer_b12x and comparing KV cache size and startup success against pinned working version."
+    ],
+    "unknowns": [
+      "Exact FlashInfer version where regression introduced; whether existing PRs fully resolve the issue."
+    ],
+    "why": "Issue provides a clear root cause: FlashInfer b12x MoE workspace allocated lazily inside profile_run, causing OOM on memory-constrained Blackwell GPUs. Evidence includes reproducible traceback, controlled comparisons across versions and backends, and quantified performance impact. The issue is actionable with a concrete validation path."
+  },
   "be2c387c671584eda6125220bbf5964cbd4573bfc8324d65ae6a28f75e624279": {
     "confidence": 0.85,
     "contradictions": [],
@@ -39992,6 +40142,38 @@
       "Exact code path in the frontend that triggers the request is not fully detailed, but the issue provides enough to start"
     ],
     "why": "The issue clearly identifies a user-visible 500 error caused by the Agent configuration UI incorrectly querying the builtin credential endpoint for MCP providers. The root cause is well described: the route resolves via ToolManager.get_builtin_provider, which fails for MCP server identifiers. No competing PR addresses this specific bug, and the fix is localized to the credential-info route and UI request logic."
+  },
+  "c180a061cf9a40f24131b255bb5c439f35743f017af1cd897feb4e9c7a823485": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #34244 is closed but has root_cause_coverage true, while PR #36154 is open with root_cause_coverage false; unclear which is the current best fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Streaming logic in DeepSeek parser (e.g., python/sglang/srt/models/deepseek.py) to flush pending content before tool_calls delta",
+      "Possibly finish_reason handling in rust/sglang-server/src/message/finish_reason.rs"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #36154 or merged PR #34458; need to ensure distinct implementation",
+      "Hardware requirements (4x H200) may limit reproduction for some contributors"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl command against a local SGLang server with DeepSeek-V4-Flash-0731 and verify all content chunks are emitted before tool_calls",
+      "Add a regression test that simulates streaming with both content and tool_calls and asserts no content truncation"
+    ],
+    "unknowns": [
+      "Exact root cause in code (buffer flush timing) not yet confirmed by maintainers",
+      "Whether the issue is already fully resolved by merged PR #34458 or open PR #36154"
+    ],
+    "why": "The issue provides a clear reproduction with expected vs actual streaming output, identifying a concrete bug in streaming content truncation when both content and tool_calls are present. The root cause is localized to streaming buffer/flush logic in the DeepSeek parser, with code anchors and a suggested fix. Although the track is llm_algorithm, the issue involves model architecture and parser behavior, and the validation path is concrete: reproduce with the provided curl command and verify complete content delivery. Existing PRs are incomplete or closed, leaving room for a competitive contribution."
   },
   "c18a58db761b1b769911ee1529d7f5cb77ba98660d02205ac8e01ad5a7b07466": {
     "confidence": 0.7,
