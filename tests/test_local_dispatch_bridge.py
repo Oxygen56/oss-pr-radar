@@ -3307,6 +3307,12 @@ def test_ingestion_quarantines_legacy_implementation_result_without_side_effect(
         evidence={"revalidated": True, "migrationId": "m-1"},
     )
     assert store.active_task_quarantine("a/b#1") is None
+    assert store.publication_work_items() == []
+    store.record_stage(
+        "a/b#1",
+        "FIX_READY",
+        evidence={"revalidated": True, "migrationId": "m-1"},
+    )
     assert {item["request_id"] for item in store.publication_work_items()} == {
         "pending-1",
         "granted-1",
