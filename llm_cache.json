@@ -7872,6 +7872,40 @@
     ],
     "why": "The issue is a usage/support question about MCP availability in Zed remote projects. The only comment suggests the user may have installed on the wrong machine, indicating a configuration misunderstanding rather than a code defect. No concrete code path or reproducible bug is identified, and the track is agent_ai_infra, not llm_algorithm. The candidate lacks actionable technical detail and is not a credible code contribution."
   },
+  "288a8e0f0330f2c415921bf4d3c53e9965a0ab73100a764431779de13c7e028b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue reports success on transparent path but failure on standard path; PR #38148 claims to add vLLM-Omni videos API but lacks root-cause coverage"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Add vLLM-Omni video endpoint support to LiteLLM proxy routing",
+      "Implement request translation for /v1/videos to vLLM-Omni API",
+      "Add error handling for unsupported video generation parameters"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #38148; need to coordinate or differentiate",
+      "API behavior changes might affect existing video generation users",
+      "vLLM-Omni API may have version-specific differences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the failing curl command against a local LiteLLM proxy with vLLM-Omni backend",
+      "Add integration test for /v1/videos endpoint with vLLM-Omni",
+      "Run existing test suite for hosted_vllm module"
+    ],
+    "unknowns": [
+      "Exact error message from the 400 response is not provided in the issue body",
+      "Whether the existing PR #38148 fully addresses the issue or only partially"
+    ],
+    "why": "Issue reports a concrete failure when using LiteLLM proxy for vLLM-Omni video generation, with a successful transparent path and a failing standard path. Root cause is likely missing support for vLLM-Omni video endpoints in LiteLLM's routing/translation layer. Existing PR #38148 adds vLLM-Omni videos API but lacks root-cause coverage and validation, leaving room for a more complete fix."
+  },
   "288c03e55ab3345981bb6f6272dcc58385b56584ae716bc23141fc1b60dd0d53": {
     "confidence": 0.85,
     "contradictions": [],
@@ -16411,6 +16445,30 @@
     ],
     "why": "Issue reports a high-impact streaming tool-call truncation bug with a clear repro, but root cause is not isolated. Existing PR #6632 likely addresses the same code path but is not linked to the issue and lacks maintainer confirmation. Gate requires HUMAN_REVIEW."
   },
+  "52966f6d772149e0b57e33490b6f31498a77b9c803d48a3a9238e0777026c934": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "tokenizer_manager.py: modify generate_request to handle cancellation separately and add force flag to abort_request"
+    ],
+    "risks": [
+      "Potential behavior change in abort_request could affect other callers; need to ensure force flag is only used in the intended path."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by launching server, starting streaming generation, killing client mid-stream, and verifying request aborts within 2s and no error logs. Add regression test simulating client disconnect."
+    ],
+    "unknowns": [
+      "Whether PR #35936 already fully addresses the issue; requires manual comparison."
+    ],
+    "why": "Issue provides a clear root cause (regression from revert #34160), a concrete reproduction with commands, and a verified minimal fix. The proposed changes are actionable and testable."
+  },
   "52d11d8d2b5efeb3f3140d87c5b71907a0668902c84add7b88f646be47828f89": {
     "confidence": 0.85,
     "contradictions": [
@@ -17910,6 +17968,31 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "Issue is a well-reproduced, high-impact bug with a clear root cause (hardcoded FAST_SKIP_DIRS in discover.c) and maintainer acknowledgment, but the repository requires assignment and no maintainer has assigned the issue, so work should not start without assignment."
+  },
+  "5812595526d1103a4e6c8d03ecc78c9025806829fc6687be45b7b0d0fa9918d8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()"
+    ],
+    "risks": [
+      "Potential hash changes may invalidate existing caches, but that is acceptable and expected. The fix may need to consider other config parameters that affect shapes, but the issue focuses on num_speculative_tokens."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that verifies SpeculativeConfig.compute_hash() returns different hashes for different num_speculative_tokens values, and optionally a regression test that runs the minimal reproduction with two different k values to ensure no cache collision."
+    ],
+    "unknowns": [
+      "Whether the proposed fix is already implemented in the open PR #53367, but the issue itself is actionable regardless."
+    ],
+    "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. The proposed fix is concrete and directly addresses the missing hash factor. The issue includes a minimal reproduction and expected behavior, making it actionable."
   },
   "582cb224371c3dff946a3bf108e5137eb045abcc860d25d4fb9e5cb9e52ba3b1": {
     "confidence": 0.85,
@@ -38239,6 +38322,37 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue describes a plausible silent-fallback bug in Go EPP scorers, but root cause of the FFI failure for multimodal requests is unconfirmed; existing PR #13365 overlaps semantically and is draft with no tests, requiring maintainer comparison before new work."
+  },
+  "bafc3b4f333abfb2094a94bb51426d1c3f5c45fac122ae91fbab269b41a53440": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comment from virajchoudhary says Zen route recovered, but raymelon reports continued failures on Aug 25; also EmranHejazi suggests context window limit, conflicting with raymelon's controlled data."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "provider routing/selection logic (e.g., selectProvider sticky handling)",
+      "possibly the Zen API gateway or provider configuration for x-preview-f-free/ox-alpha-free"
+    ],
+    "risks": [
+      "The issue may be partially resolved (Zen route recovered per comment), but Go route still failing; fix may need to cover both routes.",
+      "Root cause may be upstream provider-side, not client code; if so, code changes may not fully resolve."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl command with tools array to reproduce the failure; add a regression test that sends a request with tools to the affected model and asserts a successful response.",
+      "Test with and without tools to confirm the issue is tools-specific.",
+      "Run existing provider routing unit tests and integration tests for the affected model."
+    ],
+    "unknowns": [
+      "Whether the failure is purely client-side routing or upstream provider issue; whether the Go route is still failing; whether maintainers have a preferred fix approach."
+    ],
+    "why": "The issue provides a concrete, reproducible failure (curl command) with clear evidence that the failure is specific to the 'tools' parameter on the Ox Alpha free model, while other models work. Recent comments add strong evidence of deterministic per-session routing behavior, pointing to a sticky routing issue in the provider selection logic. The root cause is well-scoped to the provider routing/selection path, and a validation path exists via the provided curl reproduction and regression tests."
   },
   "bb0e43a69a836e5c64e46d2090bbc23b98ac46f1935180d98f613d6647713431": {
     "confidence": 0.7,
