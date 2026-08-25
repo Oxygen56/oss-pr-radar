@@ -1760,6 +1760,38 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a flaky CI failure with cudaErrorStreamCaptureInvalidated but no root cause identified; reproduction attempts on H100 passed, and the failure may be H200-specific or due to cross-test state. No maintainer investigation or design confirmation exists, and the issue is disclosure-only with no actionable code path."
   },
+  "096d45ef10575008992b997e6736f4f1c3859998915dd57fddeaa14df9547b02": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue mentions stage 2 as TileLang warmup failure, but the reproduction comment identifies it as CUDA graph capture failure; both are consistent with the same root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "Update DeepGEMM pin to 8b1392b in vLLM v0.27.1 or backport the fix from PR #52035",
+      "Add regression test for SM90/H20 CUDA graph capture with DeepSeek-V4-Flash"
+    ],
+    "risks": [
+      "The fix may not be fully bisected to a specific DeepGEMM commit, so future regressions could occur",
+      "The workaround requires rebuilding DeepGEMM, which may not be feasible for all deployments"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the A/B test with DeepGEMM revisions e21c821 and 8b1392b on 8x H20 with the exact launch command from the issue, verifying successful startup and chat completion",
+      "Add a CI test that launches DeepSeek-V4-Flash with TP=8 on SM90 and runs a simple generation to catch CUDA graph capture failures"
+    ],
+    "unknowns": [
+      "The exact DeepGEMM commit that introduced the regression is not bisected",
+      "Whether the fix in PR #52035 is fully merged into v0.28.0 and main is not explicitly confirmed"
+    ],
+    "why": "The issue provides a clear root cause: a regression in the DeepGEMM revision pinned by vLLM v0.27.1 causes CUDA illegal memory access during CUDA graph capture on SM90 (H20). A controlled A/B test with two DeepGEMM revisions confirms the fix, and the fix is already merged in PR #52035. The evidence includes concrete code anchors and a validation path."
+  },
   "09781cee75435ba3d10d4eca11d08d1b0697587d32058faa625331c17ae7cdac": {
     "confidence": 0.7,
     "contradictions": [],
@@ -13472,6 +13504,35 @@
     ],
     "why": "Issue provides a clear Windows-specific bug with reproduction steps, a working workaround, and maintainer confirmation that the gap is real and actionable. The root cause is likely PowerShell stdout capture failure when invoking the Electron/Node runtime directly, and the fix path is concrete."
   },
+  "491b714ffd6f704e1d3dfabe1d44b86d20c4f3347b52c54ef512f672371da8df": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "verl/trainer/sft_trainer.py",
+      "verl/trainer/sft_trainer_ray.py",
+      "shared validation predicate helper",
+      "CPU regression tests for validation guard"
+    ],
+    "risks": [
+      "Potential behavior change for edge cases like test_freq=0 with final-step validation; ensure final-step validation still occurs when loader present"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run provided reproduce.py against baseline and fixed revision to confirm 6/6 bug and 6/6 fixed",
+      "Add focused CPU tests covering absent/present val_dataloader, periodic/final steps, test_freq=0 and positive"
+    ],
+    "unknowns": [
+      "Exact patch content not provided, but proposed fix is clear and testable"
+    ],
+    "why": "Issue provides a precise root cause (operator precedence in validation condition), a deterministic CPU-only reproduction with expected/actual pairs, and a concrete fix with regression tests. This is a clear, actionable bug in the SFT training control flow."
+  },
   "4944fbc0144194155c39e2d510a9b6901b096286f8d461aeb1bb56fbf3aaa8c0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -16222,6 +16283,34 @@
     ],
     "why": "The issue provides a precise root cause, a failing test case, and a minimal fix direction for a user-visible bug in URL normalization. The fix is localized and low-risk, with clear acceptance criteria and regression coverage."
   },
+  "555b9f00c7790df063132588bcf3879edd0d317279c62a345f218a0b9e3e7b28": {
+    "confidence": 0.85,
+    "contradictions": [
+      "No contradictions found; all evidence is consistent."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "Fix in Qwen3NextFullAttentionDecoderLayer layer 3, likely in attention or MLP submodule, to correct batch-size-dependent output corruption."
+    ],
+    "risks": [
+      "The root cause is localized to a whole layer, not a specific kernel; further splitting may be needed to identify the exact sub-module. The fix may interact with CUDA graph and block reuse features, requiring careful validation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script with batch sizes 1, 4, 5, 14, 15, 20 and compare token outputs against the single-request baseline; add a regression test that asserts identical outputs for batch sizes above the threshold."
+    ],
+    "unknowns": [
+      "The exact sub-module within layer 3 causing the issue is not yet identified; the fix may require further localization."
+    ],
+    "why": "The issue provides a concrete, reproducible bug with a clear expected vs actual output, and the comments include a detailed root-cause localization to a specific decoder layer (layer 3) with a stable boundary. The evidence includes a deterministic reproduction, ablation results, and a clear validation path, making the contribution actionable."
+  },
   "5560a1a4d1b186884678e361ee53fdb3e0b3a76fe4edf71ffa88b7173c810a89": {
     "confidence": 0.6,
     "contradictions": [
@@ -16594,6 +16683,33 @@
       "Whether maintainers have a preferred design for passing AIC perf config to engine args; whether PR #13478 already fixes this issue."
     ],
     "why": "Issue provides a clear, reproducible bug with exact commands and byte-identical results, identifies the root cause in the replay entrypoint wiring, and contrasts with the working mocker path. The fix is a targeted code change in the replay argument handling, with a concrete test gap identified."
+  },
+  "573d404a77c69fbb72e57da433e4422e160fb11ac2adf26ea6cdd4f0b62b3769": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "streaming_chunk_builder_utils.py",
+      "proxy/common_request_processing.py",
+      "logging_utils.py"
+    ],
+    "risks": [
+      "Changing stream_chunk_builder output shape may affect downstream consumers expecting merged content; need to verify compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided Python repro to confirm failure, then add a regression test asserting stream_chunk_builder preserves n>1 choices and content separation."
+    ],
+    "unknowns": [
+      "No maintainer confirmation on desired output shape for n>1 streaming; but issue's expected behavior is clear and reasonable."
+    ],
+    "why": "Issue provides a precise root cause in stream_chunk_builder ignoring choice index, a minimal Python repro, and proxy-level evidence showing logging/spend corruption. The fix is well-scoped and testable."
   },
   "5754c8a955d38adc9f5830ca287790d00d79c773f451748793d5e1272b02fd63": {
     "confidence": 0.8,
@@ -28021,6 +28137,37 @@
     ],
     "why": "The issue identifies a concrete root cause: the capability guard checks symbol presence and device capability but not cubin arch coverage, causing the fused MTP kernel to be selected on sm_110a where no kernel image exists. The reproduction is clear, a workaround is verified, and the suggested fixes are actionable."
   },
+  "8c9646213c2ecb164a8413ddc74cc7aeda173e35c0cf488a2c056a7ce0fe9107": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "PrefillRouter::generate cancellation propagation",
+      "SGLang cancellation monitor request ID handling",
+      "Chunked Prefill cancellation boundary logic",
+      "KV-transfer resource draining"
+    ],
+    "risks": [
+      "Potential race conditions in request registration and cancellation",
+      "Need to ensure compatibility with existing SGLang abort_request semantics",
+      "May require coordination with existing PR #13703 to avoid duplication"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided steps: deploy disaggregated SGLang with NIXL, send long prompt with max_tokens=1, disconnect client, measure short request latency; add regression test for prefill cancellation before first token"
+    ],
+    "unknowns": [
+      "Exact maintainer design preferences for cancellation propagation",
+      "Whether existing PR #13703 will be updated to cover root cause"
+    ],
+    "why": "The issue provides a detailed root cause analysis with specific code paths and lifecycle gaps, a clear reproduction scenario, and expected behavior. The candidate is actionable and technically valuable, addressing a user-visible bug in a critical path. The existing PR #13703 is incomplete and lacks root-cause coverage, leaving room for a competitive contribution."
+  },
   "8cb3b7bcaaf3c6c8ffef73796514f44617eeb168c098602a4df55d7a997ce1f8": {
     "confidence": 0.7,
     "contradictions": [],
@@ -38022,6 +38169,38 @@
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and the deterministic gate requires human review. Need maintainer confirmation on design and PR comparison before starting work."
   },
+  "c3394128ed1a20206f24ca129de4ad1b5d11ab099172874837f20e6eaea7f64b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue frames the behavior as a bug, but the triage bot notes the comment above shouldCollapseResult documents MCP as intentionally non-collapsible, classifying it as an enhancement."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/components/messages/CompactToolGroupDisplay.tsx",
+      "packages/cli/src/ui/components/messages/ToolMessage.tsx",
+      "packages/cli/src/ui/utils/resumeHistoryUtils.ts",
+      "packages/core/src/tools/mcp-tool.ts"
+    ],
+    "risks": [
+      "Changing collapse behavior for MCP tools may alter documented intent (comment in ToolMessage.tsx lists MCP as deliberately non-collapsible), requiring maintainer acceptance.",
+      "Propagating MCP provenance may require updating resume history serialization and detailed-display gate to avoid losing payloads behind Ctrl+O."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Set up the reference MCP filesystem server, read an 81-line markdown file, and assert the transcript collapses the result to one line with full payload available via Ctrl+O.",
+      "Add a regression test verifying that MCP tool results with status 'Success' and string/ANSI renderer are collapsed, while errors and in-progress calls remain expanded."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to accept the behavior change and which suggested direction (structural propagation vs. broader collapse) is preferred."
+    ],
+    "why": "Issue provides a precise root cause with code anchors and a concrete validation path: MCP tool results are never collapsed because the UI's categorization map only knows built-in display names, and MCP provenance is lost before the collapse decision. The suggested fix (propagate MCP provenance structurally) is actionable and testable via a minimal reproduction with the reference MCP server."
+  },
   "c3615545397d7030d00234d19dfbe432992f6ee9db7917b720965fbb594f8085": {
     "confidence": 0.7,
     "contradictions": [],
@@ -42858,6 +43037,38 @@
       "Whether existing PRs fully resolve the issue and are mergeable"
     ],
     "why": "Issue clearly identifies a regex mismatch causing headroom_retrieve not injected. However, two open PRs (#36245, #36581) already target the same headroom.py path and marker semantics, requiring maintainer comparison to avoid duplicate work."
+  },
+  "d840cb1e2e2c0ac90189766c2ee338a164205417bd0bc0895f54b0b585782c06": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "deepspeed/sequence/layer.py",
+      "DistributedAttention",
+      "_SeqAllToAll",
+      "uneven_heads_all2all"
+    ],
+    "risks": [
+      "Potential compatibility issues with external callers relying on the global shim; need to ensure fallback behavior is preserved.",
+      "The fix depends on unmerged PR #8241; rebasing and merging may introduce conflicts."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the deterministic two-DistributedAttention forward/backward regression test with different head counts (e.g., 3 vs 2 over sp=2) to ensure the first model's split is unaffected by the second.",
+      "Run real 2-rank Gloo GQA round trip for Q=6/KV=3 to verify [4,2] shards and exact gradients."
+    ],
+    "unknowns": [
+      "Exact implementation details of the contributor's patch are not fully provided, but the approach is described sufficiently."
+    ],
+    "why": "Issue clearly identifies a process-wide global causing incorrect KV head splitting for multiple models, with a concrete root cause and a suggested fix mirroring an existing per-model approach. A contributor has a ready implementation with local regression tests, and the validation path is well-defined."
   },
   "d89f4a7b39b7a43715f1e9e96b359f2915f673bb39e90e609fee9f510165daf4": {
     "confidence": 0.8,
@@ -51746,6 +51957,32 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a silent correctness failure in LMCache P/D disaggregation with a concrete reproduction and a contributor's root-cause hypothesis (token-count mismatch in the adapter). However, the supplied evidence flags a potential duplicate issue #52620 sharing stack/failure signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not confirmed, and the proposed fix path depends on maintainer confirmation of the adapter behavior."
+  },
+  "fe431422d8ada5b04bc541b162d2e38f5f4c5f340ca7a7d91a8cccadaa16d60f": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "ONNX frontend Expand op shape inference",
+      "CPU plugin output shape handling for scalar Expand"
+    ],
+    "risks": [
+      "Potential impact on other Expand edge cases or scalar handling in other plugins"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test using the provided ONNX model to assert output shape () for scalar int32 input with empty target shape",
+      "Run existing ONNX frontend and CPU plugin unit tests"
+    ],
+    "unknowns": [
+      "Exact code location for the shape bug (frontend vs plugin) not yet identified"
+    ],
+    "why": "Issue provides a minimal ONNX model, exact reproduction script, and clear expected vs actual output shapes, establishing a concrete root cause in Expand shape handling for empty target shape. The fix is localized and testable."
   },
   "feacb19b7cf392f775baf197c9c83a1b3750f61bca8020cf5aff7308ae69be1a": {
     "confidence": 0.7,
