@@ -9571,6 +9571,16 @@ def test_ingestion_accepts_current_ci_green_continuation_result(tmp_path):
 
     assert result["ok"] is True, result["errors"]
     assert result["ingested"] == [{"key": "a/b#1", "stage": "CI_GREEN"}]
+    with store.connect() as connection:
+        ingested_payload = json.loads(
+            connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key='a/b#1' AND event_type='TASK_RESULT_INGESTED'
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()["payload_json"]
+        )
+    assert ingested_payload["taskId"] == "intent-1"
+    assert ingested_payload["threadId"] == "thread-1"
 
 
 def test_ingestion_skips_published_terminal_missing_worktree_after_result_ingested(tmp_path):
@@ -11524,6 +11534,71 @@ def test_conflicting_published_binding_event_rolls_back_all_backfill_mutations(t
 
     assert managed.read_task("intent-1") == task_before
     with managed._connection() as connection:
+        assert [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM managed_results ORDER BY result_key"
+            ).fetchall()
+        ] == results_before
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='PUBLISHED_TASK_RESULT_BACKFILLED'"""
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_published_backfill_cannot_rollback_a_newer_concurrent_pr_head(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    managed, context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        degrade_stage=False,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    stale_head = str(value["headSha"])
+    concurrent_head = "e" * 40
+    managed.upsert_pr(
+        pr_key="a/b#9",
+        owner="a",
+        repo="b",
+        number=9,
+        head_sha=concurrent_head,
+        pr_url=pr_url,
+        state="OPEN",
+        auto_created=True,
+        source_kind="MANAGED_PUBLICATION_RECEIPT",
+        source="github-authoritative-reconciliation",
+        observed_at=iso_z(datetime.now(UTC) + timedelta(seconds=1)),
+    )
+    task_before = managed.read_task("intent-1")
+    with managed._connection() as connection:
+        results_before = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM managed_results ORDER BY result_key"
+            ).fetchall()
+        ]
+
+    with pytest.raises(PermissionError, match="not bound to the current PR"):
+        managed.record_published_task_result(
+            task_id="intent-1",
+            pr_key="a/b#9",
+            pr_url=pr_url,
+            publication_commit_sha=str(context["publicationReceipt"]["commitSha"]),
+            head_sha=stale_head,
+            commit_sha=stale_head,
+            result_digest="a" * 64,
+            stage="PR_OPEN",
+        )
+
+    assert managed.read_task("intent-1") == task_before
+    with managed._connection() as connection:
+        assert connection.execute(
+            "SELECT head_sha FROM managed_prs WHERE pr_key='a/b#9'"
+        ).fetchone()["head_sha"] == concurrent_head
         assert [
             dict(row)
             for row in connection.execute(

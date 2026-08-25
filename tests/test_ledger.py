@@ -2830,7 +2830,11 @@ def test_interrupted_validation_followup_can_enter_controlled_recovery(tmp_path)
     assert store.unresolved_recoveries()[0]["threadId"] == "thread-1"
 
     store.record_task_result_ingested(
-        "a/b#1", digest="new-result-digest", stage="VALIDATION_PENDING"
+        "a/b#1",
+        digest="new-result-digest",
+        stage="VALIDATION_PENDING",
+        task_id="intent-1",
+        thread_id="thread-1",
     )
 
     assert store.recovery_candidates(min_age_minutes=0) == []
@@ -3094,6 +3098,53 @@ def test_validation_followup_is_write_ahead_and_rearms_for_a_new_result(tmp_path
 
     assert store.validation_followup_was_sent(thread_id="thread-1") is True
     assert store.validation_followup_was_sent(thread_id="missing-thread") is False
+
+
+def test_stale_validation_followup_requires_result_from_same_thread(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="validation-result",
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="validation-result")
+    store.commit_validation_followup(thread_id="thread-1", result_digest="validation-result")
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE events SET created_at=? WHERE event_type='VALIDATION_FOLLOWUP_SENT'",
+            (iso_z(datetime.now(UTC) - timedelta(hours=3)),),
+        )
+    assert store.stale_validation_followups(min_age_minutes=90)
+    assert store.recovery_candidates(min_age_minutes=0)
+
+    store.record_task_result_ingested(
+        "a/b#1", digest="other-thread-result", stage="PR_OPEN", thread_id="thread-2"
+    )
+    assert store.stale_validation_followups(min_age_minutes=90)
+    assert store.recovery_candidates(min_age_minutes=0)
+
+    store.record_task_result_ingested(
+        "a/b#1", digest="unattributed-result", stage="PR_OPEN"
+    )
+    assert store.stale_validation_followups(min_age_minutes=90)
+    assert store.recovery_candidates(min_age_minutes=0)
+
+    store.record_task_result_ingested(
+        "a/b#1", digest="same-thread-result", stage="PR_OPEN", thread_id="thread-1"
+    )
+    assert store.stale_validation_followups(min_age_minutes=90) == []
+    assert store.recovery_candidates(min_age_minutes=0) == []
 
 
 def test_validation_followup_unknown_delivery_can_be_safely_abandoned(tmp_path):

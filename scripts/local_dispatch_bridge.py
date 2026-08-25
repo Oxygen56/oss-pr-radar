@@ -2336,6 +2336,8 @@ def _recoverable_published_result(
         "key": str(context["key"]),
         "digest": result_digest,
         "stage": stage,
+        "taskId": str(context.get("intentId") or context["threadId"]),
+        "threadId": str(context["threadId"]),
     }
     if stage == "FIX_READY":
         return recovered
@@ -2435,6 +2437,8 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                     result_receipt["key"],
                     digest=result_receipt["digest"],
                     stage=result_receipt["stage"],
+                    task_id=result_receipt.get("taskId"),
+                    thread_id=result_receipt.get("threadId"),
                 )
                 if result_receipt.get("wakeDigest"):
                     store.record_followup_result(
@@ -13907,7 +13911,11 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         payload={"resultDigest": result_digest},
                     )
                     store.record_task_result_ingested(
-                        candidate["key"], digest=result_digest, stage="IMPLEMENTATION_READY"
+                        candidate["key"],
+                        digest=result_digest,
+                        stage="IMPLEMENTATION_READY",
+                        task_id=str(candidate.get("intentId") or candidate["threadId"]),
+                        thread_id=str(candidate["threadId"]),
                     )
                     ingested.append({"key": candidate["key"], "stage": "IMPLEMENTATION_READY"})
                     continue
@@ -14128,7 +14136,11 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         }
                     )
                     store.record_task_result_ingested(
-                        candidate["key"], digest=digest, stage="VALIDATION_PENDING"
+                        candidate["key"],
+                        digest=digest,
+                        stage="VALIDATION_PENDING",
+                        task_id=str(candidate.get("intentId") or candidate["threadId"]),
+                        thread_id=str(candidate["threadId"]),
                     )
                     ingested.append(
                         {
@@ -14208,7 +14220,11 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     ingested.append({"key": candidate["key"], "stage": stage})
                 store.record_task_result_ingested(
-                    candidate["key"], digest=digest, stage="FIX_READY"
+                    candidate["key"],
+                    digest=digest,
+                    stage="FIX_READY",
+                    task_id=str(candidate.get("intentId") or candidate["threadId"]),
+                    thread_id=str(candidate["threadId"]),
                 )
                 if current_wake_digest:
                     store.record_followup_result(
@@ -14238,7 +14254,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     pr_url=published_result_pr_url,
                     head_sha=str(value.get("headSha") or value.get("head_sha") or ""),
                 )
-                store.record_task_result_ingested(candidate["key"], digest=digest, stage=stage)
+                store.record_task_result_ingested(
+                    candidate["key"],
+                    digest=digest,
+                    stage=stage,
+                    task_id=str(candidate.get("intentId") or candidate["threadId"]),
+                    thread_id=str(candidate["threadId"]),
+                )
                 if current_wake_digest:
                     store.record_followup_result(
                         candidate["key"],

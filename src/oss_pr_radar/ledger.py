@@ -2982,9 +2982,12 @@ class RadarLedger:
                    JOIN events s ON s.opportunity_key=o.key
                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                      AND s.dedupe_key=d.dedupe_key
+                     AND json_extract(s.payload_json,'$.threadId')=
+                         json_extract(d.payload_json,'$.threadId')
                    WHERE o.stage IN (
                      'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
                    ) AND s.created_at<=?
+                     AND json_extract(d.payload_json,'$.threadId')=i.thread_id
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
                        WHERE quarantine.opportunity_key=o.key
@@ -3010,6 +3013,7 @@ class RadarLedger:
                            'TASK_RESULT_INGESTED','PUBLISHED_TASK_RESULT_BACKFILLED'
                          )
                          AND result.id>s.id
+                         AND json_extract(result.payload_json,'$.threadId')=i.thread_id
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events recovery
@@ -4519,6 +4523,8 @@ class RadarLedger:
                    JOIN events s ON s.opportunity_key=o.key
                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                      AND s.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
+                     AND json_extract(s.payload_json,'$.threadId')=
+                         json_extract(d.payload_json,'$.threadId')
                    WHERE o.stage IN (
                      'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
                    ) AND s.created_at<=?
@@ -4529,6 +4535,8 @@ class RadarLedger:
                            'TASK_RESULT_INGESTED','PUBLISHED_TASK_RESULT_BACKFILLED'
                          )
                          AND result.id>s.id
+                         AND json_extract(result.payload_json,'$.threadId')=
+                             json_extract(d.payload_json,'$.threadId')
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
@@ -8528,14 +8536,27 @@ class RadarLedger:
                 iso_z(datetime.now(UTC)),
             )
 
-    def record_task_result_ingested(self, key: str, *, digest: str, stage: str) -> None:
+    def record_task_result_ingested(
+        self,
+        key: str,
+        *,
+        digest: str,
+        stage: str,
+        task_id: str | None = None,
+        thread_id: str | None = None,
+    ) -> None:
         with self.transaction() as connection:
+            payload = {"stage": stage, "resultDigest": digest}
+            if task_id:
+                payload["taskId"] = task_id
+            if thread_id:
+                payload["threadId"] = thread_id
             self._event(
                 connection,
                 key,
                 "TASK_RESULT_INGESTED",
                 digest,
-                {"stage": stage},
+                payload,
                 iso_z(datetime.now(UTC)),
             )
 
