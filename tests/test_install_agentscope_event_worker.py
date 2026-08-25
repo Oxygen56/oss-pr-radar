@@ -30,3 +30,27 @@ def test_launchagent_path_resolves_codex_runtime(tmp_path, monkeypatch):
 
     assert launch_path == str(codex_dir)
     assert shutil.which("codex", path=launch_path) == str(codex_dir / "codex")
+
+
+def test_install_does_not_kill_run_at_load_worker(tmp_path, monkeypatch):
+    code_root = tmp_path / "release"
+    (code_root / "scripts").mkdir(parents=True)
+    (code_root / "release-manifest.json").write_text("{}\n", encoding="utf-8")
+    (code_root / "scripts" / "agentscope_event_worker.py").write_text(
+        "# event worker\n", encoding="utf-8"
+    )
+    calls = []
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "run",
+        lambda argv, **kwargs: calls.append((argv, kwargs)),
+    )
+
+    MODULE.install(
+        tmp_path / "runtime",
+        code_root=code_root,
+        home=tmp_path / "home",
+    )
+
+    commands = [argv[1] for argv, _kwargs in calls]
+    assert commands == ["bootout", "bootstrap"]

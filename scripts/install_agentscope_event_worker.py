@@ -77,7 +77,6 @@ def install(
     if load:
         subprocess.run(["launchctl", "bootout", service], check=False, capture_output=True)
         subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)], check=True)
-        subprocess.run(["launchctl", "kickstart", "-k", service], check=True)
     return {"ok": True, "label": LABEL, "plist": str(path), "loaded": load, "spec": value}
 
 
