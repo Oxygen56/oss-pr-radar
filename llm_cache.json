@@ -1933,6 +1933,39 @@
     "wait_reason": null,
     "why": "Issue reports a reproducible intermittent failure in page.evaluate when pages are created and closed in a loop, with a clear reproduction pattern and comparative data. No existing PR or related issue found, and the gate allows work. Root cause is not identified but the issue provides enough signal for a focused investigation and regression test."
   },
+  "0a08cb2cfda9252017e89a25949beb50a233bd20edafbc320a73158d983f7caa": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue mentions TileLang kernel warmup, but reproduction shows failure during CUDA graph capture after DeepGEMM warmup"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "DeepGEMM pin update in vllm",
+      "CUDA graph capture path for SM90",
+      "MHC/MLA kernel warmup"
+    ],
+    "risks": [
+      "The fix may be already merged in main, reducing contribution value",
+      "Potential need to bisect DeepGEMM commits for a more targeted fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with v0.27.1 and DeepGEMM e21c821 on 8x H20, then apply 8b1392b and verify startup and chat completion",
+      "Run existing DeepGEMM tests and vLLM CUDA graph tests on SM90"
+    ],
+    "unknowns": [
+      "Exact DeepGEMM commit causing regression not bisected",
+      "Whether the fix is already fully merged in main"
+    ],
+    "why": "The issue provides a clear root cause: a DeepGEMM revision regression between e21c821 and 8b1392b causes CUDA illegal memory access during CUDA graph capture on SM90/H20. The A/B test with controlled variables isolates the failure to the DeepGEMM pin, and the fix is confirmed in main and v0.28.0. This is a concrete, actionable algorithm/kernel bug with a clear validation path."
+  },
   "0a4ac8b4b7346ac989d82d68c9156d254bf895bbab86a139e8f3b07b67d42960": {
     "confidence": 0.7,
     "contradictions": [],
@@ -7522,6 +7555,39 @@
       "Maintainer preference on timeout vs redelivery"
     ],
     "why": "Issue provides a clear symptom, root cause (unresolved capability.request for hook.afterRun), reproducible steps with control, and expected behavior (timeout or redelivery). It is actionable for an agent-infra fix."
+  },
+  "289182d117aa88a19d4d5b90194d0d31907135310c69c823b3f2f426f25ce750": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Triage notes current behavior is documented intent (MCP output is the answer), while issue frames it as a bug; resolved as enhancement."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/components/messages/CompactToolGroupDisplay.tsx",
+      "packages/cli/src/ui/components/messages/ToolMessage.tsx",
+      "packages/cli/src/ui/utils/resumeHistoryUtils.ts",
+      "packages/core/src/tools/mcp-tool.ts"
+    ],
+    "risks": [
+      "Changing documented behavior may require maintainer acceptance; ensure errors and in-progress calls remain expanded.",
+      "Propagating provenance flag may affect other UI paths; need to extend detailedDisplay gate to keep Ctrl+O working."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with MCP filesystem server reading an 81-line file; assert successful MCP string results collapse to one line and full payload appears on Ctrl+O.",
+      "Add unit tests for isCollapsibleTool and shouldCollapseResult with MCP display names and provenance flag.",
+      "Test resume path: persist history with MCP tool, reload, verify collapse behavior."
+    ],
+    "unknowns": [
+      "No maintainer approval or design confirmation yet; but that is not a blocker for actionability."
+    ],
+    "why": "Issue provides a precise root cause with code anchors and a concrete validation path (reproduce with MCP filesystem server). The proposed fix direction is sound and the triage confirms the behavior is intentional but enhancement-worthy. No blocking unknowns."
   },
   "28c1dcbb30293846510b755c7907e6e5856fc32c9dff56ab14017967d892fb22": {
     "confidence": 0.9,
@@ -18400,6 +18466,41 @@
     ],
     "why": "Issue describes a clear user-visible bug with a concrete root cause: scheduler returns stale assigned_worker_id without checking current worker discovery. Reproduction steps and expected behavior are explicit, and a draft fix exists. No competing PR or issue found."
   },
+  "5ee2313d68c93b824b3c942cbf47040e642a9521c45b28d2cb850ee1ac4055a3": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #18695 is marked as COVERAGE but root_cause_coverage is false, indicating partial coverage."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "dataset_wiki_generator.py",
+      "compilation_template_group_api.py",
+      "api_utils.py",
+      "test_wiki_empty_eligible_message.py"
+    ],
+    "risks": [
+      "Potential overlap with merged PR #18695; need to confirm remaining gaps.",
+      "Changing error messages may affect existing tests or user expectations."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the silent no-op with a Built-in dataset and verify the new error message appears.",
+      "Run unit tests in test/unit_test/rag/svr/task_executor_refactor/test_wiki_empty_eligible_message.py.",
+      "Add a regression test for the pre-validation path if implemented."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a pre-validation UI change vs. just error message improvement.",
+      "Exact scope of remaining work after PR #18695."
+    ],
+    "why": "Issue provides a clear root cause (wiki eligibility requires compilation template resolution, absent for Built-in datasets) and a concrete reproduction path. The candidate is actionable: improve error messaging or pre-validation. Existing PR #18695 already merged with a guard for missing compilation config, but the issue's broader UX problem (misleading message, no pre-validation) remains partially unaddressed. The evidence includes source-verified root cause and a test plan."
+  },
   "5f225779e17c986d138bc4d049860f192656ad81c161a597de915b541fa4c3f6": {
     "confidence": 0.8,
     "contradictions": [],
@@ -22950,6 +23051,31 @@
     ],
     "why": "Issue provides a clear root cause (retract only unlocks radix-owned prefix via dec_lock_ref, leaving KV resident), concrete code anchors, and a measurable validation path (prefix match and logprob comparison). Existing PRs are incomplete or merged without root-cause coverage, leaving actionable work."
   },
+  "727dea58bf5dee93cf19bab4899ea405dc32ffb3caa7601c6ebc3ad75a5db21d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm backend router request forwarding",
+      "model name normalization in vLLM backend"
+    ],
+    "risks": [
+      "Potential impact on existing model name handling for other backends or non-custom models; need to ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by loading a custom VLM via vLLM backend and sending a chat request; verify the forwarded model name matches the served-model-name. Add a regression test that checks the request path uses the same model name as the vLLM subprocess."
+    ],
+    "unknowns": [
+      "Exact code location where the router constructs the request model name; whether the fix should strip the user. prefix or align the router to use the full served name."
+    ],
+    "why": "The issue clearly identifies a model name mismatch between the vLLM subprocess (served-model-name with user. prefix) and the lemonade router forwarding requests with the bare model name, causing 404 and silent failure. This is a concrete, reproducible bug with logs and multiple user confirmations."
+  },
   "728fd9dfee48442beceb511650a5e8f905a21872d61ac0ece3b1f88a92d1ef48": {
     "confidence": 0.85,
     "contradictions": [],
@@ -26999,6 +27125,34 @@
       "Whether PR #13650 actually addresses the flashinfer skew or only cupy pinning"
     ],
     "why": "Issue identifies a clear root cause: version skew between baked flashinfer-jit-cache and upgraded flashinfer-python causes serve-time registry failure. Evidence includes reproduction command, observed error, and verified workaround. Maintainer triage engaged and current image no longer reproduces, but structural hazard remains latent. Open PR #13650 has semantic overlap but does not cover root cause. Actionable fix: couple package versions or document unsupported workflow."
+  },
+  "86364f8cc8f6ba00b87e85de66d2dbf7432b6d644d05e1c78c7800d67c67b70f": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "extensions/vscode/package.json",
+      "manifest regression test for duplicate command IDs"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #13191; maintainer may prefer that implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a test that parses package.json and fails on duplicate command IDs",
+      "Run focused Vitest suite and VS Code typecheck/lint"
+    ],
+    "unknowns": [
+      "Whether maintainer has a preferred fix approach or will accept a new PR"
+    ],
+    "why": "Issue reports duplicate command registration error in WSL; recent comment identifies root cause as duplicate command ID in package.json manifest, with a concrete fix and regression test plan. Existing PR #13191 addresses the same issue but lacks tests, leaving room for a more complete contribution."
   },
   "8637c7669c00501add34a56c06c7e7b5ae3d69e3289d2b4a21f2129e3528007a": {
     "confidence": 0.85,
@@ -45675,6 +45829,40 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue clearly describes a missing atomic compaction API in observational memory, with source-level reproduction and expected behavior. However, the gate decision is HUMAN_REVIEW and the issue is not maintainer-approved, so work should not start without maintainer confirmation. The proposed API shape is flexible and design confirmation is needed."
   },
+  "e203ec9aa23f803403a59978318a95a6a3564e207f7cc9e1074ae5166f723b02": {
+    "confidence": 0.85,
+    "contradictions": [
+      "No contradictions found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py",
+      "vllm/distributed/kv_transfer/kv_connector/v1/nixl/push_scheduler.py",
+      "vllm/distributed/kv_transfer/kv_connector/v1/nixl/base_scheduler.py",
+      "vllm/distributed/kv_transfer/kv_connector/v1/nixl/pull_scheduler.py",
+      "vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_connector.py"
+    ],
+    "risks": [
+      "Potential interaction with existing PRs (e.g., #50457, #52244, #53663) that may already address parts of the issue; need to compare implementations to avoid duplication.",
+      "Changing scheduler/connector behavior may affect other models or KV transfer modes; need to ensure no regression in non-Mamba scenarios."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided reproduction script to send the same 7681-token request twice with NixlConnector push mode and assert the second request returns 200 instead of 500.",
+      "Add a regression test that simulates a full local prefix-cache hit with Mamba N-1 truncation and verifies num_new_tokens is recomputed or zero-compute path is handled."
+    ],
+    "unknowns": [
+      "Whether any of the overlapping PRs (#50457, #52244, #53663) already fully fix this issue; requires manual comparison.",
+      "Whether the fix should reconcile cache results or implement a zero-compute path; maintainer preference unknown."
+    ],
+    "why": "The issue provides a precise root cause: local prefix-cache lookup before Mamba N-1 truncation leads to num_new_tokens=0 and assertion failure. It includes a concrete reproduction script and identifies affected code paths. The proposed fix is actionable and testable."
+  },
   "e219454bce705516f97bb37b62b7ef704ebb6541eb8807562f1f5843d8ff3f54": {
     "confidence": 0.85,
     "contradictions": [
@@ -52273,6 +52461,30 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a silent correctness failure in LMCache P/D disaggregation with a concrete reproduction and a contributor's root-cause hypothesis (token-count mismatch in the adapter). However, the supplied evidence flags a potential duplicate issue #52620 sharing stack/failure signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not confirmed, and the proposed fix path depends on maintainer confirmation of the adapter behavior."
+  },
+  "fe32c9e91d883770a72cc340756d2a710395efc5f0ace6b4e323adadf7c7e5e4": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "CLI argument parsing and session resume path in cline/cline"
+    ],
+    "risks": [
+      "Potential behavior change for existing --id interactive usage; need to ensure backward compatibility and maintainer design preferences."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that runs the CLI headless with --json --id <session-id> and a positional prompt, asserting the session resumes and the prompt is processed; also test piped stdin and stdin redirect variants."
+    ],
+    "unknowns": [
+      "Exact code location of the --id routing logic; maintainer confirmation on intended support for headless resume."
+    ],
+    "why": "Issue provides a concrete reproduction with ordered steps, multiple input channels, and a clear root cause: the --id path unconditionally routes into the interactive branch and drops the prompt. A community comment confirms this diagnosis. The expected behavior and workaround are explicit, making the fix actionable."
   },
   "fe431422d8ada5b04bc541b162d2e38f5f4c5f340ca7a7d91a8cccadaa16d60f": {
     "confidence": 0.9,
