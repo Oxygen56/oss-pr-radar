@@ -17302,6 +17302,38 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a user-visible regression with a clear repro and suspected cause, but no maintainer confirmation or active investigation. Existing PRs are closed and not directly linked, so a new PR could be viable, but the root cause is only hypothesized and requires maintainer validation."
   },
+  "59c68f9fe61b66d55a7eb01d0db675c79dc80592bec9938607c94560bdf7cf61": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue mentions stage 2 as TileLang warmup crash, but the comment identifies it as CUDA graph capture failure; both point to the same DeepGEMM regression."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "DeepGEMM integration or pin update",
+      "CUDA graph capture path in vLLM engine"
+    ],
+    "risks": [
+      "The fix may be already merged in main or v0.28.0, reducing the need for a new PR.",
+      "The root cause is in an external dependency (DeepGEMM), so the fix may require updating the pin rather than vLLM code."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided A/B test with DeepGEMM revisions e21c821 and 8b1392b on 8x H20, verifying successful startup and chat completion.",
+      "Add a regression test that launches the model with the specified flags and asserts engine initialization succeeds."
+    ],
+    "unknowns": [
+      "Whether the fix is already present in the current main branch or v0.28.0, which would make the issue already resolved.",
+      "The exact DeepGEMM commit that introduced the regression, though not necessary for actionability."
+    ],
+    "why": "The issue provides a clear root cause: a DeepGEMM revision regression between e21c821 and 8b1392b causes CUDA graph capture failure on SM90/H20. A controlled A/B test confirms the fix, and the issue includes concrete reproduction steps and code anchors. This is a kernel-level algorithm bug with a specific validation path."
+  },
   "59d15a3247a7bb496205ef093328f5ee525ca92e11a475ebe26d343370876c69": {
     "confidence": 0.8,
     "contradictions": [],
@@ -22955,6 +22987,39 @@
       "Whether any existing PR or issue already has a confirmed root cause and fix"
     ],
     "why": "The issue reports a concrete LLM quantization regression (FP8 to MXFP4) with a clear reproduction and numerical comparison, but the root cause is unconfirmed and the supplied gate requires HUMAN_REVIEW. Existing PRs overlap semantically but none directly address the issue, so a new PR would need maintainer guidance to avoid duplication and to confirm the intended fix scope."
+  },
+  "739fe47362b6fa955e5fbbb4bd884b57892d56c8d8efc93c4df5d5d5cc47c3b4": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comment from virajchoudhary indicates zen/v1 recovered, but Go route still failing per #44503; raymelon reports deterministic per-session failures on zen/v1 on Aug 25, suggesting intermittent or partial resolution"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "restore Ox Alpha tool adapter on zen/v1 and zen/go/v1",
+      "possibly adjust provider routing/stickyProvider for x-preview-f-free"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix (e.g., routing vs adapter)",
+      "Risk of unintended API behavior changes if fix is too broad"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl repro with tools against x-preview-f-free on zen/v1 and ox-alpha-free on zen/go/v1, expecting valid tool_calls",
+      "Run control tests with nemotron-3-ultra-free and deepseek-v4-flash to ensure no regression",
+      "Add a regression test that sends a tools array to the affected model and asserts a successful tool call"
+    ],
+    "unknowns": [
+      "Exact upstream cause (dead shard vs adapter bug) not confirmed",
+      "Whether maintainers have a preferred fix approach or are already working on it"
+    ],
+    "why": "Issue provides a minimal curl repro, control models, and multiple independent confirmations; root cause is isolated to the Ox Alpha free model's tool path on both Zen routes. Evidence includes a concrete validation path (curl repro and control tests) and code anchors for the relevant tool/routing modules."
   },
   "73b3b578b6c385bb30c9b560551e4e276fb224baa9e1c4ffcead5020d479c84d": {
     "confidence": 0.7,
@@ -35560,6 +35625,38 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a systemic JSON parsing failure in the Memory MCP server. A maintainer-triggered bot investigation claims a root cause (console.error stderr interference on Windows) and a fix commit, but the fix is not yet merged and the issue remains open. The candidate is actionable but requires maintainer review of the proposed fix and confirmation of the root cause before new work starts."
   },
+  "b7d6b48fb100891f74f4b2c8850a5ced0a1ef4727399dd686a0e4bf4156308e1": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Triage comment notes current behavior is documented intent (enhancement) while issue frames it as a bug."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/components/messages/CompactToolGroupDisplay.tsx",
+      "packages/cli/src/ui/components/messages/ToolMessage.tsx",
+      "packages/cli/src/ui/utils/resumeHistoryUtils.ts",
+      "packages/core/src/tools/mcp-tool.ts"
+    ],
+    "risks": [
+      "Changing collapse behavior for MCP tools may alter documented intent (comment in ToolMessage.tsx lists MCP as deliberately non-collapsible); maintainer design preference needed.",
+      "If the detailed-display gate is not extended, collapsed payloads may disappear from transcript entirely instead of moving behind Ctrl+O."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the reference filesystem MCP server reading an 81-line file; assert the result collapses to one line and full payload is available via Ctrl+O.",
+      "Add a regression test verifying that successful MCP string results are collapsible while errors and in-progress calls remain expanded."
+    ],
+    "unknowns": [
+      "Maintainer acceptance of the behavior change is not confirmed; no explicit approval or design confirmation."
+    ],
+    "why": "Issue provides a precise root cause with code anchors and a concrete validation path: MCP tool results are never collapsed because the UI categorization map only knows built-in display names, and MCP provenance is lost before the collapse decision. The suggested fix (propagate MCP provenance structurally) is actionable and testable."
+  },
   "b8133a2661a9e9af8a3267fc2547c0bd80c412a716a798af6e93281c631b15fc": {
     "confidence": 0.7,
     "contradictions": [],
@@ -45486,6 +45583,39 @@
       "Maintainer design preference among the proposed fix options; whether any existing PR addresses this issue."
     ],
     "why": "The issue provides a detailed, reproducible bug with clear root cause: OM removes observed messages and only forwards model messages to sub-agents, breaking context forwarding and messageFilter. The proposed fixes are actionable and align with documented behavior."
+  },
+  "e3580e7af20647c0ed8b44f9eb803bd3b2f9b93ebe2c1bf136e022c5780ac784": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #18691 is open and addresses the misleading message, while PR #18695 is merged and claims coverage; the issue remains open, indicating the root cause is not fully resolved."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "rag/svr/task_executor_refactor/dataset_wiki_generator.py",
+      "api/apps/restful_apis/compilation_template_group_api.py",
+      "api/utils/api_utils.py",
+      "test/unit_test/rag/svr/task_executor_refactor/test_wiki_empty_eligible_message.py"
+    ],
+    "risks": [
+      "Potential overlap with PR #18691 which already fixes the misleading message; need to ensure the new work is complementary and not duplicative.",
+      "Changing the error message or adding pre-validation may affect existing API behavior; need to avoid breaking clients that rely on the current message."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that reproduces the silent no-op for Built-in datasets and asserts an actionable error message or pre-validation failure.",
+      "Run the existing unit tests in test_wiki_empty_eligible_message.py and any new tests for the pre-validation logic."
+    ],
+    "unknowns": [
+      "Whether the maintainers prefer a pre-validation approach over a message-only fix, and whether the additional API defects (template group creation, pipeline binding) are in scope for this issue."
+    ],
+    "why": "The issue provides a clear root cause (wiki eligibility gate in dataset_wiki_generator.py) and a reproducible scenario. The candidate is actionable: improve the misleading error message and/or pre-validate wiki generation. Existing PR #18691 already addresses the message, but the issue also calls for pre-validation and docs, leaving room for a complementary fix. The evidence includes source-verified code paths and a concrete test plan."
   },
   "e36b12961891edcbbbce82f213260d5901d150c7a218f94997c91ff608a9af72": {
     "confidence": 0.85,
