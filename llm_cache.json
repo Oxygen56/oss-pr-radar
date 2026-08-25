@@ -1880,6 +1880,38 @@
     ],
     "why": "The issue reports a reproducible multi-node TP deadlock with strong evidence of NCCL collective desync, but the root cause is not definitively identified; multiple orthogonal causes (NCCL build, FlashInfer kernel livelock, TP-divergence) are discussed. The deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
   },
+  "09265ed4cd2a0419314ddd9bc53c769a71f23e858ad8cde231f0de6300f8eb77": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vLLM XPU Dockerfile to include UCX with ze_ipc transport",
+      "NEO driver version bump to fix cross-process IPC copy on BMG",
+      "Potential fallback logic in NixlConnector for unsupported P2P paths"
+    ],
+    "risks": [
+      "Dependency on upstream UCX PR (openucx/ucx#11218) and Intel driver fix may be delayed",
+      "Hardware-specific issue may not be reproducible on other GPU platforms",
+      "Potential performance regression if fallback to CPU buffer is used"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided deployment YAMLs on Intel Arc Pro B60 with vLLM v0.27.1",
+      "Measure KV transfer throughput with kv_buffer_device: xpu vs cpu to validate P2P path",
+      "Run a small model (e.g., Qwen3-8B) with fixed seed and compare outputs between CPU and XPU buffer devices"
+    ],
+    "unknowns": [
+      "Exact NEO driver version that fixes the IPC copy bug on BMG",
+      "Whether vLLM maintainers plan to support this hardware configuration in the near term"
+    ],
+    "why": "The issue identifies a concrete root cause: missing ze_ipc transport in UCX and a Level Zero driver bug (ZE_RESULT_ERROR_INVALID_ARGUMENT) on Intel BMG, with a clear reproduction path and measurable performance impact. It is actionable for vLLM maintainers to address the UCX/NEO integration for PCIe P2P KV transfer."
+  },
   "09658bbf48a2c35e197367c0eec5898d2ec01c4ad1c0bc4b0faceb737f80d851": {
     "confidence": 0.6,
     "contradictions": [
@@ -11997,6 +12029,41 @@
     ],
     "why": "Issue reports a clear user-visible bug with a detailed root cause: delayed registry-to-GUI projection overwrites newly added models. The bug is reproducible and affects key provider configuration paths. No competing PR or issue found, and the maintainer gate allows work."
   },
+  "3b6bef92b264e24cbea0522f02e5ddbdf75ee92891f67547b848b7c96cf14d4e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue is categorized as llm_algorithm but the bug is in streaming logic, not an algorithm mechanism."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Streaming response handling in SGLang server",
+      "Tool-call parser integration for DeepSeek models",
+      "Flush logic for pending content before tool_calls delta"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #36154; need to ensure distinct contribution.",
+      "Hardware requirements (4x H200) may limit reproduction for some contributors."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl command against a local SGLang server with DeepSeek-V4-Flash-0731 and verify that all content chunks are streamed before tool_calls.",
+      "Add a regression test that simulates streaming with both content and tool_calls, asserting no content truncation."
+    ],
+    "unknowns": [
+      "Exact root cause in code (e.g., specific buffer flush condition) not yet identified.",
+      "Whether the open PR #36154 fully resolves the issue; its root-cause coverage is missing."
+    ],
+    "why": "The issue provides a clear reproduction with expected vs actual streaming output, identifying a concrete bug in streaming content truncation when both content and tool_calls are present. The root cause is localized to streaming buffer/flush logic, and the suggested fix is actionable. Although the track is llm_algorithm, the issue is a functional bug in the serving layer, not an algorithm improvement; however, the evidence includes algorithm-related mechanisms (model_architecture, numerics_quantization, kernel_algorithm) and a concrete validation path via the provided curl command. The presence of an open PR (#36154) with incomplete evidence does not block actionability; a new contribution can add root-cause coverage and tests."
+  },
   "3b6ddf0ef7fe4f4bd739981d1f2c5581cc7270b78729f5c0ebdfbc19d12b8d33": {
     "confidence": 0.9,
     "contradictions": [],
@@ -19448,6 +19515,37 @@
     ],
     "wait_reason": null,
     "why": "Issue provides a precise root cause: ForwardMode.is_prefill()/is_extend() include TARGET_VERIFY causing profiler stage misclassification under speculative decoding, plus synchronous trace export blocking the scheduler. Concrete repro and expected fixes are given, and no competing PR exists."
+  },
+  "5d6a9947b8e6e5b2c3bb76d53ec0bd1df81baedaf1fc429d35a846ac8bf303c2": {
+    "confidence": 0.85,
+    "contradictions": [
+      "One comment reports failure at known-good commit 0406431609f on a quietbox, contradicting the issue's claim that this commit is good; however, this may be a different failure mode or environment-specific."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "active_erisc-crt0.cc",
+      "fabric_firmware_initializer.cpp",
+      "tt_fabric_utils.h"
+    ],
+    "risks": [
+      "The fix may affect other architectures or modes if gp initialization is not conditional; need to ensure it does not break the cold-link fix from PR #53968."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided minimal repro (ttml.core.distributed.enable_fabric(32) + open_device([32,1])) on a Blackhole galaxy with the fix; verify 'OPENED OK' and clean teardown.",
+      "Add a regression test that checks gp is initialized in active_erisc-crt0.cc and that the local handshake completes on BH 2-ERISC mode."
+    ],
+    "unknowns": [
+      "Whether the fix has been validated on the exact hardware and firmware versions mentioned; the exact mechanism of gp initialization in active_erisc-crt0.cc is not fully specified."
+    ],
+    "why": "The issue provides a clear regression range, a minimal repro, and a confirmed root cause in a comment: PR #53968 enabled gp-relative relaxation in active-ERISC kernels without initializing gp on BH ACTIVE_ETH proc 0, causing the local handshake atomic to target a wrong NoC address. The proposed fix (initialize gp in active_erisc-crt0.cc) is concrete and testable."
   },
   "5d91d83dbbf7bdbd21dfd6b09b99dd83d48b0e6550b9cb370cb904506f42d0a4": {
     "confidence": 0.85,
@@ -28174,6 +28272,36 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a flaky CI failure in torch.compile CUDA graph capture, but root cause is unknown and reproduction is incomplete. The only comment indicates the exact config passes in isolation on H100, and the failure may be due to cross-test GPU state on H200. No maintainer investigation or confirmation of a distinct root cause. The issue is a CI failure report, not a concrete algorithm bug with a clear fix path."
   },
+  "84afda246a838ecc3c423103e68cae8346f5860a1e6a3d76c349b1b8a317edf8": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue proposes core DAP integration, but maintainer triage recommends MCP-first alternative"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "DAP-to-MCP bridge server",
+      "debugging skill layer"
+    ],
+    "risks": [
+      "Scope creep if core DAP client is pursued without maintainer approval",
+      "Potential duplication with MCP-based debugging tools"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Prototype DAP-MCP bridge and test with a sample debugger session",
+      "Validate agent tool consumption and orchestration via skill"
+    ],
+    "unknowns": [
+      "No concrete reproduction or root cause to fix",
+      "No maintainer approval for core implementation"
+    ],
+    "why": "The issue is a broad feature request for DAP integration, but the maintainer triage explicitly recommends a smaller MCP-first alternative and labels it need-discussion, indicating the proposed scope is not actionable as-is. The evidence shows no existing code anchors or reproduction, and the maintainer suggests community prototype before core work."
+  },
   "84b0ea046ab1ae63478e4db0b868ce472117604e8460725ee01c97c889e5cf82": {
     "confidence": 0.85,
     "contradictions": [
@@ -35805,6 +35933,37 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a clear runtime failure (Forward context not set) in MiniMax H3 audio encoding, with detailed traceback and code anchors. However, an existing open PR #33863 has semantic overlap with the same code paths and scheduler context, and the issue does not reference it. The PR is large, has failed CI, and may already address the root cause. A new PR would risk duplication and conflict; maintainer review is needed to determine if the existing PR covers this issue or if a separate fix is warranted."
+  },
+  "ad7f039d8739e08088a43eb8531db6d20f58955b20863c8bca14b55967697b33": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #33784 is draft and lacks tests, while #32153 and #31962 are more complete but not directly linked to this issue; no direct contradiction in evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "RadixCache retract path in cache_finished_req",
+      "flush_cache logic to handle waiting_queue during pause",
+      "possibly scheduler pause/resume flow"
+    ],
+    "risks": [
+      "Changing retract semantics may affect performance or existing behavior; maintainer may prefer a separate flush path.",
+      "Potential interaction with ongoing PRs (e.g., #33784, #32153) that address similar issue."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by pausing generation with mode='retract', then checking KV cache residency via instrumentation; assert no prefix match after weight update and logprob difference is zero.",
+      "Add regression test for flush_cache during retract pause to ensure it succeeds or retract fully releases KV."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer self-contained retract vs. separate flush; whether existing PRs will be merged and supersede this work."
+    ],
+    "why": "Issue provides a clear root cause (retract only decrements lock refs for radix-owned prefix, leaving KV resident), measured impact (old-weight KV reuse causing logprob difference), and a concrete validation path (instrument prefix matching, compare logprobs). The suggested fix is actionable and aligns with documented retract semantics."
   },
   "adef651b4b3603057ec024e05e61f09b0eaec725bc670c797cde4c91bac81943": {
     "confidence": 0.7,
@@ -44478,6 +44637,36 @@
     ],
     "why": "The issue clearly identifies a user-visible bug: process-local OAuth state causes invalid_client errors in multi-replica deployments. The root cause is well-documented with code references and a deterministic reproduction. No competing PR or issue exists, and the fix is actionable: introduce shared storage with expiration and atomic consume semantics."
   },
+  "d435214bc5197a4358e4a5659652f8dbc26f4462a42d89c4f300dc83eddc77c2": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/llamafactory/train/ppo/trainer.py",
+      "pyproject.toml",
+      "error message hint"
+    ],
+    "risks": [
+      "Changing TRL range may require adapting PPO code to new TRL API, which could be non-trivial.",
+      "Pinning older TRL may conflict with other dependencies."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Install trl==0.24.0 and run PPO training with a small model and synthetic data to reproduce the ImportError.",
+      "After fix, run PPO training with trl==0.24.0 and verify no version error and training proceeds."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer updating code to new TRL API or pinning old TRL."
+    ],
+    "why": "Issue provides a clear traceback showing PPO fails due to TRL version mismatch: code requires trl>=0.8.6,<=0.9.6 but installed trl==0.24.0. Commenter reproduces and identifies root cause: pyproject.toml allows trl>=0.18.0,<=0.24.0, while trainer.py hard-codes legacy range. This is a concrete, actionable bug in the PPO training path."
+  },
   "d43db7b71e91bb6637185008ce0bfb1162d67cf94f99705a214982a47a284672": {
     "confidence": 0.7,
     "contradictions": [
@@ -49093,6 +49282,38 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports pipeline parallelism unsupported for deepseek-v4-flash-0731, with a concrete repro command and traceback. However, the supplied evidence flags a potential duplicate issue #52735 sharing stack signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not yet confirmed; the traceback stops at speculative config creation, not the pipeline parallel path. Maintainer confirmation is needed to avoid duplicate work."
   },
+  "e5b54040998f52478b102a7c070150067592e930fb5aa973b0108b833faf18be": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Comments suggest context-window or session-sticky routing, while original report emphasizes tools-specific failure."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "provider routing/failover logic",
+      "tool request handling in Zen API"
+    ],
+    "risks": [
+      "Potential duplicate issue #45076 may already cover this; need to confirm no overlapping fix.",
+      "Root cause may be upstream provider-side, limiting in-repo fixability."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the provided curl payload to assert a non-error response or proper tool_calls for x-preview-f-free.",
+      "Run targeted unit tests for provider selection and tool serialization."
+    ],
+    "unknowns": [
+      "Whether the issue is already fixed or tracked by #45076.",
+      "Exact upstream provider behavior and whether in-repo changes can resolve it."
+    ],
+    "why": "Issue provides a concrete curl reproduction showing tools-triggered 'Endpoint is unavailable' for a specific free model, with controls on other models. Comments add session/directory determinism and context-window hypotheses, but root cause is not definitively identified. The contribution is actionable: add a failing test and investigate provider routing/tool path."
+  },
   "e5e70970a54c7bf74b605382e5d0a970a2401f7b37b44a35ede10edd00dd30a6": {
     "confidence": 0.85,
     "contradictions": [],
@@ -52804,6 +53025,38 @@
     ],
     "why": "Issue clearly identifies a security-relevant bug in a shared download path where Content-Type is trusted without byte validation, with a verified repro and suggested fix direction. However, the deterministic gate requires HUMAN_REVIEW, and the existing PR #7162 is closed with technical CI failures, so maintainer confirmation is needed before starting new work."
   },
+  "f53222cf8b44be2522c6078c57d43738bd4e4db315d54c1676525a3f4ac062cf": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #51366 is marked as having semantic overlap but direct_code_overlap is false, and it lacks tests; issue claims root cause is platform-independent while PR title suggests lazy import."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints/openai/api_server.py",
+      "model_hosting_container_standards integration",
+      "logging configuration handling"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix location (e.g., in model_hosting_container_standards) rather than lazy import.",
+      "The open PR #51366 may already cover the root cause; need to compare implementation boundaries before duplicating work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sets VLLM_LOGGING_CONFIG_PATH with a shared handler, imports vllm.entrypoints.openai.api_server, and asserts that INFO/WARNING logs from vLLM startup are not suppressed.",
+      "Run existing logging-related unit tests and the targeted package tests."
+    ],
+    "unknowns": [
+      "Whether the open PR #51366 fully resolves the issue and whether maintainers prefer that approach.",
+      "Exact logging configuration used in the reproduction (the custom VLLM_LOGGING_CONFIG_PATH content)."
+    ],
+    "why": "Issue provides a clear root cause: model_hosting_container_standards.logging_config.configure_root_logger() mutates shared root handler levels to ERROR, suppressing vLLM startup logs when a custom logging config shares handler objects. The reproduction path is concrete (import api_server, set VLLM_LOGGING_CONFIG_PATH, observe missing scheduler message). An open PR #51366 proposes a lazy-import fix but lacks regression tests and does not reference the issue, so the contribution remains actionable."
+  },
   "f551dd24ae243eb964acd68ee0a0dfe64fd2656d30fcfb4e52bf5f9bf02db0fc": {
     "confidence": 0.9,
     "contradictions": [
@@ -54877,6 +55130,33 @@
       "Maintainer confirmation or design preference on whether server-level enable/disable should emit notifications"
     ],
     "why": "Issue reports a concrete bug: server-level enable/disable do not emit ToolListChangedNotification, causing stale tool lists in connected clients. The code path is identified and a minimal fix is plausible, but the deterministic gate requires HUMAN_REVIEW and the issue lacks maintainer confirmation or design guidance."
+  },
+  "fc90f9ca0ca7e7655329b85b35034eb021b30214aafa10587ace882485ca2c90": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()"
+    ],
+    "risks": [
+      "Potential hash changes may invalidate existing caches, but that is acceptable and expected.",
+      "Need to ensure num_speculative_tokens_per_batch_size is handled correctly when None."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that creates two SpeculativeConfig instances differing only in num_speculative_tokens and asserts their compute_hash() outputs differ.",
+      "Optionally, run the minimal reproduction with k=9 then k=7 to verify no assertion failure."
+    ],
+    "unknowns": [
+      "Whether the proposed fix is already implemented in PR #53367, but that does not block the issue's actionability."
+    ],
+    "why": "The issue provides a clear root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm, and the issue involves a concrete mechanism (torch.compile cache key) with a clear validation path via reproduction and regression test."
   },
   "fc96c396852003bf83e3673f294b3adea018fdd7557c0bd5d4ea4fcd4c90f534": {
     "confidence": 0.8,
