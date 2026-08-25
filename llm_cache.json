@@ -586,6 +586,36 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue clearly identifies a real defect: ACP background updates are dropped because the provider stream ends at turn completion. The proposed fix direction (provider hook, routing, persistence, notifier) is plausible and matches existing patterns. However, the submission policy requires assignment, and the gate decision is HUMAN_REVIEW, so work cannot start without maintainer confirmation."
   },
+  "038284bf4ec253541773b9e8460b2c2ae79d97f1e70ee198c7774138cfa72bb9": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()"
+    ],
+    "risks": [
+      "The fix may require updating other hash consumers or cache invalidation logic.",
+      "Potential performance impact due to recompilation when k changes, but that is expected and acceptable."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that creates two SpeculativeConfig instances differing only in num_speculative_tokens and asserts their compute_hash() outputs differ.",
+      "Add an integration test that runs vLLM with num_speculative_tokens=9, then with num_speculative_tokens=7 using the same cache root, and verifies no assertion error occurs."
+    ],
+    "unknowns": [
+      "Whether the proposed fix is already implemented in the open PR #53367, which lacks tests and has CI failures; the issue's proposed fix may be superseded."
+    ],
+    "why": "The issue precisely identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative-token counts. It provides a concrete reproduction, expected vs actual behavior, and a proposed fix. The evidence includes code anchors and a clear validation path via recompilation and shape assertion checks."
+  },
   "03cf1f5ddd0de367908c9e51b00ef50e2c69f536f752393ef474cd375effea82": {
     "confidence": 0.7,
     "contradictions": [
@@ -943,6 +973,38 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue requests a feature to allow independent variable initialization in Dify workflows. It lacks a concrete root cause, code anchors, or reproduction steps. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required. However, the feature touches workflow runtime semantics and requires design confirmation from maintainers. No competing PRs or related issues found, but the absence of maintainer input and the need for API behavior changes make it premature to start."
+  },
+  "0585d95f54075424018bcaab653808ae6b6e63eb7af2258e330ccd8e74450305": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/storage/db/write-lock.ts",
+      "lib-esm/sqlite3.js",
+      "LibSQLStore transaction handling"
+    ],
+    "risks": [
+      "Changing transaction handling may affect performance or behavior for file: databases.",
+      "Upstream fix in libsql-client-ts may be required; coordination needed."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that runs the provided reproduction script and asserts tables persist after updateWorkflowState.",
+      "Run existing storage tests for LibSQLStore with :memory: and file: URLs."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a workaround in Mastra or an upstream fix in libsql-client-ts.",
+      "Exact scope of affected call sites beyond those listed."
+    ],
+    "why": "Issue provides a clear root cause (Sqlite3Client discards connection on interactive transaction, causing :memory: to be recreated empty), a minimal reproduction, and affected call sites. The fix is actionable: either avoid interactive transactions for :memory: or handle connection reuse. Evidence includes code anchors and a related upstream PR."
   },
   "05b2723286658721bf7dee7c9f672802a8a45df487096f97f7cbc7fc10ae9e49": {
     "confidence": 0.7,
@@ -31892,6 +31954,32 @@
     ],
     "why": "Issue clearly identifies a bug: ADK-generated eval session IDs violate Vertex AI Agent Engine constraints, causing eval failures. Root cause is in local_eval_service.py and validation mismatch in VertexAiSessionService. However, the deterministic gate says HUMAN_REVIEW, and there is no maintainer approval or design confirmation, so work should wait for maintainer direction."
   },
+  "9a1e434a3bce60a8958643985a7bebb3ca712267e8647e3341f7236fd49d3029": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "file write tool implementation",
+      "scheduler/cron state handling"
+    ],
+    "risks": [
+      "Potential maintainer design preferences; fix may need to avoid broad API changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that reproduces the Edit/Write no-op using the provided steps, then run targeted unit tests for the file write module and scheduler."
+    ],
+    "unknowns": [
+      "Exact root cause of the write no-op; whether the scheduler issue is related."
+    ],
+    "why": "Issue provides a clear, reproducible bug with ordered steps and evidence that Edit/Write tools return success without writing to disk. Root cause is not identified but the reproduction is concrete and actionable for a fix."
+  },
   "9a3b5453ca0f11fca9d3d9705c1d7d4088692c3970aff38c36f6540a4d51405c": {
     "confidence": 0.7,
     "contradictions": [
@@ -38228,6 +38316,33 @@
       "Run the existing ag-ui test suite and static checks to ensure no regression in valid snapshot emission cases."
     ],
     "why": "The issue provides a precise root cause, a deterministic no-LLM repro, production impact metrics, and a concrete suggested fix. However, the deterministic gate requires HUMAN_REVIEW, and maintainer triage is needed to confirm design preferences (e.g., whether to use pending-updates check vs. tool-name filter, and whether to introduce StateDeltaEvent at the boundary) and to disambiguate potential overlap with issue #7491."
+  },
+  "ba4966e547acb3723af0fb03a11cf1c46fdd68bfb37343291047d2782105ea21": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #35936 claims to fix the same issue but does not reference it and has technical failed checks; issue suggests a different minimal fix."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/tokenizer_manager.py: modify generate_request exception handling and abort_request force flag"
+    ],
+    "risks": [
+      "Potential behavior change in abort_request could affect other callers; need to ensure force flag is only used from create_abort_task."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that starts a streaming request, kills the client mid-generation, and asserts the request is aborted within the 2s window and no 'state was deleted' logs appear."
+    ],
+    "unknowns": [
+      "Whether PR #35936 fully resolves the issue or if the suggested fix is preferred by maintainers."
+    ],
+    "why": "Issue provides a detailed root cause with code-level analysis, a concrete reproduction, and a suggested fix. The bug is user-visible and performance-impacting. Although an open PR (#35936) overlaps semantically, it does not directly reference the issue and has technical gaps, so the opportunity remains actionable."
   },
   "ba49f4df1363c48ef447c3164fe079355eb5ce24ca6c11eaee49c9c73cdbec38": {
     "confidence": 0.85,
@@ -48731,6 +48846,36 @@
       "whether PR #6582 will be updated or superseded"
     ],
     "why": "Issue reports a real bug with strong evidence, but maintainer has explicitly linked PR #6582 as the candidate implementation and requested specific validation (long tool-loop case, non-empty preservation). Recent counter-evidence shows the sanitizer fix is incomplete, and the maintainer has redirected investigation to identify the mutation boundary, not to revive a persistence-only patch. The issue is now an upstream diagnostic/self-build candidate requiring maintainer-guided investigation."
+  },
+  "e61a836fc895e94c7dd04ff87ea5b9e2f9de71a50eb3862fe421a782ef74ee5a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Add vLLM-Omni videos API support to LiteLLM proxy",
+      "Implement /v1/videos endpoint translation to vLLM-Omni's /v1/videos/sync",
+      "Handle multipart form parameters and extra_params mapping"
+    ],
+    "risks": [
+      "Potential API behavior changes affecting existing video endpoints",
+      "Need to align with maintainer design preferences for provider-specific endpoints"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the 400 error using the provided curl commands against a local LiteLLM proxy with vLLM-Omni backend",
+      "Add integration tests for video generation endpoints, verifying successful response and correct parameter forwarding"
+    ],
+    "unknowns": [
+      "Exact error response body from the 400 (screenshots not parsed)",
+      "Whether maintainers prefer a generic solution or provider-specific extension"
+    ],
+    "why": "Issue clearly identifies a missing feature: LiteLLM proxy does not support vLLM-Omni's videos API, causing 400 errors when using the standard /v1/videos endpoint. The user provides a working transparent path and a failing path, establishing a concrete reproduction. A related PR #38148 exists but lacks root-cause coverage, leaving room for a more complete fix."
   },
   "e63a70b10d97940ab96e59b12f306347f81a5b54ec98103b974281b529c5fc74": {
     "confidence": 0.7,
