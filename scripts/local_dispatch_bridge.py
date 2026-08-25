@@ -15408,7 +15408,14 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                     )
                 except (OSError, RuntimeError, subprocess.SubprocessError):
                     pass
-                valid_workspace = thread_cwd == GITHUB_ROOT.resolve() and valid_origin
+                # Current project-scoped tasks start from GITHUB_ROOT, while
+                # older managed tasks were created directly in their bound
+                # worktree.  Both layouts bind the same verified repository;
+                # rejecting the legacy cwd strands otherwise valid follow-up
+                # and recovery turns after an upgrade.
+                valid_workspace = (
+                    thread_cwd in {GITHUB_ROOT.resolve(), worktree} and valid_origin
+                )
             else:
                 valid_workspace = (
                     thread_cwd == worktree

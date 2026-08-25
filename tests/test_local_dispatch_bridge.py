@@ -5748,6 +5748,62 @@ def test_recovery_accepts_github_project_thread_with_managed_worktree(monkeypatc
     assert result["recoverable"][0]["threadId"] == "thread-1"
 
 
+def test_recovery_accepts_legacy_thread_bound_to_its_managed_worktree(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    worktree = project_root / ".oss-pr-radar" / "worktrees" / "task" / "b"
+    worktree.mkdir(parents=True)
+    run_git(worktree, "init")
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            """CREATE TABLE threads (
+                id TEXT, archived INTEGER, title TEXT, first_user_message TEXT,
+                cwd TEXT, git_origin_url TEXT, updated_at INTEGER, rollout_path TEXT
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-1",
+                0,
+                "task",
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(worktree),
+                None,
+                1,
+                None,
+            ),
+        )
+
+    class Store:
+        def recovery_candidates(self, **_kwargs):
+            return [
+                {
+                    "key": "a/b#1",
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "threadId": "thread-1",
+                    "worktreePath": str(worktree),
+                }
+            ]
+
+        def unresolved_recoveries(self):
+            return []
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert result["blocked"] == []
+    assert result["recoverable"][0]["threadId"] == "thread-1"
+
+
 def test_pr_followup_list_defers_recently_active_threads(monkeypatch, tmp_path):
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
