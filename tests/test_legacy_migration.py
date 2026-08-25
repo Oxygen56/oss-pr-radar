@@ -165,6 +165,7 @@ def test_authoritative_reconciliation_closes_only_with_exact_evidence(tmp_path):
             {"url": "https://github.com/owner/repo/pull/1", "headSha": "head-1"},
             {"url": "https://github.com/owner/repo/pull/2", "headSha": "head-2"},
         ],
+        observed_at="2026-08-19T06:59:59Z",
     )
     result = reconcile_managed_pr_states(
         target,
