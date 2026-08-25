@@ -3911,6 +3911,37 @@
     ],
     "why": "Issue clearly identifies a reserved namespace collision in bedrock_mantle, but multiple open PRs already target the same transformation file with overlapping semantics, and the deterministic gate requires HUMAN_REVIEW. A new PR would risk duplicating existing work without maintainer direction."
   },
+  "141d9809872fa84668d65ca134559e55fb97c19363675f9ee6ac4ef71321bf6c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Propagate cancellation from original request context to Prefill context",
+      "Determine effective SGLang request ID before first output",
+      "Retain cancellation across request-registration race and dispatch abort after registration",
+      "Drain KV-transfer lifecycle safely"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #13703 which may already address the issue; need to compare and avoid duplication",
+      "Changes to cancellation lifecycle may affect normal request handling and require careful regression testing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided reproduction steps to create a failing test: deploy SGLang disaggregated with NIXL, send long prompt with max_tokens=1, disconnect client, verify short request is not delayed",
+      "Add unit tests for cancellation propagation and abort-after-registration logic"
+    ],
+    "unknowns": [
+      "Whether existing PR #13703 fully resolves the issue or has gaps that need addressing"
+    ],
+    "why": "The issue provides a clear bug description with reproduction steps, expected vs actual behavior, and a detailed code-path analysis identifying two lifecycle gaps. The root cause is well-defined: cancellation state is not shared between the original HTTP context and the remote Prefill context, and the SGLang cancellation monitor cannot abort before the first output because it learns the request ID only from the first response. This is a concrete, actionable bug fix opportunity."
+  },
   "149186126a654c01d756afbaa84ae2cc5975a5897fd145ff4579e1c2ec2039b1": {
     "confidence": 0.85,
     "contradictions": [
@@ -16441,6 +16472,36 @@
     "unknowns": [],
     "why": "The issue is a test-infrastructure bug report about Playwright timeouts and suite budget exhaustion. It is not an algorithm or model change; it lacks a concrete training objective, model mechanism, or numerical method. The track is agent_ai_infra, but the required algorithm evidence is null. The proposed changes are test configuration and timeout adjustments, which are not actionable code contributions in the algorithm sense."
   },
+  "5492c35d584647329795e0bccfa329be2ffbeb1ad903247d1eb8e346cccbf03b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "No contradictions found."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()",
+      "vllm/config/vllm.py: ensure VllmConfig.compute_hash() propagates the updated speculative config hash"
+    ],
+    "risks": [
+      "Potential hash collisions if other config fields are also omitted; need to ensure all shape-affecting fields are included.",
+      "Changing the hash may invalidate existing caches, causing recompilation overhead for users."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that constructs two SpeculativeConfig instances with different num_speculative_tokens and asserts their compute_hash() outputs differ.",
+      "Add an integration test that runs the minimal reproduction: start server with k=9, then k=7 without clearing cache, and verify no assertion error occurs."
+    ],
+    "unknowns": [
+      "Whether the proposed fix is sufficient to cover all shape-affecting fields (e.g., draft_tensor_parallel_size, target_tensor_parallel_size) or if additional fields need to be added."
+    ],
+    "why": "The issue provides a clear root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative-token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm and the issue involves model architecture and distributed training mechanisms, with a clear validation path via numerical regression or runtime assertion tests."
+  },
   "549637667c6965aa21ae7e5c3a4cdb071dd30a260dd050d394b4664e51b546b6": {
     "confidence": 0.9,
     "contradictions": [
@@ -25207,6 +25268,37 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue clearly identifies a client-side provenance loss in StreamableHTTPClientTransport and proposes a concrete, client-only fix with code anchors. However, the gate decision is HUMAN_REVIEW and there is no public reproduction, no maintainer approval, and no open PR to assess. The fix is actionable but requires maintainer confirmation on API surface and design."
+  },
+  "7a79c58e9c74df9241b8fd95a79a07588cff28b6dd1d2e7e896ee4386079f213": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #38106 is marked technical_complete but root_cause_coverage false; issue states root cause clearly"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "CustomStreamWrapper: pin response_id for GenericStreamingChunk path",
+      "Add regression test for stable id across streamed chunks"
+    ],
+    "risks": [
+      "Potential behavior change for providers that intentionally vary ids; need to ensure OpenAI contract compliance",
+      "Existing PR #38106 may be merged, requiring coordination"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with GigaChat provider or mock GenericStreamingChunk stream, assert all chunks share same id",
+      "Run existing streaming tests and add unit test for chunk_creator/model_response_creator"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific implementation approach",
+      "Exact test coverage in existing PR #38106"
+    ],
+    "why": "Issue clearly identifies a user-visible bug in streaming responses where GenericStreamingChunk-based providers generate a new id per chunk, breaking clients that merge by id. Root cause is precisely located in CustomStreamWrapper's handling of GenericStreamingChunk, with code anchors and a concrete repro. Existing PR #38106 attempts a fix but lacks root-cause coverage and has CI failures, leaving room for a more complete contribution."
   },
   "7aa644878ca18a33a4e7eb691ce7364ed91e88d3fd2280698b872f3758874cf1": {
     "confidence": 0.85,
@@ -34280,6 +34372,38 @@
     ],
     "why": "Issue provides a clear root cause and minimal repro, but requires maintainer design confirmation due to potential overlap with #7491 and need to align with maintainer preferences on fix scope."
   },
+  "abd25810afb13c1aaee4056fb760063b5d37df63312fa760024739669e9bc651": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/parser/parser_manager.py",
+      "vllm/parser/engine/parser_engine.py",
+      "vllm/parser/engine/adapters.py"
+    ],
+    "risks": [
+      "Potential overlap with issue #52544, though shared stack signatures are likely coincidental and not semantically related.",
+      "Fix may require careful handling of parser engine composition to avoid breaking existing DelegatingParser behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided minimal reproduction script on main and verify structural_tag is populated for both auto and required tool_choice.",
+      "Add a regression test parametrized over shared-engine parser pairs (e.g., qwen3 reasoning + qwen3_coder tool) to assert structural_tag is attached.",
+      "Verify server-side with logprobs that masked entries appear when strict tool calling is enabled."
+    ],
+    "unknowns": [
+      "Whether maintainers have already started work on this issue, but no open PRs were found."
+    ],
+    "why": "The issue provides a precise root cause: when reasoning and tool parsers share the same engine, ParserManager.get_parser returns the engine class directly, bypassing the DelegatingParser that attaches structural tags. The bug is isolated to the frontend attachment, with engine-side functionality verified working. A minimal CPU-only reproduction and expected vs actual output are provided, making the fix actionable."
+  },
   "abe619337c4746698c86629090e62ad52d03058731db42e5b30622465b76ee8f": {
     "confidence": 0.7,
     "contradictions": [],
@@ -35431,6 +35555,34 @@
       "Exact interaction between connector presence and mamba spec-verify rollback that causes corruption."
     ],
     "why": "Issue provides a detailed experiment matrix isolating the corruption to speculative decoding with any KV connector attached, even with zero token transfer, and identifies a suspected code path. Maintainer comment confirms a relevant fix (#50344) but reporter's backport test shows corruption persists, narrowing the root cause to connector presence effects beyond the lookup branch. This is a concrete, reproducible bug with clear validation path."
+  },
+  "b2488d117df24330ef29c2f9cc9162b1ac4785364025fb98e8d5fdd580a73ad4": {
+    "confidence": 0.9,
+    "contradictions": [
+      "No contradictions in the supplied evidence; all comments consistently confirm the bug and its boundary."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "Fix in Qwen3NextFullAttentionDecoderLayer layer 3, likely in attention backend or MLP path, to ensure batch-size invariance in greedy decoding."
+    ],
+    "risks": [
+      "The root cause is localized to a whole layer, not yet a specific kernel; the fix may require deeper kernel-level changes and could affect performance or other models."
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that runs the reported prompt at batch sizes 1 and 5 (or 8) with greedy decoding and asserts token-identical outputs; include a CPU/GPU reference comparison and fixed seed."
+    ],
+    "unknowns": [
+      "The exact kernel or sub-operation within layer 3 causing the divergence is not yet identified; the fix may depend on GPU architecture (L20 vs 4090) or specific kernel selection."
+    ],
+    "why": "The issue reports a deterministic correctness bug in Qwen3.5-2B generation under batch sizes >4, with a clear reproduction (curl commands, config), expected vs actual outputs, and extensive maintainer-led localization narrowing the failure to layer 3 of the decoder. The evidence includes a concrete validation path (token-level comparison, ablation matrix) and identifies a specific model mechanism (attention/MLP in decoder layer) that can be fixed and regression-tested."
   },
   "b2497ac01dcaa0c1c4ce11bc3759ba5dd59314ae45bf30f53275df7459de699e": {
     "confidence": 0.85,
