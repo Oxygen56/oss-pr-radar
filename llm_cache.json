@@ -8599,6 +8599,33 @@
     ],
     "why": "Issue reports a user-visible bug with a plausible code path but lacks a confirmed root cause; open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design confirmation is needed before implementation."
   },
+  "2d9b48bcf6167642f6c73822667fc9bb00fe5fea0a25da0aada2df46bdaaa77f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/managers/scheduler.py",
+      "python/sglang/srt/dllm/mixin/scheduler.py"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #35645; need to ensure the fix is not redundant.",
+      "Changing scheduler control flow may affect other scheduling paths; need to verify no regression in chunked prefill behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that sets Scheduler.chunked_req to consume all remaining chunk budget, places a request in waiting_queue, runs get_new_batch_prefill(), and asserts that the waiting request is not processed for cache matching or load-back."
+    ],
+    "unknowns": [
+      "Exact implementation details of the fix (e.g., where to check budget state) are not specified, but this is normal implementation uncertainty."
+    ],
+    "why": "Issue provides a clear root cause (scheduler fails to check budget after resuming chunked request) and a deterministic reproduction path at the scheduler level. The expected behavior is well-defined, and the fix is localized to scheduler control flow. Existing PR #35645 addresses the same issue but lacks tests, leaving room for a more complete contribution."
+  },
   "2dcce8d6a0c9a61b631a497605ac494c1223924d8dc07c5121f5345f57d091c6": {
     "confidence": 0.85,
     "contradictions": [],
@@ -19345,6 +19372,35 @@
     ],
     "why": "The issue identifies a concrete bug in the gemma4 tool parser: tool_choice='required' is not enforced, leading to prose-only responses with finish_reason='tool_calls' and empty tool_calls. Root cause is partially identified (finish_reason translation in #53255) and the enforcement gap is clearly described. The issue provides a reproduction loop and evidence of failure rates, and the code paths are anchored in the parser and tool-calling logic. This is a valid LLM algorithm bug with a clear validation path."
   },
+  "63bc9d26bdaf31fb367c86d795041826e76e24135ec616280e8d2b68bb4c525d": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "browser_use/llm/openai/chat.py",
+      "browser_use/llm/azure/chat.py",
+      "browser_use/llm/browser_use/chat.py",
+      "tests/ci/models/test_llm_openai.py"
+    ],
+    "risks": [
+      "Potential behavior change if empty entries were intentionally used as wildcards, but issue argues they should not be accepted silently.",
+      "Need to ensure consistent handling across all providers (OpenAI, Azure, Vercel) to avoid divergence."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the provided failing test to tests/ci/models/test_llm_openai.py and run it to confirm failure, then implement fix and rerun to pass.",
+      "Run existing test suite for the affected modules to ensure no regressions."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to reject empty entries at construction or filter them during matching."
+    ],
+    "why": "Issue provides a clear root cause (empty string in reasoning_models matches all models due to substring check), a concrete failing test, and expected behavior. The fix is localized and testable."
+  },
   "63c2c6842dfb53aac8ec95ce8573fe20c92283820baaab480a1bbf4f08ed924d": {
     "confidence": 0.8,
     "contradictions": [],
@@ -19423,6 +19479,35 @@
       "Whether maintainers have a preferred design (per-client cancellation vs endpoint-scoped sharing)"
     ],
     "why": "The issue identifies a concrete resource leak in the Rust runtime: each Endpoint::client() call spawns a reconciliation task that retains a clone of the Client, preventing garbage collection of per-client routing state. The root cause is clearly traced to monitor_instance_source_with_cancellation using primary_token() and cloning the Client. The expected behavior and reproduction steps are specific, and the fix is actionable without requiring design confirmation."
+  },
+  "64270f5b59c7073359dad29ba7fd9c3da8bbac12ad135c7b7fcb78bf525015e8": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The reporter's follow-up contradicts the initial hypothesis that the connector-conditional lookup is the root cause, as corruption persists after applying the suggested fix."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py",
+      "vllm/v1/core/kv_cache_manager.py",
+      "vllm/v1/core/kv_transfer/kv_connector.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #52244; need to compare implementation boundaries before duplicating work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided workload and connector attached under speculative decoding; add a regression test that runs the same scenario and checks for output corruption or runaway generation."
+    ],
+    "unknowns": [
+      "Whether the corruption reproduces on the latest main/nightly build, as the reporter has not yet tested it."
+    ],
+    "why": "The issue provides a detailed experiment matrix, a suspected code path, and a concrete reproduction path. The maintainer's comment and the reporter's follow-up confirm the root cause is not the connector-conditional lookup but something about having a connector registered under speculative decoding. This is a clear, actionable bug with a defined validation path."
   },
   "64422d1cae521529ca82d68f348875dbb4f0450393cd30cf3db2667d46a7b876": {
     "confidence": 0.85,
@@ -22588,6 +22673,35 @@
       "Exact code location and current implementation of ElevenLabs speech-to-text provider in LiteLLM"
     ],
     "why": "Issue clearly identifies missing pass-through of ElevenLabs diarization parameters in LiteLLM's speech-to-text provider, with concrete expected fields and a reproducible request shape. No duplicate PR or issue found, and the issue remains open with recent confirmation that it is still broken."
+  },
+  "725df2130f6bf992b13b1b56864298a43c6feab710a86d552bc1077ead5d91c0": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #31962 is merged but root_cause_coverage is false, suggesting incomplete fix."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/mem_cache/radix_cache.py",
+      "python/sglang/srt/mem_cache/flush_cache.py",
+      "scheduler retract path"
+    ],
+    "risks": [
+      "Potential maintainer preference for separate flush semantics; need to align with existing PRs to avoid duplication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test reproducing retract then flush_cache while paused, asserting KV release and no prefix match after weight update."
+    ],
+    "unknowns": [
+      "Exact maintainer design preference for retract semantics; whether merged PR #31962 already resolves the issue in current main."
+    ],
+    "why": "Issue provides a clear root cause (retract only unlocks radix-owned prefix via dec_lock_ref, leaving KV resident), concrete code anchors, and a measurable validation path (prefix match and logprob comparison). Existing PRs are incomplete or merged without root-cause coverage, leaving actionable work."
   },
   "728fd9dfee48442beceb511650a5e8f905a21872d61ac0ece3b1f88a92d1ef48": {
     "confidence": 0.85,
@@ -27006,6 +27120,38 @@
       "Maintainer interest or assignment for this flaky test"
     ],
     "why": "Issue reports a flaky CI failure in CUDA graph capture with cudaErrorStreamCaptureInvalidated, but root cause is unknown and reproduction is inconsistent (passes in isolation on H100, CI runs on H200). No maintainer confirmation or design direction. Existing PRs are merged and not directly linked, so no competition. Actionability is blocked by missing root cause and hardware-specific reproduction."
+  },
+  "88d0aba38c089099d26fe73868d7406824f047dc5a3b7826aa2b92d4b8f2c9df": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #18695 is marked as COVERAGE but root_cause_coverage is false, indicating it may not fully resolve the issue."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "dataset_wiki_generator.py",
+      "compilation_template_group_api.py",
+      "api_utils.py",
+      "test_wiki_empty_eligible_message.py"
+    ],
+    "risks": [
+      "Potential overlap with PR #18695 which may partially address the issue; need to ensure the fix is complementary.",
+      "Changing the error message or behavior may affect existing tests or user expectations."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the silent no-op with a Built-in dataset and verify the new error message appears.",
+      "Run the unit tests in test_wiki_empty_eligible_message.py and any related API tests."
+    ],
+    "unknowns": [
+      "Whether the maintainers prefer a specific approach among the three expected behaviors listed in the issue."
+    ],
+    "why": "The issue provides a clear root cause with source-verified code anchors and a reproducible sequence. The expected behavior is actionable and the validation path is concrete. Although a related PR (#18695) has been merged, it does not cover the root cause (silent no-op for Built-in datasets) and the issue remains open, so the contribution is not redundant."
   },
   "88fdf5a5f9c05cdd0a449cc82158e938fd19da27b1a182c0d5c1917d852e4e4c": {
     "confidence": 0.7,
@@ -31445,6 +31591,39 @@
     ],
     "why": "Issue provides a clear, reproducible bug with a concrete code path and expected behavior, but the deterministic gate requires HUMAN_REVIEW and design confirmation is needed before implementation."
   },
+  "a1a9f449211583479f58f4d6f206d4e5b6562ece140120a48660dd38ead66e4d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Triage notes current behavior is documented intent (enhancement) vs reporter frames as bug"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Propagate MCP provenance flag from core to UI records",
+      "Update collapse decision logic in ToolMessage.tsx and CompactToolGroupDisplay.tsx",
+      "Extend detailed-display gate in useReactToolScheduler.ts",
+      "Handle resume path in resumeHistoryUtils.ts"
+    ],
+    "risks": [
+      "Behavior change may affect other tools if not gated properly; ensure only MCP successful string results collapse",
+      "Potential regression in detailed display extraction if gate not extended"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test using the reference MCP filesystem server reading an 81-line file, assert that successful MCP results collapse to one line and expand via Ctrl+O",
+      "Add unit tests for isCollapsibleTool with MCP display names and provenance flag",
+      "Test resume path with persisted history containing mcp__ prefix"
+    ],
+    "unknowns": [
+      "Maintainer acceptance of the behavior change is pending; no explicit approval yet"
+    ],
+    "why": "Issue provides a precise root cause with code anchors, a concrete reproduction scenario, and a clear fix direction (propagate MCP provenance structurally). The triage confirms the root cause and identifies implementation dependencies. The change is actionable and testable."
+  },
   "a1f569cd7ebfb2922f7aa3cadce4713ea7e0eab80fef503843a8334fcbe58acc": {
     "confidence": 0.8,
     "contradictions": [],
@@ -33800,6 +33979,51 @@
       "Exact current state of the stacked PRs and whether they fully address the issue's acceptance criteria."
     ],
     "why": "Issue clearly identifies a root cause: provisioning reader uses newest-created ordering instead of execution-tier authority, and mutation chain lacks fail-closed Shared-tier boundaries. Concrete acceptance criteria and evidence plan are provided. Multiple stacked PRs (e.g., #24312, #24362, #25046) show active maintainer collaboration and incremental progress, indicating the issue is actionable and valuable."
+  },
+  "afe8ba7789d4bad3784087063d5f793e051477c42f71789fc2e5ab87135ab6c9": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue body says 'Do not redesign the parked generic connector handoff from #18284' but the recent comments mention 'credential-handoff guards' and 'warm-claim and credential-handoff guards' in PR #27567, which might touch that area; however, the issue explicitly excludes redesigning that handoff, so this is a potential scope conflict."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Replace organization-wide `[0]` provisioning selectors with deterministic non-Shared, non-pool, non-deleted target selectors",
+      "Retire `ensureElizaAppProvisioning()` and make legacy app provisioning POST observation-only",
+      "Pass explicit non-Shared execution tier in all retained container-bound create paths",
+      "Keep pool rows billing-exempt and resume billing only after transfer to user row with null pool_status",
+      "Reject Shared warm-claim targets and Shared rows under lifecycle lock before container-bound job reuse/insertion",
+      "Revalidate authoritative tier in workers and reject Shared rows in service re-entry, lifecycle CAS, and provider placement",
+      "Add focused regression tests at reader, route/service, enqueue, worker, warm-pool, lifecycle-CAS, payment, billing, and provider boundaries"
+    ],
+    "risks": [
+      "Potential merge conflicts with the existing draft PRs (#27465, #27210, #27567, #27905) that are already implementing parts of the fix; coordination is needed to avoid duplication",
+      "The issue mentions a billing repair for warm-pool placeholders; incorrect implementation could affect billing behavior",
+      "The fix touches many boundaries (reader, route/service, enqueue, worker, warm-pool, lifecycle-CAS, payment, billing, provider), increasing the chance of regressions in existing Dedicated/custom provisioning behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create deterministic mixed-tier repository fixtures with permutations (newer Shared, older Dedicated; inverse order; soft-deleted/pool rows; equal timestamps) and assert the selector always returns the intended Dedicated target or none",
+      "Add negative tests ensuring Shared rows produce zero provision job/provider mutation across all container-bound enqueue paths",
+      "Add tests for billing exemption of pool rows through creation, rate classification, selection/claim, and cancellation, and resumption after transfer",
+      "Add tests for warm-claim refusing Shared targets while accepting historical source pool slots",
+      "Add tests for worker revalidation stopping stale/forged Shared jobs before billing, shutdown, restore, service, or provider calls",
+      "Add tests for service re-entry, lifecycle CAS, and provider placement leaving state unchanged on Shared rows",
+      "Add tests for Shared top-up settlement succeeding without enqueueing restart",
+      "Run focused Bun 1.3.14 tests and affected package typecheck, and ensure any unrelated baseline failures are named exactly with logs"
+    ],
+    "unknowns": [
+      "Whether the existing draft PRs (#27465, #27210, #27567, #27905) fully cover all the acceptance criteria in the issue, or if additional work is needed; the issue remains open and the comments indicate some slices are delivered but not all",
+      "The exact current state of the `develop` branch and whether the base SHA in the issue is still valid, given the many PRs and restacking mentioned in comments"
+    ],
+    "why": "The issue clearly identifies a root cause: the provisioning reader uses `sandboxes[0]` which is newest-created rather than execution-tier authority, causing incorrect provisioning state when Shared and Dedicated rows coexist. It also specifies a concrete fail-closed boundary repair across multiple layers. The evidence shows maintainer involvement and a series of PRs that incrementally implement the fix, with detailed test results and exact-head validation. The remaining work is well-scoped and actionable."
   },
   "aff05de05cc99c57d067b82541f635102013f8a2b14c46290679574f2d75842e": {
     "confidence": 0.6,
@@ -36967,6 +37191,36 @@
       "Maintainer preference on fix location (backend vs UI)"
     ],
     "why": "The issue reports a UI display bug where the tool schema is missing from hidden_params in the LiteLLM dashboard, despite being sent to Ollama. The root cause is unclear: it could be a serialization/redaction issue in the logging path or a UI rendering issue. No maintainer confirmation or design direction exists, and the track is agent_ai_infra, not llm_algorithm, so the required algorithm evidence is absent. The candidate is actionable but needs maintainer input to confirm the intended fix location."
+  },
+  "bfdc44c704aeecebe553ffdca4e7e808a712ba21776b34880bba048eae352682": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3.py",
+      "python/sglang/multimodal_gen/configs/models/encoders/qwen3.py",
+      "python/sglang/multimodal_gen/runtime/models/encoders/qwen3.py",
+      "python/sglang/kernels/aot/csrc/cpu/model/qwen3.cpp"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix location; need to confirm design before large changes.",
+      "NVFP4 quantization may introduce hardware-specific behavior not captured in CI."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the provided curl command with the specified Qwen3.5-arch model, asserting non-repetitive output and correct finish_reason.",
+      "Run existing model and parser unit tests for qwen3 to ensure no regression."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; may require bisecting between 0.5.6.dev and 0.5.17 to pinpoint the regression commit."
+    ],
+    "why": "Issue provides a clear user-visible regression with a concrete reproduction command, isolated variables (DFLASH on/off, reasoning parser, tools), and a known working version. Root cause is localized to generation-level behavior for Qwen3.5-arch models in 0.5.17, with code anchors in model and parser files. No duplicate or competing PR covers this path."
   },
   "bfe527fa914c87544191b88b5776b9a65a0e50b78e840c792851ac86b99c5b3c": {
     "confidence": 0.9,
@@ -44580,6 +44834,44 @@
     ],
     "why": "Issue provides a clear root cause (clampReasoningEffort fallback includes 'max'), a concrete reproduction path, and a well-defined fix direction. The triage comment adds depth by noting the OpenAI-compatible path bypasses the clamp entirely, and the issue is labeled ready-for-agent. Although a related PR (#9478) exists, it is closed with changes requested and does not fully cover the root cause, so the issue remains actionable."
   },
+  "e124c250e838e0fafa2fdba50433fdaeea8a4f46e96d0f1b540c357121e33058": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #27713 is reported as green and mergeable, but also has stale approval and no reviewDecision; issue comments claim live failure persists"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cloud/api/eliza-app/webhook/_telegram-edge.ts",
+      "packages/cloud/api/wrangler.toml",
+      "packages/cloud/services/gateway-webhook/src/webhook-handler.ts",
+      "onboarding URL configuration",
+      "Telegram identity proof validation"
+    ],
+    "risks": [
+      "PR #27713 may not cover the full onboarding and identity-binding scope; need to compare implementation boundaries",
+      "Potential maintainer design preference for identity proof mechanism",
+      "AI disclosure conflict may block automated public actions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add edge tests for connectorAccountId derivation and token-rotation stability",
+      "Add negative E2E tests for expired link, replay, sender mismatch, unsigned payload, and identity conflict",
+      "Verify second DM routes to assigned agent after linking"
+    ],
+    "unknowns": [
+      "Whether PR #27713 fully resolves the issue or only the staging ingress defect",
+      "Exact maintainer design preference for Telegram identity proof",
+      "Whether the AI disclosure conflict affects the ability to proceed with the contribution"
+    ],
+    "why": "Issue provides a clear root cause (missing connectorAccountId in Telegram edge, wrong onboarding URL, and lack of signed identity proof) with a concrete reproduction path and acceptance criteria. An open PR (#27713) directly addresses the core delivery contract and is green, but is not yet merged; the issue remains actionable for the remaining onboarding and identity-binding work."
+  },
   "e142d4072c50533e2f4c660bd4c17c5974b8a8b7c9a95a1d57e92de2c7122872": {
     "confidence": 0.85,
     "contradictions": [],
@@ -44882,6 +45174,40 @@
       "Exact scope of changes needed in openai-protocol crate"
     ],
     "why": "Issue clearly identifies a version mismatch between Rust openai-protocol crate and Python protocol.py causing router rejection of custom tool types. However, existing PR #31184 is open but lacks tests and has CI failures, and maintainer approval is absent. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input."
+  },
+  "e265d39e79f447b188b4782e061757e8d32c2f52e0386ae44cccecd67daa6e50": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue title mentions 'Engine core initialization failed' but the reproduction shows failure during CUDA graph capture, not engine core init",
+      "The issue suggests TileLang warmup as the crash point, but the A/B test indicates DeepGEMM graph capture failure"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "DeepGEMM pin update in vLLM build files",
+      "Potential kernel-level fix in DeepGEMM for SM90 graph capture"
+    ],
+    "risks": [
+      "The fix may be already merged in main, reducing the need for new code work",
+      "The A/B test does not bisect to a specific kernel instruction, so the underlying kernel bug may remain for other configurations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction on 8x H20 with v0.27.1 and DeepGEMM e21c821 to confirm failure, then with 8b1392b to confirm success",
+      "Add a regression test that launches the model with the given flags and verifies startup and chat completion"
+    ],
+    "unknowns": [
+      "Whether the fix is already fully merged in main and v0.28.0, and whether any additional code changes are needed in vLLM beyond the DeepGEMM pin update"
+    ],
+    "why": "The issue provides a clear root cause: a regression in DeepGEMM revision pinned by vLLM v0.27.1 causes CUDA illegal memory access during CUDA graph capture on SM90/H20. A controlled A/B test with two DeepGEMM revisions confirms the fix, and the fix is already merged in PR #52035. The evidence includes concrete code paths and a validation path."
   },
   "e270b791cc88123b8fc56f4e0e864430f5e397d5da2883855fb24e307997b52a": {
     "confidence": 0.8,
