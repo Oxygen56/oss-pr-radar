@@ -23,6 +23,7 @@ SUPERSEDED_SCANNER_DECISION_REVISIONS = frozenset(
         "oss_pr_radar_v49_payload_bound_evidence_ids",
         "oss_pr_radar_v50_material_contradictions",
         "oss_pr_radar_v51_bounded_wait_evidence",
+        "oss_pr_radar_v52_recheck_pr_validation",
     }
 )
 SUPERSEDED_SCANNER_DECISION_CONTRACTS = {
@@ -58,6 +59,13 @@ SUPERSEDED_SCANNER_DECISION_CONTRACTS = {
         "intentVersion": INTENT_VERSION,
         "decisionContractDigest": (
             "feeb8a88be0effea9330e569fb0f4c62de7e9dbfb0c2729c6a74984dd5ecd6c1"
+        ),
+        "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
+    },
+    "oss_pr_radar_v52_recheck_pr_validation": {
+        "intentVersion": INTENT_VERSION,
+        "decisionContractDigest": (
+            "bea3254376f7aced8aef5e8a7d060fa881c49ffefdc92fe1a0f5ba16740e04db"
         ),
         "contractDigest": "0ffabde97bae00693068b61ed03087975ec1c57c989c591a2b43af8aa3ecf505",
     },
@@ -215,6 +223,7 @@ def build_queue(
                     renewed["autoSubmitAuthorized"] = bool(
                         mode in {"canary", "active"}
                         and renewed.get("publicSubmissionAllowed") is True
+                        and renewed.get("category") != "PR_COMPETITION_OPPORTUNITY"
                     )
                     retained[str(item["key"])] = signer.seal(renewed)
         except (SignatureError, KeyError, TypeError, ValueError):
@@ -263,7 +272,9 @@ def build_queue(
             "submissionPolicy": candidate.get("submission_policy") or "normal",
             "publicSubmissionAllowed": candidate.get("public_submission_allowed") is True,
             "autoSubmitAuthorized": (
-                mode in {"canary", "active"} and candidate.get("public_submission_allowed") is True
+                mode in {"canary", "active"}
+                and candidate.get("public_submission_allowed") is True
+                and candidate.get("category") != "PR_COMPETITION_OPPORTUNITY"
             ),
             "authorizationSource": "signed_live_revalidation_required",
             "publicationMode": mode,

@@ -3511,9 +3511,15 @@ class Radar:
         keyword_hits, code_like_overlap = semantic_overlap_strength(issue_title, text)
         distinctive_overlap = semantic_distinctive_overlap(issue_title, text)
         overlapping_paths = overlapping_issue_pr_paths(issue_context, file_paths)
+        direct_code_overlap = bool(
+            references_issue
+            and keyword_hits >= 3
+            and code_like_overlap
+            and distinctive_overlap
+        )
         semantic_overlap = (bool(overlapping_paths) and keyword_hits >= 2) or (
             keyword_hits >= 3 and code_like_overlap and len(distinctive_overlap) >= 2
-        )
+        ) or direct_code_overlap
 
         score = 0
         strengths: list[str] = []
@@ -3613,6 +3619,7 @@ class Radar:
             "issue_body_link": issue_body_link,
             "issue_body_link_relation": issue_body_link_relation,
             "semantic_overlap": semantic_overlap,
+            "direct_code_overlap": direct_code_overlap,
             "semantic_overlap_count": keyword_hits,
             "semantic_distinctive_overlap": sorted(distinctive_overlap),
             "overlapping_paths": overlapping_paths[:3],
@@ -3773,6 +3780,12 @@ class Radar:
                 )
             else:
                 summary = f"已有较强 PR：#{best['number']} score={best['score']}，{'; '.join(best['strengths'])}"
+        elif active_direct and best.get("direct_code_overlap"):
+            status = "human_review_required"
+            summary = (
+                f"已有直接关联且命中同一代码标识的 PR #{best['number']}；"
+                "缺少测试本身不足以证明存在独立实现空间，需先人工比较"
+            )
         elif active_direct and repo_rules(repo) != "needs_assignment":
             status = "weak_pr_competition_possible"
             summary = (

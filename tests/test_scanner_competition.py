@@ -420,6 +420,44 @@ def test_active_direct_draft_blocks_competing_task(monkeypatch, tmp_path):
     assert "缺少根因覆盖证据" in result["gaps"]
 
 
+def test_direct_same_code_identifier_without_tests_requires_review(monkeypatch, tmp_path):
+    instance = radar(tmp_path)
+    monkeypatch.setattr(instance, "open_pr_hits", lambda *args: [{"number": 2414}])
+    monkeypatch.setattr(
+        instance,
+        "pr_detail",
+        lambda *args: {
+            "number": 2414,
+            "title": "fix(toolkit): describe active tool groups in reset_tools",
+            "url": "https://github.com/agentscope-ai/agentscope/pull/2414",
+            "body": "Fixes #2413. Mark already active tool groups in reset_tools descriptions.",
+            "state": "OPEN",
+            "isDraft": False,
+            "updatedAt": "2026-08-24T16:26:00Z",
+            "files": [
+                {"path": "src/agentscope/tool/_builtin/_meta.py"},
+                {"path": "src/agentscope/tool/_toolkit.py"},
+            ],
+            "additions": 13,
+            "deletions": 1,
+            "changedFiles": 2,
+            "statusCheckRollup": [],
+            "reviewDecision": "REVIEW_REQUIRED",
+            "comments": [],
+            "closingIssuesReferences": [{"number": 2413}],
+        },
+    )
+
+    result = instance.assess_open_prs(
+        "agentscope-ai/agentscope",
+        2413,
+        "reset_tools does not reflect already active tool groups",
+    )
+
+    assert result["status"] == "human_review_required"
+    assert result["prs"][0]["direct_code_overlap"] is True
+
+
 def test_merged_direct_pr_is_strong_coverage(monkeypatch, tmp_path):
     instance = radar(tmp_path)
     monkeypatch.setattr(instance, "open_pr_hits", lambda *args: [{"number": 9}])
@@ -518,7 +556,7 @@ def test_nontechnical_triage_failure_does_not_create_pr_competition(monkeypatch,
         "get_episodes uses ORDER BY uuid DESC instead of recency",
     )
 
-    assert result["status"] == "weak_pr_competition_possible"
+    assert result["status"] == "covered_strong"
     assert result["prs"][0]["ignored_nontechnical_failed_checks"] == ["triage"]
     assert "存在失败 CI/check" not in result["prs"][0]["gaps"]
 

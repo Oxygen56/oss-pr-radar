@@ -106,6 +106,19 @@ def test_canary_envelope_carries_narrow_publication_authorization():
     assert intent["authorizationSource"] == "signed_live_revalidation_required"
 
 
+def test_competition_intent_cannot_auto_submit_without_bound_review():
+    result = MODULE.build(
+        report(candidate(category="PR_COMPETITION_OPPORTUNITY")),
+        signing_key=KEY,
+        now=NOW,
+        mode="canary",
+    )
+
+    intent = result["intents"][0]
+    assert intent["publicSubmissionAllowed"] is True
+    assert intent["autoSubmitAuthorized"] is False
+
+
 def test_algorithm_evidence_is_bound_into_dispatch_intent():
     algorithm_evidence = {
         "score": 9,
@@ -312,7 +325,7 @@ def test_stale_scanner_report_cannot_build_dispatch_queue():
 
 
 def test_current_scanner_revision_and_decision_contract_filter_non_contradictions():
-    assert SCANNER_DECISION_REVISION == "oss_pr_radar_v52_recheck_pr_validation"
+    assert SCANNER_DECISION_REVISION == "oss_pr_radar_v53_direct_overlap_hold"
     assert decision_contract_digest() != (
         "63d9b5419e4b58f072055513e60148abadfd4bfc9e8ae799e791a761ff3f56a4"
     )
