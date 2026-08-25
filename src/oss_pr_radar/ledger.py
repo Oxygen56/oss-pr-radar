@@ -3028,6 +3028,74 @@ class RadarLedger:
                    ORDER BY s.created_at""",
                 (cutoff,),
             ).fetchall()
+            implementation_rows = connection.execute(
+                """SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
+                          i.worktree_path,s.created_at AS dispatched_at,
+                          s.dedupe_key AS followup_digest,
+                          (SELECT MAX(abandoned.created_at) FROM events abandoned
+                           WHERE abandoned.opportunity_key=o.key
+                             AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                             AND json_extract(abandoned.payload_json,'$.threadId')=i.thread_id
+                          ) AS recovery_epoch
+                   FROM opportunities o
+                   JOIN intents i ON i.intent_id=(
+                     SELECT i2.intent_id FROM intents i2
+                     WHERE i2.opportunity_key=o.key
+                       AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
+                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                   )
+                   JOIN events s ON s.opportunity_key=o.key
+                     AND s.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                     AND s.id=(
+                       SELECT MAX(s2.id) FROM events s2
+                       WHERE s2.opportunity_key=o.key
+                         AND s2.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                     )
+                   WHERE i.status='DISPATCHED' AND s.created_at<=?
+                     AND i.thread_id=json_extract(s.payload_json,'$.threadId')
+                     AND NOT EXISTS (
+                       SELECT 1 FROM task_quarantines quarantine
+                       WHERE quarantine.opportunity_key=o.key
+                         AND quarantine.status='ACTIVE'
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events exhausted
+                       JOIN events recovery
+                         ON recovery.opportunity_key=exhausted.opportunity_key
+                        AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                        AND recovery.dedupe_key=exhausted.dedupe_key
+                       WHERE exhausted.opportunity_key=o.key
+                         AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                         AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+                         AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                             'IMPLEMENTATION_FOLLOWUP_RESULT'
+                         AND json_extract(recovery.payload_json,'$.followupDigest')=s.dedupe_key
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events result
+                       WHERE result.opportunity_key=o.key
+                         AND result.event_type='TASK_RESULT_INGESTED'
+                         AND result.id>s.id
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events recovery
+                       WHERE recovery.opportunity_key=o.key
+                         AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                         AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+                         AND recovery.created_at>=s.created_at
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events abandoned
+                           WHERE abandoned.opportunity_key=recovery.opportunity_key
+                             AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                             AND json_extract(
+                                   abandoned.payload_json,'$.reservationDigest'
+                                 )=recovery.dedupe_key
+                             AND abandoned.id>recovery.id
+                         )
+                     )
+                   ORDER BY s.created_at""",
+                (cutoff,),
+            ).fetchall()
             exhausted_dispatched_rows = (
                 connection.execute(
                     """SELECT exhausted.id AS event_id,
@@ -3074,11 +3142,17 @@ class RadarLedger:
             *((row, "DISPATCHED_TASK") for row in dispatched_rows),
             *((row, "PR_FOLLOWUP_RESULT") for row in followup_rows),
             *((row, "VALIDATION_FOLLOWUP_RESULT") for row in validation_rows),
+            *((row, "IMPLEMENTATION_FOLLOWUP_RESULT") for row in implementation_rows),
         ):
             thread_id = str(row["thread_id"])
             followup_digest = (
                 str(row["followup_digest"])
-                if recovery_kind in {"PR_FOLLOWUP_RESULT", "VALIDATION_FOLLOWUP_RESULT"}
+                if recovery_kind
+                in {
+                    "PR_FOLLOWUP_RESULT",
+                    "VALIDATION_FOLLOWUP_RESULT",
+                    "IMPLEMENTATION_FOLLOWUP_RESULT",
+                }
                 else None
             )
             candidate = {
@@ -5016,18 +5090,27 @@ class RadarLedger:
         with self.connect() as connection:
             rows = connection.execute(
                 """SELECT o.key,o.repo,o.issue_number,o.issue_url,o.title,
-                          i.thread_id,i.title_time,i.updated_at,
+                          i.intent_id,i.thread_id,i.title_time,d.created_at AS dispatched_at,
                           json_extract(i.payload_json,'$.maturity') AS maturity,
                           json_extract(i.payload_json,'$.notify') AS notify
-                   FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
-                   WHERE i.status='DISPATCHED' AND i.thread_id IS NOT NULL
+                   FROM events d
+                   JOIN intents i
+                     ON i.intent_id=json_extract(d.payload_json,'$.intentId')
+                    AND i.opportunity_key=d.opportunity_key
+                    AND i.thread_id=json_extract(d.payload_json,'$.threadId')
+                    AND i.thread_id=d.dedupe_key
+                   JOIN opportunities o ON o.key=d.opportunity_key
+                   WHERE d.event_type='DISPATCHED' AND i.thread_id IS NOT NULL
                      AND NOT EXISTS (
                        SELECT 1 FROM events e
                        WHERE e.opportunity_key=o.key
-                         AND e.event_type='DISPATCH_NOTIFICATION_SENT'
-                         AND e.dedupe_key=i.thread_id
+                         AND e.event_type IN (
+                           'DISPATCH_NOTIFICATION_SENT',
+                           'DISPATCH_NOTIFICATION_SUPPRESSED'
+                         )
+                         AND e.dedupe_key=d.dedupe_key
                      )
-                   ORDER BY i.updated_at"""
+                   ORDER BY d.created_at,d.id"""
             ).fetchall()
         return [
             {
@@ -5036,8 +5119,10 @@ class RadarLedger:
                 "issueNumber": row["issue_number"],
                 "issueUrl": row["issue_url"],
                 "title": row["title"],
+                "intentId": row["intent_id"],
                 "threadId": row["thread_id"],
                 "titleTime": row["title_time"],
+                "dispatchedAt": row["dispatched_at"],
                 "maturity": row["maturity"] or "mature",
                 "notify": row["notify"] != 0,
             }
@@ -5047,15 +5132,28 @@ class RadarLedger:
     def commit_dispatch_notification(
         self,
         *,
+        intent_id: str,
         thread_id: str,
         idempotency_key: str,
     ) -> None:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             row = connection.execute(
-                """SELECT opportunity_key FROM intents
-                   WHERE thread_id=? AND status='DISPATCHED'""",
-                (thread_id,),
+                """SELECT d.opportunity_key FROM events d
+                   JOIN intents i
+                     ON i.intent_id=json_extract(d.payload_json,'$.intentId')
+                    AND i.opportunity_key=d.opportunity_key
+                    AND i.thread_id=json_extract(d.payload_json,'$.threadId')
+                    AND i.thread_id=d.dedupe_key
+                   WHERE d.event_type='DISPATCHED'
+                     AND i.intent_id=? AND i.thread_id=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events suppressed
+                       WHERE suppressed.opportunity_key=d.opportunity_key
+                         AND suppressed.event_type='DISPATCH_NOTIFICATION_SUPPRESSED'
+                         AND suppressed.dedupe_key=d.dedupe_key
+                     )""",
+                (intent_id, thread_id),
             ).fetchone()
             if row is None:
                 raise LedgerError("dispatch notification task not found")
@@ -5067,6 +5165,63 @@ class RadarLedger:
                 {"threadId": thread_id, "idempotencyKey": idempotency_key},
                 now,
             )
+
+    def suppress_dispatch_notifications_before(
+        self,
+        *,
+        cutoff: str,
+        reason: str,
+    ) -> list[dict[str, str]]:
+        """Audit, without sending, old dispatch notices missed by prior releases."""
+
+        cutoff = iso_z(parse_time(cutoff))
+        now = iso_z(datetime.now(UTC))
+        suppressed: list[dict[str, str]] = []
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """SELECT d.opportunity_key,i.intent_id,i.thread_id,d.created_at
+                   FROM events d
+                   JOIN intents i
+                     ON i.intent_id=json_extract(d.payload_json,'$.intentId')
+                    AND i.opportunity_key=d.opportunity_key
+                    AND i.thread_id=json_extract(d.payload_json,'$.threadId')
+                    AND i.thread_id=d.dedupe_key
+                   WHERE d.event_type='DISPATCHED' AND d.created_at<=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events e
+                       WHERE e.opportunity_key=d.opportunity_key
+                         AND e.event_type IN (
+                           'DISPATCH_NOTIFICATION_SENT',
+                           'DISPATCH_NOTIFICATION_SUPPRESSED'
+                         )
+                         AND e.dedupe_key=d.dedupe_key
+                     )
+                   ORDER BY d.created_at,d.id""",
+                (cutoff,),
+            ).fetchall()
+            for row in rows:
+                self._event(
+                    connection,
+                    row["opportunity_key"],
+                    "DISPATCH_NOTIFICATION_SUPPRESSED",
+                    row["thread_id"],
+                    {
+                        "intentId": row["intent_id"],
+                        "threadId": row["thread_id"],
+                        "dispatchedAt": row["created_at"],
+                        "cutoff": cutoff,
+                        "reason": reason,
+                    },
+                    now,
+                )
+                suppressed.append(
+                    {
+                        "key": row["opportunity_key"],
+                        "intentId": row["intent_id"],
+                        "threadId": row["thread_id"],
+                    }
+                )
+        return suppressed
 
     def reset_dispatch_for_retry(self, *, thread_id: str, reason: str) -> dict[str, Any]:
         now_dt = datetime.now(UTC)

@@ -5191,8 +5191,117 @@ def test_dispatch_notification_receipt_is_per_created_thread(tmp_path):
     store, _worktree = registered_store(tmp_path)
 
     assert [item["threadId"] for item in store.dispatch_notification_candidates()] == ["thread-1"]
-    store.commit_dispatch_notification(thread_id="thread-1", idempotency_key="notification-1")
+    store.commit_dispatch_notification(
+        intent_id="intent-1",
+        thread_id="thread-1",
+        idempotency_key="notification-1",
+    )
     assert store.dispatch_notification_candidates() == []
+
+
+@pytest.mark.parametrize("terminal_stage", ["FIX_READY", "AUDIT_NO_GO"])
+def test_dispatch_notification_survives_fast_terminal_transition(tmp_path, terminal_stage):
+    store, _worktree = registered_store(tmp_path)
+
+    store.record_stage("a/b#1", stage=terminal_stage, reason="fast-terminal")
+
+    candidate = store.dispatch_notification_candidates()[0]
+    assert candidate["intentId"] == "intent-1"
+    assert candidate["threadId"] == "thread-1"
+    store.commit_dispatch_notification(
+        intent_id="intent-1",
+        thread_id="thread-1",
+        idempotency_key="notification-1",
+    )
+    store.commit_dispatch_notification(
+        intent_id="intent-1",
+        thread_id="thread-1",
+        idempotency_key="notification-1",
+    )
+    assert store.dispatch_notification_candidates() == []
+    with store.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type='DISPATCH_NOTIFICATION_SENT'"
+        ).fetchone()[0] == 1
+
+
+def test_dispatch_notification_requires_exact_dispatch_event(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-1",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+    store.record_stage("a/b#1", stage="AUDIT_NO_GO", reason="rejected-before-dispatch")
+
+    assert store.dispatch_notification_candidates() == []
+    with pytest.raises(LedgerError, match="dispatch notification task not found"):
+        store.commit_dispatch_notification(
+            intent_id="intent-1",
+            thread_id="thread-1",
+            idempotency_key="notification-1",
+        )
+
+
+def test_historical_dispatch_notifications_can_be_suppressed_without_false_receipts(tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    cutoff = (datetime.now(UTC) + timedelta(hours=8, minutes=1)).strftime(
+        "%Y-%m-%dT%H:%M:%S.%f+08:00"
+    )
+
+    suppressed = store.suppress_dispatch_notifications_before(
+        cutoff=cutoff,
+        reason="release-migration",
+    )
+
+    assert [item["threadId"] for item in suppressed] == ["thread-1"]
+    assert store.dispatch_notification_candidates() == []
+    with pytest.raises(LedgerError, match="dispatch notification task not found"):
+        store.commit_dispatch_notification(
+            intent_id="intent-1",
+            thread_id="thread-1",
+            idempotency_key="notification-1",
+        )
+    with store.connect() as connection:
+        counts = {
+            row["event_type"]: row["count"]
+            for row in connection.execute(
+                """SELECT event_type,COUNT(*) AS count FROM events
+                   WHERE event_type IN (
+                     'DISPATCH_NOTIFICATION_SENT',
+                     'DISPATCH_NOTIFICATION_SUPPRESSED'
+                   ) GROUP BY event_type"""
+            )
+        }
+    assert counts == {"DISPATCH_NOTIFICATION_SUPPRESSED": 1}
+
+
+def test_dispatch_notification_suppression_command_is_idempotent(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    args = SimpleNamespace(
+        ledger=tmp_path / "ledger.sqlite3",
+        cutoff=iso_z(datetime.now(UTC) + timedelta(minutes=1)),
+        reason="RELEASE_MIGRATION_HISTORICAL_MISSED_NOTICES",
+    )
+
+    first = MODULE.suppress_dispatch_notifications(args)
+    second = MODULE.suppress_dispatch_notifications(args)
+
+    assert first["suppressedCount"] == 1
+    assert second["suppressedCount"] == 0
 
 
 def test_prepare_failure_releases_claim(monkeypatch, tmp_path):
@@ -12066,6 +12175,12 @@ def test_repaired_implementation_context_rearms_same_result_once(tmp_path, prior
         ).fetchone()[0]
     assert repaired_count == 1
     assert sent_count == 2
+    recovery = next(
+        item
+        for item in store.recovery_candidates(min_age_minutes=0)
+        if item["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
+    )
+    assert recovery["followupDigest"] == attempt_digest
 
 
 def test_implementation_followup_reserve_repairs_context_before_delivery(tmp_path):
@@ -12108,6 +12223,89 @@ def test_implementation_followup_reserve_repairs_context_before_delivery(tmp_pat
     assert refreshed["probeLevel"] == "REPRODUCED_VALIDATED"
     assert refreshed["childMayEditFiles"] is True
     assert refreshed["resultDigest"] == candidate["resultDigest"]
+
+
+def test_implementation_followup_without_result_uses_bounded_recovery(tmp_path):
+    store, _worktree, _result_path = _controller_commit_result(tmp_path)
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    provenance = json.loads(managed.read_task("intent-1")["provenance_json"])
+    result_digest = str(provenance["probeReceipt"]["resultDigest"])
+    store.record_task_result_ingested(
+        "a/b#1", digest=result_digest, stage="IMPLEMENTATION_READY"
+    )
+    store.reserve_implementation_followup(
+        thread_id="thread-1", result_digest=result_digest
+    )
+    store.commit_implementation_followup(
+        thread_id="thread-1", result_digest=result_digest
+    )
+
+    candidate = next(
+        item
+        for item in store.recovery_candidates(min_age_minutes=0)
+        if item["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
+    )
+    assert candidate["threadId"] == "thread-1"
+    assert candidate["followupDigest"] == result_digest
+
+    first_nonce = candidate["recoveryNonce"]
+    reserved = store.reserve_recovery(
+        thread_id="thread-1",
+        nonce=first_nonce,
+    )
+    assert reserved["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
+    store.commit_recovery(thread_id="thread-1", nonce=first_nonce)
+    assert store.sent_recoveries_without_result()[0]["retryCount"] == 0
+    store.abandon_recovery_delivery(
+        thread_id="thread-1",
+        nonce=first_nonce,
+        reason="TERMINAL_RECOVERY_TURN_INTERRUPTED",
+        min_age_minutes=0,
+    )
+
+    retry = next(
+        item
+        for item in store.recovery_candidates(min_age_minutes=0)
+        if item["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
+    )
+    assert retry["recoveryNonce"] != first_nonce
+    store.reserve_recovery(thread_id="thread-1", nonce=retry["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=retry["recoveryNonce"])
+    assert store.sent_recoveries_without_result()[0]["retryCount"] == 1
+    store.exhaust_recovery(thread_id="thread-1", nonce=retry["recoveryNonce"])
+    assert not any(
+        item["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
+        for item in store.recovery_candidates(min_age_minutes=0)
+    )
+
+
+def test_new_task_result_cancels_implementation_followup_recovery(tmp_path):
+    store, _worktree, _result_path = _controller_commit_result(tmp_path)
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    provenance = json.loads(managed.read_task("intent-1")["provenance_json"])
+    result_digest = str(provenance["probeReceipt"]["resultDigest"])
+    store.record_task_result_ingested(
+        "a/b#1", digest=result_digest, stage="IMPLEMENTATION_READY"
+    )
+    store.reserve_implementation_followup(
+        thread_id="thread-1", result_digest=result_digest
+    )
+    store.commit_implementation_followup(
+        thread_id="thread-1", result_digest=result_digest
+    )
+    assert any(
+        item["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
+        for item in store.recovery_candidates(min_age_minutes=0)
+    )
+
+    store.record_task_result_ingested(
+        "a/b#1", digest="implementation-result", stage="FIX_READY"
+    )
+
+    assert not any(
+        item["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
+        for item in store.recovery_candidates(min_age_minutes=0)
+    )
 
 
 def test_controller_normalizes_child_base_to_prepared_default_branch(tmp_path):

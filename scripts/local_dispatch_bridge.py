@@ -3376,6 +3376,7 @@ def dispatch_notifications(args: argparse.Namespace) -> dict[str, Any]:
         try:
             client.send_card(card, idempotency_key=idempotency_key)
             store.commit_dispatch_notification(
+                intent_id=item["intentId"],
                 thread_id=item["threadId"],
                 idempotency_key=idempotency_key,
             )
@@ -3387,6 +3388,23 @@ def dispatch_notifications(args: argparse.Namespace) -> dict[str, Any]:
         "pending": candidates,
         "notified": notified,
         "errors": errors,
+    }
+
+
+def suppress_dispatch_notifications(args: argparse.Namespace) -> dict[str, Any]:
+    """Audit old missed creation notices without sending stale user messages."""
+
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", args.reason):
+        raise RuntimeError("suppression reason must be machine-readable")
+    suppressed = ledger(args.ledger).suppress_dispatch_notifications_before(
+        cutoff=args.cutoff,
+        reason=args.reason,
+    )
+    return {
+        "ok": True,
+        "cutoff": iso_z(parse_time(args.cutoff)),
+        "suppressedCount": len(suppressed),
+        "suppressed": suppressed,
     }
 
 
@@ -16195,6 +16213,11 @@ def main() -> int:
     alerts_parser.add_argument("--notify", action="store_true")
     dispatch_notifications_parser = subparsers.add_parser("dispatch-notifications")
     dispatch_notifications_parser.add_argument("--notify", action="store_true")
+    dispatch_notification_suppress_parser = subparsers.add_parser(
+        "dispatch-notifications-suppress"
+    )
+    dispatch_notification_suppress_parser.add_argument("--cutoff", required=True)
+    dispatch_notification_suppress_parser.add_argument("--reason", required=True)
     claim = subparsers.add_parser("claim")
     claim.add_argument("--intent-id", required=True)
     claim.add_argument("--owner", required=True)
@@ -16496,6 +16519,8 @@ def main() -> int:
         result = dispatch_alerts(args)
     elif args.operation == "dispatch-notifications":
         result = dispatch_notifications(args)
+    elif args.operation == "dispatch-notifications-suppress":
+        result = suppress_dispatch_notifications(args)
     elif args.operation == "claim":
         result = claim_intent(args)
     elif args.operation == "claim-release":
