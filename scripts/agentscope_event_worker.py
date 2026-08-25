@@ -9,7 +9,6 @@ import json
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from urllib.parse import urlparse
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -20,37 +19,44 @@ from oss_pr_radar.agentscope_events import (  # noqa: E402
     dispatch_once,
     github_event_effective_time,
 )
-from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.local_publication import run_bridge  # noqa: E402
-from oss_pr_radar.release_binding import runtime_ledger_path  # noqa: E402
 
 
 def _is_agentscope_record(value: dict) -> bool:
     repo = str(value.get("repo") or value.get("repository") or "").casefold()
-    if repo == "agentscope-ai/agentscope":
+    if repo == REPO.casefold():
         return True
     for key in ("key", "opportunityKey", "opportunity_key"):
-        if str(value.get(key) or "").casefold().startswith("agentscope-ai/agentscope#"):
+        if str(value.get(key) or "").casefold().startswith(f"{REPO.casefold()}#"):
             return True
     for key in ("issueUrl", "issue_url", "prUrl", "pr_url"):
-        if "github.com/agentscope-ai/agentscope/" in str(value.get(key) or "").casefold():
+        if f"github.com/{REPO.casefold()}/" in str(value.get(key) or "").casefold():
             return True
     return False
 
 
 EVENT_LANE_MANIFEST = "event-lane-manifest.json"
+EVENT_LANE_DIGEST = "event-lane-manifest.sha256"
+REPO = "agentscope-ai/agentscope"
+CENTRAL_CWD = Path("/Users/oxygen/Documents/github/agentscope")
 
 
-def _active_task_thread(root: Path, repo: str) -> str:
-    """Read the configured central contributor task; never invent a thread."""
-    candidates = [root / EVENT_LANE_MANIFEST, ROOT / EVENT_LANE_MANIFEST]
-    manifest_path = next((path for path in candidates if path.is_file() and not path.is_symlink()), None)
-    if manifest_path is None:
+def _active_task_config(root: Path, repo: str) -> dict[str, str]:
+    """Read and verify the immutable release manifest; never use runtime root."""
+    del root
+    manifest_path = ROOT / EVENT_LANE_MANIFEST
+    digest_path = ROOT / EVENT_LANE_DIGEST
+    if any(path.is_symlink() or not path.is_file() for path in (manifest_path, digest_path)):
         raise RuntimeError(f"event-lane manifest is unavailable for {repo}")
     try:
-        value = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        manifest_bytes = manifest_path.read_bytes()
+        actual_digest = hashlib.sha256(manifest_bytes).hexdigest()
+        expected_digest = digest_path.read_text(encoding="utf-8").strip().split()[0]
+        value = json.loads(manifest_bytes.decode("utf-8"))
+    except (IndexError, OSError, json.JSONDecodeError) as exc:
         raise RuntimeError("event-lane manifest is invalid") from exc
+    if actual_digest != expected_digest:
+        raise RuntimeError("event-lane manifest digest mismatch")
     if not isinstance(value, dict) or value.get("schemaVersion") != "oss-pr-radar-event-lane-v1":
         raise RuntimeError("event-lane manifest schema is invalid")
     repositories = value.get("repositories")
@@ -58,30 +64,10 @@ def _active_task_thread(root: Path, repo: str) -> str:
     thread_id = str(entry.get("activeThreadId") or "") if isinstance(entry, dict) else ""
     if not thread_id:
         raise RuntimeError(f"central active task thread is not configured for {repo}")
-    return thread_id
-
-
-def _public_active_keys(root: Path, store: RadarLedger, lane: EventLane) -> set[str]:
-    """Count durable public work, including ledger work without a live thread."""
-    active: set[str] = set()
-    for value in store.pr_followup_candidates() + store.implementation_followup_candidates():
-        if _is_agentscope_record(value):
-            key = str(value.get("key") or value.get("opportunityKey") or "")
-            if key:
-                active.add(key)
-    try:
-        with store.connect() as db:
-            rows = db.execute(
-                "SELECT p.opportunity_key AS key FROM pr_followups p "
-                "JOIN opportunities o ON o.key=p.opportunity_key WHERE o.repo=? "
-                "AND o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')",
-                ("agentscope-ai/agentscope",),
-            ).fetchall()
-        active.update(str(row["key"]) for row in rows if row["key"])
-    except Exception:
-        pass
-    active.update(lane.active_work_keys())
-    return active
+    configured_cwd = Path(str(entry.get("cwd") or "")).resolve() if isinstance(entry, dict) else Path("/")
+    if configured_cwd != CENTRAL_CWD or not CENTRAL_CWD.is_dir():
+        raise RuntimeError("central task cwd is not the safe repository")
+    return {"threadId": thread_id, "cwd": str(CENTRAL_CWD)}
 
 
 def _pr_number(event: dict) -> int | None:
@@ -94,7 +80,14 @@ def _pr_number(event: dict) -> int | None:
 
 
 def _resolve_event_target(root: Path, event: dict) -> dict[str, object]:
-    """Resolve a GitHub PR to its opportunity before selecting a handler."""
+    """Classify an event without consulting shared task ownership state."""
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    if event.get("kind") == "outcome_reconcile":
+        return {
+            "key": str(event.get("eventKey") or payload.get("publicKey") or ""),
+            "kind": "outcome_reconcile",
+            "mapped": False,
+        }
     repo = str(event.get("repo") or "")
     number = _pr_number(event)
     issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
@@ -103,71 +96,9 @@ def _resolve_event_target(root: Path, event: dict) -> dict[str, object]:
     if not is_pr:
         return {"key": key, "kind": "issue", "mapped": False}
     pr_url = str(issue.get("html_url") or issue.get("pull_request", {}).get("html_url") or "")
-    ledger = RadarLedger(runtime_ledger_path(root))
-    candidates = ledger.pr_followup_candidates()
-    candidates += ledger.unresolved_pr_followups()
-    try:
-        with ledger.connect() as db:
-            rows = db.execute(
-                "SELECT p.opportunity_key AS key,p.pr_url AS pr_url,"
-                "(SELECT i.thread_id FROM intents i WHERE i.opportunity_key=p.opportunity_key "
-                "AND i.thread_id IS NOT NULL ORDER BY i.updated_at DESC,i.intent_id DESC LIMIT 1) AS thread_id,"
-                "(SELECT i.worktree_path FROM intents i WHERE i.opportunity_key=p.opportunity_key "
-                "AND i.thread_id IS NOT NULL ORDER BY i.updated_at DESC,i.intent_id DESC LIMIT 1) AS worktree_path "
-                "FROM pr_followups p JOIN opportunities o ON o.key=p.opportunity_key WHERE o.repo=?",
-                (repo,),
-            ).fetchall()
-        candidates += [dict(row) for row in rows]
-    except Exception:
-        pass
-    for candidate in candidates:
-        candidate_url = str(candidate.get("prUrl") or candidate.get("pr_url") or "")
-        parsed = urlparse(candidate_url)
-        candidate_number = parsed.path.rstrip("/").split("/")[-1] if parsed.path else ""
-        if number is not None and candidate_number == str(number):
-            return {"key": str(candidate.get("key") or ""), "kind": "pr_followup", "mapped": True,
-                    "candidate": candidate, "threadId": candidate.get("thread_id") or candidate.get("threadId"),
-                    "worktreePath": candidate.get("worktree_path") or candidate.get("worktreePath"), "prUrl": candidate_url}
-        if pr_url and candidate_url and pr_url.rstrip("/") == candidate_url.rstrip("/"):
-            return {"key": str(candidate.get("key") or ""), "kind": "pr_followup", "mapped": True,
-                    "candidate": candidate, "threadId": candidate.get("thread_id") or candidate.get("threadId"),
-                    "worktreePath": candidate.get("worktree_path") or candidate.get("worktreePath"), "prUrl": candidate_url}
-    # An Oxygen56 PR without a Ledger mapping remains a review/CI watch item;
-    # it is never downgraded into a new issue claim.
+    # Own-PR filtering happens in GitHubIssuePoller before this point.  The
+    # event lane never maps a PR back to a shared Radar opportunity/thread.
     return {"key": f"{repo}#{number}", "kind": "pr_watch", "mapped": False, "prUrl": pr_url}
-
-
-def _validate_pr_followup_binding(target: dict[str, object], *, key: str, pr_url: str) -> None:
-    """Require the PR event to point at the exact task context it will resume."""
-    thread_id = str(target.get("threadId") or "")
-    worktree_value = str(target.get("worktreePath") or "")
-    if not thread_id or not worktree_value:
-        raise RuntimeError("PR follow-up task context binding is incomplete")
-    worktree = Path(worktree_value).resolve()
-    context_path = worktree / ".oss-pr-radar" / "task-context.json"
-    try:
-        context = json.loads(context_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError("PR follow-up task context is unavailable") from exc
-    if not isinstance(context, dict):
-        raise RuntimeError("PR follow-up task context is invalid")
-    if str(context.get("threadId") or "") != thread_id:
-        raise RuntimeError("PR follow-up task context/thread mismatch")
-    if str(context.get("key") or "") != key:
-        raise RuntimeError("PR follow-up task context/key mismatch")
-    followup = context.get("prFollowup")
-    if not isinstance(followup, dict):
-        raise RuntimeError("PR follow-up task context has no prFollowup")
-    candidate = target.get("candidate") if isinstance(target.get("candidate"), dict) else {}
-    candidate_wake = str(candidate.get("wakeDigest") or candidate.get("wake_digest") or "")
-    context_wake = str(followup.get("wakeDigest") or "")
-    if candidate_wake and context_wake and candidate_wake != context_wake:
-        raise RuntimeError("PR follow-up wake binding mismatch")
-    receipt = context.get("publicationReceipt")
-    bound_url = str((receipt or {}).get("prUrl") or "") if isinstance(receipt, dict) else ""
-    expected_url = str(pr_url or target.get("prUrl") or "").rstrip("/")
-    if not bound_url or not expected_url or bound_url.rstrip("/") != expected_url:
-        raise RuntimeError("PR follow-up task context/PR mismatch")
 
 
 def _quarantine_event(root: Path, lane: EventLane, event: dict, *, reason: str) -> None:
@@ -182,9 +113,19 @@ def _quarantine_event(root: Path, lane: EventLane, event: dict, *, reason: str) 
 def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: dict[str, object] | None = None) -> None:
     """Start/resume the detached bridge worker and receipt its turn before ack."""
     target = target or _resolve_event_target(root, event)
-    key = str(target.get("key") or f"{event.get('repo')}#{event.get('number')}")
-    if target.get("kind") == "outcome_reconcile":
-        _quarantine_event(root, lane, event, reason="outcome_requires_reconciliation")
+    event_repo = str(event.get("repo") or "")
+    if event_repo != REPO and not (event.get("kind") == "outcome_reconcile" and not event_repo):
+        _quarantine_event(root, lane, event, reason="foreign_repository_event")
+        return
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    key = str(
+        target.get("key")
+        or event.get("eventKey")
+        or payload.get("publicKey")
+        or f"{event.get('repo')}#{event.get('number')}"
+    )
+    if not key.casefold().startswith(f"{REPO.casefold()}#") or key.endswith("#"):
+        _quarantine_event(root, lane, event, reason="foreign_repository_event")
         return
     issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
     public_status = lane.public_status(key)
@@ -195,51 +136,36 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
         target = dict(target)
         target["kind"] = "issue_closeout"
     event_id = str(event["eventId"])
+    lane.expire_handler_turns()
     existing_turn = lane.handler_turn(event_id)
     if existing_turn and str(existing_turn.get("status") or "") in {"reserved", "started"}:
         # A delayed retry for the same event is idempotent.
         return
     active_turn = lane.active_handler_turn(key)
     if active_turn and str(active_turn.get("event_id") or "") != event_id:
-        # Coalesce the event instead of creating a second execution task for
-        # the same issue/thread.  The active task remains authoritative.
-        lane.terminalize_event(event_id, status="coalesced", reason="active_task_already_running")
-        return
+        lane.defer_event(event_id, lease_token=str(event.get("leaseToken") or ""))
+        raise RuntimeError("central_task_busy")
     central_thread = None
-    if target.get("kind") in {"issue", "issue_closeout", "pr_watch"}:
-        try:
-            central_thread = _active_task_thread(root, str(event.get("repo") or ""))
-        except RuntimeError as exc:
-            _quarantine_event(root, lane, event, reason=str(exc))
-            return
-        central_active = lane.active_handler_thread(central_thread)
-        if central_active and str(central_active.get("event_id") or "") != event_id:
-            lane.terminalize_event(event_id, status="coalesced", reason="central_task_already_running")
-            return
-    if target.get("kind") == "pr_followup":
-        pr_url = str(target.get("prUrl") or issue.get("html_url") or issue.get("pull_request", {}).get("html_url") or "")
-        try:
-            _validate_pr_followup_binding(target, key=key, pr_url=pr_url)
-        except RuntimeError as exc:
-            _quarantine_event(root, lane, event, reason=str(exc))
-            return
-    binding = lane.handler_thread(key)
-    if central_thread:
-        binding = {"thread_id": central_thread}
-    if binding is None and target.get("threadId"):
-        binding = {"thread_id": str(target["threadId"])}
-    binding_active = binding and str(binding.get("status") or "") in {"reserved", "started"}
-    if not binding_active:
-        active = _public_active_keys(root, RadarLedger(runtime_ledger_path(root)), lane)
-        if key not in active and len(active) >= 3:
-            raise RuntimeError("AgentScope handler capacity is full")
+    central_cwd = None
+    try:
+        central = _active_task_config(root, REPO)
+        central_thread = central["threadId"]
+        central_cwd = central["cwd"]
+    except RuntimeError as exc:
+        _quarantine_event(root, lane, event, reason=str(exc))
+        return
+    central_active = lane.active_handler_thread(central_thread)
+    if central_active and str(central_active.get("event_id") or "") != event_id:
+        lane.defer_event(event_id, lease_token=str(event.get("leaseToken") or ""))
+        raise RuntimeError("central_task_busy")
+    binding = {"thread_id": central_thread}
     client_message_id = f"oss-pr-radar:agentscope-event:{event_id}"
     lane.reserve_handler_turn(key, event_id, client_message_id)
-    if target.get("kind") == "pr_followup":
+    if target.get("kind") in {"pr_followup", "pr_watch"}:
         prompt = (
-            f"Handle AgentScope PR follow-up event {event['eventId']} for {target.get('prUrl') or key}. "
-            "Resume the mapped opportunity's existing thread. Review maintainer comments, review state, conflicts, and CI; "
-            "repair or complete the existing PR only, never claim a new issue or create a duplicate PR. "
+            f"Observe AgentScope PR event {event['eventId']} for {target.get('prUrl') or key} in the configured central task. "
+            "Review maintainer comments, review state, conflicts, and CI without resuming any legacy task context; "
+            "never claim a new issue or create a duplicate PR. "
             "Before terminal completion, write one machine outcome: no_action, claimed_or_pr, or design_wait with publicKey and wait timestamps."
         )
     elif target.get("kind") == "outcome_reconcile":
@@ -247,13 +173,6 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
             f"Recover the invalid AgentScope event outcome for {key} in the existing thread. "
             "Do not claim new work or create a PR. Verify the actual terminal state and write a valid outcome JSON "
             "for this exact event/public key using the restricted schema before completion."
-        )
-    elif target.get("kind") == "pr_watch":
-        prompt = (
-            f"Watch AgentScope PR event {event['eventId']} for {event.get('issue', {}).get('html_url') or key}. "
-            "This is an unmapped Oxygen56 PR review/CI/conflict observation. Do not claim an issue, reserve an opportunity, "
-            "or create a new PR; record only actionable maintainer or CI follow-up. "
-            "Before terminal completion, write one machine outcome: no_action, claimed_or_pr, or design_wait with publicKey and wait timestamps."
         )
     elif target.get("kind") == "issue_closeout":
         prompt = (
@@ -292,7 +211,7 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
             "--event-key", key,
             "--thread-id", str(binding.get("thread_id") or "") if binding else "",
             "--client-user-message-id", client_message_id,
-            "--cwd", str(target.get("worktreePath") or root),
+            "--cwd", str(central_cwd),
             "--prompt", prompt,
             "--receipt", str(receipt),
             "--outcome-receipt", str(outcome_path),
@@ -392,30 +311,9 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
 
 
 def production_queue_snapshot(root: Path) -> dict:
-    """Read existing local durable work without invoking the shared workers."""
-    try:
-        ledger_path = runtime_ledger_path(root)
-        if not ledger_path.exists():
-            return {}
-        store = RadarLedger(ledger_path)
-        intents = [item for item in store.pending() if _is_agentscope_record(item)]
-        pr_followups = [item for item in store.pr_followup_candidates() if _is_agentscope_record(item)]
-        followups = [item for item in store.implementation_followup_candidates() if _is_agentscope_record(item)]
-        queue: dict = {
-            "intents": intents,
-            "prFollowups": pr_followups,
-            "followups": followups,
-        }
-        slow_path = root / "state" / "slow-work-request.json"
-        try:
-            slow = json.loads(slow_path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            slow = {}
-        if isinstance(slow, dict) and slow.get("reasons") and _is_agentscope_record(slow):
-            queue["slowWorkRequests"] = [slow]
-        return queue
-    except (OSError, RuntimeError, ValueError, TypeError):
-        return {}
+    """Compatibility hook; queue ownership remains outside this listener."""
+    del root
+    return {}
 
 
 def bridge_delivery(root: Path, lane: EventLane, event: dict) -> None:
@@ -423,6 +321,9 @@ def bridge_delivery(root: Path, lane: EventLane, event: dict) -> None:
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
     queue_kinds = {"intents", "prFollowups", "followups", "slowWorkRequests"}
     if event.get("kind") in queue_kinds:
+        lane.terminalize_event(
+            str(event.get("eventId") or ""), status="coalesced", reason="retired_shared_queue_mirror"
+        )
         return
     target = _resolve_event_target(root, event)
     if event.get("kind") == "outcome_reconcile":
@@ -548,6 +449,7 @@ def run_once(
     receipts_reconciled = reconcile_detached_receipts(root, lane)
     current = (now or datetime.now(UTC)).astimezone(UTC)
     expired = lane.expire_claims(now=current.timestamp())
+    turns_expired = lane.expire_handler_turns(now=current.timestamp())
     poll = GitHubIssuePoller(state / "agentscope-poll.json")
     had_poll_state = (state / "agentscope-poll.json").exists()
     try:
@@ -627,6 +529,7 @@ def run_once(
         "queueWoken": queue_result["woken"],
         "legacyQueueRetired": legacy_queue_retired,
         "claimsExpired": expired,
+        "turnsExpired": turns_expired,
         "fullReconciliation": bool(full_result is not None),
         "fullReconciliationEvents": len(full_result.events) if full_result is not None else 0,
         "publicWorkSeedItems": seed_items,

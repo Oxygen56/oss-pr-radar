@@ -532,6 +532,7 @@ class EventLane:
         lease_seconds: int = 120,
         ttl_seconds: int = 86400,
         max_attempts: int = 3,
+        turn_timeout_seconds: int = 900,
     ) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -541,6 +542,7 @@ class EventLane:
         # terminal reconciliation record is safer than repeatedly waking a
         # second task from the same stale event.
         self.max_attempts = max(1, max_attempts)
+        self.turn_timeout_seconds = max(1, turn_timeout_seconds)
         with self.connect() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS event_lane_events (
@@ -721,9 +723,75 @@ class EventLane:
             )
             return result.rowcount == 1
 
+    def defer_event(self, event_id: str, *, lease_token: str | None = None, owner: str = "event-lane") -> bool:
+        """Return a leased event to pending when its sole executor is busy."""
+        with self.writer() as db:
+            query = (
+                "UPDATE event_lane_events SET status='pending',lease_until=NULL,"
+                "lease_owner=NULL,lease_token=NULL WHERE event_id=? AND status='leased'"
+            )
+            params: list[object] = [str(event_id)]
+            if lease_token:
+                query += " AND lease_owner=? AND lease_token=?"
+                params.extend([str(owner), str(lease_token)])
+            return db.execute(query, params).rowcount == 1
+
     def pending(self) -> int:
         with self.connect() as db:
             return int(db.execute("SELECT count(*) FROM event_lane_events WHERE status IN ('pending','leased')").fetchone()[0])
+
+    def expire_handler_turns(self, *, now: float | None = None, timeout_seconds: int | None = None) -> int:
+        """Terminalize stale bridge turns so they cannot hold the lane forever."""
+        current = time.time() if now is None else now
+        timeout = self.turn_timeout_seconds if timeout_seconds is None else max(1, timeout_seconds)
+        with self.writer() as db:
+            rows = db.execute(
+                "SELECT event_id,event_key,receipt_json FROM event_lane_turns "
+                "WHERE status IN ('reserved','started') AND created_at<=?",
+                (current - timeout,),
+            ).fetchall()
+            expired = 0
+            for row in rows:
+                try:
+                    receipt = json.loads(row["receipt_json"] or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    receipt = {}
+                pid = receipt.get("pid") or receipt.get("processId") or receipt.get("launchPid")
+                if pid:
+                    try:
+                        os.kill(int(pid), 0)
+                        continue
+                    except (OSError, TypeError, ValueError):
+                        pass
+                if receipt.get("turnStarted") is True and not receipt.get("turnStatus"):
+                    continue
+                expired += 1
+                receipt["terminalReason"] = "handler_turn_timeout"
+                receipt_json = json.dumps(receipt, sort_keys=True)
+                db.execute(
+                    "UPDATE event_lane_turns SET status='needs_reconcile',receipt_json=? "
+                    "WHERE event_id=? AND status IN ('reserved','started')",
+                    (receipt_json, row["event_id"]),
+                )
+                db.execute(
+                    "UPDATE event_lane_threads SET status='needs_reconcile',receipt_json=? "
+                    "WHERE event_key=? AND status IN ('reserved','started')",
+                    (receipt_json, row["event_key"]),
+                )
+                event_row = db.execute(
+                    "SELECT payload_json FROM event_lane_events WHERE event_id=? "
+                    "AND status IN ('pending','leased')",
+                    (row["event_id"],),
+                ).fetchone()
+                if event_row:
+                    payload = json.loads(event_row["payload_json"])
+                    payload["terminalReason"] = "handler_turn_timeout"
+                    db.execute(
+                        "UPDATE event_lane_events SET status='needs_reconcile',payload_json=?,"
+                        "delivered_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL WHERE event_id=?",
+                        (json.dumps(payload, sort_keys=True), current, row["event_id"]),
+                    )
+            return expired
 
     def terminalize_github_events_before(
         self, boundary: datetime, *, now: float | None = None
