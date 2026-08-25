@@ -5398,6 +5398,33 @@
     ],
     "why": "Issue reports a runtime crash on NPU for a specific model, but root cause is unconfirmed and likely in the NPU plugin or stateful inference, not a clear algorithm defect. No maintainer confirmation or design direction; requires maintainer investigation."
   },
+  "1ddea38a6d6793914c69f91d288d262f658a422ed9c0e5cbc40adb3291fa8aae": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Initial report attributes overflow to thought blocks, but later comments indicate it occurs with text/code blocks; workaround 'Wrap Codeblocks' suggests code block wrapping is involved."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Chat sidebar container CSS/className to constrain width and prevent horizontal overflow"
+    ],
+    "risks": [
+      "Potential regression in responsive layout if width constraint is too aggressive; need to ensure code block wrapping still works."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by sending a prompt to a reasoning model in VS Code sidebar and observe overflow; apply fix and verify no overflow with long code blocks and thought blocks."
+    ],
+    "unknowns": [
+      "Exact CSS rule causing overflow; whether PR #13153 fully resolves the issue or needs additional changes."
+    ],
+    "why": "Issue reports a clear UI overflow bug in chat sidebar with reproduction steps and user-confirmed workaround. Root cause is likely missing width constraint on chat container, and a patch has been proposed in PR #13153. The issue is actionable and not a duplicate."
+  },
   "1e0a99a1ea63cc5742c834f1dadf42ea8d095a187869ce31959be6c8ff46c230": {
     "confidence": 0.85,
     "contradictions": [],
@@ -15596,6 +15623,39 @@
       "Maintainer preference on whether to await title persistence or use a runtime-supported background hook."
     ],
     "why": "Issue clearly identifies a detached promise in Agent#executeOnFinish causing title loss on serverless runtimes, with a public repro and maintainer acknowledgment. However, a contributor has asked for design direction (await vs background hook) and no maintainer has confirmed the intended behavior, so implementation choice is unresolved."
+  },
+  "521388a01a8e883b561378b1fdb17b14448d6ecde1e6e3bb2719fa01c2b976a9": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The open PR #53367 claims to fix the same issue but lacks tests and has CI failures; however, the issue itself is clear and the proposed fix is straightforward."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()",
+      "vllm/config/vllm.py: ensure VllmConfig.compute_hash() propagates the updated speculative hash"
+    ],
+    "risks": [
+      "Potential hash collisions with other config factors if not carefully combined; need to ensure the new factors are included in a stable order.",
+      "The fix may require updating existing cache keys, causing recompilation for existing users, but that is acceptable."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the minimal reproduction: start server with num_speculative_tokens=9, stop, then start with num_speculative_tokens=7 without clearing cache; verify no assertion error and correct recompilation.",
+      "Add a unit test for SpeculativeConfig.compute_hash() asserting different hashes for different num_speculative_tokens values."
+    ],
+    "unknowns": [
+      "Whether the maintainers prefer a different implementation (e.g., including num_speculative_tokens in a different hash component) is not known, but that is normal implementation uncertainty.",
+      "The exact behavior of num_speculative_tokens_per_batch_size in dynamic speculative decoding is not fully detailed, but the issue suggests including it."
+    ],
+    "why": "The issue provides a clear root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm and the issue qualifies as a kernel/algorithm mechanism (torch.compile cache key correctness) with a clear validation path via the reproduction steps."
   },
   "523dc251b8e92769563369ade20cba7acddd833560e61563daa736a7ecad4a09": {
     "confidence": 0.85,
@@ -30786,6 +30846,39 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "The issue is a well-specified design with clear root cause, concrete code anchors, and a detailed verification plan. However, the repository requires assignment before implementation, and the issue-spec runner comments show unauthorized command attempts, indicating assignment is not yet confirmed. The design has been approved by a maintainer, but the assignment gate is still blocking."
+  },
+  "9ad06c7ed546fd6e77e4487559b2e897fe99aa1bdae264ca4d90bca1e57ae5bb": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The triage comment notes that the current behavior is documented intent (MCP tools are deliberately non-collapsible), while the issue frames it as a bug; this is a design decision for maintainers, not a technical blocker."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/components/messages/CompactToolGroupDisplay.tsx",
+      "packages/cli/src/ui/components/messages/ToolMessage.tsx",
+      "packages/cli/src/ui/utils/resumeHistoryUtils.ts",
+      "packages/core/src/tools/mcp-tool.ts"
+    ],
+    "risks": [
+      "Changing collapse behavior for MCP tools may affect users who rely on inline full output; need to ensure errors and in-progress calls remain expanded.",
+      "The fix must handle the resume path where tool objects may be unresolvable, requiring provenance derivation from persisted fc.name."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that registers an MCP tool via the reference filesystem server, reads a multi-line file, and asserts the transcript collapses the result to one line with full payload available via Ctrl+O.",
+      "Run existing UI component tests for CompactToolGroupDisplay and ToolMessage to ensure no regressions."
+    ],
+    "unknowns": [
+      "Whether maintainers accept the behavior change (enhancement vs bug) and prefer the structural provenance approach over the broader alternative."
+    ],
+    "why": "Issue provides a precise root cause with code anchors and a concrete validation path: MCP tool results are never collapsed because the UI's category map only knows built-in display names, and MCP provenance is lost before the collapse decision. The suggested fix (propagate MCP provenance structurally) is actionable and testable."
   },
   "9aea0784bdd5a0b1e3a3e7204913c7d37adb54f2fafe91af619f0cffdd1b63a1": {
     "confidence": 0.7,
@@ -46113,6 +46206,33 @@
     ],
     "why": "Issue reports a clear .NET bug where web_search_options is sent unsupported, with a reproduced root cause in ChatClientAgentRunOptionsConverter. However, the deterministic gate is HUMAN_REVIEW and design confirmation is needed; existing PRs are Python-only and not directly competing."
   },
+  "e2e31d240c1ab119e410c5b2e1f16c635a158849be7dc2361f5b5420570ec62f": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Bot comment states the exact flow passes on main, but issue reports production failure; this may indicate environment-specific timing or missing reproducer."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Fix per-requestId approval resolution in Slack HITL flow, likely in interactions.js or hitl.js, to make pending-approval updates atomic."
+    ],
+    "risks": [
+      "Potential concurrency changes may affect other channels or introduce locking overhead; need to ensure no regression in single-approval flows."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that simulates two concurrent tool-approval requests in the same thread, approves the second one first, and asserts the first remains pending."
+    ],
+    "unknowns": [
+      "Exact server-side code path for pending-approval state management is not fully confirmed; maintainer design preference for fix approach is unknown."
+    ],
+    "why": "Issue provides a concrete race condition in concurrent Slack tool-approval handling with a suspected root cause (non-atomic read-modify-write on pending approvals) and a clear validation path via a failing test that reproduces the later-first approval denial. The code anchors and reproduction steps are specific, and no duplicate or merged fix is identified."
+  },
   "e2ea459623f14c35806aec525d354f6c9ac76f117c36c5eb54392211dab8f2d6": {
     "confidence": 0.7,
     "contradictions": [
@@ -49718,6 +49838,40 @@
       "Whether the existing PRs are merged or superseded, and maintainer's preferred fix approach."
     ],
     "why": "Issue clearly identifies a bug in malformed-key warning logic for resource URIs containing '@', with a concrete repro and expected behavior. However, two PRs (#4821, #4822) already reference the issue and are closed, indicating potential competition or maintainer action. The deterministic gate requires HUMAN_REVIEW, and assignment is requested, so maintainer confirmation is needed before starting work."
+  },
+  "f1a5ca1ea97b26fc71e8f1ab8a683a1f6578a29205dfebb15b139c05edbafb6e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "No contradictions in the supplied evidence; all comments are consistent with a deterministic batch-size-dependent correctness bug"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "Attention kernel or numerical path in Qwen3NextFullAttentionDecoderLayer layer 3",
+      "Possibly CUDA graph padding or block reuse interaction"
+    ],
+    "risks": [
+      "The root cause is localized to a whole layer, not yet a specific kernel; further splitting may be needed",
+      "The bug may be specific to certain GPU architectures (L20 vs 4090) or kernel selection, requiring hardware-specific validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided prompt and concurrency 5 vs 4 on current main; verify token divergence at index 9",
+      "Run the 2x2 ablation (CUDA graph on/off, block reuse on/off) to confirm the boundary",
+      "Add a regression test that runs the same prompt at batch 4 and 5 and asserts identical token sequences"
+    ],
+    "unknowns": [
+      "Exact kernel or sub-layer within layer 3 causing the divergence",
+      "Whether the fix will be a kernel change, a configuration guard, or a scheduler fix",
+      "Maintainer ownership and preferred fix approach (fail-fast vs implementation)"
+    ],
+    "why": "The issue reports a deterministic correctness bug in Qwen3.5-2B under batch sizes >4, with a clear reproduction (concurrent identical requests) and extensive localization by a contributor. The root cause is narrowed to a whole-decoder-layer boundary (layer 3) with bitwise-identical inputs but divergent attention outputs, indicating a kernel or numerical issue. The evidence includes a concrete validation path (A/B tests at batch 4/5 and 14/15, CUDA graph on/off) and no competing PR covers this root cause."
   },
   "f1c861a4c3ae96c00ebb235e363c99d390d3a4e4e054c9d7d479c86a129b4ce2": {
     "confidence": 0.95,
