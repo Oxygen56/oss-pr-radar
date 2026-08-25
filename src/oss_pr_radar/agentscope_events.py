@@ -43,6 +43,37 @@ def _parse_time(value: str | None) -> datetime | None:
         return None
 
 
+def _event_bridge_process_alive(value: object) -> bool:
+    """Return true only for a live detached event bridge worker."""
+    try:
+        pid = int(value)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass
+    except OSError:
+        return False
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        # On platforms without ps, preserve a demonstrably live process.
+        return True
+    command = result.stdout if result.returncode == 0 else ""
+    return "local_dispatch_bridge.py" in command and "-event-worker" in command
+
+
 def _stable_records(value: Any, keys: tuple[str, ...], sort_keys: tuple[str, ...]) -> list[dict[str, Any]]:
     rows = value if isinstance(value, list) else []
     projected = [
@@ -762,12 +793,8 @@ class EventLane:
                     or receipt.get("processId")
                     or receipt.get("launchPid")
                 )
-                if pid:
-                    try:
-                        os.kill(int(pid), 0)
-                        continue
-                    except (OSError, TypeError, ValueError):
-                        pass
+                if pid and _event_bridge_process_alive(pid):
+                    continue
                 expired += 1
                 receipt["terminalReason"] = "handler_turn_timeout"
                 receipt_json = json.dumps(receipt, sort_keys=True)

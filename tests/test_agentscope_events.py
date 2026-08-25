@@ -13,6 +13,7 @@ import pytest
 from oss_pr_radar.agentscope_events import (
     EventLane,
     GitHubIssuePoller,
+    _event_bridge_process_alive,
     _github_event_id,
     _github_event_identity,
     dispatch_once,
@@ -503,7 +504,11 @@ def test_stale_handler_turn_is_terminalized_and_releases_central_slot(tmp_path):
     assert json.loads(row["receipt_json"])["terminalReason"] == "handler_turn_timeout"
 
 
-def test_active_long_bridge_turn_is_not_reclaimed(tmp_path):
+def test_active_long_bridge_turn_is_not_reclaimed(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "oss_pr_radar.agentscope_events._event_bridge_process_alive",
+        lambda pid: int(pid) == os.getpid(),
+    )
     lane = EventLane(tmp_path / "events.db", turn_timeout_seconds=10)
     lane.reserve_handler_turn("agentscope-ai/agentscope#2", "long-event", "client:long")
     lane.bind_handler_turn(
@@ -514,6 +519,20 @@ def test_active_long_bridge_turn_is_not_reclaimed(tmp_path):
         db.execute("UPDATE event_lane_turns SET created_at=0 WHERE event_id='long-event'")
     assert lane.expire_handler_turns(now=11) == 0
     assert lane.active_handler_thread(CENTRAL_THREAD)["event_id"] == "long-event"
+
+
+def test_reused_pid_from_unrelated_process_is_not_trusted(monkeypatch):
+    monkeypatch.setattr("oss_pr_radar.agentscope_events.os.kill", lambda *_args: None)
+
+    class Result:
+        returncode = 0
+        stdout = "python -m pytest tests/test_agentscope_events.py"
+
+    monkeypatch.setattr(
+        "oss_pr_radar.agentscope_events.subprocess.run",
+        lambda *_args, **_kwargs: Result(),
+    )
+    assert _event_bridge_process_alive(os.getpid()) is False
 
 
 def test_dead_started_bridge_turn_is_reclaimed(tmp_path):
