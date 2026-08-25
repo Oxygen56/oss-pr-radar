@@ -680,6 +680,32 @@
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible UTF-8 corruption bug in the SGLang streaming detokenizer. However, multiple open PRs (e.g., #10344, #12562, #12820) overlap semantically with the same code path, and the deterministic gate requires HUMAN_REVIEW. The issue itself is a bug report with a proposed fix, not a PR, and the maintainer has not confirmed assignment or design preference. Given the overlapping PRs and the need to compare implementation boundaries, a new clean candidate cannot be confidently started without maintainer input."
   },
+  "04045f296d2e2719b737799988b89a05a0c84d2d8e82ea883cf82e8cccbd96f8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "extensions/intellij/src/testIntegration/kotlin/com/github/continuedev/continueintellijextension/Autocomplete.kt",
+      "test configuration or test framework setup"
+    ],
+    "risks": [
+      "Potential maintainer preference for disabling vs fixing the test; need to avoid masking real autocomplete regressions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the specific integration test `:testIntegration > Autocomplete.testAutocomplete()` after applying the fix; verify the assertion at Autocomplete.kt:42 passes."
+    ],
+    "unknowns": [
+      "Exact root cause among the four listed hypotheses is not confirmed; maintainer preference on option A/B/C is unknown."
+    ],
+    "why": "Issue provides a clear failing assertion, code anchor, and reproduction path; the root cause is well-scoped to the Autocomplete integration test and its interaction with the new test framework. The suggested next steps include concrete validation options (fix, disable, or remove), making the work actionable."
+  },
   "0411cc9a0821d12686733547647e890d8a9d71d332709b250f7489e4fd59d19d": {
     "confidence": 0.85,
     "contradictions": [
@@ -14052,6 +14078,36 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports a concrete Azure OAuth failure, but the maintainer's diagnostic suggests a version/import mismatch: the reporter may be using mcp.server.fastmcp from the MCP SDK rather than the standalone fastmcp package. The reporter has not yet confirmed the actual code path or provided the requested traceback. Root cause is unconfirmed and the fix location is ambiguous."
   },
+  "46431016fb2186cfccfe34cbbe0c7e21b3a572f889f0f78b79763b899bd00388": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "DAP-to-MCP bridge server",
+      "MCP tools for debugging",
+      "Skill for /debug orchestration"
+    ],
+    "risks": [
+      "Potential performance issues with MCP tool call overhead for stepping",
+      "Limited expressiveness of MCP for complex debugger events"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the existing prototype's end-to-end smoke test with mock DAP adapter",
+      "Test against real native adapters (CodeLLDB, cppdbg, GDB) and measure stepping latency and event handling"
+    ],
+    "unknowns": [
+      "Whether the community prototype will be maintained and accepted by the community",
+      "Exact performance metrics for MCP-based debugging"
+    ],
+    "why": "The issue clearly identifies a gap in runtime debugging capabilities and proposes a concrete DAP integration. The triage bot suggests a smaller MCP-first alternative, and a community prototype already demonstrates the approach with real CodeLLDB validation. This provides a clear, actionable path for further work."
+  },
   "466375b55c855978618afee5f1db78366b196760e6be0bfe98b1535d6d03b0df": {
     "confidence": 0.7,
     "contradictions": [
@@ -14166,6 +14222,40 @@
       "No maintainer confirmation or assignment, but that is not a blocker for actionability."
     ],
     "why": "Issue provides a precise root cause: AnthropicLlm omits model_version in both streaming and non-streaming paths, with exact code locations and a minimal reproduction. The fix is straightforward and aligns with existing wrappers."
+  },
+  "4703563cac8ecb1960a0a002a8341e71d94069fc55ed8164ac53397d0edcd7e9": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue claims bug in 0.5.17, but PR #34458 is merged and may have fixed it; however, the issue is still open and reproduction may still fail."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Streaming response handling in SGLang server",
+      "Tool call parser integration for DeepSeek models"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #36154, #34458, #34244; need to ensure unique contribution.",
+      "The fix may require careful handling of chunk boundaries and parser state."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided curl command and model, verify that all content chunks are streamed before tool_calls delta.",
+      "Add a regression test that simulates streaming with both content and tool_calls, asserting no content truncation."
+    ],
+    "unknowns": [
+      "Whether the bug persists in the latest version after PR #34458 merge.",
+      "Exact root cause in code (streaming buffer vs parser)."
+    ],
+    "why": "The issue provides a concrete reproduction with expected vs actual streaming output, identifying a clear bug in streaming content truncation when both content and tool_calls are present. The root cause is likely in the streaming buffer or parser logic, and the issue suggests a specific fix. Although the track is llm_algorithm, the bug is in the serving/streaming layer, not a core algorithm, but it is still a valid technical contribution with a clear validation path."
   },
   "475812994174c58ec6729cc99a7961a87454b0b8d2f72c4a1e1c016b0e509615": {
     "confidence": 0.8,
@@ -22398,6 +22488,42 @@
     ],
     "why": "Issue provides a clear root cause and a concrete fix, but an open PR (#6770) already targets the same code path and semantics. The PR is recent, has tests and CI, but does not reference the issue. Maintainer review is needed to decide whether to adopt the PR, request changes, or accept a new PR."
   },
+  "696efea66a64c3cbae0b7414415bbd222d37facba35c7aa2afec26abd235af92": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #53529 initially restored the guard but was revised to only add tests; no direct contradiction with issue's proposed fix"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Qwen3VLForConditionalGeneration._get_deepstack_input_embeds",
+      "torch.cond-based conditional construction of IntermediateTensors",
+      "regression tests for compiled deepstack behavior"
+    ],
+    "risks": [
+      "Reintroducing graph specialization bug if fix is not carefully implemented",
+      "Potential performance impact from torch.cond or conditional branches",
+      "Private corpus cannot be shared, limiting external verification"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the reported accuracy drop using the private corpus or a public proxy (e.g., stop_sign/cherry_blossom) with compiled vs eager modes",
+      "Add a unit test that compiles the decoder with empty deepstack, then runs with nonzero payload to verify correct injection",
+      "Run existing Qwen3-VL tests and torch.compile regression suite"
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix approach (revert vs torch.cond)",
+      "Whether the accuracy gain is due to disabling deepstack or a graph artifact (explicit ablation not yet run)",
+      "Impact on other models/tasks (e.g., Geo3K) not tested"
+    ],
+    "why": "Issue provides a concrete root cause (removal of num_tokens==0 early return in Qwen3VL deepstack path), a human-verified accuracy regression with statistical significance, and a clear validation path (restore guard or use torch.cond). Recent comments confirm the mechanism and propose a targeted fix, while PR #53529 adds regression coverage without claiming a fix. The contribution is actionable and technically valuable."
+  },
   "6972e959f11748a22ee6adc77aebeae78f7b4914636384986bd3b64195b4f9a1": {
     "confidence": 0.7,
     "contradictions": [
@@ -26677,6 +26803,38 @@
       "Whether the issue is reproducible on upstream main is unknown"
     ],
     "why": "The issue describes a reproducible hang in a specific LLM serving configuration (DSA attention, EAGLE speculative decoding, PD-disaggregation) with a clear stack trace pointing to a lazy Triton kernel load inside cuModuleLoadData. However, the root cause is not definitively identified; it could be a missing warmup or a CUDA driver deadlock. The issue is from an internal fork, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The track is llm_algorithm, but the proposed fix (warmup or driver workaround) is operational rather than a new algorithm, and the evidence does not clearly support a reference-vs-implementation test."
+  },
+  "7c932aa570e8ea50a5cd663dbcd42488ebe2670be00e7ba2333823c5a9594bfc": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comments suggest the failure may be session-specific or context-window related, while the original report indicates it is tools-specific; these need reconciliation."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "provider routing/failover logic for x-preview-f-free/ox-alpha-free",
+      "possibly stickyProvider configuration or health-aware failover"
+    ],
+    "risks": [
+      "Potential overlap with issue #45076, which may already track a similar problem; need to ensure no duplicate work.",
+      "Changing routing/failover behavior could affect other models or introduce regressions in provider selection."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl command with tools array to reproduce the failure, then verify fix by running the same command and expecting a successful tool_calls response.",
+      "Add a regression test that sends a request with tools to the affected model and asserts no 'Endpoint is unavailable' error."
+    ],
+    "unknowns": [
+      "Exact upstream cause (shard outage vs. routing hash) is not confirmed; maintainer may have internal knowledge.",
+      "Whether issue #45076 is a true duplicate or a separate manifestation."
+    ],
+    "why": "Issue provides a concrete curl reproduction, consistent failure pattern, and control experiments isolating the problem to the Ox Alpha free model's tool path. Root cause is likely a routing/provider issue, with evidence pointing to sticky routing and upstream shard unavailability. The contribution is actionable: fix the provider routing or failover for this model."
   },
   "7c967bbcc8d422006b105d81f40f4372b24f9ac72ab59de2e1b9d36c186b370c": {
     "confidence": 0.6,
@@ -42555,6 +42713,34 @@
       "No explicit maintainer approval, but not required for actionability."
     ],
     "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction path and a proposed fix, making it actionable."
+  },
+  "ca68bc09610b49727446be0b0f9441f10e4829b8c9da9194c4fd65ca8b6631ee": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix model name forwarding in the vLLM backend router to use the served model name consistently",
+      "Add error propagation from upstream vLLM errors to the client instead of masking as HTTP 200"
+    ],
+    "risks": [
+      "Potential impact on existing users who rely on the current behavior",
+      "Need to ensure compatibility with different vLLM versions and model naming conventions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by loading a custom VLM via vLLM backend and sending a chat completion request; verify the request reaches vLLM with the correct model name and returns a valid response",
+      "Add a regression test that checks the forwarded model name matches the served model name and that upstream errors are surfaced"
+    ],
+    "unknowns": [
+      "Exact code location where the model name is forwarded",
+      "Whether the fix should be in the router or the vLLM backend configuration"
+    ],
+    "why": "The issue clearly identifies a root cause: a model name mismatch where lemonade launches vLLM with --served-model-name user.<model> but forwards requests using the bare model name, causing vLLM to return 404 and lemonade to mask it as HTTP 200. This is a concrete, reproducible bug with logs and multiple user confirmations."
   },
   "cacb001b6a8a9e17fab1375fed9b50521c3e94e676a02be6dff0ea680531de42": {
     "confidence": 0.85,
