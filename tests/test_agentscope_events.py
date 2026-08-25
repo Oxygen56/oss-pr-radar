@@ -19,7 +19,7 @@ from oss_pr_radar.agentscope_events import (
     dispatch_once,
 )
 
-CENTRAL_THREAD = "01a03970-78f5-7450-9267-72423b9edbc8"
+CENTRAL_THREAD = "01a0399e-f694-7213-98e6-9d7c4808dfa2"
 
 
 def _configure_manifest(worker, root: Path, monkeypatch) -> None:
