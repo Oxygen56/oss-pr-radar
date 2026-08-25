@@ -3006,7 +3006,9 @@ class RadarLedger:
                      AND NOT EXISTS (
                        SELECT 1 FROM events result
                        WHERE result.opportunity_key=o.key
-                         AND result.event_type='TASK_RESULT_INGESTED'
+                         AND result.event_type IN (
+                           'TASK_RESULT_INGESTED','PUBLISHED_TASK_RESULT_BACKFILLED'
+                         )
                          AND result.id>s.id
                      )
                      AND NOT EXISTS (
@@ -4521,6 +4523,14 @@ class RadarLedger:
                      'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
                    ) AND s.created_at<=?
                      AND NOT EXISTS (
+                       SELECT 1 FROM events result
+                       WHERE result.opportunity_key=o.key
+                         AND result.event_type IN (
+                           'TASK_RESULT_INGESTED','PUBLISHED_TASK_RESULT_BACKFILLED'
+                         )
+                         AND result.id>s.id
+                     )
+                     AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
                        WHERE quarantine.opportunity_key=o.key
                          AND quarantine.status='ACTIVE'
@@ -4662,7 +4672,7 @@ class RadarLedger:
             managed_receipt = managed_provenance.get("probeReceipt")
             if (
                 managed_task
-                and managed_task.get("state") == "IMPLEMENTATION_READY"
+                and managed_task.get("state") in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}
                 and isinstance(managed_receipt, dict)
             ):
                 verified_probe_receipt = managed_ledger.implementation_authorization_receipt(
@@ -4682,6 +4692,13 @@ class RadarLedger:
                     payload["resultDigest"] = verified_probe_receipt["resultDigest"]
                     payload["headSha"] = verified_probe_receipt["headSha"]
                     payload["commitSha"] = verified_probe_receipt["commitSha"]
+                    current_published = managed_ledger.current_published_result_for_task(
+                        str(row["intent_id"] or "")
+                    )
+                    if current_published is not None:
+                        payload["headSha"] = current_published["headSha"]
+                        payload["commitSha"] = current_published["commitSha"]
+                        payload["resultDigest"] = current_published["resultDigest"]
         except (OSError, RuntimeError, ValueError, sqlite3.Error, json.JSONDecodeError):
             verified_probe_receipt = None
         implementation_authorized = verified_probe_receipt is not None
@@ -8519,6 +8536,50 @@ class RadarLedger:
                 "TASK_RESULT_INGESTED",
                 digest,
                 {"stage": stage},
+                iso_z(datetime.now(UTC)),
+            )
+
+    def published_task_result_backfill_seen(self, key: str, *, digest: str) -> bool:
+        """Return whether the legacy controller recorded a published-result backfill."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='PUBLISHED_TASK_RESULT_BACKFILLED'
+                     AND dedupe_key=?
+                   LIMIT 1""",
+                (key, digest),
+            ).fetchone()
+        return row is not None
+
+    def record_published_task_result_backfilled(
+        self,
+        key: str,
+        *,
+        task_id: str,
+        thread_id: str,
+        digest: str,
+        stage: str,
+        pr_url: str,
+        head_sha: str,
+    ) -> None:
+        """Append the legacy-side completion marker for an atomic managed backfill."""
+
+        with self.transaction() as connection:
+            self._event(
+                connection,
+                key,
+                "PUBLISHED_TASK_RESULT_BACKFILLED",
+                digest,
+                {
+                    "taskId": task_id,
+                    "threadId": thread_id,
+                    "resultDigest": digest,
+                    "stage": stage,
+                    "prUrl": pr_url,
+                    "headSha": head_sha,
+                },
                 iso_z(datetime.now(UTC)),
             )
 

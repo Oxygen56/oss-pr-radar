@@ -145,6 +145,37 @@ def _parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
 
 
+def _pr_observation_source_rank(source: str) -> int:
+    """Break equal-time PR observation ties without defeating newer evidence."""
+
+    normalized = source.casefold()
+    if normalized == "github-authoritative-reconciliation" or normalized.endswith(
+        "-authoritative-reconciliation"
+    ):
+        return 40
+    if normalized == "publication":
+        return 30
+    if normalized == "github-followup":
+        return 20
+    return 10
+
+
+def _pr_observation_wins(
+    *,
+    existing_observed_at: str,
+    existing_source: str,
+    incoming_observed_at: str,
+    incoming_source: str,
+) -> bool:
+    existing_time = _parse_rfc3339_utc(existing_observed_at)
+    incoming_time = _parse_rfc3339_utc(incoming_observed_at)
+    if incoming_time != existing_time:
+        return incoming_time > existing_time
+    return _pr_observation_source_rank(incoming_source) > _pr_observation_source_rank(
+        existing_source
+    )
+
+
 def _parse_rfc3339_utc(value: object) -> datetime:
     """Parse a lease timestamp strictly; naive timestamps are malformed."""
 
@@ -1821,6 +1852,23 @@ class ManagedLedger:
                             "resultDigest": established_receipt.get("resultDigest"),
                         }
                     )
+                current_published = provenance.get("currentPublishedResult")
+                if isinstance(current_published, dict):
+                    current_head = str(current_published.get("headSha") or "")
+                    current_commit = str(current_published.get("commitSha") or "")
+                    current_digest = str(current_published.get("resultDigest") or "")
+                    if (
+                        re.fullmatch(r"[0-9a-f]{40}", current_head)
+                        and current_commit == current_head
+                        and re.fullmatch(r"[0-9a-f]{64}", current_digest)
+                    ):
+                        provenance.update(
+                            {
+                                "headSha": current_head,
+                                "commitSha": current_commit,
+                                "resultDigest": current_digest,
+                            }
+                        )
             connection.execute(
                 """INSERT INTO managed_tasks
                    (task_id,opportunity_key,thread_id,worktree_path,state,source,
@@ -2007,7 +2055,7 @@ class ManagedLedger:
         if (
             task_row is None
             or opportunity_row is None
-            or task_row["state"] != "IMPLEMENTATION_READY"
+            or task_row["state"] not in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}
         ):
             return None
         if not task_row["thread_id"] or task_row["thread_id"] != thread_id:
@@ -2096,6 +2144,7 @@ class ManagedLedger:
             raise ValueError("PR key must be owner/repo#number")
         if state not in PR_STATES:
             raise ValueError(f"unsupported managed PR state: {state}")
+        observed = iso_z(_parse_rfc3339_utc(_utc(observed_at)))
         connection = self._connection()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -2117,6 +2166,14 @@ class ManagedLedger:
                     raise PermissionError("finalized reservation has no recorded PR")
             if existing and existing["origin_kind"] == "EXISTING_OPEN_PR":
                 auto_created = False
+            if existing and not _pr_observation_wins(
+                existing_observed_at=str(existing["observed_at"]),
+                existing_source=str(existing["latest_source"] or existing["source"] or ""),
+                incoming_observed_at=observed,
+                incoming_source=source,
+            ):
+                connection.commit()
+                return dict(existing)
             auto_creation = (
                 auto_created
                 and state == "OPEN"
@@ -2160,7 +2217,7 @@ class ManagedLedger:
                     source_kind,
                     source,
                     _json(provenance or {}),
-                    _utc(observed_at),
+                    observed,
                     _json(metadata or {}),
                     source_kind,
                     _json(provenance or {}),
@@ -3298,6 +3355,353 @@ class ManagedLedger:
         finally:
             connection.close()
 
+    def record_published_task_result(
+        self,
+        *,
+        task_id: str,
+        pr_key: str,
+        pr_url: str,
+        publication_commit_sha: str,
+        head_sha: str,
+        commit_sha: str,
+        result_digest: str,
+        stage: str,
+        validation: dict[str, Any] | None = None,
+        provenance: dict[str, Any] | None = None,
+        observed_at: str | None = None,
+    ) -> dict[str, Any]:
+        """Atomically persist and bind a current published result."""
+
+        if stage not in {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}:
+            raise ValueError("published task result stage is invalid")
+        if pr_key_from_url(pr_url) != pr_key:
+            raise ValueError("published task result PR identity is invalid")
+        if not re.fullmatch(r"[0-9a-f]{40}", publication_commit_sha):
+            raise ValueError("published task result publication commit is invalid")
+        if not re.fullmatch(r"[0-9a-f]{40}", head_sha) or commit_sha != head_sha:
+            raise ValueError("published task result head is invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", result_digest):
+            raise ValueError("published task result digest is invalid")
+        observed = _utc(observed_at)
+        result_key = f"{task_id}|{pr_key}|{head_sha}|{result_digest}"
+        persisted_validation = dict(validation or {})
+        persisted_provenance = dict(provenance or {})
+        connection = self._connection()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            task = connection.execute(
+                "SELECT * FROM managed_tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if task is None or task["state"] not in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}:
+                raise PermissionError("published task result lacks implementation authorization")
+            publication = connection.execute(
+                """SELECT 1 FROM managed_publication_reservations r
+                   JOIN managed_prs p ON p.pr_key=r.pr_key
+                   WHERE r.opportunity_key=? AND r.pr_key=? AND r.head_sha=?
+                     AND r.state='FINALIZED'
+                     AND p.pr_url=? AND p.head_sha=? AND p.state IN ('OPEN','MERGED')""",
+                (
+                    task["opportunity_key"],
+                    pr_key,
+                    publication_commit_sha,
+                    pr_url,
+                    head_sha,
+                ),
+            ).fetchone()
+            if publication is None:
+                raise PermissionError("published task result is not bound to the current PR")
+            task_provenance = json.loads(task["provenance_json"] or "{}")
+            receipt = (
+                task_provenance.get("probeReceipt")
+                if isinstance(task_provenance, dict)
+                else None
+            )
+            if not isinstance(receipt, dict) or not task_provenance.get(
+                "probeReceiptDigest"
+            ):
+                raise PermissionError("published task result lacks durable reproduction evidence")
+            current = {
+                "stage": stage,
+                "prKey": pr_key,
+                "prUrl": pr_url,
+                "publicationCommitSha": publication_commit_sha,
+                "headSha": head_sha,
+                "commitSha": commit_sha,
+                "resultDigest": result_digest,
+            }
+            event_provenance = persisted_provenance | {
+                "publicationCommitSha": publication_commit_sha
+            }
+            event_specs = [
+                (
+                    "TASK_RESULT_RECORDED",
+                    f"result:{result_key}",
+                    {"worker_state": stage, "commit_sha": commit_sha, "advanced": False},
+                ),
+                (
+                    "PUBLISHED_TASK_RESULT_BOUND",
+                    f"published-task-result:{task_id}:{pr_key}:{head_sha}:{result_digest}",
+                    current,
+                ),
+            ]
+            existing_result = connection.execute(
+                "SELECT * FROM managed_results WHERE result_key=?", (result_key,)
+            ).fetchone()
+            if existing_result is not None and any(
+                existing_result[field] != expected
+                for field, expected in {
+                    "task_id": task_id,
+                    "pr_key": pr_key,
+                    "head_sha": head_sha,
+                    "result_digest": result_digest,
+                    "commit_sha": commit_sha,
+                }.items()
+            ):
+                raise ValueError("published task result identity mismatch")
+            existing_events: dict[str, sqlite3.Row | None] = {}
+            for event_type, idempotency_key, payload in event_specs:
+                fingerprint = stable_fingerprint(idempotency_key)
+                existing_event = connection.execute(
+                    """SELECT * FROM managed_lifecycle_events
+                       WHERE idempotency_fingerprint=?""",
+                    (fingerprint,),
+                ).fetchone()
+                if existing_event is not None:
+                    identity = {
+                        "opportunity_key": str(task["opportunity_key"]),
+                        "task_id": task_id,
+                        "pr_key": pr_key,
+                        "idempotency_key": idempotency_key,
+                    }
+                    identity_matches = all(
+                        existing_event[field] == value for field, value in identity.items()
+                    )
+                    if event_type == "TASK_RESULT_RECORDED":
+                        event_matches = existing_event["event_type"] in {
+                            "TASK_RESULT_RECORDED",
+                            "PATCHED",
+                            "PATCH_REJECTED_MISSING_EVIDENCE",
+                        }
+                    else:
+                        event_matches = all(
+                            (
+                                existing_event["event_type"] == event_type,
+                                existing_event["state"]
+                                in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"},
+                                existing_event["source"] == "dispatch-result",
+                                existing_event["provenance_json"]
+                                == _json(event_provenance),
+                                existing_event["payload_json"] == _json(payload),
+                            )
+                        )
+                    if not identity_matches or not event_matches:
+                        raise ValueError(
+                            "published task result lifecycle event binding mismatch"
+                        )
+                existing_events[idempotency_key] = existing_event
+            legacy_marker_payload = {
+                "taskId": task_id,
+                "threadId": str(task["thread_id"] or ""),
+                "resultDigest": result_digest,
+                "stage": stage,
+                "prUrl": pr_url,
+                "headSha": head_sha,
+            }
+            legacy_events_available = (
+                connection.execute(
+                    """SELECT 1 FROM sqlite_master
+                       WHERE type='table' AND name='events'"""
+                ).fetchone()
+                is not None
+                and connection.execute(
+                    "SELECT 1 FROM opportunities WHERE key=?",
+                    (str(task["opportunity_key"]),),
+                ).fetchone()
+                is not None
+            )
+            existing_legacy_marker = None
+            if legacy_events_available:
+                existing_legacy_marker = connection.execute(
+                    """SELECT payload_json FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='PUBLISHED_TASK_RESULT_BACKFILLED'
+                         AND dedupe_key=?""",
+                    (str(task["opportunity_key"]), result_digest),
+                ).fetchone()
+                if (
+                    existing_legacy_marker is not None
+                    and json_payload(existing_legacy_marker["payload_json"])
+                    != legacy_marker_payload
+                ):
+                    raise ValueError("published task result legacy marker binding mismatch")
+            superseded = connection.execute(
+                """SELECT result_key FROM managed_results
+                   WHERE task_id=? AND is_current=1 AND result_key<>?""",
+                (task_id, result_key),
+            ).fetchall()
+            connection.execute(
+                """UPDATE managed_results SET is_current=0,superseded_by=?
+                   WHERE task_id=? AND is_current=1 AND result_key<>?""",
+                (result_key, task_id, result_key),
+            )
+            if existing_result is None:
+                connection.execute(
+                    """INSERT INTO managed_results
+                       (result_key,task_id,pr_key,head_sha,result_digest,result_type,worker_state,
+                        commit_sha,validation_json,source,provenance_json,observed_at,is_current,
+                        superseded_by)
+                       VALUES (?,?,?,?,?,NULL,?,?,?,?,?,?,1,NULL)""",
+                    (
+                        result_key,
+                        task_id,
+                        pr_key,
+                        head_sha,
+                        result_digest,
+                        stage,
+                        commit_sha,
+                        _json(persisted_validation),
+                        "dispatch-result",
+                        _json(persisted_provenance),
+                        observed,
+                    ),
+                )
+            else:
+                connection.execute(
+                    """UPDATE managed_results SET worker_state=?,commit_sha=?,validation_json=?,
+                         source='dispatch-result',provenance_json=?,is_current=1,superseded_by=NULL
+                       WHERE result_key=?""",
+                    (
+                        stage,
+                        commit_sha,
+                        _json(persisted_validation),
+                        _json(persisted_provenance),
+                        result_key,
+                    ),
+                )
+            task_provenance.update(
+                {
+                    "headSha": head_sha,
+                    "commitSha": commit_sha,
+                    "resultDigest": result_digest,
+                    "currentPublishedResult": current,
+                }
+            )
+            connection.execute(
+                """UPDATE managed_tasks SET provenance_json=?,observed_at=?
+                   WHERE task_id=?""",
+                (_json(task_provenance), observed, task_id),
+            )
+            for event_type, idempotency_key, payload in event_specs:
+                if existing_events[idempotency_key] is None:
+                    connection.execute(
+                        """INSERT INTO managed_lifecycle_events
+                       (opportunity_key,task_id,pr_key,event_type,state,idempotency_key,source,
+                        idempotency_fingerprint,provenance_json,observed_at,payload_json)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            str(task["opportunity_key"]),
+                            task_id,
+                            pr_key,
+                            event_type,
+                            str(task["state"]),
+                            idempotency_key,
+                            "dispatch-result",
+                            stable_fingerprint(idempotency_key),
+                            _json(event_provenance),
+                            observed,
+                            _json(payload),
+                        ),
+                    )
+            if legacy_events_available and existing_legacy_marker is None:
+                connection.execute(
+                    """INSERT INTO events
+                       (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+                       VALUES (?,?,?,?,?)""",
+                    (
+                        str(task["opportunity_key"]),
+                        "PUBLISHED_TASK_RESULT_BACKFILLED",
+                        result_digest,
+                        _json(legacy_marker_payload),
+                        observed,
+                    ),
+                )
+            connection.commit()
+            result = connection.execute(
+                "SELECT * FROM managed_results WHERE result_key=?", (result_key,)
+            ).fetchone()
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return dict(result) | {
+            "created": existing_result is None,
+            "state": str(task["state"]),
+            "advanced": False,
+            "superseded": [str(row["result_key"]) for row in superseded],
+        }
+
+    def current_published_result_for_task(self, task_id: str) -> dict[str, Any] | None:
+        """Return only a result still bound to the durable task, PR, and publication receipt."""
+
+        task = self.read_task(task_id)
+        if task is None or task.get("state") not in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}:
+            return None
+        try:
+            provenance = json.loads(task.get("provenance_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            return None
+        current = provenance.get("currentPublishedResult")
+        if not isinstance(current, dict):
+            return None
+        pr_key = str(current.get("prKey") or "")
+        pr_url = str(current.get("prUrl") or "")
+        publication_commit = str(current.get("publicationCommitSha") or "")
+        head_sha = str(current.get("headSha") or "")
+        commit_sha = str(current.get("commitSha") or "")
+        result_digest = str(current.get("resultDigest") or "")
+        if (
+            not pr_key
+            or not pr_url
+            or not re.fullmatch(r"[0-9a-f]{40}", publication_commit)
+            or not re.fullmatch(r"[0-9a-f]{40}", head_sha)
+            or commit_sha != head_sha
+            or not re.fullmatch(r"[0-9a-f]{64}", result_digest)
+        ):
+            return None
+        publication = self.published_pr_for_opportunity(
+            str(task["opportunity_key"]),
+            pr_url=pr_url,
+            publication_head_sha=publication_commit,
+        )
+        result = self.current_result_for_pr(pr_key)
+        if (
+            publication is None
+            or publication.get("pr_key") != pr_key
+            or publication.get("head_sha") != head_sha
+            or result is None
+            or result.get("task_id") != task_id
+            or result.get("head_sha") != head_sha
+            or result.get("commit_sha") != commit_sha
+            or result.get("result_digest") != result_digest
+        ):
+            return None
+        event_key = f"published-task-result:{task_id}:{pr_key}:{head_sha}:{result_digest}"
+        connection = self._connection()
+        try:
+            binding = connection.execute(
+                """SELECT payload_json FROM managed_lifecycle_events
+                   WHERE event_type='PUBLISHED_TASK_RESULT_BOUND' AND idempotency_key=?
+                     AND task_id=? AND pr_key=?""",
+                (event_key, task_id, pr_key),
+            ).fetchone()
+        finally:
+            connection.close()
+        if binding is None or json_payload(binding["payload_json"]) != current:
+            return None
+        return dict(current)
+
     def published_pr_for_opportunity(
         self,
         opportunity_key: str,
@@ -3326,6 +3730,7 @@ class ManagedLedger:
                    FROM managed_publication_reservations r
                    JOIN managed_prs p ON p.pr_key=r.pr_key
                    WHERE r.opportunity_key=? AND r.head_sha=? AND p.pr_url=?
+                     AND r.state='FINALIZED'
                      AND p.state IN ('OPEN','MERGED')
                    ORDER BY CASE p.state WHEN 'MERGED' THEN 0 ELSE 1 END,
                             p.observed_at DESC,r.updated_at DESC
@@ -3640,7 +4045,7 @@ class ManagedLedger:
             raise ValueError("PR key must be owner/repo#number")
         if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
             raise ValueError("publication receipt head SHA is invalid")
-        observed = _utc(now)
+        observed = iso_z(_parse_rfc3339_utc(_utc(now)))
         connection = self._connection()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -3657,6 +4062,10 @@ class ManagedLedger:
                     "FINALIZED",
                 }:
                     raise PermissionError("publication reservation is not active")
+                if reservation["head_sha"] and reservation["head_sha"] != head_sha:
+                    raise PermissionError("publication receipt head does not match reservation")
+                if reservation["pr_key"] and reservation["pr_key"] != pr_key:
+                    raise PermissionError("publication receipt PR does not match reservation")
                 gate_key = str(reservation["opportunity_key"] or gate_key or "")
                 if reservation["state"] == "FINALIZED":
                     existing_finalized = connection.execute(
@@ -3671,12 +4080,51 @@ class ManagedLedger:
                     operation="managed publication receipt",
                 )
 
+            fingerprint = stable_fingerprint(event_idempotency_key)
+            receipt_event_payload = dict(event_payload or {}) | {
+                "prUrl": pr_url,
+                "headSha": head_sha,
+                "reservationKey": reservation_key,
+            }
+            receipt_event = connection.execute(
+                """SELECT event_type,pr_key,observed_at,payload_json
+                   FROM managed_lifecycle_events
+                   WHERE idempotency_key=?""",
+                (event_idempotency_key,),
+            ).fetchone()
+            if receipt_event is not None and (
+                receipt_event["event_type"] != "PUBLICATION_RECEIPT_OBSERVED"
+                or receipt_event["pr_key"] != pr_key
+            ):
+                raise PermissionError("publication receipt idempotency binding mismatch")
+            if receipt_event is not None:
+                existing_event_payload = json_payload(receipt_event["payload_json"])
+                for field in ("prUrl", "headSha", "reservationKey"):
+                    if field in existing_event_payload and existing_event_payload[field] != (
+                        receipt_event_payload[field]
+                    ):
+                        raise PermissionError("publication receipt idempotency binding mismatch")
+            projection_observed = (
+                iso_z(_parse_rfc3339_utc(str(receipt_event["observed_at"])))
+                if receipt_event is not None
+                else observed
+            )
             existing = connection.execute(
                 "SELECT * FROM managed_prs WHERE pr_key=?", (pr_key,)
             ).fetchone()
             if existing and existing["origin_kind"] == "EXISTING_OPEN_PR":
                 auto_created = False
-            auto_creation = auto_created and (existing is None or not existing["auto_created"])
+            projection_wins = existing is None or _pr_observation_wins(
+                existing_observed_at=str(existing["observed_at"]),
+                existing_source=str(existing["latest_source"] or existing["source"] or ""),
+                incoming_observed_at=projection_observed,
+                incoming_source=source,
+            )
+            auto_creation = (
+                projection_wins
+                and auto_created
+                and (existing is None or not existing["auto_created"])
+            )
             if auto_creation and not receipt_observation:
                 invitation_allowed = False
                 if invitation_event_key:
@@ -3709,44 +4157,45 @@ class ManagedLedger:
                     if open_count + active_count >= OPEN_PR_CAP:
                         raise PermissionError("repository open unanswered automatic PR cap reached")
 
-            connection.execute(
-                """INSERT INTO managed_prs
-                   (pr_key,owner,repo,number,head_sha,pr_url,state,auto_created,
-                    maintainer_response,source_kind,source,provenance_json,observed_at,metadata_json,
-                    origin_kind,origin_observation_json,origin_head_sha,origin_pr_url,latest_source)
-                   VALUES (?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?)
-                   ON CONFLICT(pr_key) DO UPDATE SET head_sha=excluded.head_sha,
-                     pr_url=excluded.pr_url,state=excluded.state,
-                     auto_created=CASE WHEN managed_prs.auto_created=1 THEN 1 ELSE excluded.auto_created END,
-                     source_kind=managed_prs.source_kind,source=excluded.source,
-                     provenance_json=excluded.provenance_json,observed_at=excluded.observed_at,
-                     metadata_json=excluded.metadata_json,
-                     origin_kind=managed_prs.origin_kind,
-                     origin_observation_json=managed_prs.origin_observation_json,
-                     origin_head_sha=managed_prs.origin_head_sha,
-                     origin_pr_url=managed_prs.origin_pr_url,
-                     latest_source=excluded.source""",
-                (
-                    pr_key,
-                    owner,
-                    repo,
-                    number,
-                    head_sha,
-                    pr_url,
-                    "OPEN",
-                    int(auto_created),
-                    source_kind,
-                    source,
-                    _json(provenance or {}),
-                    observed,
-                    _json({}),
-                    source_kind,
-                    _json(provenance or {}),
-                    None,
-                    None,
-                    source,
-                ),
-            )
+            if projection_wins:
+                connection.execute(
+                    """INSERT INTO managed_prs
+                       (pr_key,owner,repo,number,head_sha,pr_url,state,auto_created,
+                        maintainer_response,source_kind,source,provenance_json,observed_at,metadata_json,
+                        origin_kind,origin_observation_json,origin_head_sha,origin_pr_url,latest_source)
+                       VALUES (?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?)
+                       ON CONFLICT(pr_key) DO UPDATE SET head_sha=excluded.head_sha,
+                         pr_url=excluded.pr_url,state=excluded.state,
+                         auto_created=CASE WHEN managed_prs.auto_created=1 THEN 1 ELSE excluded.auto_created END,
+                         source_kind=managed_prs.source_kind,source=excluded.source,
+                         provenance_json=excluded.provenance_json,observed_at=excluded.observed_at,
+                         metadata_json=excluded.metadata_json,
+                         origin_kind=managed_prs.origin_kind,
+                         origin_observation_json=managed_prs.origin_observation_json,
+                         origin_head_sha=managed_prs.origin_head_sha,
+                         origin_pr_url=managed_prs.origin_pr_url,
+                         latest_source=excluded.source""",
+                    (
+                        pr_key,
+                        owner,
+                        repo,
+                        number,
+                        head_sha,
+                        pr_url,
+                        "OPEN",
+                        int(auto_created),
+                        source_kind,
+                        source,
+                        _json(provenance or {}),
+                        projection_observed,
+                        _json({}),
+                        source_kind,
+                        _json(provenance or {}),
+                        None,
+                        None,
+                        source,
+                    ),
+                )
 
             if reservation_key:
                 self.finalize_publication_reservation(
@@ -3758,7 +4207,6 @@ class ManagedLedger:
                     receipt_observation=receipt_observation,
                 )
 
-            fingerprint = stable_fingerprint(event_idempotency_key)
             connection.execute(
                 """INSERT OR IGNORE INTO managed_lifecycle_events
                    (opportunity_key,task_id,pr_key,event_type,state,idempotency_key,source,
@@ -3775,7 +4223,7 @@ class ManagedLedger:
                     fingerprint,
                     _json(event_provenance or {}),
                     observed,
-                    _json(event_payload or {}),
+                    _json(receipt_event_payload),
                 ),
             )
             row = connection.execute(

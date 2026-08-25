@@ -53,6 +53,7 @@ from oss_pr_radar.ledger import (  # noqa: E402
     bind_dispatched_recovery_prompt,
 )
 from oss_pr_radar.managed_adapter import (  # noqa: E402
+    PUBLISHED_RESULT_STAGES,
     GitHubAbsenceQueries,
     ManagedAdapter,
 )
@@ -4929,7 +4930,7 @@ def write_task_context(
     if issue_match is None:
         raise RuntimeError("issue URL is invalid")
     repo_identity = issue_match.group(1)
-    if managed_task and managed_task.get("state") == "IMPLEMENTATION_READY":
+    if managed_task and managed_task.get("state") in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}:
         managed_receipt = managed_provenance.get("probeReceipt")
         if isinstance(managed_receipt, dict):
             verified_receipt = managed_ledger.implementation_authorization_receipt(
@@ -4946,6 +4947,13 @@ def write_task_context(
                 context["headSha"] = verified_receipt["headSha"]
                 context["commitSha"] = verified_receipt["commitSha"]
                 context["resultDigest"] = verified_receipt["resultDigest"]
+                current_published = managed_ledger.current_published_result_for_task(
+                    str(context.get("intentId") or "")
+                )
+                if current_published is not None:
+                    context["headSha"] = current_published["headSha"]
+                    context["commitSha"] = current_published["commitSha"]
+                    context["resultDigest"] = current_published["resultDigest"]
     if verified_receipt is not None:
         context["reproductionReceipt"] = verified_receipt
         raw_task_stage = "IMPLEMENTATION_READY"
@@ -13345,6 +13353,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             context = json.loads(_read_task_context_bytes_from_private(result_access))
             if not isinstance(context, dict):
                 raise RuntimeError("task result context must be an object")
+            managed_candidate["publicationReceipt"] = context.get("publicationReceipt")
+            managed_candidate["taskStage"] = context.get("taskStage")
             expected = {
                 "schemaVersion": TASK_RESULT_SCHEMA,
                 "key": candidate["key"],
@@ -13467,6 +13477,97 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 initial_digest = _task_result_digest(value, raw)
             digest_seen = store.task_result_digest_seen(candidate["key"], initial_digest)
+            published_managed_backfill_required = False
+            published_result_pr_url = ""
+            if str(value.get("stage") or "") in PUBLISHED_RESULT_STAGES:
+                result_publication = (
+                    value.get("publicationReceipt")
+                    if isinstance(value.get("publicationReceipt"), dict)
+                    else {}
+                )
+                publication = (
+                    value.get("publication") if isinstance(value.get("publication"), dict) else {}
+                )
+                result_pr_url = str(
+                    value.get("prUrl")
+                    or publication.get("prUrl")
+                    or result_publication.get("prUrl")
+                    or ""
+                )
+                published_result_pr_url = result_pr_url
+                context_publication = (
+                    context.get("publicationReceipt")
+                    if isinstance(context.get("publicationReceipt"), dict)
+                    else {}
+                )
+                current_pr = None
+                if result_publication and context_publication:
+                    try:
+                        current_pr = managed_ledger.published_pr_for_opportunity(
+                            str(candidate["key"]),
+                            pr_url=result_pr_url,
+                            publication_head_sha=str(context_publication.get("commitSha") or ""),
+                        )
+                    except ValueError:
+                        current_pr = None
+                controller_authorized_publication = False
+                if not result_publication and context_publication and result_pr_url:
+                    managed_task_id = str(
+                        candidate.get("intentId") or candidate["threadId"]
+                    )
+                    managed_task = managed_ledger.read_task(managed_task_id) or {}
+                    try:
+                        managed_provenance = json.loads(
+                            managed_task.get("provenance_json") or "{}"
+                        )
+                    except (TypeError, json.JSONDecodeError):
+                        managed_provenance = {}
+                    managed_receipt = managed_provenance.get("probeReceipt")
+                    issue_match = ISSUE_URL.fullmatch(str(candidate["issueUrl"]))
+                    if isinstance(managed_receipt, dict) and issue_match is not None:
+                        controller_authorized_publication = bool(
+                            managed_ledger.implementation_authorization_receipt(
+                                task_id=managed_task_id,
+                                thread_id=str(candidate["threadId"]),
+                                worktree_path=str(result_access.worktree),
+                                repo=issue_match.group(1),
+                                issue_url=str(candidate["issueUrl"]),
+                                receipt_digest=str(
+                                    managed_receipt.get("receiptDigest") or ""
+                                ),
+                            )
+                        )
+                    if controller_authorized_publication:
+                        try:
+                            current_pr = managed_ledger.published_pr_for_opportunity(
+                                str(candidate["key"]),
+                                pr_url=result_pr_url,
+                                publication_head_sha=str(
+                                    context_publication.get("commitSha") or ""
+                                ),
+                            )
+                        except ValueError:
+                            current_pr = None
+                if (
+                    current_pr is not None
+                    and current_pr.get("state") == "OPEN"
+                    and (bool(result_publication) or controller_authorized_publication)
+                ):
+                    current_published = managed_ledger.current_published_result_for_task(
+                        str(candidate.get("intentId") or candidate["threadId"])
+                    )
+                    published_managed_backfill_required = bool(
+                        current_published is None
+                        or current_published.get("prUrl") != result_pr_url
+                        or current_published.get("headSha")
+                        != str(value.get("headSha") or "")
+                        or current_published.get("resultDigest") != initial_digest
+                        or not store.published_task_result_backfill_seen(
+                            candidate["key"], digest=initial_digest
+                        )
+                    )
+            if published_managed_backfill_required:
+                digest_seen = False
             pending_implementation_result = bool(
                 value.get("stage") == "FIX_READY"
                 and task_stage == "IMPLEMENTATION_READY"
@@ -13505,6 +13606,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and candidate["stage"] != "VALIDATION_PENDING"
                 and not possible_policy_recovery
                 and not initial_review_recoverable
+                and not published_managed_backfill_required
             ):
                 seen_followup = context.get("prFollowup")
                 seen_wake_digest = (
@@ -14126,6 +14228,15 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 digest = _task_result_digest(value, raw)
                 managed_adapter.record_task_result(
                     candidate=managed_candidate, value=value, result_digest=digest
+                )
+                store.record_published_task_result_backfilled(
+                    candidate["key"],
+                    task_id=str(candidate.get("intentId") or candidate["threadId"]),
+                    thread_id=str(candidate["threadId"]),
+                    digest=digest,
+                    stage=stage,
+                    pr_url=published_result_pr_url,
+                    head_sha=str(value.get("headSha") or value.get("head_sha") or ""),
                 )
                 store.record_task_result_ingested(candidate["key"], digest=digest, stage=stage)
                 if current_wake_digest:

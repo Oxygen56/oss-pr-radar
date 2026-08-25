@@ -11169,6 +11169,376 @@ def test_ingest_keeps_reservation_bound_published_pr_authoritative(
     assert managed.read_task("intent-1") == task_before
 
 
+@pytest.mark.parametrize("include_result_receipt", [True, False])
+def test_legacy_ingested_published_result_backfills_current_head_and_context(
+    tmp_path, include_result_receipt, monkeypatch
+):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        degrade_stage=False,
+    )
+    task_before = managed.read_task("intent-1")
+    assert task_before is not None
+    task_provenance_before = json.loads(task_before["provenance_json"])
+    probe_receipt_before = dict(task_provenance_before["probeReceipt"])
+    managed.record_result(
+        task_id="intent-1",
+        result_digest=str(probe_receipt_before["resultDigest"]),
+        worker_state="patched",
+        pr_key=None,
+        head_sha=str(probe_receipt_before["headSha"]),
+        commit_sha=str(probe_receipt_before["commitSha"]),
+        validation={"passed": False, "legacy": True},
+        waiting_external=True,
+        source="legacy-test",
+    )
+    with managed._connection() as connection:
+        connection.execute(
+            "UPDATE managed_tasks SET state='PORTFOLIO_READY' WHERE task_id='intent-1'"
+        )
+
+    (worktree / "runtime.py").write_text(
+        "value = 3\nassert value == 3\n", encoding="utf-8"
+    )
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: refine published runtime boundary")
+    current_head = run_git(worktree, "rev-parse", "HEAD")
+    managed.upsert_pr(
+        pr_key="a/b#9",
+        owner="a",
+        repo="b",
+        number=9,
+        head_sha=current_head,
+        pr_url=pr_url,
+        state="OPEN",
+        auto_created=True,
+        source_kind="MANAGED_PUBLICATION_RECEIPT",
+        source="github-authoritative-reconciliation",
+        observed_at=iso_z(datetime.now(UTC) + timedelta(seconds=1)),
+    )
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    publication_receipt_before = dict(context["publicationReceipt"])
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "stage": "PR_OPEN",
+            "handoffMode": "pr_followup_no_local_change",
+            "commitSha": current_head,
+            "headSha": current_head,
+            "publication": dict(value.get("publication") or {}) | {"prUrl": pr_url},
+            "evidence": {"checks": "green", "independentReview": "passed"},
+            "quality": {field: True for field in QUALITY_FIELDS},
+        }
+    )
+    if include_result_receipt:
+        value["publicationReceipt"] = publication_receipt_before
+    else:
+        value.pop("publicationReceipt", None)
+    for field in ("reproductionReceipt", "probeReceipt", "resultDigest"):
+        value.pop(field, None)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    raw = result_path.read_bytes()
+    result_digest = MODULE._task_result_digest(value, raw)
+    store.record_task_result_ingested("a/b#1", digest=result_digest, stage="PR_OPEN")
+    with store.connect() as connection:
+        publication_counts_before = {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in (
+                "publication_requests",
+                "publication_permits",
+                "publication_effects",
+                "managed_publication_reservations",
+            )
+        }
+    adapter_results = []
+    original_record_task_result = MODULE.ManagedAdapter.record_task_result
+
+    def capture_record_task_result(adapter, **kwargs):
+        result = original_record_task_result(adapter, **kwargs)
+        adapter_results.append(result)
+        return result
+
+    monkeypatch.setattr(
+        MODULE.ManagedAdapter, "record_task_result", capture_record_task_result
+    )
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True, first["errors"]
+    assert first["ingested"] == [{"key": "a/b#1", "stage": "PR_OPEN"}]
+    assert adapter_results[-1]["publicationAllowed"] is False
+    managed_result = managed.current_result_for_pr("a/b#9")
+    assert managed_result is not None
+    assert managed_result["task_id"] == "intent-1"
+    assert managed_result["head_sha"] == current_head
+    assert managed_result["result_digest"] == result_digest
+    managed_validation = json.loads(managed_result["validation_json"])
+    assert managed_validation["implementationAuthorizationAuthenticated"] is True
+    assert managed_validation["publishedContinuationBound"] is True
+    assert "reproductionReceiptAuthenticated" not in managed_validation
+    task_after = managed.read_task("intent-1")
+    assert task_after is not None and task_after["state"] == "PORTFOLIO_READY"
+    task_provenance_after = json.loads(task_after["provenance_json"])
+    assert task_provenance_after["probeReceipt"] == probe_receipt_before
+    assert task_provenance_after["probeReceiptDigest"] == task_provenance_before[
+        "probeReceiptDigest"
+    ]
+    assert task_provenance_after["currentPublishedResult"] == {
+        "stage": "PR_OPEN",
+        "prKey": "a/b#9",
+        "prUrl": pr_url,
+        "publicationCommitSha": publication_receipt_before["commitSha"],
+        "headSha": current_head,
+        "commitSha": current_head,
+        "resultDigest": result_digest,
+    }
+
+    first_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert first_context["headSha"] == current_head
+    assert first_context["commitSha"] == current_head
+    assert first_context["resultDigest"] == result_digest
+    assert first_context["reproductionReceipt"] == probe_receipt_before
+    assert first_context["publicationReceipt"] == publication_receipt_before
+    first_local = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    second_local = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    for local_context in (first_local, second_local):
+        assert local_context["headSha"] == current_head
+        assert local_context["commitSha"] == current_head
+        assert local_context["resultDigest"] == result_digest
+        assert local_context["reproductionReceipt"] == probe_receipt_before
+        assert local_context["publicationReceipt"] == publication_receipt_before
+
+    with store.connect() as connection:
+        assert {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in publication_counts_before
+        } == publication_counts_before
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key='a/b#1'
+                     AND event_type='PUBLISHED_TASK_RESULT_BACKFILLED'
+                     AND dedupe_key=?""",
+                (result_digest,),
+            ).fetchone()[0]
+            == 1
+        )
+        connection.execute(
+            """DELETE FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PUBLISHED_TASK_RESULT_BACKFILLED'
+                 AND dedupe_key=?""",
+            (result_digest,),
+        )
+
+    recovered = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert recovered["ok"] is True, recovered["errors"]
+    assert recovered["ingested"] == [{"key": "a/b#1", "stage": "PR_OPEN"}]
+    assert adapter_results[-1]["publicationAllowed"] is False
+
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert repeated["ok"] is True, repeated["errors"]
+    assert repeated["ingested"] == []
+    with managed._connection() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM managed_results
+                   WHERE task_id='intent-1'"""
+            ).fetchone()[0]
+            == 2
+        )
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM managed_results
+                   WHERE task_id='intent-1' AND pr_key='a/b#9' AND is_current=1"""
+            ).fetchone()[0]
+            == 1
+        )
+    with store.connect() as connection:
+        assert {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in publication_counts_before
+        } == publication_counts_before
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key='a/b#1'
+                     AND event_type='PUBLISHED_TASK_RESULT_BACKFILLED'
+                     AND dedupe_key=?""",
+                (result_digest,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM managed_results
+                   WHERE task_id='intent-1' AND pr_key IS NULL AND is_current=0"""
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM managed_lifecycle_events
+                   WHERE event_type='PUBLISHED_TASK_RESULT_BOUND'
+                     AND task_id='intent-1' AND pr_key='a/b#9'"""
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_invalid_published_backfill_does_not_mutate_authorized_task(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    managed, context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        degrade_stage=False,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    tampered_receipt = dict(context["publicationReceipt"])
+    tampered_receipt["commitSha"] = "f" * 40
+    value.update(
+        {
+            "stage": "PR_OPEN",
+            "publicationReceipt": tampered_receipt,
+            "publication": dict(value.get("publication") or {}) | {"prUrl": pr_url},
+            "evidence": {"checks": "green"},
+        }
+    )
+    candidate = next(
+        item
+        for item in store.task_result_candidates()
+        if item["key"] == "a/b#1" and item["threadId"] == "thread-1"
+    )
+    managed_candidate = dict(candidate.get("intent") or {}) | dict(candidate)
+    managed_candidate["publicationReceipt"] = context["publicationReceipt"]
+    managed_candidate["taskStage"] = context["taskStage"]
+    task_before = managed.read_task("intent-1")
+    with managed._connection() as connection:
+        result_count_before = connection.execute(
+            "SELECT COUNT(*) FROM managed_results"
+        ).fetchone()[0]
+
+    with pytest.raises(PermissionError, match="not bound to the current PR"):
+        MODULE.ManagedAdapter(tmp_path, store.path).record_task_result(
+            candidate=managed_candidate,
+            value=value,
+            result_digest="a" * 64,
+        )
+
+    assert managed.read_task("intent-1") == task_before
+    with managed._connection() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM managed_results").fetchone()[0] == (
+            result_count_before
+        )
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM managed_lifecycle_events
+                   WHERE event_type='PUBLISHED_TASK_RESULT_BOUND'"""
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_conflicting_published_binding_event_rolls_back_all_backfill_mutations(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    managed, context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        degrade_stage=False,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "stage": "PR_OPEN",
+            "publicationReceipt": context["publicationReceipt"],
+            "publication": dict(value.get("publication") or {}) | {"prUrl": pr_url},
+            "evidence": {"checks": "green"},
+            "worktreePath": str(worktree),
+        }
+    )
+    result_digest = "a" * 64
+    head_sha = str(value["headSha"])
+    event_key = f"published-task-result:intent-1:a/b#9:{head_sha}:{result_digest}"
+    managed.record_event(
+        event_type="PUBLISHED_TASK_RESULT_BOUND",
+        idempotency_key=event_key,
+        opportunity_key="a/b#1",
+        task_id="intent-1",
+        pr_key="a/b#9",
+        state="IMPLEMENTATION_READY",
+        source="dispatch-result",
+        payload={"wrong": True},
+    )
+    candidate = next(
+        item
+        for item in store.task_result_candidates()
+        if item["key"] == "a/b#1" and item["threadId"] == "thread-1"
+    )
+    managed_candidate = dict(candidate.get("intent") or {}) | dict(candidate)
+    managed_candidate["publicationReceipt"] = context["publicationReceipt"]
+    managed_candidate["taskStage"] = context["taskStage"]
+    task_before = managed.read_task("intent-1")
+    with managed._connection() as connection:
+        results_before = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM managed_results ORDER BY result_key"
+            ).fetchall()
+        ]
+
+    with pytest.raises(ValueError, match="lifecycle event binding mismatch"):
+        MODULE.ManagedAdapter(tmp_path, store.path).record_task_result(
+            candidate=managed_candidate,
+            value=value,
+            result_digest=result_digest,
+        )
+
+    assert managed.read_task("intent-1") == task_before
+    with managed._connection() as connection:
+        assert [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM managed_results ORDER BY result_key"
+            ).fetchall()
+        ] == results_before
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='PUBLISHED_TASK_RESULT_BACKFILLED'"""
+            ).fetchone()[0]
+            == 0
+        )
+
+
 def test_ingest_allows_fix_ready_again_after_authoritative_pr_closes(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,

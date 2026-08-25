@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,43 @@ from .util import canonical_json, sha256_json
 
 NOTIFICATION_CHANNELS = ("feishu", "codex")
 NOTIFICATION_DELIVERY_STATUSES = {"PENDING", "SENT", "FAILED", "RECONCILE_REQUIRED"}
+PUBLISHED_RESULT_STAGES = {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+
+
+def _published_result_matches_worktree(
+    *, candidate: dict[str, Any], value: dict[str, Any], head_sha: str
+) -> bool:
+    candidate_path = str(candidate.get("worktreePath") or "")
+    value_path = str(value.get("worktreePath") or "")
+    if not candidate_path or value_path != candidate_path:
+        return False
+    worktree = Path(candidate_path)
+    try:
+        path_stat = worktree.lstat()
+    except OSError:
+        return False
+    if stat.S_ISLNK(path_stat.st_mode) or not stat.S_ISDIR(path_stat.st_mode):
+        return False
+    try:
+        current_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=worktree,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout.strip()
+        status_output = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=worktree,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return current_head == head_sha and not status_output
 
 
 def _notification_status_by_channel(metadata: dict[str, Any]) -> dict[str, str]:
@@ -772,6 +811,128 @@ class ManagedAdapter:
             )
             if str(path).strip()
         ]
+        stage = str(value.get("stage") or "")
+        publication = value.get("publication") if isinstance(value.get("publication"), dict) else {}
+        publication_receipt = (
+            value.get("publicationReceipt")
+            if isinstance(value.get("publicationReceipt"), dict)
+            else {}
+        )
+        pr_url = str(
+            value.get("prUrl")
+            or publication.get("prUrl")
+            or publication_receipt.get("prUrl")
+            or ""
+        )
+        pr_key = pr_key_from_url(pr_url) if pr_url else None
+        head_sha = str(value.get("headSha") or value.get("head_sha") or "") or None
+        quality = value.get("quality") if isinstance(value.get("quality"), dict) else {}
+        validation = (
+            value.get("validation") if isinstance(value.get("validation"), dict) else quality
+        )
+        context_publication_receipt = candidate.get("publicationReceipt")
+        published_managed_task = ledger.read_task(task_id)
+        if (
+            stage in PUBLISHED_RESULT_STAGES
+            and published_managed_task is not None
+            and published_managed_task.get("readSource") == "managed"
+        ):
+            if not isinstance(context_publication_receipt, dict):
+                raise PermissionError("published task result lacks publication authority")
+            commit_sha = str(value.get("commitSha") or value.get("commit_sha") or "")
+            task = published_managed_task
+            try:
+                task_provenance = json.loads(task.get("provenance_json") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                task_provenance = {}
+            durable_receipt = ledger.implementation_authorization_receipt(
+                task_id=task_id,
+                thread_id=str(thread_id),
+                worktree_path=str(candidate.get("worktreePath") or value.get("worktreePath") or ""),
+                repo=f"{owner}/{repo}",
+                issue_url=normalized_url,
+                receipt_digest=str(task_provenance.get("probeReceiptDigest") or ""),
+            )
+            if publication_receipt or durable_receipt is not None:
+                effective_publication_receipt = (
+                    publication_receipt or context_publication_receipt
+                )
+                publication_commit_sha = str(
+                    effective_publication_receipt.get("commitSha") or ""
+                )
+                publication_pr_url = str(effective_publication_receipt.get("prUrl") or "")
+                pr_url = str(
+                    value.get("prUrl")
+                    or publication.get("prUrl")
+                    or publication_pr_url
+                    or ""
+                )
+                pr_key = pr_key_from_url(pr_url) if pr_url else None
+                bound_pr = (
+                    ledger.published_pr_for_opportunity(
+                        opportunity_key,
+                        pr_url=publication_pr_url,
+                        publication_head_sha=publication_commit_sha,
+                    )
+                    if publication_pr_url and publication_commit_sha
+                    else None
+                )
+                if (
+                    existing_opportunity is None
+                    or (
+                        bool(publication_receipt)
+                        and context_publication_receipt != publication_receipt
+                    )
+                    or publication_pr_url != pr_url
+                    or str(publication.get("prUrl") or publication_pr_url)
+                    != publication_pr_url
+                    or pr_key is None
+                    or bound_pr is None
+                    or bound_pr.get("pr_key") != pr_key
+                    or bound_pr.get("state") != "OPEN"
+                    or bound_pr.get("head_sha") != head_sha
+                    or not isinstance(durable_receipt, dict)
+                    or not re.fullmatch(r"[0-9a-f]{40}", str(head_sha or ""))
+                    or commit_sha != head_sha
+                    or not _published_result_matches_worktree(
+                        candidate=candidate, value=value, head_sha=str(head_sha)
+                    )
+                ):
+                    raise PermissionError("published task result is not bound to the current PR")
+                published_validation = dict(validation)
+                published_validation.pop("reproductionReceiptAuthenticated", None)
+                published_validation.update(
+                    {
+                        "implementationAuthorizationAuthenticated": True,
+                        "publishedContinuationBound": True,
+                        "authorizationReceiptDigest": durable_receipt.get("receiptDigest"),
+                    }
+                )
+                managed_result = ledger.record_published_task_result(
+                    task_id=task_id,
+                    pr_key=pr_key,
+                    pr_url=pr_url,
+                    publication_commit_sha=publication_commit_sha,
+                    head_sha=str(head_sha),
+                    commit_sha=commit_sha,
+                    result_digest=result_digest,
+                    stage=stage,
+                    validation=published_validation,
+                    provenance={
+                        "issueUrl": normalized_url,
+                        "stage": stage,
+                        "publishedContinuationBound": True,
+                        "authorizationReceiptDigest": durable_receipt.get("receiptDigest"),
+                    },
+                )
+                return {
+                    "ok": True,
+                    "result": managed_result,
+                    "reproductionValidated": False,
+                    "implementationAuthorized": True,
+                    "publicationAllowed": False,
+                }
+            raise PermissionError("published task result lacks implementation authorization")
         if existing_opportunity is None:
             ledger.upsert_opportunity(
                 opportunity_key=opportunity_key,
@@ -800,15 +961,6 @@ class ManagedAdapter:
                 "headSha": str(value.get("headSha") or value.get("head_sha") or "") or None,
                 "commitSha": str(value.get("commitSha") or value.get("commit_sha") or "") or None,
             },
-        )
-        stage = str(value.get("stage") or "")
-        publication = value.get("publication") if isinstance(value.get("publication"), dict) else {}
-        pr_url = str(value.get("prUrl") or publication.get("prUrl") or "")
-        pr_key = pr_key_from_url(pr_url) if pr_url else None
-        head_sha = str(value.get("headSha") or value.get("head_sha") or "") or None
-        quality = value.get("quality") if isinstance(value.get("quality"), dict) else {}
-        validation = (
-            value.get("validation") if isinstance(value.get("validation"), dict) else quality
         )
         reproduction_receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
         probe_paths = [

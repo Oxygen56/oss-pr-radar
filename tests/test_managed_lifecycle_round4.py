@@ -185,3 +185,229 @@ def test_existing_open_pr_origin_survives_followup_receipt_and_restore(tmp_path)
         assert row["auto_created"] == 0
         assert row["source_kind"] == "EXISTING_OPEN_PR"
         assert row["latest_source"] == "publication"
+
+
+def test_older_followup_cannot_overwrite_newer_authoritative_pr_head(tmp_path):
+    database = tmp_path / "ledger.sqlite3"
+    RadarLedger(database)
+    ledger = ManagedLedger(database, ensure_schema=True)
+    pr_url = "https://github.com/owner/repo/pull/9"
+    current_head = "d" * 40
+    stale_head = "8" * 40
+    ledger.upsert_pr(
+        pr_key="owner/repo#9",
+        owner="owner",
+        repo="repo",
+        number=9,
+        head_sha=current_head,
+        pr_url=pr_url,
+        state="OPEN",
+        auto_created=False,
+        source_kind="EXISTING_OPEN_PR",
+        source="github-authoritative-reconciliation",
+        observed_at="2026-08-19T02:00:00Z",
+    )
+
+    ManagedAdapter(database.parent, database).record_followup(
+        {
+            "items": [
+                {
+                    "key": "owner/repo#9",
+                    "url": pr_url,
+                    "headSha": stale_head,
+                    "ciStatus": "PASSED",
+                    "checkedAt": "2026-08-19T01:00:00Z",
+                    "evidence": {"failingChecks": [], "requestedChanges": []},
+                }
+            ]
+        },
+        {"run_id": "stale-followup"},
+    )
+    equal_time = ledger.upsert_pr(
+        pr_key="owner/repo#9",
+        owner="owner",
+        repo="repo",
+        number=9,
+        head_sha=stale_head,
+        pr_url=pr_url,
+        state="OPEN",
+        auto_created=False,
+        source_kind="FOLLOWUP_OBSERVATION",
+        source="github-followup",
+        observed_at="2026-08-19T02:00:00Z",
+    )
+
+    assert equal_time["head_sha"] == current_head
+    assert equal_time["latest_source"] == "github-authoritative-reconciliation"
+    assert equal_time["observed_at"] == "2026-08-19T02:00:00Z"
+
+    newer = ledger.upsert_pr(
+        pr_key="owner/repo#9",
+        owner="owner",
+        repo="repo",
+        number=9,
+        head_sha="e" * 40,
+        pr_url=pr_url,
+        state="OPEN",
+        auto_created=False,
+        source_kind="FOLLOWUP_OBSERVATION",
+        source="github-followup",
+        observed_at="2026-08-19T03:00:00Z",
+    )
+    assert newer["head_sha"] == "e" * 40
+    assert newer["latest_source"] == "github-followup"
+
+
+def test_stale_publication_receipt_finalizes_without_reverting_pr_projection(tmp_path):
+    database = tmp_path / "ledger.sqlite3"
+    RadarLedger(database)
+    ledger = ManagedLedger(database, ensure_schema=True)
+    publication_head = "7" * 40
+    current_head = "d" * 40
+    pr_url = "https://github.com/owner/repo/pull/9"
+    ledger.reserve_publication_slot(
+        reservation_key="publication:request-9",
+        request_id="request-9",
+        repo="owner/repo",
+        head_ref="fix/9",
+        head_sha=publication_head,
+        idempotency_key="publication:request-9",
+        now="2026-08-19T00:00:00Z",
+    )
+    ledger.upsert_pr(
+        pr_key="owner/repo#9",
+        owner="owner",
+        repo="repo",
+        number=9,
+        head_sha=current_head,
+        pr_url=pr_url,
+        state="OPEN",
+        auto_created=False,
+        source_kind="EXISTING_OPEN_PR",
+        source="github-authoritative-reconciliation",
+        observed_at="2026-08-19T02:00:00Z",
+    )
+
+    row = ledger.record_publication_receipt_atomic(
+        pr_key="owner/repo#9",
+        owner="owner",
+        repo="repo",
+        number=9,
+        head_sha=publication_head,
+        pr_url=pr_url,
+        auto_created=False,
+        source_kind="MANAGED_PUBLICATION_RECEIPT",
+        source="publication",
+        reservation_key="publication:request-9",
+        event_idempotency_key="publication:request-9:receipt",
+        now="2026-08-19T01:00:00Z",
+    )
+
+    assert row["head_sha"] == current_head
+    assert row["latest_source"] == "github-authoritative-reconciliation"
+    with ledger._connection() as connection:
+        reservation = connection.execute(
+            "SELECT state,head_sha,pr_key FROM managed_publication_reservations"
+        ).fetchone()
+        receipt_count = connection.execute(
+            """SELECT COUNT(*) FROM managed_lifecycle_events
+               WHERE event_type='PUBLICATION_RECEIPT_OBSERVED'"""
+        ).fetchone()[0]
+    assert dict(reservation) == {
+        "state": "FINALIZED",
+        "head_sha": publication_head,
+        "pr_key": "owner/repo#9",
+    }
+    assert receipt_count == 1
+
+    replayed = ledger.record_publication_receipt_atomic(
+        pr_key="owner/repo#9",
+        owner="owner",
+        repo="repo",
+        number=9,
+        head_sha=publication_head,
+        pr_url=pr_url,
+        auto_created=False,
+        source_kind="MANAGED_PUBLICATION_RECEIPT",
+        source="publication",
+        reservation_key="publication:request-9",
+        event_idempotency_key="publication:request-9:receipt",
+        now="2026-08-19T03:00:00Z",
+    )
+    assert replayed["head_sha"] == current_head
+    assert replayed["observed_at"] == "2026-08-19T02:00:00Z"
+    assert replayed["latest_source"] == "github-authoritative-reconciliation"
+    with ledger._connection() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM managed_lifecycle_events
+                   WHERE event_type='PUBLICATION_RECEIPT_OBSERVED'"""
+            ).fetchone()[0]
+            == 1
+        )
+
+    with pytest.raises(PermissionError, match="idempotency binding mismatch"):
+        ledger.record_publication_receipt_atomic(
+            pr_key="owner/repo#9",
+            owner="owner",
+            repo="repo",
+            number=9,
+            head_sha=publication_head,
+            pr_url=f"{pr_url}/files",
+            auto_created=False,
+            source_kind="MANAGED_PUBLICATION_RECEIPT",
+            source="publication",
+            reservation_key="publication:request-9",
+            event_idempotency_key="publication:request-9:receipt",
+            now="2026-08-19T04:00:00Z",
+        )
+    with ledger._connection() as connection:
+        unchanged = connection.execute(
+            "SELECT head_sha,observed_at,latest_source FROM managed_prs WHERE pr_key='owner/repo#9'"
+        ).fetchone()
+        assert dict(unchanged) == {
+            "head_sha": current_head,
+            "observed_at": "2026-08-19T02:00:00Z",
+            "latest_source": "github-authoritative-reconciliation",
+        }
+
+
+def test_active_publication_reservation_is_not_published_authority(tmp_path):
+    database = tmp_path / "ledger.sqlite3"
+    RadarLedger(database)
+    ledger = ManagedLedger(database, ensure_schema=True)
+    publication_head = "7" * 40
+    pr_url = "https://github.com/owner/repo/pull/9"
+    ledger.reserve_publication_slot(
+        reservation_key="publication:request-9",
+        request_id="request-9",
+        repo="owner/repo",
+        head_ref="fix/9",
+        head_sha=publication_head,
+        opportunity_key="owner/repo#1",
+        idempotency_key="publication:request-9",
+        now="2026-08-19T00:00:00Z",
+    )
+    ledger.upsert_pr(
+        pr_key="owner/repo#9",
+        owner="owner",
+        repo="repo",
+        number=9,
+        head_sha=publication_head,
+        pr_url=pr_url,
+        state="OPEN",
+        auto_created=False,
+        reservation_key="publication:request-9",
+        source_kind="MANAGED_PUBLICATION_RECEIPT",
+        source="publication",
+        observed_at="2026-08-19T00:01:00Z",
+    )
+
+    assert (
+        ledger.published_pr_for_opportunity(
+            "owner/repo#1",
+            pr_url=pr_url,
+            publication_head_sha=publication_head,
+        )
+        is None
+    )

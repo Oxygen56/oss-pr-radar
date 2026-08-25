@@ -267,10 +267,14 @@ def test_real_control_plane_adapter_path_reaches_all_projection_buckets(tmp_path
             }
         )
     for number in range(1, 5):
+        bound_worktree = worktree if number == 4 else fixtures[number][0]
         adapter.bind_task_after_thread(
             intent=intents[f"task-{number}"],
-            thread_id=f"thread-{number}",
-            worktree_path=str(tmp_path / f"worktree-{number}"),
+            thread_id=f"task-{number}",
+            worktree_path=str(bound_worktree),
+        )
+        intents[f"task-{number}"].update(
+            {"threadId": f"task-{number}", "worktreePath": str(bound_worktree)}
         )
     _worktree, base_1, head_1, _branch, receipt_1, digest_1, _evidence = fixtures[1]
     adapter.record_task_result(
@@ -302,7 +306,39 @@ def test_real_control_plane_adapter_path_reaches_all_projection_buckets(tmp_path
         },
         result_digest=digest_2,
     )
-    _worktree, base_3, head_3, _branch, receipt_3, digest_3, _evidence = fixtures[3]
+    _worktree, base_3, head_3, branch_3, receipt_3, digest_3, _evidence = fixtures[3]
+    _evidence.unlink()
+    _evidence.parent.rmdir()
+    task_3_pr_url = "https://github.com/owner/repo/pull/3"
+    task_3_reservation = adapter.reserve_publication(
+        request_id="request-3",
+        repo="owner/repo",
+        head_ref=branch_3,
+        head_sha=head_3,
+        opportunity_key="owner/repo#3",
+    )
+    adapter.record_publication_receipt(
+        request={
+            "requestId": "request-3",
+            "issueUrl": "https://github.com/owner/repo/issues/3",
+            "taskId": "task-3",
+            "commitSha": head_3,
+            "publicationKind": "PR_CREATE",
+            "reservationKey": task_3_reservation["reservationKey"],
+            "selectedBaseSha": base_3,
+            "headSha": head_3,
+            "codePaths": ["runtime.py"],
+            "preTaskEvidence": {"baseSha": base_3, "codePathsPlan": ["runtime.py"]},
+            "resultDigest": digest_3,
+            "reproductionReceipt": receipt_3,
+        },
+        receipt={"prUrl": task_3_pr_url, "headSha": head_3},
+    )
+    intents["task-3"]["publicationReceipt"] = {
+        "prUrl": task_3_pr_url,
+        "commitSha": head_3,
+        "branch": branch_3,
+    }
     adapter.record_task_result(
         candidate=intents["task-3"],
         value={
@@ -313,6 +349,9 @@ def test_real_control_plane_adapter_path_reaches_all_projection_buckets(tmp_path
             "codePaths": ["runtime.py"],
             "reproductionReceipt": receipt_3,
             "resultDigest": digest_3,
+            "worktreePath": str(_worktree),
+            "publication": {"prUrl": task_3_pr_url},
+            "evidence": {"checks": "green"},
         },
         result_digest=digest_3,
     )
@@ -386,7 +425,7 @@ def test_real_control_plane_adapter_path_reaches_all_projection_buckets(tmp_path
     with ManagedLedger(database)._connection() as connection:
         assert connection.execute("SELECT COUNT(*) FROM managed_opportunities").fetchone()[0] == 4
         assert connection.execute("SELECT COUNT(*) FROM managed_tasks").fetchone()[0] == 4
-        assert connection.execute("SELECT COUNT(*) FROM managed_results").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM managed_results").fetchone()[0] == 2
         assert (
             connection.execute("SELECT COUNT(*) FROM managed_lifecycle_events").fetchone()[0] >= 8
         )

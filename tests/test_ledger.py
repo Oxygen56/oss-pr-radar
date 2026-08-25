@@ -2649,6 +2649,7 @@ def test_active_quarantine_hides_validation_and_recovery_until_cleared(tmp_path)
         )
     assert store.stale_validation_followups(min_age_minutes=90)
     assert store.recovery_candidates(min_age_minutes=0)
+    assert store.recovery_candidates(min_age_minutes=0)
 
     from oss_pr_radar.task_quarantine import record
 
@@ -2810,12 +2811,21 @@ def test_interrupted_validation_followup_can_enter_controlled_recovery(tmp_path)
     )
     store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest")
     store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest")
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE events SET created_at=?
+               WHERE event_type='VALIDATION_FOLLOWUP_SENT'""",
+            (iso_z(datetime.now(UTC) - timedelta(hours=3)),),
+        )
 
     candidate = store.recovery_candidates(min_age_minutes=0)[0]
 
     assert candidate["threadId"] == "thread-1"
     assert candidate["recoveryKind"] == "VALIDATION_FOLLOWUP_RESULT"
     assert candidate["followupDigest"] == "result-digest"
+    assert store.stale_validation_followups(min_age_minutes=0)[0]["resultDigest"] == (
+        "result-digest"
+    )
     store.reserve_recovery(thread_id="thread-1", nonce=candidate["recoveryNonce"])
     assert store.unresolved_recoveries()[0]["threadId"] == "thread-1"
 
@@ -2825,6 +2835,50 @@ def test_interrupted_validation_followup_can_enter_controlled_recovery(tmp_path)
 
     assert store.recovery_candidates(min_age_minutes=0) == []
     assert store.unresolved_recoveries() == []
+    assert store.stale_validation_followups(min_age_minutes=0) == []
+
+
+def test_published_result_binding_retires_followup_when_legacy_ingest_was_earlier(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "PR_OPEN")
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-1",
+        result_digest="result-digest",
+        missing=["relevant_tests_green"],
+    )
+    store.record_task_result_ingested("a/b#1", digest="result-digest", stage="PR_OPEN")
+    store.reserve_validation_followup(thread_id="thread-1", result_digest="result-digest")
+    store.commit_validation_followup(thread_id="thread-1", result_digest="result-digest")
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE events SET created_at=?
+               WHERE event_type='VALIDATION_FOLLOWUP_SENT'""",
+            (iso_z(datetime.now(UTC) - timedelta(hours=3)),),
+        )
+    assert store.stale_validation_followups(min_age_minutes=90)
+
+    store.record_published_task_result_backfilled(
+        "a/b#1",
+        task_id="intent-1",
+        thread_id="thread-1",
+        digest="new-published-result-digest",
+        stage="PR_OPEN",
+        pr_url="https://github.com/a/b/pull/9",
+        head_sha="a" * 40,
+    )
+
+    assert store.stale_validation_followups(min_age_minutes=90) == []
+    assert store.recovery_candidates(min_age_minutes=0) == []
 
 
 def test_repeatedly_interrupted_recovery_is_terminal_and_releases_wip(tmp_path):
