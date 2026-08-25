@@ -984,10 +984,11 @@ class EventLane:
                     "intents", "prFollowups", "followups", "slowWorkRequests"
                 }:
                     continue
+                payload["terminalReason"] = "retired_shared_queue_mirror"
                 db.execute(
-                    "UPDATE event_lane_events SET status='delivered',delivered_at=?,"
+                    "UPDATE event_lane_events SET status='coalesced',payload_json=?,delivered_at=?,"
                     "lease_until=NULL,lease_owner=NULL,lease_token=NULL WHERE event_id=?",
-                    (current, row["event_id"]),
+                    (json.dumps(payload, sort_keys=True), current, row["event_id"]),
                 )
                 retired += 1
         return retired

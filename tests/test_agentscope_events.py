@@ -278,8 +278,9 @@ def test_queue_identity_is_stable_and_legacy_rows_retire_once(tmp_path):
     assert lane.retire_queue_events(now=10) == 2
     assert lane.retire_queue_events(now=11) == 0
     with lane.connect() as db:
-        statuses = {row["status"] for row in db.execute("SELECT status FROM event_lane_events")}
-    assert statuses == {"delivered"}
+        rows = list(db.execute("SELECT status,payload_json FROM event_lane_events"))
+    assert {row["status"] for row in rows} == {"coalesced"}
+    assert all(json.loads(row["payload_json"])["terminalReason"] == "retired_shared_queue_mirror" for row in rows)
 
 
 def _write_bootstrap_seed(root: Path, boundary: str) -> None:
