@@ -19795,6 +19795,40 @@
     ],
     "why": "Issue provides a clear, reproducible bug with a concrete traceback and a minimal repro setup, identifying the root cause as a non-iterable ModelResponseStream object in the streaming interception path. The expected fix is well-scoped and testable, and the existing PR #37657 is still a draft with gaps, leaving room for a competitive contribution."
   },
+  "59ac443d9d7d3b98cc4276534b36b62fd4f131bf4fc4aac4a806501d1c65001b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Automated triage labels as support, but issue describes a platform-side bug with code-level fixes"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Zoom toolkit scope registration",
+      "Zoom webinar CRUD tools",
+      "Search tool capability gap signaling",
+      "proxy_execute error annotation"
+    ],
+    "risks": [
+      "Potential API behavior changes in search and proxy_execute may affect existing integrations",
+      "Adding new tools requires careful scope and permission handling",
+      "Managed app scope changes may require provider approval and could have rollout implications"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a test that mocks the Zoom API and verifies webinar creation fails with a clear scope error when scopes are missing",
+      "Add a test for COMPOSIO_SEARCH_TOOLS to ensure it returns a capability gap signal for unsupported use cases",
+      "Add a regression test for proxy_execute to distinguish scope-not-granted from scope-not-requestable"
+    ],
+    "unknowns": [
+      "Whether maintainers have already planned a fix or have design preferences for the search tool behavior"
+    ],
+    "why": "The issue provides a clear root cause: the managed Zoom OAuth app lacks webinar write scopes, the toolkit lacks webinar creation tools, and search/workbench mislead users into an unfixable OAuth loop. The reproduction steps and minimal example are concrete, and the requested fixes are actionable code changes (registering scopes, adding tools, improving error handling)."
+  },
   "59b2abad237e73a563901483e0df6ac773ab2893b3536cd79ea63f083bdda1d8": {
     "confidence": 0.7,
     "contradictions": [],
@@ -28418,6 +28452,35 @@
       "Exact code paths responsible for the full snapshot writes"
     ],
     "why": "Issue reports a clear performance bug: full conversation snapshots are re-saved on every step, causing excessive storage and latency. Root cause is evident from the issue body, and the maintainer has labeled it for trio-tnt, indicating active triage. However, the deterministic gate requires HUMAN_REVIEW, and the open PR #21068 may partially address the issue but lacks explicit linkage and has requested changes. Thus, maintainer confirmation is needed before starting work."
+  },
+  "7eb321b6edd98e34d14d6c9efb50253538a171718dfce88f8245c72f745764e6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "sglang/srt/layers/attention/linear/gdn_backend.py",
+      "sglang/srt/layers/attention/linear/kernels/gdn_flashinfer.py",
+      "argument validation for --linear-attn-prefill-backend and --mamba-ssm-dtype"
+    ],
+    "risks": [
+      "Potential performance impact if casting to FP32 is done naively; need to ensure only the checkpoint buffer is FP32 while recurrent state remains BF16."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction command with --linear-attn-prefill-backend flashinfer --linear-attn-decode-backend flashinfer --mamba-ssm-dtype bfloat16 on SM120 and verify no crash; add a unit test that checks dtype compatibility during argument resolution or that prefill checkpoint buffer is cast to FP32."
+    ],
+    "unknowns": [
+      "Whether existing PR #35400 already fixes this exact issue; however, the issue is still open and the PR does not reference it, so the contribution remains actionable."
+    ],
+    "why": "Issue provides a clear root cause: FlashInfer GDN prefill requires FP32 state_checkpoints while decode requires BF16 on SM120, causing mutually incompatible dtype requirements. Reproduction steps and environment are provided, and the fix is actionable: either reject the invalid combination or allocate/cast prefill checkpoints to FP32 independently. This is a concrete kernel/numerics bug in an LLM algorithm path."
   },
   "7ecdde56b1d607d0bcd314e17ac34909419531de45601ce9a3cde3e1c1620895": {
     "confidence": 0.85,
