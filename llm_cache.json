@@ -4105,6 +4105,40 @@
     ],
     "why": "Issue clearly identifies a protocol-conformance bug in McpServerSession and McpStatelessAsyncServer where empty Mono completions cause no response, violating JSON-RPC 2.0. Root cause is well-documented with code references and a suggested fix. However, the repository requires assignment and AI disclosure, and the deterministic gate is HUMAN_REVIEW, so work should not start without maintainer confirmation."
   },
+  "13573f714d445808b5d2283b15273029bb611178e390f9a8aab34f5b38cdc245": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue suggests 'client_id' is sent, but maintainer comment states 'client_key' is already sent"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "OAuth2 token exchange handling for TikTok custom-auth",
+      "Response validation for TikTok token endpoint",
+      "Possibly provider-specific OAuth configuration"
+    ],
+    "risks": [
+      "Potential need for provider-specific handling that may affect other OAuth flows",
+      "Maintainer may prefer a different fix approach",
+      "Requires access to TikTok developer credentials for full reproduction"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the issue using the provided curl commands and a test TikTok app",
+      "Add a regression test that mocks TikTok's token endpoint response without 'access_token' and verifies proper error handling or successful exchange",
+      "Run existing OAuth-related unit tests in the relevant package"
+    ],
+    "unknowns": [
+      "Exact provider error returned by TikTok (missing from error output)",
+      "Whether the connector needs a change or the app configuration is rejected"
+    ],
+    "why": "The issue provides a clear, reproducible failure with exact API calls and error output. The root cause is identified as TikTok's non-standard OAuth token exchange requiring 'client_key' and returning 'access_token' at top level, conflicting with Composio's validation. A maintainer comment confirms the flow already sends 'client_key' but the underlying provider error is unknown, indicating a concrete debugging path. The candidate is actionable with a clear validation path."
+  },
   "1376c30d4677b96b54ae9410c771b8f9ea8ec0e334f67a1f5303843f1e32786a": {
     "confidence": 0.7,
     "contradictions": [],
