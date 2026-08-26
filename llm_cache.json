@@ -10413,6 +10413,37 @@
     "wait_reason": null,
     "why": "Issue identifies a concrete bug in @ai-sdk/google's schema conversion: $ref/$defs are silently dropped, producing invalid API requests. Root cause is clearly localized to convert-json-schema-to-openapi-schema.ts with a reproducible example and expected behavior. No competing PR addresses this specific issue."
   },
+  "3397506fcd8237b0fd2246d0a0a91a6c32d8957e84337ca763753e9c263e7dd8": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #13551 is open and semantically overlaps but does not reference the issue; issue body claims no existing fix."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/session/checkpoint-restore.ts",
+      "checkpoint-restore.test.ts"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #13551; need to compare implementations to avoid duplicate work.",
+      "Changing restore behavior may affect user expectations; need to align with maintainer design preferences."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that creates a commit after checkpoint creation, then restores to the earlier checkpoint, and asserts the commit is preserved or the restore is refused.",
+      "Run the existing checkpoint-restore unit tests and the new test against the modified code."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the minimal refusal approach or automatic preservation via refs.",
+      "Whether PR #13551 fully resolves the root cause or only partially addresses it."
+    ],
+    "why": "Issue provides a clear root cause (git reset --hard moves branch pointer without checking HEAD divergence), a concrete reproduction path, and a suggested fix. An open PR (#13551) already targets the same code path with a similar fix, but it is not linked to the issue and lacks root-cause coverage, so the issue remains actionable for a competing implementation."
+  },
   "33b5005f95e84a2d96eca178ae4419267f102451b12aa73132087e852f8f25ac": {
     "confidence": 0.85,
     "contradictions": [],
@@ -21016,6 +21047,36 @@
     ],
     "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, indicating a generation-level bug in the Qwen3.5 architecture on sglang 0.5.17. The root cause is not yet identified, but the reproduction path is actionable for debugging and fixing."
   },
+  "61ed13928d73102f914ef235c33e54c50fd32a3ea6aa1d0a9b8dfc15d1d3c32d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()",
+      "vllm/config/vllm.py: ensure VllmConfig.compute_hash() propagates the updated speculative hash"
+    ],
+    "risks": [
+      "The fix may cause recompilation when switching k, increasing warmup time; acceptable trade-off for correctness.",
+      "Potential hash collisions if other config fields are still missing; broader cache key fragility remains."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that constructs two SpeculativeConfig instances differing only in num_speculative_tokens and asserts their compute_hash() outputs differ.",
+      "Add an integration test that runs the minimal reproduction: start server with k=9, then k=7 using the same cache root, and verify no assertion error occurs."
+    ],
+    "unknowns": [
+      "Whether the proposed fix has been implemented in any PR; the open PR #53367 appears to address the same issue but lacks tests, so independent implementation may still be valuable."
+    ],
+    "why": "The issue provides a precise root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm and the issue qualifies as a kernel/algorithmic bug with a clear validation path via numerical regression or runtime assertion checks."
+  },
   "620b645b07a697658c61e04902e20dc27e8cba2bfaab41029d83953e78846686": {
     "confidence": 0.85,
     "contradictions": [],
@@ -25750,6 +25811,37 @@
       "Maintainer preference for the suggested fix approach (populating fields vs. backend split)"
     ],
     "why": "Issue provides a clear root cause (extend_prefix_lens_cpu not set in spec branch), a deterministic reproduction command, and a concrete suggested fix. The bug is user-visible and affects a key path (speculative decoding with NVFP4 KV cache)."
+  },
+  "75558a0439227e49aee0ebbc679ba79b5d349172a5b5df70b0f92dda2ada7561": {
+    "confidence": 0.85,
+    "contradictions": [
+      "User reports applying the suggested patch but error persists, while Dosu maintains the root cause is unchanged and the patch is correct."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "api/controllers/console/workspace/tool_providers.py",
+      "api/services/tools/tools_transform_service.py"
+    ],
+    "risks": [
+      "The fix may need to be applied consistently to other endpoints (e.g., detail endpoint) that also use get_provider with a non-UUID id.",
+      "Potential frontend caching of old server_identifier values may require a hard refresh."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that calls the MCP list endpoint and asserts the returned id is a UUID, then calls the authorize endpoint with that id and verifies no DataError occurs.",
+      "Run existing tests for tool_providers and mcp_tools_manage_service."
+    ],
+    "unknowns": [
+      "Whether the user's patch was actually applied and the API container rebuilt; whether there are additional code paths that still return server_identifier."
+    ],
+    "why": "Issue provides a clear traceback showing a UUID type error when authorizing an MCP server. Dosu comments identify the root cause: the list endpoint returns server_identifier instead of the database UUID, and the fix is a one-line change to pass for_list=True. An open PR (#41110) already implements this fix, but it is not merged, so the issue remains actionable."
   },
   "757f74065dd04d0c1b894743a4393d3f5786549b755b07fe7111e0658cd613a7": {
     "confidence": 0.8,
@@ -38539,6 +38631,41 @@
       "Whether maintainers have a preferred fix approach or are already investigating"
     ],
     "why": "Issue reports a reproducible 400 error on Anthropic-route tool calls for Kimi models, with bisection isolating input_schema presence as trigger. However, open PR and related issue lookups timed out, so duplicate work cannot be excluded. The deterministic gate is HUMAN_REVIEW, and maintainer design preference is unknown."
+  },
+  "b517f746a4663db054678461770fb9f31edd4545a80a83c6c12bdd8c7605d04b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #4630 is marked as MERGED but is listed as an open PR in the assessment; however, it is not directly referenced by the issue and does not cover the handoff case."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/agents/run_internal/turn_resolution.py",
+      "src/agents/run.py",
+      "src/agents/run_internal/run_loop.py",
+      "src/agents/run_internal/session_persistence.py",
+      "src/agents/run_state.py"
+    ],
+    "risks": [
+      "Potential conflict with maintainer-owned PR #2695 that overlaps the same files; coordination required.",
+      "Changing the durable checkpoint to NextStepRunAgain may have subtle interactions with other resumable states."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that reproduces the atomic-failure scenario with a scripted model, verifying that after retry the Session and RunResult contain exactly one call/output pair for both charge and handoff, and that tool effects and hooks execute exactly once.",
+      "Run the existing test suite for the affected modules to ensure no regressions."
+    ],
+    "unknowns": [
+      "Maintainer confirmation on the intended durable post-handoff checkpoint (NextStepRunAgain) is requested but not yet provided; this is a design preference, not a blocker.",
+      "Exact implementation details of the fix are not specified, but the issue provides a clear direction."
+    ],
+    "why": "The issue provides a detailed root cause analysis with code anchors, a deterministic reproduction matrix, and a concrete design direction. It identifies a real persistence gap in the agent runtime where handoff outputs are lost after a failed session append, with clear acceptance criteria and non-goals. The proposed fix is actionable and testable."
   },
   "b534ab026233c5b940f456df82a92c93cba891fa279634b4f42862993298494a": {
     "confidence": 0.8,
@@ -53661,6 +53788,37 @@
     ],
     "why": "Issue provides a clear root cause and actionable fix direction, but the deterministic gate requires HUMAN_REVIEW and existing PR #20285 has semantic overlap with the same code paths, needing maintainer comparison before new work starts."
   },
+  "f12f164783897ab5aa6b1b0640740976189952576b86104c02cf46e17076ab2d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Adjust REQUEST_LIMIT in .github/scripts/pydantic_ai_gh_aw_shim/cli.py",
+      "Possibly update workflow prompt or report-failure-as-issue setting"
+    ],
+    "risks": [
+      "Changing request_limit may affect workflow budget and cost",
+      "Potential maintainer preference for not altering the guard"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run existing tests/test_usage_limits.py and tests/test_exceptions.py to ensure no regression",
+      "Reproduce the failure with a counting model to verify the guard behavior before and after change"
+    ],
+    "unknowns": [
+      "Maintainer decision on #7700 regarding raising request_limit or other config changes"
+    ],
+    "why": "The issue is a bot-generated workflow failure report with a clear traceback showing UsageLimitExceeded at request_limit=200. The maintainer bot's comment confirms the behavior is real, reproduced on current main, and matches the documented UsageLimits contract. The root cause is the checked-in shim configuration (REQUEST_LIMIT=200) in cli.py, not a library defect. The issue is actionable as a configuration or workflow adjustment, with a concrete validation path via existing tests and reproduction."
+  },
   "f15625f58c013565f264861383e67bae02ad723c0b1bbe95cc85a5bde65fffd9": {
     "confidence": 0.85,
     "contradictions": [],
@@ -57074,6 +57232,33 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a reproducible CUDA illegal memory access near context boundary with NEXTN on Qwen3.5 hybrid model. Existing PR #34270 has semantic overlap and is maintainer-owned, but does not reference this issue. Need maintainer to confirm whether PR addresses this root cause before creating a new task."
+  },
+  "ff46f5b99fea04ca9fcb7ed3bf419664b8f9b3c5b0498984d2de70db9ab7b193": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "adapter response processing",
+      "semantic validation hook"
+    ],
+    "risks": [
+      "Behavior change may affect existing clients expecting empty responses",
+      "Potential performance overhead of semantic validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with MiniMax-M2.7 or GLM-5.1 streaming response, assert content is merged or error raised when empty with finish_reason=stop and usage=0"
+    ],
+    "unknowns": [
+      "Exact adapter code paths for each provider",
+      "Maintainer preference for validation hook design"
+    ],
+    "why": "Issue clearly describes two failure patterns with root cause: adapters not respecting merge_reasoning_content_in_choices and missing semantic validation for empty responses. Expected behavior and validation path are concrete."
   },
   "ff621c4d4ea95504d04ba212856c8aa8980b1f1838ec3e746571651040a75a8d": {
     "confidence": 0.7,
