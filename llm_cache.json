@@ -15184,6 +15184,39 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides a detailed causal chain for zero cache hits in long DSV4 sessions, with code anchors and a reproduction path. However, the supplied gate decision is HUMAN_REVIEW and the open PR assessment flags semantic overlap with PR #35116 that requires manual comparison. The candidate is not clearly actionable until maintainers confirm the root cause and whether existing PRs already address it."
   },
+  "4b08b98bebc2ff3af9b75fb3d90ce9764d562fb44fd3dfda87c7df233a60faa0": {
+    "confidence": 0.85,
+    "contradictions": [
+      "One comment reports failure at known-good commit 0406431609f on a quietbox, but the issue states that commit is good on galaxy; this may indicate a different hardware/config issue or an incomplete repro.",
+      "Another comment suggests the mesh shape is a red herring and the real trigger is BH+2-erisc+fabric, while the issue title emphasizes the [32,1] mesh; the root cause is still the same."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "active_erisc-crt0.cc: initialize gp register",
+      "possibly adjust linker script or build flags to prevent gp-relative relaxation on BH ACTIVE_ETH proc 0"
+    ],
+    "risks": [
+      "Initializing gp may affect other firmware paths; need to ensure no unintended side effects on other processors or configurations.",
+      "The fix may not address the underlying relaxation issue if other uninitialized registers are used in relaxed instructions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided 5-line repro (ttml.core.distributed.enable_fabric(32) + open_device([32,1])) on a Blackhole galaxy with the fix; expect 'OPENED OK' and clean close.",
+      "Run the tt-blaze nightly test bucket on a loudbox node to confirm no Fabric Router Sync timeout."
+    ],
+    "unknowns": [
+      "Whether the fix has been implemented and verified on the latest main; a comment says the problem is gone at e4d4e6d1853b5d5dc978af84e496c88c90abde67, but no explicit confirmation from all reporters.",
+      "Whether the gp initialization fix is sufficient or if additional changes are needed to prevent relaxation in all relevant kernels."
+    ],
+    "why": "The issue provides a clear regression with known good/bad commits, a minimal repro, and a detailed root-cause hypothesis confirmed by a contributor comment identifying PR #53968 as the trigger. The fix is concrete: initialize gp in active_erisc-crt0.cc. This is a distributed-training fabric handshake bug with a specific code path and validation via the provided repro."
+  },
   "4b0badf5edf7dbf279a741191bcdd0788b1d6ebc29684ddb3836786c9eb329bc": {
     "confidence": 0.7,
     "contradictions": [],
@@ -28981,6 +29014,37 @@
       "The exact mechanism by which load triggers the bug is not fully understood. Also, whether the fix should be in the parser or the engine's tool_choice enforcement is not specified."
     ],
     "why": "The issue identifies a concrete bug in the gemma4 tool parser: tool_choice='required' is not enforced, leading to prose-only responses with finish_reason='tool_calls' and empty tool_calls. Root cause is partially identified (finish_reason mislabeling) and the enforcement gap is clearly described. The issue provides a reproduction script and evidence of failure rates under load, enabling a concrete validation path. Although the exact trigger is content-dependent and not fully reproducible on idle servers, the root cause and expected behavior are clear, and the fix is actionable."
+  },
+  "86730bb2d1536f3e1c49e9998bfdb8dda4211cf1f6c27015efdfea1d6dbb3d4c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Fix Expand op shape inference for empty target shape in ONNX frontend and CPU plugin",
+      "Add regression test for scalar input with empty target shape"
+    ],
+    "risks": [
+      "Potential impact on other Expand shape inference cases",
+      "Need to ensure consistency with ONNX spec and other backends"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script to confirm failure",
+      "Add unit test in ONNX frontend and CPU plugin for Expand with empty target shape",
+      "Run existing Expand-related tests and full CPU plugin test suite"
+    ],
+    "unknowns": [
+      "Exact code location for the bug in the CPU plugin",
+      "Maintainer design preferences for fix implementation"
+    ],
+    "why": "Issue provides a minimal ONNX model, exact reproduction script, and clear expected vs actual output shapes, establishing a concrete bug in OpenVINO CPU's Expand handling for empty target shape. The root cause is localized to shape/rank handling in the Expand op, with code anchors in frontends. The issue is open, no duplicate PRs, and a contributor has volunteered to work on it, indicating actionable and valuable work."
   },
   "867cfd70904a8d44edb9649b434b0dcc0347a33f1ff61c998a80ff12dc7edafa": {
     "confidence": 0.9,
