@@ -681,6 +681,35 @@
     ],
     "why": "Issue provides detailed root cause analysis with measured memory footprints and bit-level logit comparisons, identifying two separable bugs: incorrect GPU memory gate and ill-defined logprob pairing at top-k ties. A concrete validation path exists via the existing test and proposed fixes."
   },
+  "03ce6890b469b9e886c80a71b3a5246c30a75debcc84ad6d63ad2adba59ba41c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()"
+    ],
+    "risks": [
+      "Potential hash collisions with other config changes if not carefully integrated.",
+      "Changing the hash may invalidate existing caches, causing recompilation overhead."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that computes SpeculativeConfig.compute_hash() for different num_speculative_tokens values and asserts distinct hashes.",
+      "Add an integration test that runs vLLM with two different num_speculative_tokens values sharing the same cache directory and verifies no assertion failure."
+    ],
+    "unknowns": [
+      "Whether the proposed fix has been implemented in any open PR; the open PR #53367 appears to address the same issue but lacks tests."
+    ],
+    "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction, expected vs actual behavior, and a proposed fix. The track is llm_algorithm with a concrete mechanism (model_architecture, distributed_training) and a validation path via numerical regression or controlled experiment."
+  },
   "03cf1f5ddd0de367908c9e51b00ef50e2c69f536f752393ef474cd375effea82": {
     "confidence": 0.7,
     "contradictions": [
@@ -17873,6 +17902,39 @@
       "Maintainer design preference for fix approach is unknown"
     ],
     "why": "Issue reports a clear performance bug: every step re-saves the entire conversation, causing 135 MB Postgres and 1.2 GB Redis bloat. Root cause is evident from the description. However, the deterministic gate requires HUMAN_REVIEW, and the issue is labeled for maintainer investigation (trio-tnt). The related PR #20548 is closed and unrelated, so no competition. Actionability is high but maintainer assignment and design confirmation are needed."
+  },
+  "54ab015c5a0b76f0fa3257ade3415af45e8301e82ed51fb68e18275a8f61ff90": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #53647 has semantic overlap but does not reference issue; issue claims no open PR covers changes, but PR exists."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "tests/v1/sample/test_logprobs.py",
+      "gpu_worker.py",
+      "test infrastructure configuration"
+    ],
+    "risks": [
+      "Potential overlap with PR #53647 requires manual review to avoid duplicate work.",
+      "Lowering min_gb might expose test on runners with different numerical behavior, but issue shows Hopper passes at top_logprobs=3."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run test_spec_decode_logprobs on h200_18gb with min_gb lowered to 8 or 12; verify it executes and passes on Hopper. Add regression test for tie-aware pairing by token id with synthetic logits to ensure deterministic behavior."
+    ],
+    "unknowns": [
+      "Whether PR #53647 fully addresses the issue's proposed fixes; requires manual comparison."
+    ],
+    "why": "Issue provides detailed root cause: test never runs due to min_gb=32 vs 18GB runner, and assertion ill-defined due to index-based pairing and top-k ties. Concrete fixes proposed with measured memory footprint and bit-level logit analysis. Open PR #53647 overlaps but does not reference issue; requires manual comparison but does not block actionability."
   },
   "54b4cc8a242353b51585e087e8d0ad06915444032d4808cc9af6d50e69342233": {
     "confidence": 0.9,
@@ -36097,6 +36159,33 @@
     ],
     "why": "Issue provides a clear regression with exact version comparison, isolated variables, and a reproducible command. Root cause is narrowed to generation-level changes in 0.5.17 for Qwen3.5-arch models, with code anchors in qwen3 model files. Actionable fix path is to add a regression test and investigate sampling/logits pipeline."
   },
+  "a7d209eed47fcfccc71db7ef76aada4b9e0167248534599713d654294aad1f49": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "source/common/http/filter_manager.cc",
+      "wasm plugin handling of StopIterationNoBuffer",
+      "ext_proc interaction with buffered_response_data_"
+    ],
+    "risks": [
+      "Potential impact on existing filter behavior when changing buffered_response_data_ handling; need to ensure no regression in multi-block streaming."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that reproduces the single-frame end_stream=true scenario with a wasm plugin returning StopIterationNoBuffer and a downstream ext_proc filter in async pause, verifying the client receives the full body."
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix approach; whether a fix should be in Envoy upstream or Higress-specific code."
+    ],
+    "why": "Issue provides a detailed root cause analysis with code anchors in filter_manager.cc, a concrete reproduction scenario, and a clear expected behavior. The bug is user-visible and affects streaming responses in the AI proxy path, making it a valuable fix."
+  },
   "a80821f98e3da9ec6c72d18495f58a91729ade0207e271b44f826b29676913ef": {
     "confidence": 0.85,
     "contradictions": [],
@@ -37106,6 +37195,31 @@
       "Whether maintainers prefer self-contained retract vs. separate flush; whether existing PRs will be merged and supersede this work."
     ],
     "why": "Issue provides a clear root cause (retract only decrements lock refs for radix-owned prefix, leaving KV resident), measured impact (old-weight KV reuse causing logprob difference), and a concrete validation path (instrument prefix matching, compare logprobs). The suggested fix is actionable and aligns with documented retract semantics."
+  },
+  "adc74379218cff0bdb5ba4cf9f186dd6db85e239ba5a975f09e7a26c84587190": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/frontend/prepost.py: modify StreamingPostProcessor.process_output to emit tool-call deltas immediately instead of waiting for parser None or finish_reason"
+    ],
+    "risks": [
+      "Potential change in frame boundaries could affect clients expecting finish_reason on the last frame; need to verify OpenAI delta semantics are preserved."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that feeds a stream of tool-call deltas with no parser None chunks and asserts that frames are emitted incrementally with no long gaps; include a regression test using the provided Qwen3 coder parser offline token stream to verify frame count and timing."
+    ],
+    "unknowns": [
+      "No maintainer approval or explicit confirmation that the suggested fix is preferred, but this is normal PR review uncertainty and does not block actionability."
+    ],
+    "why": "The issue provides a precise root cause in StreamingPostProcessor.process_output, with code anchors, a suggested minimal fix, and concrete reproduction steps including expected vs actual frame timing. The fix is a small, well-scoped change to flush tool-call deltas immediately, with production validation already performed by the reporter. This is a technically valuable and actionable contribution."
   },
   "adef651b4b3603057ec024e05e61f09b0eaec725bc670c797cde4c91bac81943": {
     "confidence": 0.7,
@@ -41246,6 +41360,34 @@
     ],
     "why": "Issue provides a clear user-visible regression with a concrete reproduction command, isolated variables (DFLASH on/off, reasoning parser, tools), and a known working version. Root cause is localized to generation-level behavior for Qwen3.5-arch models in 0.5.17, with code anchors in model and parser files. No duplicate or competing PR covers this path."
   },
+  "bfe39c451ed3dfb2bc36555b7d6f525aaf0fc20e7bb5d523a9e0d975f6a47f1d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "adapter response processing",
+      "semantic validation hook"
+    ],
+    "risks": [
+      "May require maintainer design preference for validation hook configuration",
+      "Potential behavior change for existing clients expecting empty responses"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with MiniMax-M2.7 or GLM-5.1 streaming response, assert content is merged from reasoning_content when toggle enabled",
+      "Simulate empty content with finish_reason=stop and total_tokens=0, assert error is raised to trigger retry"
+    ],
+    "unknowns": [
+      "Exact adapter code paths for each provider",
+      "Whether maintainers prefer a specific validation hook interface"
+    ],
+    "why": "Issue clearly describes two failure patterns with root cause: adapters not respecting merge_reasoning_content_in_choices and missing semantic validation for empty responses. Expected behavior is concrete and testable."
+  },
   "bfe527fa914c87544191b88b5776b9a65a0e50b78e840c792851ac86b99c5b3c": {
     "confidence": 0.9,
     "contradictions": [
@@ -41476,6 +41618,37 @@
       "Maintainer confirmation of bug and desired fix approach"
     ],
     "why": "The issue reports a reproducible MTP speculative decoding corruption at concurrency >=4, with multiple user confirmations and a plausible root cause in mixed-batch indexing. However, the deterministic gate is HUMAN_REVIEW, and the related-issue lookup failed due to rate limiting, leaving unknown whether existing PRs or fixes already address this. The candidate is technically valuable but requires maintainer confirmation and evidence of no competing implementation."
+  },
+  "c0d7b9e0e9989bd638906c9dc3a5df0da0ae2c61f8f79cc3a9be61e203d13288": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #13551 is open and semantically overlaps but does not reference the issue; root cause coverage is false in PR assessment."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/session/checkpoint-restore.ts",
+      "checkpoint-restore.ts",
+      "Add pre-restore HEAD divergence check and optional ref preservation"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #13551; need to compare implementation boundaries.",
+      "Changing restore behavior may affect user expectations; need maintainer design preference."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test in checkpoint-restore.test.ts that creates a commit after checkpoint and verifies restore either refuses or preserves the commit via a ref."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the minimal refusal or automatic preservation approach.",
+      "Exact implementation details of PR #13551 and whether it fully addresses the issue."
+    ],
+    "why": "Issue provides a clear root cause (git reset --hard moves branch pointer without checking HEAD divergence), a concrete reproduction with ordered steps and minimal repro, and a suggested fix. The code path is identified in checkpoint-restore.ts. An open PR #13551 semantically overlaps but does not directly reference the issue, so the contribution remains actionable pending comparison."
   },
   "c13cd9c32b7c22806624fc78e120aa48bd8d57c97c1cea0c2290051894ce54eb": {
     "confidence": 0.8,
@@ -41853,6 +42026,41 @@
     ],
     "wait_reason": null,
     "why": "Issue clearly describes a bug where GPU counting assumes device plugin and fails with DRA ResourceClaims, causing global planner crash and local planner warnings. Includes reproduction steps, expected vs actual behavior, and code anchors. No competing PR or issue found. The fix is actionable: extend GPU count detection to support DRA ResourceClaims."
+  },
+  "c232c5e28ffc57656e6e635723251936554078270fbaf52e364202428f3f2bab": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #53522 claims to fix the metadata assert but the issue states it is insufficient and causes silent memory corruption",
+      "PR #53680 pins DeepGEMM to a6b593d but does not address the indexer geometry issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Modify the paged MQA kernel or metadata scheduler to support block_kv=2 (or add a fallback path for non-32/64 geometries)",
+      "Possibly slice the short-row decode top-k subsystem from megapatch #41834 as an official SM12x route"
+    ],
+    "risks": [
+      "Potential performance regression if fallback path is slower",
+      "Risk of introducing new memory corruption if the kernel is not properly gated for unsupported geometries"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on GB10 with DSV4-Flash and DeepGEMM enabled; run a decode-shaped forward and verify no assert or illegal memory access",
+      "Add a regression test that constructs a KV cache with num_states=2 and runs the paged MQA logits kernel, checking numerical correctness against a reference implementation"
+    ],
+    "unknowns": [
+      "Maintainer preference among the proposed fix directions (a), (b), or (c)",
+      "Whether the existing PR #53522 will be extended or superseded"
+    ],
+    "why": "The issue provides a precise root cause: DSV4's compressed KV cache geometry (num_states=2) violates the paged MQA kernel's compile-time block_kv template constraint (32/64), causing an assert or silent memory corruption. It includes code anchors, reproduction environment, and a concrete validation path (test on GB10 hardware). The track is llm_algorithm and the issue qualifies as a kernel algorithm bug with numerical/quantization aspects."
   },
   "c2ba984a75a3e46267061baf5863fc5cb1d727660637abf0f65fa5b866ddda15": {
     "confidence": 0.85,
@@ -49670,6 +49878,39 @@
     ],
     "why": "Issue clearly describes two failure patterns with root cause: adapters not respecting merge_reasoning_content_in_choices and missing semantic validation for empty responses. Concrete code anchors and expected behavior provided, enabling a targeted fix and regression tests."
   },
+  "e1dd6a6e5a9110ada546696fc94f39310851b6110463c6dfc9ff88e8032591ab": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #18244 is referenced as fixing the issue but does not explicitly reference the issue number",
+      "Reporter's original environment (L20) vs maintainer's reproduction on RTX 4090 D; both reproduce but with slightly different thresholds"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Fix XQA kernel on sm89 or related attention backend to handle batch_size > 4 correctly",
+      "Possibly adjust KV cache block reuse or tokens_per_block defaults"
+    ],
+    "risks": [
+      "Fix may be specific to sm89 or Qwen3.5 architecture; need to ensure no regression for other models or batch sizes",
+      "Workaround tokens_per_block:64 may have performance implications"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with Qwen3.5-2B on L20 or RTX 4090 D using the provided YAML and concurrency 5+; verify output matches single-request baseline",
+      "Run the existing test in PR #18244 and add regression test for batch_size > 4 with greedy decoding"
+    ],
+    "unknowns": [
+      "Exact kernel-level root cause within attention backend (XQA vs FMHA) not fully identified",
+      "Whether PR #18244 fully resolves the issue for all configurations (e.g., CUDA graph off)"
+    ],
+    "why": "Issue provides deterministic reproduction with batch-size threshold, expected vs actual outputs, and extensive maintainer-led ablation localizing the fault to the attention backend/KV-state boundary. A concrete fix PR (#18244) is referenced by a collaborator, and a workaround is provided. The root cause is sufficiently clear for actionable code work."
+  },
   "e200d8ab0437f515de2b6502970e776b2fb8c1d7f9457eebc7dafb3a0f704100": {
     "confidence": 0.7,
     "contradictions": [
@@ -52920,6 +53161,36 @@
       "Whether existing PR #7604 can be improved or will be merged soon"
     ],
     "why": "Issue provides a clear root cause (system Chrome exits on --remote-debugging-port=0, and ensureChromiumExecutable() ignores PUPPETEER_EXECUTABLE_PATH) and a workaround. Existing PR #7604 is weak: it has failing CI and lacks full evidence, so a materially better PR with complete tests and root-cause coverage is plausible."
+  },
+  "ee0a12631792defdcfba6c691fa27b87f7a770d73486bd25e5e1bf025b58c0b3": {
+    "confidence": 0.85,
+    "contradictions": [
+      "User reports applying the fix but still seeing server_identifier; Dosu suggests caching or incorrect patch location"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "api/controllers/console/workspace/tool_providers.py: pass for_list=True in ToolMCPListAllApi.get",
+      "possibly add regression test for MCP provider list id format"
+    ],
+    "risks": [
+      "Potential frontend caching of old server_identifier values",
+      "Need to ensure other callers of list_providers are not affected by for_list flag"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by calling GET /console/api/workspaces/current/tools/mcp and verifying id is UUID; add unit test for list_providers with for_list=True returning UUIDs",
+      "Run existing API tests for tool providers"
+    ],
+    "unknowns": [
+      "Whether the user's patch was applied to the correct call site and container rebuilt correctly"
+    ],
+    "why": "Issue provides a clear traceback showing a UUID type error when the MCP provider id is a server identifier string. Dosu comments identify the root cause as the list endpoint not passing for_list=True, and an open PR #41110 implements the one-line fix. The bug is user-visible and actionable."
   },
   "ee123742ef232e04254bb85d3865753457038926474e6b7bba835f621027ebfc": {
     "confidence": 0.7,
