@@ -1613,6 +1613,35 @@
     ],
     "why": "Issue reports a clear user-facing bug: profiling.numerical() fails for multi-input models due to np.ascontiguousarray(X) on a list of arrays with different shapes. Root cause is likely in activations_hlsmodel where X is passed to np.ascontiguousarray without handling list-of-arrays. No competing PR or maintainer assignment blocks work."
   },
+  "07591cf95242db6a51ea5bd83be1f0e726c68101d5680e6f35ae4541c3e3cd87": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comment suggests leftover extension folder, but later comment identifies manifest duplicate; no direct contradiction"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "extensions/vscode/package.json",
+      "add manifest regression test"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #13191; need to ensure fix aligns with maintainer preferences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add test that parses package.json and asserts unique command IDs",
+      "Run focused Vitest suite and VS Code typecheck/lint"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers a specific fix approach or has already accepted PR #13191"
+    ],
+    "why": "Issue reports duplicate command registration in WSL; recent comment identifies exact root cause: duplicate 'continue.focusContinueInput' in package.json manifest. Concrete fix and regression test are actionable."
+  },
   "075c1ce45c2c1de2f03f215c87e3fdc833743ce69edec75e6190ec6af68ac1ac": {
     "confidence": 0.85,
     "contradictions": [],
@@ -23208,6 +23237,31 @@
     ],
     "why": "Issue provides a clear, reproducible bug with exact commands and expected behavior; root cause is identified as the --id path unconditionally routing to interactive mode and dropping the prompt. A concrete validation path exists via the provided reproduction steps."
   },
+  "6b9276c4a6111ccbc7595d30a6e6314f384f861ddd6ebe335f5c73c1f0e9a3b7": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/util/gradingProvider.ts",
+      "assertions layer getFinalTest clone logic"
+    ],
+    "risks": [
+      "Changing clone behavior may affect performance or object identity semantics; need to ensure no other code relies on deep clone."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the provided repro.yaml that asserts no RangeError when judge provider id matches target provider id."
+    ],
+    "unknowns": [
+      "Maintainer preference between suggested fix directions (circles:true vs shallow copy) is not yet known."
+    ],
+    "why": "Issue provides a clear regression window, exact root cause (rfdc clone of live provider with circular SDK client), and a minimal repro. The suggested fixes are concrete and testable."
+  },
   "6b96109e69e17a6be5b40b720df2a11218f2ef1310838c08359434bc82842258": {
     "confidence": 0.85,
     "contradictions": [
@@ -42990,6 +43044,38 @@
     ],
     "why": "Issue provides a precise root cause (missing response_format in ZAIChatConfig allowlist), a validated fix path (reuse _add_response_format_to_tools), and a concrete reproduction script. The proposed change is actionable and testable."
   },
+  "c9e2de30b43669425434069f7a351abda76dc2b2795cbdcaaf3e33f9561aa0e1": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #32754 has semantic overlap but no direct code overlap; issue #30936 shares failure signature but may be a different root cause."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/jit/csrc/kvcacheio/staged_write_back.cuh",
+      "JIT kvcacheio kernel dispatch logic"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #32754 or issue #30936; need to verify no duplicate fix already in progress.",
+      "Changing ABI selection may affect performance or introduce new compatibility issues with other CUDA versions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test that compiles JIT kernel with CUDA 12.8 headers and runs with CUDA 13 runtime, verifying no segfault and correct fallback behavior.",
+      "Regression test using mocked cudaMemcpyBatchAsync to validate runtime ABI selection."
+    ],
+    "unknowns": [
+      "Whether existing PR #32754 or issue #30936 already covers this exact fix; maintainer preference on implementation approach."
+    ],
+    "why": "Issue provides a precise root cause (compile-time vs runtime ABI mismatch for cudaMemcpyBatchAsync in JIT path), a concrete reproduction with dual-toolchain setup, and a clear fix direction (runtime dispatch). The bug is user-visible and affects a critical path. No material unknowns block actionability."
+  },
   "ca135e4e909adc9515585f89c7720fa67ac5b04452219ecef5111f0d49667fcf": {
     "confidence": 0.95,
     "contradictions": [],
@@ -43549,6 +43635,38 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a crash in deep_gemm_moe_permute during cudagraph mode with deepep_v2, but the root cause is not fully diagnosed. A potential duplicate issue #52897 shares stack signatures, and an open PR #52632 directly addresses DeepEP-V2 cudagraph path but lacks tests and does not reference this issue. The deterministic gate is HUMAN_REVIEW, and the submission policy conflict blocks automatic action."
+  },
+  "cd8e7574b90172332a6e6e63b8b6756237415124777cc1ca894a6ce1dbffad8a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "User's separate audio stream subscription showed audio arriving, but maintainer clarified it is not the same stream RoomIO reads; user's session recording confirmed audio stops reaching the session."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "AudioRecognition audio routing",
+      "RoomIO track subscription handling",
+      "Audio frame delivery to STT/VAD/turn detection"
+    ],
+    "risks": [
+      "The bug is intermittent and may be hard to reproduce deterministically in tests.",
+      "Fix may require changes to low-level audio routing that could affect other features."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the freeze using the provided configuration and session recording (record={\"audio\": true}) to confirm audio stops reaching the session.",
+      "Add a regression test that simulates multi-turn conversations and verifies continuous audio delivery to detection components."
+    ],
+    "unknowns": [
+      "Exact mechanism causing the track subscription to stop delivering frames mid-call.",
+      "Whether the issue is specific to self-hosted SIP deployments or affects other scenarios."
+    ],
+    "why": "The issue provides a detailed bug report with multiple configurations isolating the problem to the shared audio routing infrastructure. Maintainer guidance and user-provided recordings confirm that audio stops reaching the session, narrowing the root cause to the track subscription or RoomIO audio delivery. The evidence includes concrete code anchors and a clear validation path via session recording and DEBUG logs."
   },
   "cd9c3edc5317427ee0add5fe32e6e25807de3873b9262621bee43435eaa819e3": {
     "confidence": 0.85,
@@ -48805,6 +48923,31 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports Windows stdio communication failure with Antigravity, but root cause is unconfirmed; a commenter's probe suggests the server itself works and the problem may be in Antigravity's launch path. No maintainer confirmation or design direction."
+  },
+  "e1d39726b9c52eada0f52557e2f393b965f9fa517174116986b65a2d8cc45434": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "adapter response processing for reasoning_content merging",
+      "semantic validation hook for empty content with finish_reason=stop and total_tokens=0"
+    ],
+    "risks": [
+      "Potential behavior change for legitimate empty responses; need configurable opt-in to avoid breaking existing clients."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create unit tests simulating MiniMax-M2.7 and GLM-5.1 responses with empty content and reasoning_content, verify merge toggle behavior and validation error triggers retry/fallback."
+    ],
+    "unknowns": [
+      "Exact adapter implementations and whether maintainers prefer a specific validation hook design."
+    ],
+    "why": "Issue clearly describes two failure patterns with root cause: adapters not respecting merge_reasoning_content_in_choices and missing semantic validation for empty responses. Concrete code anchors and expected behavior provided, enabling a targeted fix and regression tests."
   },
   "e200d8ab0437f515de2b6502970e776b2fb8c1d7f9457eebc7dafb3a0f704100": {
     "confidence": 0.7,
