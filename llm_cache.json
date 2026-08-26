@@ -5795,6 +5795,39 @@
     ],
     "why": "Issue reports a runtime crash on NPU for a specific model, but root cause is unconfirmed and likely in the NPU plugin or stateful inference, not a clear algorithm defect. No maintainer confirmation or design direction; requires maintainer investigation."
   },
+  "1dc0f79d5e503f879abe0d0c4da2f50b116aba3bc862b4dc0b58ad3471202083": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #13169 claims to fix FFmpeg but does not address the test failure; issue states the test failure is pre-existing and not caused by the FFmpeg fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Fix Autocomplete integration test or underlying autocomplete behavior",
+      "Possibly adjust TestLLM fixture or timing",
+      "Add regression test to ensure test passes"
+    ],
+    "risks": [
+      "May require maintainer design preference on whether to fix test or disable it",
+      "Potential flakiness in test framework"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the existing testIntegration Autocomplete.testAutocomplete with the FFmpeg fix applied and verify assertion passes",
+      "Add a regression test that reproduces the failure without the fix"
+    ],
+    "unknowns": [
+      "Exact root cause among the four listed hypotheses",
+      "Whether maintainers prefer fixing the test vs disabling it"
+    ],
+    "why": "Issue provides a concrete failing assertion, code anchor, and multiple plausible root causes, with a clear validation path via the existing integration test. The latent bug is user-visible and the fix is actionable."
+  },
   "1ddea38a6d6793914c69f91d288d262f658a422ed9c0e5cbc40adb3291fa8aae": {
     "confidence": 0.85,
     "contradictions": [
@@ -12227,6 +12260,29 @@
       "Maintainer's intended fix scope"
     ],
     "why": "The issue reports a VSCode BYOK integration failure with LiteLLM proxy, but the root cause is unclear: a commenter suggests a URL configuration issue, while the reporter says it persists across URL styles. The problem may be in VSCode's client behavior or LiteLLM's /v1/models response format, requiring maintainer confirmation of the intended fix scope."
+  },
+  "3c4dcf10d1d8dc26eedfe23463cc73ab6da4d8f795ed7e500b7f80967637a3a2": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims Qwen Desktop 1.0.3, but maintainer says no such version exists in repo.",
+      "Issue quotes UI strings not present in Qwen Code codebase."
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Working on this issue would target the wrong product and waste effort."
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [],
+    "unknowns": [
+      "Which product is actually affected? Requires reporter confirmation."
+    ],
+    "why": "The issue describes a bug in 'Qwen Desktop 1.0.3', but the maintainer's triage states that no such version exists in this repository and the UI strings do not match Qwen Code's permission model. The affected product is likely a different application (Qwen chat desktop app), making the issue not actionable in this repo. The root cause is unconfirmed and the reproduction path is not valid for this codebase."
   },
   "3c6257863d0ec057d0914ddabd1ee2c877859d2c29d86a3a273ee98e9fab1f82": {
     "confidence": 0.7,
@@ -31704,6 +31760,38 @@
     "wait_reason": null,
     "why": "Issue reports a duplicate command registration error in a VS Code extension under WSL, but provides no root cause, code anchor, or reproduction beyond environment description. It is a usage/support problem without actionable implementation details."
   },
+  "960b709d435aff5527938acfeff6930f209b238608f4be08ccc17962d5847674": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #4363 is open and touches frontend-gray, but its scope (404 fallback) does not directly address the cookie parsing bug; no direct contradiction."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-token-ratelimit/util/utils.go",
+      "plugins/wasm-go/extensions/frontend-gray/util/utils.go",
+      "possibly main.go files to handle errors gracefully"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #4363 which touches frontend-gray; need to compare and avoid duplicate work.",
+      "Changing cookie parsing behavior might affect edge cases; ensure compatibility with existing valid cookies."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit tests for ExtractCookieValueByKey and GetCookieValue with malformed cookie segments (e.g., 'key' without '=') to reproduce the panic.",
+      "Run existing plugin tests and add regression tests for the specific PoC scenarios described in the issue."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific fix approach (e.g., using SplitN vs. checking length) or have design preferences.",
+      "Whether the existing PR #4363 already includes a fix for the cookie parsing issue; needs manual comparison."
+    ],
+    "why": "Issue provides a precise root cause (index-out-of-range panic in cookie parsing), a concrete PoC with curl commands, and a known fix pattern from a prior commit. The code paths are clearly identified, and the impact is security-relevant (rate-limit bypass)."
+  },
   "962331b72cfd70ae701f13de6c2903b1c3cf51f246e7b189366d85d7878d86c2": {
     "confidence": 0.7,
     "contradictions": [
@@ -33390,6 +33478,33 @@
       "Whether maintainer prefers a new explicit hook vs documenting static-provider convention; no maintainer approval yet."
     ],
     "why": "The issue identifies a concrete bug in header_provider handling during MCP connect handshake, with a clear root cause (ContextVar only set in call_tool) and a live reproduction. A maintainer comment confirms the core delivery mechanism is fixed but notes a remaining gap for kwargs-dependent providers on ambient requests, which aligns with the issue's suggested feature. The contribution is actionable: implement a distinct connect-time header hook or document static-provider convention, with existing test patterns to extend."
+  },
+  "9da51ca0e110c96e2c73837d14aef580e1430defe09f236d5f933c1856135550": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "packages/core/src/session.ts",
+      "packages/core/src/session/runner/to-llm-message.ts",
+      "packages/core/src/tool-output.ts"
+    ],
+    "risks": [
+      "Potential behavior change for users relying on full shell output in session messages; need to ensure full output is retained separately if needed."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that simulates a session shell command producing >50 KiB output and verifies the model-facing message is capped at 50 KiB.",
+      "Run existing core package tests and static checks."
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix approach (cap vs. token estimation) is not confirmed, but the issue suggests a minimal fix."
+    ],
+    "why": "Issue provides a clear root cause: session shell output bypasses the 50 KiB tool-output limit, causing oversized model requests and provider failures. Reproduction steps and expected behavior are concrete, and the proposed fix (apply existing cap) is actionable."
   },
   "9db0b04cde367f79a146dc04e2e407d9ef1ac00ca20a3acc32742892d814c6b1": {
     "confidence": 0.85,
@@ -54324,6 +54439,36 @@
       "Exact handling of the AI disclosure policy conflict for public contribution"
     ],
     "why": "The issue precisely identifies a runner-level gap in fc_agent_runner.py where zero tool calls with plain-text terminal answers are accepted as success, and the signal (tool_responses empty, function_call_state False) is available. However, the proposed fix requires design decisions (per-tool vs per-agent flag, retry vs error, error surface) that need maintainer input, and the repository's AI disclosure policy conflicts with automated public contribution. The issue is a feature request with no maintainer approval or help-wanted signal, and the discussion reveals a second failure mode (wrong parameter on genuine tool call) that broadens scope. Actionability is high technically but blocked by design confirmation and policy constraints."
+  },
+  "f8bf6051aeb6e81a3a33076f40db615eb8c6b418f5a6976fd13e4e92019ddf4e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR assessment lists PRs with semantic overlap but none directly reference the issue; no direct contradiction."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "benchmark/one_batch.py",
+      "ModelRunner initialization"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs; need to verify no duplicate fix already in progress."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run bench_one_batch with --moe-runner-backend flashinfer_mxfp4 on a small MoE model and assert get_moe_runner_backend() returns flashinfer_mxfp4; profile kernels to ensure trtllm-gen kernels are used instead of triton fallback."
+    ],
+    "unknowns": [
+      "Whether any existing PR already fixes this exact issue; maintainer preference for fix location."
+    ],
+    "why": "Issue identifies a concrete bug: bench_one_batch skips initialize_moe_config, causing quantized MoE to silently fall back to BF16/triton. Root cause is clear with code anchors and a reproduction path. The fix is actionable: call initialize_moe_config in the bench path or ModelRunner init. Validation via kernel profiling and numerical comparison is concrete."
   },
   "f8fe1e116e3711a23280d07715d865e221688f8b49f5da6478d56a98c0206174": {
     "confidence": 0.7,
