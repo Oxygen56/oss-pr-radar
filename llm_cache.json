@@ -2355,6 +2355,40 @@
     ],
     "why": "Issue provides a concrete reproduction with ordered steps and a clear observed/expected behavior. A contributor traced the current code path and identified plausible root causes (token expiry during long-pending approval, auth-retry wiring, or mid-stream error handling) with specific code anchors. The validation path is a retest on latest build with the same 45-minute wait and log inspection, which is actionable."
   },
+  "0ba796a3316eb770c789db4614f1f168162f6db7c65ba6acf7889e7bb123c2b7": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #53647 claims to fix tie-awareness but does not reference issue; issue author states no open PR covers changes, but PR exists with semantic overlap."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "tests/v1/sample/test_logprobs.py",
+      "gpu_worker.py"
+    ],
+    "risks": [
+      "Changing min_gb may expose test on CI where it could fail due to numerical differences; need to ensure Hopper passes at top_logprobs=3.",
+      "Tie-aware pairing may require careful handling of boundary ties to avoid flakiness."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run test_spec_decode_logprobs on h200_18gb with min_gb lowered to 8 or 12; verify it executes and passes on Hopper.",
+      "Add regression test for tie-aware token-id pairing using synthetic logits with exact ties at top-k boundary."
+    ],
+    "unknowns": [
+      "Whether PR #53647 fully addresses the assertion problem; need to compare its implementation with proposed fix.",
+      "Exact min_gb value maintainers prefer; issue suggests 8 or 12 but leaves choice open."
+    ],
+    "why": "Issue provides detailed root cause: test never runs due to mismatched min_gb=32 on 18GB MIG slice, and assertion ill-defined due to flat-index pairing and top-k tie-breaking. Concrete fixes proposed and validated with measurements. Existing PR #53647 overlaps but does not close the issue; no blocker."
+  },
   "0bf9ce8c08da3bccee182b02e96cfff5ed3c58805be59e87efbcec67ed00dd7d": {
     "confidence": 0.7,
     "contradictions": [
@@ -6381,6 +6415,37 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides a clear root cause and reproduction for a user-visible bug, but the open PR #36657 overlaps semantically and may already address the same code path. The issue also lacks maintainer confirmation and the fix design has multiple viable options (A/B/C) that need maintainer input. The deterministic gate is HUMAN_REVIEW, so no upgrade is allowed."
+  },
+  "209261a28295224232514f4a4b5d16bb2fc2bac8e32a169f6453b9a9e11a6fea": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found; all evidence is consistent"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "attention backend / KV-state handling in tensorrt_llm/_torch/attention_backend/fmha/fallback.py",
+      "CUDA graph padding or scheduler batch-size handling"
+    ],
+    "risks": [
+      "Fix may be specific to Qwen3.5-2B or L20/4090D hardware; need to verify on other GPUs and models",
+      "The remaining root cause is in C++/KV internals not fully observable from Python; a diagnostic hook may be required before a production fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided YAML and curl loop at concurrency 5 (graph on) or 15 (graph off) on Qwen3.5-2B, assert token-identical output to single-request baseline",
+      "Add a regression test that runs the exact prompt at batch sizes 1 and 5 (or 15) and compares generated token IDs"
+    ],
+    "unknowns": [
+      "Exact C++ kernel/plan state causing the divergence is not yet observable; maintainer guidance on diagnostic surface is pending"
+    ],
+    "why": "The issue provides a deterministic reproduction with exact commands, a clear expected vs actual output pair, and extensive maintainer-led ablation isolating the failure to the attention backend/KV-state boundary. The root cause is localized to a concrete code path (FallbackFmha, Layer-3 attention) with a clear validation path via the established batch-size threshold and token-level divergence."
   },
   "20c7f520726b094abb49b75fecfbb7aceeb0ca83b0a9197bd3b6c32056e72b58": {
     "confidence": 0.6,
@@ -10447,6 +10512,38 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly identifies a root cause in transport detection ignoring query strings, with a concrete repro and control experiment. However, an open PR #2311 directly targets the same code path and semantics, requiring maintainer comparison before new work."
   },
+  "343efa6783bb84cd94830d06a86c9025404811e2c41f2b7c7445a6c818bcffa2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "internal/classifier/tracing.go",
+      "internal/classifier/analyze.go",
+      "internal/classifier/perch_onnx.go",
+      "internal/classifier/birdnet_v3_onnx.go",
+      "internal/classifier/bat_onnx.go",
+      "internal/inference/onnx/classifier.go",
+      "internal/analysis/processor/processor.go"
+    ],
+    "risks": [
+      "Potential performance impact if preserving extra classes increases inference overhead.",
+      "May require coordination with long-term VAD fix (#4176) to avoid conflicting changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that feeds a chunk with human speech below top-10 but above privacy confidence and asserts the privacy filter suppresses the detection.",
+      "Run existing classifier and processor tests to ensure no regression."
+    ],
+    "unknowns": [
+      "Exact confidence thresholds and model behavior for human speech in different BirdNET versions."
+    ],
+    "why": "Issue provides a clear root cause (top-K truncation before privacy filter), concrete code anchors, and a reproducible scenario. The suggested fix is targeted and testable."
+  },
   "34bb800971bbab733ff321d7b7e92dae085a3bf01d65015c28d93fc4befa4bc2": {
     "confidence": 0.7,
     "contradictions": [],
@@ -13327,6 +13424,34 @@
     ],
     "wait_reason": null,
     "why": "Issue reports a concrete streaming protocol bug on the Zen gateway: missing finish_reason and [DONE] for muse models, causing strict OpenAI clients to retry. Multiple user confirmations and related issues strengthen the case. The fix is actionable: ensure final chunk and [DONE] are emitted, possibly synthesizing stop reason. No competing PR found."
+  },
+  "4204b87388b85ced0ce57a0c019444bbfb2883f8e219a3a3a0a02207d03b61a6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "rag/nlp/search.py",
+      "wiki page indexing logic"
+    ],
+    "risks": [
+      "Changing filter may affect existing retrieval behavior for other document types",
+      "Need to ensure wiki pages are properly indexed with required fields without breaking existing functionality"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a dataset with wiki compilation, run retrieval with include_knowledge_compilation=true, assert wiki pages are returned",
+      "Add unit test for retriever.retrieval() with documents missing available_int to verify filter behavior"
+    ],
+    "unknowns": [
+      "Exact code location where wiki_page documents are indexed and why available_int is missing",
+      "Maintainer preference on whether wiki pages should be retrievable or explicitly view-only"
+    ],
+    "why": "Issue provides a clear root cause: wiki_page documents lack available_int/doc_id, and the hardcoded filter available_int=1 in retriever.retrieval() excludes them. Empirical reproduction with API confirms zero wiki pages returned. This is a concrete, actionable bug in the RAG retrieval path."
   },
   "420efb0ac4f902974b717c49db734190521734d9024d52dc2343bd85a496e1b9": {
     "confidence": 0.85,
@@ -26251,6 +26376,30 @@
     ],
     "why": "The issue provides a clear, reproducible bug in streaming tool-call parsing for deepseekv32/deepseekv4, with a minimal script and expected vs actual behavior. The root cause is likely in the streaming parser's state handling across chunk boundaries, which is a concrete, actionable code fix."
   },
+  "78b780373cc5b91d292c029599a5e2d9a81d116bee700957a4ecfa1f123b62d2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Modify remote_a2a_agent.py to only cache the agent card after successful validation, or clear the cache on validation failure."
+    ],
+    "risks": [
+      "Potential behavior change if other code relies on the card being cached even when invalid; need to ensure no other side effects."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that simulates an invalid RPC URL, invokes the agent twice, and asserts the second invocation also fails with the same validation error."
+    ],
+    "unknowns": [
+      "Whether an existing PR already fixes this exact issue; PR #6844 has semantic overlap but not confirmed."
+    ],
+    "why": "Issue provides a clear root cause: RemoteA2aAgent caches the agent card before validation, so a failed validation leaves an invalid cached card that is reused on subsequent invocations. The reproduction steps are concrete and the code path is identified. This is a valid bug fix opportunity in agent infrastructure."
+  },
   "78c0254578d72ed6448d2b225336d2616c964029d2fa10bf9ad2d7279d074fcc": {
     "confidence": 0.85,
     "contradictions": [],
@@ -30833,6 +30982,29 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly describes stale E2E assertions that fail after managed-image cutover, with reproduction steps and acceptance criteria. However, the issue is a bug report without maintainer approval or design confirmation, and the gate decision is HUMAN_REVIEW. The fix requires updating test assertions and possibly test infrastructure, which needs maintainer confirmation on expected behavior and scope."
+  },
+  "8e06b19132f6dc1cd38a49201605f25c9659e574c5ed971bfdfab0c3d215f736": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "No actionable code change can be derived from the supplied evidence."
+    ],
+    "root_cause_clarity": "low",
+    "score": 0,
+    "semanticSignal": "RETRY",
+    "test_plan": [],
+    "unknowns": [
+      "Reproduction steps",
+      "LiteLLM version and configuration",
+      "Profiling data",
+      "Root cause"
+    ],
+    "why": "The issue is a memory growth report with no reproduction steps, no version/config details, and no root cause identified. It asks for guidance rather than proposing a concrete fix. The track requires a concrete algorithm or infrastructure mechanism and a validation path; this lacks both."
   },
   "8e06e7d264c394c4d5d7946dd50a60e35b1777ce1f7f38e15ce762d564e70343": {
     "confidence": 0.6,
@@ -41163,6 +41335,36 @@
     "wait_reason": null,
     "why": "Issue clearly describes a bug where GPU counting assumes device plugin and fails with DRA ResourceClaims, causing global planner crash and local planner warnings. Includes reproduction steps, expected vs actual behavior, and code anchors. No competing PR or issue found. The fix is actionable: extend GPU count detection to support DRA ResourceClaims."
   },
+  "c2ba984a75a3e46267061baf5863fc5cb1d727660637abf0f65fa5b866ddda15": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #32754 title suggests AMD support but overlaps on CUDA-related paths; may not directly address this issue."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "sglang/kernels/jit/csrc/kvcacheio/staged_write_back.cuh",
+      "JIT kernel build/dispatch logic"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #32754 or issue #30936; need to compare implementations to avoid duplicate work.",
+      "Runtime dispatch may introduce complexity; ensure fallback path still works."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test for staged_write_back.cuh with mocked cudaMemcpyBatchAsync to verify runtime ABI selection based on loaded runtime version.",
+      "Integration test on dual-toolchain host (nvcc 12.8 + CUDA 13 runtime) reproducing the segfault and verifying fix."
+    ],
+    "unknowns": [
+      "Whether existing PR #32754 or issue #30936 already fixes this exact bug; need to inspect their changes."
+    ],
+    "why": "Issue provides a precise root cause (compile-time vs runtime ABI mismatch for cudaMemcpyBatchAsync in JIT path), a concrete reproduction with dual-toolchain setup, and a clear fix direction (runtime dispatch). The bug is user-visible and affects a critical path (HiCache L3 backup)."
+  },
   "c2f63253a0272f955ba3a076af4ca5df25b987746fea5e0e112c05e5c59d06a9": {
     "confidence": 0.9,
     "contradictions": [
@@ -50506,6 +50708,34 @@
     ],
     "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction, expected vs actual behavior, and a proposed fix. The track is llm_algorithm and the issue involves a concrete mechanism (model_architecture, distributed_training) with a clear validation path via numerical regression or controlled experiment."
   },
+  "e6de3bdd9aa9756cd953d938089cc21eebf1c96e58f8742a366e831a88f29985": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/util/gradingProvider.ts",
+      "assertions layer getFinalTest",
+      "rfdc clone usage"
+    ],
+    "risks": [
+      "Potential behavior change if shallow copy alters provider identity expectations.",
+      "Performance impact if enabling circles:true."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the provided YAML repro to assert no RangeError and successful eval.",
+      "Run targeted unit tests for gradingProvider and assertions."
+    ],
+    "unknowns": [
+      "Exact maintainer preference between suggested fix directions."
+    ],
+    "why": "Issue provides a precise root cause (rfdc clone of live provider with circular SDK client) and a minimal repro, making the fix actionable. Existing PR #10502 addresses it but lacks root-cause coverage, leaving room for a more complete contribution."
+  },
   "e6e87b063d38fd174859437a5da3e3521a1b38850f1ef57170553ee92e3e9725": {
     "confidence": 0.8,
     "contradictions": [],
@@ -55775,6 +56005,31 @@
     ],
     "why": "Issue identifies a concrete atomicity bug in RemoteSandboxService read paths that commit the shared request-scoped session, risking premature commits of sibling writes. The fix pattern is already proven in get_sandbox, and the issue provides a clear scope list, productionization guidance, and a regression test approach. No competing PR exists."
   },
+  "fc54d4b2f36bf58265b6ac1ca1fc8cbf58b99c4139c8996d2012602a291ec50c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "adapter response handling for reasoning_content merge",
+      "semantic validation hook in response processing"
+    ],
+    "risks": [
+      "Potential behavior change for existing clients expecting empty responses; need to ensure hook is configurable and default off."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create unit tests simulating MiniMax-M2.7 and GLM-5.1 responses with empty content and reasoning_content, verify merge toggle behavior and validation hook triggers retry/fallback."
+    ],
+    "unknowns": [
+      "Exact adapter names and code locations for merge_reasoning_content_in_choices enforcement; maintainer preference on hook design."
+    ],
+    "why": "Issue clearly describes two failure patterns with root cause: adapters not respecting merge_reasoning_content_in_choices and missing validation for empty content with finish_reason=stop and zero usage. Expected behavior is concrete: enforce toggle and add configurable semantic validation hook. Code anchors provided. No duplicate or competing PR found. Actionable."
+  },
   "fc56e97763ec0eed50fb81f4a1cbd9e49f956c418d8ae8f02b369a85b34dac43": {
     "confidence": 0.7,
     "contradictions": [
@@ -56108,6 +56363,37 @@
     ],
     "unknowns": [],
     "why": "The issue is a dependency-related segfault caused by decord's global symbol override, not an LLM algorithm defect. The proposed fix (making decord optional or removing it) is operational dependency management, not a training objective, model mechanism, or numerical method. It lacks a reference-vs-implementation test or controlled experiment for algorithm validation."
+  },
+  "fdb12a727f1b119486cf16cfa1464c7a712fc5e144ecda01e568d0267ea10078": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #53367 claims to fix the same issue but lacks tests; issue proposes a fix that includes additional parameters (num_speculative_tokens_per_batch_size) not mentioned in PR."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash",
+      "Add regression test verifying distinct cache keys for different num_speculative_tokens"
+    ],
+    "risks": [
+      "Potential interaction with dynamic speculative decoding where num_speculative_tokens_per_batch_size may vary; ensure hash covers all shape-affecting parameters.",
+      "Changing the hash may invalidate existing caches, causing recompilation overhead for users upgrading."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided minimal reproduction: start server with num_speculative_tokens=9, stop, then start with num_speculative_tokens=7 without clearing cache; assert no AssertionError and correct behavior.",
+      "Add unit test for SpeculativeConfig.compute_hash() asserting different hashes for different num_speculative_tokens values."
+    ],
+    "unknowns": [
+      "Whether the open PR #53367 will be merged soon and whether it includes the additional parameter coverage; maintainer preference for implementation details."
+    ],
+    "why": "Issue provides a precise root cause (missing num_speculative_tokens in SpeculativeConfig.compute_hash), a concrete reproduction with exact commands and error, and a proposed fix. The validation path is clear: run the reproduction before and after the fix to confirm the cache key changes and the assertion disappears. Although an open PR #53367 directly addresses the same bug, it lacks tests and is not yet merged, leaving actionable independent work (e.g., adding regression tests). The issue is technically valuable and actionable."
   },
   "fddbf32df29d5f6b785936e46bb8a9730f20efad77dcf40db64426fcaf35da40": {
     "confidence": 0.7,
