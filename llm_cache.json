@@ -31982,6 +31982,35 @@
     ],
     "why": "Issue provides a clear root cause (hardcoded provider whitelist in webSearchEnabled), concrete reproduction steps, and MITM evidence showing the tool is missing for custom providers. An open PR exists but lacks root-cause coverage, leaving room for a more complete fix."
   },
+  "8ec9ff642cc7567c58384382db6fc59ba386de245bddf787a7df08c1e77c974e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #4536 has semantic overlap but no direct code overlap; PR #4367 overlaps in redis.go but does not address the header-key pause."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/response-cache/main.go",
+      "plugins/wasm-go/extensions/response-cache/main_test.go"
+    ],
+    "risks": [
+      "Potential hang if dispatch succeeds but callback never fires; mitigated by documented timeout and rollback fallback."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run focused go test, race, vet, and Wasm build as specified in the verification plan; use the real Envoy/Redis barrier harness to assert hit/miss/error/timeout behavior with baseline vs fixed variants."
+    ],
+    "unknowns": [
+      "Exact SDK capability to inject synchronous dispatch errors or observe resume count; if unsupported, maintainer decision needed."
+    ],
+    "why": "The issue provides a detailed design with a clear root cause: the response-cache plugin returns ActionContinue after dispatching an async Redis lookup, causing unpaired resume and hit-race failures. The design selects a concrete fix (HeaderStopAllIterationAndWatermark after successful dispatch) with a behavior matrix and verification plan. Maintainer approval is present in comments, and the contributor has authored implementation and verification tasks. The open PRs have semantic overlap but do not directly cover the root cause, so they are not blockers."
+  },
   "8ed28018364559a79fc4746781ecced8e179525366f63e05e7e6d78faabbde41": {
     "confidence": 0.85,
     "contradictions": [
@@ -32534,6 +32563,36 @@
       "Exact code structure and maintainer preferences for the merge implementation, but the issue provides sufficient detail for a minimal fix."
     ],
     "why": "Issue provides a deterministic failure with a clear root cause in the Bedrock Converse lowering: consecutive user messages are not merged, violating Anthropic's requirement for toolResult blocks. The fix is a minimal merge in the lowering, analogous to the existing anthropic-messages protocol. No competing PR or issue found."
+  },
+  "9337d98981423b8dd845061ccaabb412299906f4eaafd7284b938a6eaea94cc3": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "AudioRecognition audio routing",
+      "STT stream lifecycle",
+      "Activity transition handling"
+    ],
+    "risks": [
+      "Fix may require changes to core session audio pipeline, potentially affecting other features; needs careful regression testing.",
+      "Reproducer may be flaky; need to ensure test reliably triggers the freeze."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided audio.ogg and DEBUG logs to create a regression test that simulates multi-turn conversation and asserts audio frames continue to be delivered to STT/VAD after several turns.",
+      "Run existing unit tests for livekit-agents audio and turn detection packages."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; maintainer has not confirmed a specific code defect.",
+      "Whether a maintainer has a preferred fix approach is unknown."
+    ],
+    "why": "Issue provides a clear, reproducible bug with multiple configurations isolating the failure to the shared audio routing infrastructure. Maintainer has confirmed the symptom (RoomIO stops receiving audio) and requested a minimal reproducer, which the reporter has provided. Root cause is localized to audio frame delivery in the session, with concrete code paths identified."
   },
   "937bebb9102c0bf9343d1bec842af47ee24dbcdf41bf1da696e90baaa48662ae": {
     "confidence": 0.85,
@@ -39202,6 +39261,41 @@
       "Open PR status unknown due to rate limit; maintainer confirmation absent; exact code path responsible not identified."
     ],
     "why": "Issue reports a reproducible Ref2VA-specific snow/noise bug with detailed diagnostics and a minimal repro, but root cause is unconfirmed and open PR lookup failed due to rate limit, so duplicate work cannot be excluded."
+  },
+  "b5472495b936b76a7f3f04eb5f9df279db514b4846f0b343d1c7ce780abea9a5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #3891 is marked as semantic overlap but not directly linked to issue; its root cause coverage is false, so it may not fully resolve the issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "nemotron_h sample-packing monkeypatch in axolotl",
+      "transformers compatibility layer for nemotron_h"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #3891 which may already address the root cause; need to compare implementations before duplicating work",
+      "Fix may need to handle both transformers versions, increasing complexity",
+      "Numerical differences between fused and non-fused paths could cause subtle training behavior changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce step-0 crash using axolotlai/axolotl:main-20260818-py3.12-cu130-2.12.0 with NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16 and sample_packing: true",
+      "Run training with sample_packing: false as baseline to confirm workaround",
+      "After fix, run same config with sample_packing: true and verify training completes without error",
+      "Add regression test that runs the patched forward on both transformers 5.14.1 and 5.15.0 with a small model and synthetic batch"
+    ],
+    "unknowns": [
+      "Whether PR #3891 already fixes the exact failure described in the issue",
+      "Exact code changes needed to support both transformers versions",
+      "Maintainer preference for fix vs. validation error approach"
+    ],
+    "why": "Issue identifies a concrete root cause: the nemotron_h sample-packing monkeypatch fails on transformers 5.14.1 and 5.15.0 due to removed module globals and changed kernel path return types. The issue provides a clear validation path (reproduce with specified docker images and model, compare against workaround) and suggests a concrete fix (rewrite patch against 5.15 structure or add validation error). This is a training optimization and kernel algorithm issue in a curated LLM repo, meeting the llm_algorithm track requirements."
   },
   "b56984f7b3655ead1e76f8ee86fb59eec3126e8c5b447df59a284390bce52dc0": {
     "confidence": 0.85,
@@ -46265,6 +46359,36 @@
     ],
     "why": "Issue clearly identifies a root cause: provisioning reader uses newest-created ordering instead of execution-tier authority, and mutation chain lacks fail-closed Shared-tier boundaries. Concrete acceptance criteria and evidence plan are provided. No duplicate open PRs; related PRs are merged and do not close this issue. Maintainer-approved and actionable."
   },
+  "d2d83539e8232bcf7445512232aac4f5e31c68791f8edae4e102a198fb3002f0": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "e2e/features/step-definitions/agent-v2/access-point.steps.ts",
+      "e2e/features/step-definitions/common/navigation.steps.ts"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach; need to align with existing step semantics.",
+      "The fix may need to handle other similar races in the E2E suite."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that reproduces the reload-then-enable race, e.g., by simulating a delayed toggle enable and verifying the click is not dropped.",
+      "Run the specific E2E scenario 'Web app access can be disabled and restored from Access Point' multiple times to ensure stability."
+    ],
+    "unknowns": [
+      "Whether the maintainers have already accepted a fix approach or have additional constraints on E2E changes."
+    ],
+    "why": "The issue provides a clear root cause (race between page reload and toggle click without readiness assertion), concrete reproduction evidence (consistent E2E failures across unrelated PRs), and a specific validation path (assert toggle enabled before click). The proposed fix is actionable and testable."
+  },
   "d2f0f43ac554b864a88479cf019f2bdec194278a8629e65f470a6a943efa35a9": {
     "confidence": 0.7,
     "contradictions": [
@@ -46601,6 +46725,38 @@
       "Exact cause of CUDA graph hang (e.g., unsupported output type vs. memory issue) not fully isolated."
     ],
     "why": "The issue provides a concrete, reproducible bug with clear root causes: CUDA graph capture hangs for hybrid GDN models, dtype mismatch in AWQ/Mamba state cache, and MTP memory allocation failure. It includes exact commands, environment details, and code anchors. The track is llm_algorithm with mechanisms in model_architecture and numerics_quantization, and a validation path via reference comparison and numerical tolerance tests."
+  },
+  "d42f3a2b89d900d71e102588859c00ffe6fe291b508a39dc19ed18c1fb9f3e03": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #13179 references issue but lacks root-cause coverage; issue claims no duplicate but PR exists"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "CLI permission handling in dist/index.js",
+      "Permission prompt callback wiring",
+      "Denial reason reporting"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #13179; need to differentiate by addressing root cause and adding comprehensive tests",
+      "Changing denial reason may affect downstream consumers expecting 'user'"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that simulates a tool call with ask policy and no onToolPermissionRequest callback, asserting a prompt is shown or a non-user denial reason is returned",
+      "Run existing CLI permission tests and add regression test for callback-missing scenario"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific fix approach or have design constraints",
+      "Exact behavior expected when callback is missing (error vs warning vs distinct denial reason)"
+    ],
+    "why": "Issue provides a clear root cause in the CLI permission-decision path: the ask policy silently denies when onToolPermissionRequest callback is missing, mislabeling denial as user rejection. Concrete reproduction steps and code anchors are supplied, making the fix actionable. An open PR exists but lacks root-cause coverage, leaving room for a more complete contribution."
   },
   "d433bfaa0f66193a1ffa1d843343163dcc0940caf0ae21c3deb9d98fb725892c": {
     "confidence": 0.85,
@@ -54280,6 +54436,32 @@
     ],
     "why": "The issue provides a reproducible throughput regression with detailed benchmarks and bisection, and a comment identifies a plausible root cause in vLLM's pooling entrypoint executor configuration, with a concrete one-flag test to confirm. This is a valuable performance investigation with a clear validation path."
   },
+  "f015ba17b4ee68ab60260b399c2efd8354339085781bbf99045157d64ba4a658": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "api/controllers/service_api/dataset/dataset.py",
+      "api/services/dataset_service.py"
+    ],
+    "risks": [
+      "Changing list visibility may affect existing users relying on owner-scoped filtering; need to ensure no unintended exposure of private datasets."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that creates datasets with different permissions and creators, then asserts GET /v1/datasets returns all tenant datasets when using a service API token, matching direct GET behavior."
+    ],
+    "unknowns": [
+      "Maintainer preference among the three suggested options is not confirmed; however, Option 1 is clearly the smallest change and the issue provides sufficient direction."
+    ],
+    "why": "Issue provides a clear root cause (owner impersonation in service API token validation), a concrete reproduction with expected/actual pairs, and a suggested minimal fix (Option 1) that aligns list and direct GET behavior. The evidence includes code anchors and a maintainer bot confirming the analysis."
+  },
   "f01e8ed94cb606bd2d116a807536da5306da0fa0c1e9d6d0460c8807fd351727": {
     "confidence": 0.85,
     "contradictions": [
@@ -56513,6 +56695,37 @@
     ],
     "why": "The issue is a well-documented bug with independent reproductions and a confirmed fix in RC1, but the maintainer has explicitly requested verification on RC1/current main and marked it awaiting-reporter. The candidate is not a new clean contribution; it is a regression case already routed for RC. Work should wait for maintainer confirmation and reporter verification."
   },
+  "f9491403afb16860cb171bfd179f13f34345ff68a9b5515cca75ec841ad78253": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Zoom toolkit scope registration",
+      "Zoom webinar creation tool",
+      "Search tool capability gap signaling",
+      "proxy_execute error annotation"
+    ],
+    "risks": [
+      "Requires backend/platform changes beyond SDK; may need maintainer coordination",
+      "Adding new OAuth scopes may require Zoom app verification and could affect existing users"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a test that verifies webinar:write:webinar is in the managed app's available scopes",
+      "Add a test that COMPOSIO_SEARCH_TOOLS returns a capability-gap signal for webinar creation",
+      "Add a regression test for proxy_execute distinguishing scope-not-granted vs scope-not-requestable"
+    ],
+    "unknowns": [
+      "Whether the managed Zoom app can be updated to include the missing scopes",
+      "Whether maintainers prefer to implement all four requested fixes or a subset"
+    ],
+    "why": "The issue provides a clear root cause: the managed Zoom OAuth app lacks webinar write scopes, the toolkit lacks webinar creation tools, and search/workbench mislead users into an unfixable OAuth loop. Concrete reproduction steps and a minimal example are supplied, making the fix actionable."
+  },
   "f95c127e819584df60400ff929d239ff9eefef8b57c474b9fc21475495eb8b13": {
     "confidence": 0.85,
     "contradictions": [
@@ -56774,6 +56987,39 @@
       "Whether PR #49636 already addresses the issue"
     ],
     "why": "The issue provides a concrete, reproducible bug in MoE backend selection causing incorrect logprobs and output, with clear evidence of root cause (FlashInfer TRTLLM backend vs deep_gemm) and a validation path via perplexity comparison and curl commands. The track is llm_algorithm and the issue involves kernel algorithm and numerical correctness, satisfying the requirement for a concrete validation path."
+  },
+  "f9fa9e2a6bb92ede46746b42debb5e048d01c0fcc7d3a2eb98b9fa6dd68aefe1": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue states root cause is subagent classification; maintainer comment falsifies this on main."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/mcp_tools/apps.py",
+      "src/kiro_crew/mcp_core.py",
+      "issue_radar/backend/crew_runtime.py",
+      "slack/gateway.py",
+      "dashboard/chat_runner.py"
+    ],
+    "risks": [
+      "Potential overlap with PR #5999 requires manual comparison to avoid duplicate work.",
+      "Design decisions for new authorization path and API change need maintainer input."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the failure using the issue's steps and capture the full error message including the strict_identity_diagnosis suffix. Add a regression test that simulates an auto-nudge worker session and verifies ledger read/write succeeds with proper identity. Add a test for the new empty-queue record operation without an issue number."
+    ],
+    "unknowns": [
+      "Full error message from reproduction is missing; it would confirm whether the cause is a missing stub_servers entry or another identity gap."
+    ],
+    "why": "Issue describes a real user-visible bug with concrete reproduction steps and expected behavior. Maintainer comment falsifies the stated root cause but identifies the actual likely cause (missing identity channel) and confirms two genuine work items: worker-scoped authorization and empty-queue record operation. The issue is actionable with a clear validation path."
   },
   "fa305ff418acef9c18d32e0df855b28371a6048a99bbfff1a0c4886a02f66414": {
     "confidence": 0.85,
