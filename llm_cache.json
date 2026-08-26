@@ -8694,6 +8694,32 @@
     ],
     "why": "Issue reports prefix caching ineffective for Mamba-2/GDN hybrid, but maintainer comments indicate it may be a block-size issue and PR #46384 already addresses it. Open PR search failed due to rate limit, and the issue is not confirmed on current main. Requires maintainer confirmation and duplicate review."
   },
+  "2900c62c6f9f6d2d930885634629d210e3c559d4085b004a6938d708b059ed04": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims Qwen Desktop 1.0.3, but maintainer says no such version exists in this repo",
+      "UI strings in issue do not match Qwen Code codebase"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Working on the wrong repository or product",
+      "Wasted effort if issue is out of scope"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [],
+    "unknowns": [
+      "Which product is actually affected",
+      "Whether the issue belongs to this repository or modelstudioai/openwork",
+      "Missing /about output and runtime logs"
+    ],
+    "why": "The issue describes a bug in 'Qwen Desktop 1.0.3', but the maintainer's triage states this product is not built from this repository and the UI strings do not exist in the codebase. The affected product is unclear, and the issue may belong to another repository (modelstudioai/openwork). This is a material unknown that blocks actionability."
+  },
   "29183113b6ad26860be3fb88216b0d5b62be64cb402d667a03898f0b43e5c28c": {
     "confidence": 0.85,
     "contradictions": [],
@@ -11997,6 +12023,40 @@
       "Whether PR #20690 will be updated to pass CI"
     ],
     "why": "Issue provides a clear root cause and reproduction, but an existing PR (#20690) directly addresses it with tests, yet has failing CI and unresolved maintainer scope decisions. The deterministic gate requires HUMAN_REVIEW, and the presence of a competing PR with gaps makes this a wait-for-maintainer situation."
+  },
+  "38ade1f6c49d5c12fd6b985e3a6980a6b3c19e0a0bc978c232138f2710bb3aad": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Automated triage labeled as support, but issue describes a platform-side bug with clear technical root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Register webinar write scopes on managed Zoom app",
+      "Add ZOOM_CREATE_A_WEBINAR tool to Zoom toolkit",
+      "Improve COMPOSIO_SEARCH_TOOLS to flag unsupported use cases",
+      "Enhance proxy_execute/MANAGE_CONNECTIONS to distinguish scope not granted vs not requestable"
+    ],
+    "risks": [
+      "Requires coordination with Zoom app management and may involve external service changes",
+      "Adding new tools may require updating SDK schemas and docs",
+      "Changing search behavior could affect existing users relying on current fallback suggestions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test verifying the Zoom toolkit includes a webinar creation tool and the managed auth scopes include webinar:write:webinar",
+      "Add a regression test for COMPOSIO_SEARCH_TOOLS to ensure webinar-creation queries do not return meeting tools as primary",
+      "Add a test for proxy_execute error handling to annotate scope errors based on available scopes"
+    ],
+    "unknowns": [
+      "Whether maintainers have already planned a fix or have design preferences for the search behavior change"
+    ],
+    "why": "The issue provides a clear root cause: the managed Zoom OAuth app lacks webinar:write:webinar scope, the toolkit lacks a webinar creation tool, and search/workbench mislead users into an unfixable OAuth loop. The reproduction steps and minimal example are concrete, and the requested fixes are actionable. No competing PR covers this, and the issue is not a duplicate."
   },
   "38ecd70ac82290be1cf168a706eb5c9717a7b3f49acb46c4bdfaf85460af1559": {
     "confidence": 0.7,
@@ -19059,6 +19119,37 @@
       "The outcome of the maintainer's investigation into the mutation boundary"
     ],
     "why": "The issue is a real bug with clear user impact, but the maintainer has explicitly linked PR #6582 as the current candidate and requested further investigation. Recent counter-evidence shows the sanitizer fix does not cover all send paths, so the root cause is not fully identified. The maintainer is actively investigating and has not invited a second implementation."
+  },
+  "57662bec4b87f0589f8be715fb0fcc4039c8d97db1d9d6c18370147a80e40e9c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #3945 is referenced by maintainer but not directly linked to issue; PR #3891 has semantic overlap but no direct reference"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "Rewrite nemotron_h sample-packing monkeypatch to match transformers 5.15 module structure",
+      "Add validation error for nemotron_h + sample_packing until fix lands"
+    ],
+    "risks": [
+      "Potential overlap with PR #3945 or #3891; need to coordinate to avoid duplicate work",
+      "Changes may affect other model architectures using similar monkeypatch patterns"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the example config on the exact stack (2x4090, WSL2 docker, Lightning BF16) to verify step-0 and packed-batch results",
+      "Add regression test for the monkeypatch with transformers 5.14.1 and 5.15.0"
+    ],
+    "unknowns": [
+      "Whether PR #3945 fully resolves the issue; whether maintainers prefer a fix or a validation error"
+    ],
+    "why": "Issue provides a precise root cause: the nemotron_h sample-packing monkeypatch fails on transformers 5.14.1 and 5.15.0 due to removed module globals and changed kernel registration. The issue includes a workaround and a clear ask to rewrite the patch or add a validation error. The referenced PR #3945 is a direct fix attempt, and the issue reporter has reviewed it, indicating actionable next steps."
   },
   "578c66fb09434b57065fd204306f8025e83dea845103a4157d06a42448d2b5cd": {
     "confidence": 0.85,
@@ -34919,6 +35010,41 @@
     ],
     "why": "Issue clearly identifies a security-relevant bug in shared download path with verified repro and suggested fix direction. However, existing PR #7162 is closed and weak, and repository requires assignment; maintainer design confirmation is needed for scope (which URL types to validate)."
   },
+  "9d61ecad8a3474080ad6be7d49014fe666ca2c881b83dcea714c256257144656": {
+    "confidence": 0.9,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "@ai-sdk/moonshotai provider request/response handling",
+      "Structured output schema normalization",
+      "MIME type validation",
+      "Streaming variant parsing",
+      "Backports to v5/v6 release lines"
+    ],
+    "risks": [
+      "Potential conflicts with existing provider behavior or core SDK architecture",
+      "Backport complexity for older release lines with different interfaces"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for each sub-issue using the official OpenAPI schema and documented examples",
+      "Run provider-specific unit tests (Moonshot Node/Edge) and type checks",
+      "Verify backports against release branches with existing test suites"
+    ],
+    "unknowns": [
+      "Exact implementation details for each sub-issue are not fully specified, but the issue provides enough direction for actionable work."
+    ],
+    "why": "The issue is a detailed audit of the Moonshot provider against the official API spec, with clear root causes for each gap (e.g., unsupported fields sent to models, missing strict schema control, MIME type validation). It provides concrete validation paths via the official OpenAPI document and first-party guides, and the issue tracks sub-issues with merged PRs, demonstrating actionable progress."
+  },
   "9d87c218114ab0d707fcabaf59dbcdc98b8da1f986d6eee57343d366c65f7a77": {
     "confidence": 0.85,
     "contradictions": [],
@@ -35376,6 +35502,33 @@
       "Whether the bug is in generic ACP lifecycle or WeChat adapter"
     ],
     "why": "Issue is a real user-visible bug with strong reproduction evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed unmerged and do not settle the policy, so a new PR would be premature without maintainer direction."
+  },
+  "9fb4580cf3cddc5bbbf0958a6148ce65efe5d899674cab03fb99b58f29137d2b": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "openhands/agent_server/event_service.py",
+      "Agent Canvas UI conversation-service adapter (optional)"
+    ],
+    "risks": [
+      "Potential behavior change for clients that intentionally omit hook_config; need to ensure explicit config still wins.",
+      "load_hooks_from_workspace may have side effects or performance impact; should be verified."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a workspace with .openhands/hooks.json containing a session_start hook, start a conversation via Agent Canvas, and assert HookExecutionEvent appears and base_state.json stores hook_config.",
+      "Add a unit test for event_service.start() verifying fallback to load_hooks_from_workspace when hook_config is None and explicit hook_config takes precedence."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a client-side fix instead of server-side fallback; but this does not block actionability."
+    ],
+    "why": "Issue provides a clear root cause (event_service only uses request payload hook_config, no server-side fallback to workspace hooks) and a concrete fix with code anchors. Acceptance criteria and reproduction steps are explicit, enabling a regression test. The suggested fix is minimal and safe."
   },
   "9fbb08e40e0079a1f53cdeae1d8c3f8a89c84abe9f42d4cc6c6954c240a28055": {
     "confidence": 0.85,
@@ -39032,6 +39185,33 @@
       "Whether any open PR already addresses this exact bug (open PR lookup failed)"
     ],
     "why": "The issue describes a concrete bug with a public reproducer and clear symptoms (visible token leak, negative output ids) in chunked-prefill cancellation. However, the root cause is not pinpointed, and the open PR lookup timed out, so duplicate or competing work cannot be excluded. The deterministic gate requires HUMAN_REVIEW."
+  },
+  "b2e6841f11a295c061d4c63efdef59e7315e2d69895946e2165e348b7b3ebaab": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/server_args.py",
+      "python/sglang/srt/layers/moe/token_dispatcher/flashinfer.py"
+    ],
+    "risks": [
+      "Changing backend selection may affect performance for existing EAGLE users on Hopper; need to verify intended backend."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script to confirm A and B resolve the same backend after fix.",
+      "Add a regression test that simulates Hopper and EAGLE with unset params, asserting attention_backend matches explicit params."
+    ],
+    "unknowns": [
+      "Maintainer preference on which backend is intended for EAGLE topk>1 on Hopper."
+    ],
+    "why": "The issue provides a clear root cause: `is_no_spec_infer_or_topk_one` reads `speculative_eagle_topk` before auto-resolution, causing inconsistent backend selection between unset and explicit EAGLE params. The reproduction script and expected fix are concrete, and the SM100 branch already has the guard, making the fix straightforward."
   },
   "b347652fdc0db16df38c8c454c5d23a0a2a093fd5fcc7d165370441e73008686": {
     "confidence": 0.8,
@@ -42998,6 +43178,31 @@
       "Maintainer design preferences for binary content stripping in traces"
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and the deterministic gate requires human review. Need maintainer confirmation on design and PR comparison before starting work."
+  },
+  "c331b6df263c97f0c041590b1cd6ce08cf7662a08c6b09543818983793437ebc": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "crates/switchyard-server/src/sse.rs",
+      "crates/libsy-llm-client/src/client.rs"
+    ],
+    "risks": [
+      "Concurrency timing may make regression test flaky; need to ensure test is deterministic or uses sufficient load."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run repro_concurrent.py against a local backend to confirm hang, then add a regression test that simulates concurrent streaming requests and asserts all receive body bytes."
+    ],
+    "unknowns": [
+      "Exact root cause not identified; maintainer may need to trace whether backend stream is fully consumed."
+    ],
+    "why": "Issue provides a high-probability concurrent reproduction, clear expected behavior, and code anchors in streaming paths. Root cause is not pinpointed but the evidence is sufficient to start a concrete fix and validation."
   },
   "c3394128ed1a20206f24ca129de4ad1b5d11ab099172874837f20e6eaea7f64b": {
     "confidence": 0.85,
