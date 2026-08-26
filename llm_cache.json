@@ -5786,6 +5786,33 @@
     ],
     "why": "Issue provides a precise root cause (transaction ownership conflict between begin_nested and session.commit) with exact file/line references, a clear upgrade-triggered regression, and a concrete security leak (unbounded API key creation). No competing PR or related issue exists, and the fix is well-scoped: adjust transaction handling and move create_api_key after the fallible operation."
   },
+  "1ce021d95b4949182880d149dd9314f672b1ae00a07913d1595fef204bf1708e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/config/speculative.py: include num_speculative_tokens and num_speculative_tokens_per_batch_size in compute_hash()"
+    ],
+    "risks": [
+      "Potential hash collisions with other config fields if not carefully combined; need to ensure backward compatibility with existing cache entries."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided minimal reproduction: start server with num_speculative_tokens=9, then with 7 without clearing cache, and verify no assertion failure. Add a unit test for SpeculativeConfig.compute_hash() ensuring different num_speculative_tokens produce different hashes."
+    ],
+    "unknowns": [
+      "Whether the proposed fix has been implemented in any PR; the open PR #53367 appears to address this but lacks tests and has CI failures, so independent implementation may still be valuable."
+    ],
+    "why": "The issue provides a clear root cause: `num_speculative_tokens` is missing from the `torch.compile` cache key, causing shape-incompatible artifact reuse. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm and the issue qualifies as it involves a model architecture mechanism (speculative decoding) and a concrete validation path via the reproduction steps."
+  },
   "1ce9e972ac2a7c3fd8e7b5afe75d6d8ee6b39740b29d6acd2fbc37662e5a5a1d": {
     "confidence": 0.7,
     "contradictions": [
@@ -6331,6 +6358,37 @@
       "Maintainer design preference for fix implementation"
     ],
     "why": "The issue provides a clear root cause: the working memory state signal is included in observer history, causing a self-feedback loop. It includes a concrete reproduction path and a suggested fix with regression test steps. The evidence is sufficient to make the fix actionable."
+  },
+  "1f8762d1ecbd59dc4bcf2db34d368f9affb3f00299c4413d4784814dcef066af": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue states the test never runs on NVIDIA CI, but the recent comment claims a fix is in progress; no contradiction with the evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "tests/v1/sample/test_logprobs.py",
+      "gpu_worker.py"
+    ],
+    "risks": [
+      "Changing min_gb may expose the test on CI and require handling of numerical differences between GPU architectures.",
+      "The fix for tie-aware pairing must be carefully designed to avoid masking real logprob mismatches."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run test_spec_decode_logprobs on an 18GB MIG slice with min_gb lowered to 8 or 12 to verify it executes and passes on Hopper.",
+      "Add a regression test that constructs a top-k tie and verifies the assertion pairs by token ID and handles ties deterministically."
+    ],
+    "unknowns": [
+      "Whether the existing PR #53647 fully addresses the issue, as it has semantic overlap but does not reference the issue."
+    ],
+    "why": "The issue provides a detailed root cause analysis with measured memory footprints and bit-level logit comparisons, identifying two separable bugs: the test never runs on NVIDIA CI due to an incorrect min_gb threshold, and the assertion is ill-defined due to flat-index pairing and top-k tie-breaking. A concrete validation path exists via running the test on an 18GB MIG slice and comparing logprobs by token ID. The candidate is actionable and technically valuable."
   },
   "1fac82adf1890890e51a3dccb2b3b2dd325f3cadcfd38aba573ee3f5f40809a8": {
     "confidence": 0.9,
@@ -8688,6 +8746,37 @@
     "wait_reason": null,
     "why": "Issue clearly identifies an unbounded query in view_spend_logs causing OOM, with concrete code anchors and suggested fixes. No competing PR or maintainer assignment found."
   },
+  "295fb033dde03fc750ccf5cd264197a7ab5f778e96769156c11abd18d79295df": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #13551 is open and semantically overlapping but not linked to the issue; its root cause coverage is marked false."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/session/checkpoint-restore.ts",
+      "checkpoint-restore.test.ts"
+    ],
+    "risks": [
+      "Potential overlap with PR #13551; need to compare implementations to avoid duplicate work.",
+      "Changing restore behavior may affect user expectations; need maintainer design preference."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that creates a commit after checkpoint, then restores, and asserts the commit is preserved or restore is refused.",
+      "Run the existing checkpoint-restore unit tests and the new test."
+    ],
+    "unknowns": [
+      "Whether PR #13551 already implements the suggested fix and would close the issue.",
+      "Maintainer preference for refusing vs. preserving commits."
+    ],
+    "why": "Issue provides a clear root cause (git reset --hard moves branch pointer without checking HEAD divergence), a concrete minimal repro, and a suggested fix. An open PR (#13551) overlaps semantically but is not linked and may not fully cover the root cause; the issue remains actionable."
+  },
   "299193e33be75e17c4de14a725267dadb6b46592dacd4bdf988adf4aa81509ad": {
     "confidence": 0.7,
     "contradictions": [
@@ -8950,6 +9039,43 @@
       "Whether maintainers prefer option (a), (b), or (c) from the issue; exact hardware availability for testing."
     ],
     "why": "Issue provides a precise root cause: DSV4 compressed pages (2 states) violate the paged MQA kernel's compile-time block_kv 32/64 template constraint, causing an assert or silent memory corruption. Concrete code anchors and a clear validation path (reproduce on DGX Spark, test with small model) support actionable algorithm work."
+  },
+  "2aef9badc5f86056b78ab0f75f1805c5901585baedf2881c0c133752d990d581": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue states the crash is deterministic at bs=20, but the open PR assessment lists PRs with semantic overlap that may or may not address this exact issue."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sglang/srt/layers/attention/hybrid_linear_attn_backend.py",
+      "sglang/srt/layers/attention/triton_backend.py",
+      "sglang/kernels/ops/attention/extend_attention.py"
+    ],
+    "risks": [
+      "The root cause may be a numerical precision issue in the compact mode that is hard to distinguish from a memory layout bug.",
+      "The fix may require changes to the Triton kernel that could affect performance or other modes.",
+      "The issue mentions related PRs with semantic overlap; need to ensure the fix does not duplicate existing work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the crash with the provided command and environment (B300, CUDA 13.2, Qwen3.5 hybrid model).",
+      "Run with SGLANG_RAGGED_VERIFY_MODE=compact and capture the CUDA graph at bs=20, num_tokens_per_req=8 to trigger the IMA.",
+      "Compare with static and cap-accept modes to isolate the compact-specific path.",
+      "Add a regression test that exercises the compact mode with a small hybrid attention model and verifies no illegal memory access during graph capture."
+    ],
+    "unknowns": [
+      "The exact root cause of the illegal memory access in compact mode is not identified.",
+      "Whether the related PRs (e.g., #32754) already fix this issue or are unrelated.",
+      "The specific memory access pattern that causes the IMA in the Triton kernel."
+    ],
+    "why": "The issue provides a deterministic reproduction with exact launch command, environment, and stack trace pointing to a specific kernel (extend_attention_fwd) and mode (compact). It identifies a concrete algorithmic path (hybrid linear attention with CUDA graph capture) and suggests a validation approach via comparison across verify modes. The root cause is not fully identified but the evidence is sufficient to start a focused investigation."
   },
   "2aff874b834f495c7a007eca6558cfbf89933744f31c556db7af0de08e516c48": {
     "confidence": 0.85,
@@ -19274,6 +19400,41 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports agent integration hangs with local Qwen models, but direct API calls work. Comments suggest root cause may be context length/prefill timeout rather than Ollama bug. No code-level root cause identified, no maintainer confirmation, and no concrete fix path."
   },
+  "593faa9ac5ef0f772898471ec547395cfc7102a4d2a06ce80c44922f3486b994": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue's benchmark table reports different byte counts than the reproduction snippet, but the comment clarifies the discrepancy due to vLLM template overhead."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "agentscope/model/_openai_model.py",
+      "agentscope/agent/_react_agent.py",
+      "count_tokens heuristic",
+      "context compaction logic"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #2397; need to differentiate by providing more complete root-cause coverage and tests.",
+      "Token estimation may vary across tokenizers and chat templates; tests must be robust to environment differences."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script with the five payloads and compare count_tokens estimates to actual usage.input_tokens from the model backend.",
+      "Add regression tests covering English, Chinese, SQL, JSON, and multi-turn contexts to ensure token estimates are within a reasonable tolerance."
+    ],
+    "unknowns": [
+      "Exact tokenizer and chat template configuration used in the benchmark, though the comment provides some details.",
+      "Whether the existing PR #2397 fully addresses the root cause; its root-cause coverage is marked false."
+    ],
+    "why": "The issue provides a clear root cause (token underestimation in count_tokens), concrete reproduction steps, benchmark data, and a validation path comparing estimates to actual usage. The algorithm evidence includes mechanisms like distributed training and numerics, and the issue supports a reference-vs-implementation test. Although an open PR exists, it lacks root-cause coverage, leaving room for a more complete contribution."
+  },
   "595a505356a28e4acd736f3dc3cfa1d00adacc1736376664037b816f061ac96e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -28345,6 +28506,34 @@
     ],
     "why": "The issue describes a plausible stale-session bug in Continue's PR checks, but the repository is now read-only and unmaintained after acquisition, and the open-PR lookup failed, so duplicate work cannot be excluded. The report is detailed but lacks a confirmed root cause and maintainer confirmation."
   },
+  "80076fecdbb35dcd7fc1e44e5d86644becf34092d9fe42527d0aa9369fe4ef2f": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue reports bug in 2.0.5, maintainer says fixed in 2.0.7; no contradiction, just version difference."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Modify context compression to treat structured-output validation errors as recoverable, retry with feedback, and fall back to truncation on exhaustion."
+    ],
+    "risks": [
+      "Potential overlap with existing PR #2140 or other open PRs; need to verify current state and avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test with a mock model returning an invalid summary first and valid second, expecting two calls and successful compression."
+    ],
+    "unknowns": [
+      "Whether the fix is already merged and if the issue is still open; need to check current repository state."
+    ],
+    "why": "Issue provides a clear root cause (schema validation error not retried in context compression), a concrete reproduction path, and expected behavior. Maintainer confirms it was fixed in 2.0.7 via PR #2140, indicating the issue is valid and actionable. The candidate is a bug fix opportunity with clear validation path."
+  },
   "803e1ea3290cdb9d948b0bbba5fb621767710dd3d967c3ac34a5d54ad8f30936": {
     "confidence": 0.7,
     "contradictions": [
@@ -33843,6 +34032,43 @@
       "Whether PR #50894 is viable or needs replacement"
     ],
     "why": "Issue reports a clear crash with root cause and repro, but the deterministic gate says HUMAN_REVIEW and the related issue audit timed out. An existing draft PR (#50894) directly addresses the bug but has failed CI and is incomplete, so a better PR may be possible. However, maintainer design preference and PR status need confirmation."
+  },
+  "9b97eed71f65745c6205c797395e748466be396b2e6aaa9c075854b506242e1a": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims subagent classification; maintainer comment states no subagent classification exists on the path",
+      "Issue suggests auto-nudge path is distinct; maintainer says it is indistinguishable from direct dashboard turn"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "session identity resolution in mcp_core",
+      "worker-scoped authorization path",
+      "empty-queue/heartbeat record operation"
+    ],
+    "risks": [
+      "Fixing based on falsified root cause would be wrong",
+      "New authz surface and API shape changes need maintainer design approval",
+      "Open PR #5999 may already cover part of the fix"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with full error message to identify whether stub_servers is missing",
+      "Add regression test for auto-nudge worker reading its own ledger",
+      "Add test for empty-queue record without issue number"
+    ],
+    "unknowns": [
+      "Full error message after the truncated suffix",
+      "Whether kirocrew-core is missing from mcp_gateway.stub_servers",
+      "Whether PR #5999 actually fixes the root cause or is unrelated"
+    ],
+    "why": "The issue's stated root cause (subagent classification) is contradicted by a detailed maintainer comment showing no such classification exists on the path; the real cause is likely a per-install topology gap or a missing identity channel, but the evidence is incomplete because the full error message was truncated. The comment also identifies two genuine design gaps (worker-scoped authz and empty-queue record) that require maintainer decisions, and there is an open PR with semantic overlap that needs manual comparison."
   },
   "9b9cea26215309a64b1e273ca1e408f050a516b93be9a098ba9cac21f3b586ae": {
     "confidence": 0.85,
@@ -44005,6 +44231,37 @@
     ],
     "why": "Issue provides a precise root cause (compile-time vs runtime ABI mismatch for cudaMemcpyBatchAsync in JIT path), a concrete reproduction with dual-toolchain setup, and a clear fix direction (runtime dispatch). The bug is user-visible and affects a critical path. No material unknowns block actionability."
   },
+  "c9ed3148e14ae72b19a0cf3a7e9d9f569f67b70d9e97a0a7d44815f17b0cd8d0": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #4536 has semantic overlap but no direct code overlap; PR #4367 also overlaps but is stale and unrelated to the root cause."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/response-cache/main.go",
+      "plugins/wasm-go/extensions/response-cache/main_test.go"
+    ],
+    "risks": [
+      "Potential hang if callback is never invoked after pause; mitigated by documented timeout and rollback fallback.",
+      "Existing PR #4536 may overlap semantically; need to compare implementation boundaries to avoid duplication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit tests for successful dispatch returning HeaderStopAllIterationAndWatermark, synchronous dispatch failure returning ActionContinue, and hit/miss/error/empty-value resume behavior.",
+      "Run go test ./... -count=1, go test -race ./... -count=20, go vet ./..., and Wasm build with SHA-256 recording.",
+      "Execute real Envoy/proxy-Wasm red-green verification with barrier-controlled Redis and upstream fixtures, asserting zero upstream arrivals on hits and exactly one resume on misses/errors."
+    ],
+    "unknowns": [
+      "Whether the proxy-Wasm SDK can inject synchronous dispatch errors and observe resume counts; if not, the verification plan requires maintainer decision."
+    ],
+    "why": "The issue clearly identifies a race condition in the response-cache Wasm plugin where header-key requests are forwarded before asynchronous Redis lookup completes. The design provides a concrete fix (return HeaderStopAllIterationAndWatermark after successful dispatch) with a detailed verification plan including unit tests and real Envoy red-green testing. Maintainer approval is present, and the implementation task is well-defined."
+  },
   "ca135e4e909adc9515585f89c7720fa67ac5b04452219ecef5111f0d49667fcf": {
     "confidence": 0.95,
     "contradictions": [],
@@ -51578,6 +51835,36 @@
     ],
     "why": "Issue reports a clear bug: Azure Functions adds Domain attribute to __Host- cookie, causing browser rejection and 403. Root cause is well understood and reproducible. However, the deterministic gate says HUMAN_REVIEW, and there is no maintainer approval or help-wanted signal. The fix may involve design choices about cookie handling, so maintainer confirmation is needed."
   },
+  "e721c91f3925ea293686889f4f24ae4b2bf09f556d77d204ba2e670ffe9d75f9": {
+    "confidence": 0.85,
+    "contradictions": [
+      "User reports that applying the suggested patch did not resolve the issue, while Dosu maintains the root cause is the same and suggests verifying the patch is live."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "api/controllers/console/workspace/tool_providers.py: pass for_list=True in ToolMCPListAllApi.get",
+      "possibly adjust related detail/auth endpoints to use UUID consistently"
+    ],
+    "risks": [
+      "The fix may need to be applied to multiple endpoints (list, detail, auth) to fully resolve the issue.",
+      "Potential frontend caching of old server_identifier values may require a frontend change or cache invalidation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that calls the MCP list endpoint and verifies the returned id is a UUID, then calls the authorize endpoint with that id and expects success.",
+      "Run existing API tests for tool_providers and mcp_tools_manage_service."
+    ],
+    "unknowns": [
+      "Whether the user's patch was correctly applied and the container rebuilt; whether the frontend is still sending the old identifier due to caching."
+    ],
+    "why": "Issue provides a clear traceback showing a UUID type error when authorizing an MCP server. Dosu comments identify the root cause: the list endpoint returns server_identifier instead of the database UUID, and the fix is a one-line change to pass for_list=True. An open PR (#41110) implements this fix, but it is not merged and the issue remains open, so the contribution is still actionable."
+  },
   "e727c890c1b5ef339351c2daed80e33bcdb2c9d72c3b2b2b6fb66a2462eb4484": {
     "confidence": 0.8,
     "contradictions": [],
@@ -51891,6 +52178,35 @@
       "Whether a PR would be accepted without explicit design confirmation"
     ],
     "why": "The issue describes a real session-breaking bug with a plausible fix, but the maintainer's comment indicates the root cause is capability selection policy for unknown models, not the serializer. A user confirms a config workaround exists, so the remaining work is a policy decision on default image support for unknown models. This requires maintainer design confirmation before implementation."
+  },
+  "e8dfd509ec8f96acf9aa799c24b961722871cff12e63485e01d0791225f03cab": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "e2e/features/step-definitions/agent-v2/access-point.steps.ts",
+      "e2e/features/step-definitions/common/navigation.steps.ts"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different wait strategy; need to ensure the fix does not mask other underlying issues."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the specific E2E scenario 'Web app access can be disabled and restored from Access Point' repeatedly to confirm flakiness is resolved.",
+      "Add a regression test that simulates the reload-then-enable flow and asserts the toggle is enabled before clicking."
+    ],
+    "unknowns": [
+      "Whether the maintainer has already assigned or preferred a specific implementation approach."
+    ],
+    "why": "Issue provides a clear root cause (missing wait after reload before clicking toggle) and a concrete validation path (E2E scenario reproduction). The proposed fix is actionable and scoped."
   },
   "e8e5b4b3df9d3bedf0ab764fd9669a3605e8257e9169436f16ac2f72d8efc9dd": {
     "confidence": 0.7,
