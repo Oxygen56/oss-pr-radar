@@ -1731,6 +1731,41 @@
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible streaming corruption bug, but the deterministic gate requires HUMAN_REVIEW and there is potential overlap with issue #11997. Maintainer confirmation is needed before starting work."
   },
+  "075fd6e1ec9706856d005b8b435a208180db4fb93927b28c6e11dfd486686481": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue's benchmark table reports different byte counts than the reproduction snippet (e.g., SQL payload 473 bytes vs 172 bytes in comment), but the comment clarifies the discrepancy due to template overhead and provides exact payloads."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "agentscope/model/_openai_model.py",
+      "agentscope/agent/_react_agent.py",
+      "count_tokens implementation",
+      "context compaction logic"
+    ],
+    "risks": [
+      "The fix may need to account for vLLM template overhead (~52 tokens) and tokenizer-specific behavior, which could vary across models and backends.",
+      "Potential conflict with existing PR #2397; must ensure the new implementation is distinct and addresses root cause more completely."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the five provided payloads (English, Chinese, SQL, JSON, multi-turn) to compare count_tokens estimates against actual usage.input_tokens from a vLLM backend, ensuring underestimation ratio is within acceptable bounds.",
+      "Add regression tests that simulate multi-turn sessions with non-ASCII and structured data to verify compaction triggers before exceeding context window."
+    ],
+    "unknowns": [
+      "Exact tokenizer and chat template configuration for the target model, which affects token counting accuracy.",
+      "Whether the existing PR #2397 will be merged or updated to cover root cause, which could affect the need for a new contribution."
+    ],
+    "why": "The issue provides a clear root cause: ChatModelBase.count_tokens uses a bytes/4 heuristic that underestimates tokens for non-ASCII, numeric, and structured content, leading to context overflow and HTTP 400. It includes benchmark data, reproduction steps, and code anchors. The algorithm evidence is strong with mechanisms like distributed_training, numerics_quantization, and evaluation_method, and a concrete validation path exists via comparing estimates to actual usage.input_tokens. Although an open PR #2397 exists, it lacks root-cause coverage and complete validation, leaving room for a competitive contribution."
+  },
   "076d552e37a3bd92663ce5f083e793f3db858de0202718dcf1beac6af896a91a": {
     "confidence": 0.85,
     "contradictions": [
@@ -12165,6 +12200,39 @@
     ],
     "why": "The issue reports multiple bugs, but recent comments indicate the primary root cause (Bug 1) is already fixed on the default branch by merged PR #26871. The remaining bugs (Bug 2 and Bug 3) lack sufficient reproduction evidence and root-cause clarity, and the issue is not directly linked to any open PR. The evidence is contradictory: the issue claims a missing hydration path, while comments show it exists. This makes the contribution opportunity unclear and potentially duplicative."
   },
+  "39e4887da980b69611dcca210aad6cede5f1b3018750ed187f50398d5390e436": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #19940 is merged but does not cover this issue; no direct reference to this issue."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/channels/output-processor.ts",
+      "packages/core/src/channels/chat-driver-static.ts",
+      "packages/core/src/agent-controller/agent-controller.ts",
+      "packages/core/src/channels/__tests__/agent-controller-channels.test.ts"
+    ],
+    "risks": [
+      "Changing the blanket approval setting may affect deny policy enforcement; must ensure deny tools never execute.",
+      "Potential maintainer design preference on how to propagate effective policy to channel renderer."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided repro repository (npm install && npm test) to confirm the failing assertion.",
+      "Add a regression test in agent-controller-channels.test.ts with one allow and one ask tool, asserting only the ask tool posts tool_approve:* action.",
+      "Run targeted unit tests for the affected packages and static checks."
+    ],
+    "unknowns": [
+      "Maintainer design preference for the fix approach (e.g., passing effective policy vs. suppressing card based on armed state)."
+    ],
+    "why": "Issue provides a clear root cause (global requireToolApproval vs effective policy resolution), a minimal executable reproduction, and a concrete expected behavior with a proposed regression test. The bug is user-visible and affects a core agent channel path. No duplicate or merged fix covers this specific rendering issue."
+  },
   "3a3200715a179e3fb66c57614d719443eb1e631b0ee64c9dd39ac5f0c96fc6ef": {
     "confidence": 0.7,
     "contradictions": [],
@@ -12807,6 +12875,38 @@
     ],
     "why": "Issue provides a concrete, reproducible bug with a clear root-cause hypothesis (head_dim mismatch in Mistral3) and a validation path via backend comparison and numerical regression. The evidence includes ordered repro steps, environment details, and code anchors, satisfying the llm_algorithm track requirements."
   },
+  "3cb9f94e9278a49e434b8f7255879ab8b9bf441198f8d2b30418d951b787df56": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Reporter initially suspected framework-level issue, but maintainer's analysis points to track subscription; no direct contradiction."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Audio routing in RoomIO/track subscription",
+      "AudioRecognition frame delivery",
+      "STT stream lifecycle"
+    ],
+    "risks": [
+      "Root cause may be in external dependency (LiveKit server or SIP gateway) rather than agents code, requiring cross-repo coordination.",
+      "Fix may need to handle edge cases in track subscription reconnection or silence detection."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided audio.ogg and debug logs to create a regression test that simulates multi-turn audio and verifies frames continue to reach the session after several turns.",
+      "Run existing audio routing unit tests and integration tests for RoomIO and AudioRecognition."
+    ],
+    "unknowns": [
+      "Exact code path where frames stop being delivered (e.g., subscription reconnection, silence detection) is not yet identified.",
+      "Whether the issue is reproducible in a minimal environment without SIP/self-hosted setup is unknown."
+    ],
+    "why": "Issue provides a clear, reproducible bug with detailed configurations, timeline, and maintainer-confirmed root cause (RoomIO stops receiving audio frames mid-call). The maintainer has requested a minimal reproduction, and the reporter has provided recordings and logs. The code anchors and proposed test path make the fix actionable."
+  },
   "3ccfec3428609455656a0ac379dba06b5a74ee6fac829f573253607b8b7104db": {
     "confidence": 0.7,
     "contradictions": [],
@@ -13010,6 +13110,31 @@
       "Whether maintainers prefer the simple guard or the flag-based approach."
     ],
     "why": "Issue provides a clear root cause (unconditional autosave on empty nodes/edges) with code anchors and a deterministic reproduction path. The suggested guard is concrete and testable."
+  },
+  "3e1b69711c414eed6db93a50ab1f51c40ccd8f8d5c2420885d1dd85d4a351dd1": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/timeout.py",
+      "streaming response handling in proxy"
+    ],
+    "risks": [
+      "Potential behavior change in streaming keepalive pings; need to ensure fix doesn't break normal streaming responses."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Set up a silent TCP listener (nc -l) and configure request_timeout=8, send streaming request, assert HTTP 408 within ~8 seconds on v1.97+."
+    ],
+    "unknowns": [
+      "Exact commit that introduced the regression; maintainer design preference for fix."
+    ],
+    "why": "Issue provides a clear regression between v1.93.0 and v1.97.0, a concrete reproduction with exact config and commands, and a suspected cause (wrap_sse_stream_with_keepalive_pings). The bug is user-visible and affects streaming timeout behavior, making it a valuable and actionable fix."
   },
   "3e4ec83fb1584f104515e81181ff94d3f7b348cf972480a5b6f3cd038d700098": {
     "confidence": 0.6,
@@ -16528,6 +16653,38 @@
     ],
     "why": "Issue provides a precise, reproducible bug with clear root cause: LiteLLM's Bedrock streaming path swallows upstream ValidationException, causing infinite zero-byte hang. Expected behavior is well-defined: translate thinking format for adaptive-only models and surface upstream errors. No competing PR addresses this; existing PRs are unrelated."
   },
+  "4d98bd92f5a78f7d873d29efefb9f0a086b25cf0d45c56d72492f1748e3e9cc3": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "nemotron_h sample-packing monkeypatch in axolotl",
+      "possibly validation logic for sample_packing with nemotron_h"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #3891 or #3945; need to compare implementations to avoid duplicate work",
+      "Fix may require careful handling of transformers version differences; risk of breaking other models or paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the step-0 crash using the specified docker images and model config with sample_packing: true",
+      "Run training with sample_packing: false and gradient_checkpointing: true to confirm workaround",
+      "After fix, run training with sample_packing: true on both transformers 5.14.1 and 5.15.0 to ensure no crash and correct loss"
+    ],
+    "unknowns": [
+      "Whether PR #3891 or #3945 already fixes this issue; need to inspect their code changes",
+      "Exact code changes required for the monkeypatch rewrite"
+    ],
+    "why": "Issue provides a clear root cause: the nemotron_h sample-packing monkeypatch fails on transformers 5.14.1 and 5.15.0 due to removed module-global `is_fast_path_available` and `torch_forward`, and a tuple unpacking bug in the fused kernel path. The issue includes a workaround and a concrete ask to rewrite the patch or add a validation error. This is a concrete LLM algorithm bug with a clear validation path (reproduce with specified versions and model)."
+  },
   "4d9a1b4bcf278a04f973785a8f69eaa2ca6b1e4190849cae36fdc254f5252d5f": {
     "confidence": 0.7,
     "contradictions": [
@@ -17980,6 +18137,39 @@
       "Maintainer's preferred fix direction"
     ],
     "why": "The issue reports a user-visible compression failure on macOS M-series with a specific ONNX runtime error. However, the root cause is ambiguous: the reporter's explicit use of the fp32 artifact contradicts the quantization error, and a contributor's comment suggests the env var may not reach the running proxy or the artifact may be mislabeled. Existing PRs #2448 and #2740 are merged and address related kompress issues, but neither directly resolves this issue. The maintainer has not confirmed the design or requested work, and the issue is still open with active discussion. The candidate is actionable but requires maintainer confirmation on the intended fix direction."
+  },
+  "5434658d679da177315fc536dc6bd3794a63f35b911dd4cdf8ad65283723438d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims subagent classification; maintainer says no such classification exists"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Add worker-scoped authorization path for auto-nudge crew sessions",
+      "Add empty-queue/heartbeat record operation without requiring issue number",
+      "Improve refusal message to include strict_identity_diagnosis suffix"
+    ],
+    "risks": [
+      "Root cause may be config not code; fix may be unnecessary",
+      "New authz surface could introduce security regressions",
+      "API change for empty-queue record may require maintainer design approval"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with full error message to confirm stub_servers config gap",
+      "Add integration test for auto-nudge worker reading its own ledger",
+      "Add test for empty-queue record without issue number"
+    ],
+    "unknowns": [
+      "Full error message from reproduction to confirm config vs code defect",
+      "Maintainer preference on design for worker-scoped authz and empty-queue operation"
+    ],
+    "why": "Issue describes a real user-visible bug with concrete reproduction steps and acceptance criteria. Maintainer comment falsifies the stated root cause but identifies likely config gap and two genuine design gaps (worker-scoped authz, empty-queue record). The issue remains actionable for the design gaps and the misleading error message, though the primary root cause is uncertain."
   },
   "5436e9fe0cd5e342232eebe90e06a1bf15c3ab02189deb63ec0d4322acff99b9": {
     "confidence": 0.7,
@@ -23761,6 +23951,33 @@
       "Maintainer preference on whether to extend validation beyond images; status of PR #7162 and whether it will be revived."
     ],
     "why": "Issue clearly identifies a security-relevant bug in a shared download path, with a verified repro and suggested fix direction. However, the deterministic gate requires HUMAN_REVIEW, and the existing PR #7162 is closed with CI failures, so maintainer confirmation is needed before starting new work."
+  },
+  "6b556e05eecc4d9a409dc17c3330b7b4ef6da56228ad59da3d54513b0a6a19ed": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/frontend/prepost.py: modify StreamingPostProcessor.process_output to emit tool-call deltas immediately when in_progress_tool_calls is non-empty, instead of waiting for parser None or finish_reason."
+    ],
+    "risks": [
+      "Potential change in frame timing could affect clients that rely on the previous batching behavior, though OpenAI delta semantics are preserved.",
+      "The fix may interact with other branches that drain in_progress_tool_calls; need to ensure no double-emission or missed finish_reason handling."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test for StreamingPostProcessor that feeds a sequence of tool-call deltas with no parser None and verifies that each delta is emitted immediately, not buffered until finish_reason.",
+      "Add an integration test using a mock vLLM parser that streams token-by-token for a long string argument, asserting multiple frames with no long gaps."
+    ],
+    "unknowns": [
+      "Exact test framework and existing test patterns in the repository, but not blocking as the change is small and well-understood."
+    ],
+    "why": "The issue provides a precise root cause in StreamingPostProcessor's flush condition, a concrete reproduction with measurements, and a suggested minimal fix that has been validated in production. The fix is a small, well-scoped change to an existing code path with clear expected behavior."
   },
   "6b59c16b04754442c73aa32fbdc1ea3af4bfb901f1ad25c0b1642278a498c93b": {
     "confidence": 0.85,
