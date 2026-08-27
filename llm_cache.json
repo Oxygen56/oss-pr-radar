@@ -5384,6 +5384,25 @@
     ],
     "why": "Issue describes a clear deadlock with root cause in fastsafetensors using WORLD group for PP-scoped draft loads, but lacks maintainer confirmation and has an existing PR (#50514) with failed CI that may already address the area."
   },
+  "1af1647f415bd8ff9a2a7e23d6179c96b45eed1575503d62185215bbca079beb": {
+    "confidence": 0.95,
+    "contradictions": [
+      "Issue claims Qwen Desktop 1.0.3, but maintainer says no such version exists in this repo."
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [
+      "Which product the reporter is actually using; no confirmation from reporter."
+    ],
+    "why": "The issue describes a bug in 'Qwen Desktop 1.0.3', but the maintainer's triage comment states that this product is not built from this repository, and the UI strings and version do not match. The issue is misdirected and not actionable in this repo."
+  },
   "1af685d1164d22cda70faf6d471a6184019a0542052ef11c3343cee42458e234": {
     "confidence": 0.7,
     "contradictions": [],
@@ -6785,6 +6804,45 @@
       "Whether PR #1571 will be updated or superseded"
     ],
     "why": "Issue provides detailed reproduction and root-cause analysis, but maintainer guidance is pending on scope and upstream dependency fix; existing PR #1571 is draft and incomplete, leaving competition opportunity but requiring design confirmation."
+  },
+  "20eec55ab4508ff02d1e7ef76f06ea2a0f8ebf7e04ff7ac782fbac157a3ca82a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #33206 overlaps semantically but lacks tests and does not reference the issue; may not fully address root cause.",
+      "Comment from llc-kc reports crashes persist even with #32477, suggesting incomplete fix."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "sampler NaN handling",
+      "Kimi-K3 stop-token configuration",
+      "tokenizer special-token handling"
+    ],
+    "risks": [
+      "Changing stop-token behavior may affect legitimate pad usage in generation.",
+      "Sanitizing NaN logits may mask underlying numerical issues and produce silent garbage.",
+      "Modifying tokenizer special-token handling could break existing workflows relying on allowed_special='all'."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce PAD storm with short prompt and low max_tokens; verify fix stops PAD emission.",
+      "Enable SGLANG_SANITIZE_NAN_LOGITS and assert no NaN logits in sampler; add regression test for full-NaN row handling.",
+      "Test tokenizer with user input containing '[PAD]' to ensure it is escaped or rejected."
+    ],
+    "unknowns": [
+      "Whether PR #33206 fully resolves the NaN issue or only aborts requests.",
+      "Exact interaction between chunked prefill and SSM state replay in hybrid models.",
+      "Whether maintainers will accept changes to default stop-token and sanitization settings."
+    ],
+    "why": "Issue provides a concrete root cause (NaN contamination from CUDA-graph padding, #32477) with production evidence, a clear mechanism chain, and a validation path via A/B rollout and targeted tests. The suggested actions are actionable code changes (stop-token filtering, sanitization defaults, tokenizer escaping) with measurable impact."
   },
   "21275bcf58076f914b4eea9babbd33887d011ed09e093685315e119a63b8e379": {
     "confidence": 0.7,
@@ -43296,6 +43354,37 @@
       "Maintainer preference on whether to accept the behavior change and which suggested direction (structural propagation vs. broader collapse) is preferred."
     ],
     "why": "Issue provides a precise root cause with code anchors and a concrete validation path: MCP tool results are never collapsed because the UI's categorization map only knows built-in display names, and MCP provenance is lost before the collapse decision. The suggested fix (propagate MCP provenance structurally) is actionable and testable via a minimal reproduction with the reference MCP server."
+  },
+  "c3563b57ece7a3384e4c57f984be761ceda958fcb12042cf52fe506c1d9d59d3": {
+    "confidence": 0.85,
+    "contradictions": [
+      "One comment reports the issue also reproduces at the known-good commit on a quietbox, contradicting the regression claim; another comment suggests the issue may be resolved on latest main."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "fabric_firmware_initializer.cpp",
+      "active_erisc-crt0.cc",
+      "bh_hal.cpp"
+    ],
+    "risks": [
+      "The root cause is a hypothesis; the fix may need to be validated across different board classes and firmware versions.",
+      "Initializing gp might have side effects on other firmware paths; need to ensure no performance or correctness impact."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided 5-line repro script on a Blackhole galaxy with the fix; verify 'OPENED OK' and clean close.",
+      "Run the full tt-blaze test bucket on a loudbox node to ensure no regression."
+    ],
+    "unknowns": [
+      "Whether the fix has been implemented and tested; the exact commit that resolves the issue; whether the gp initialization fix is sufficient across all affected hardware."
+    ],
+    "why": "Issue provides a clear regression range, minimal repro, and a detailed root-cause hypothesis (gp-relative relaxation due to unconditional __global_pointer$ definition) with code-level evidence. The fix is actionable: initialize gp in active_erisc-crt0.cc. The issue is a genuine LLM-algorithm-related bug (distributed training fabric handshake) with a concrete validation path via the provided repro script."
   },
   "c3615545397d7030d00234d19dfbe432992f6ee9db7917b720965fbb594f8085": {
     "confidence": 0.7,
