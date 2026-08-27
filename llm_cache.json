@@ -5806,6 +5806,38 @@
     ],
     "why": "Issue provides a clear root cause (case-sensitive path keys on Windows) with code anchors and a suggested fix aligned with existing conventions. Triage confirms root cause and notes a legacy-key migration concern. Actionable and valuable."
   },
+  "1cb0b12bbb1b92e47f228e502ca6592eaa74b367da21df2b9da8b316254ed9c4": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer comment suggests using deepgemm or triton backend on SM90, but issue reports crash on H20 (SM90) with flashinfer_trtllm; this does not contradict the root cause but may affect priority."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "sglang/srt/eplb/expert_location.py",
+      "sglang/srt/models/glm5_next.py",
+      "sglang/srt/layers/moe/fused_moe_triton/layer.py"
+    ],
+    "risks": [
+      "The fix might be a band-aid if not properly routing shared-expert weights, potentially causing silent incorrect behavior.",
+      "Existing PRs (e.g., #36549, #36607) may already address the root cause, requiring careful comparison to avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction command with --moe-runner-backend flashinfer_trtllm on a small model or single GPU to confirm the IndexError, then apply the fix and verify startup succeeds.",
+      "Add a unit test for logical_to_all_physical with logical_expert_id out of bounds to ensure a clear error or correct routing."
+    ],
+    "unknowns": [
+      "Whether the existing PRs (especially #36607) already fix this exact issue, as they touch glm5_next.py but do not reference the issue."
+    ],
+    "why": "Issue provides a clear root cause (missing bounds guard for logical_expert_id when shared-experts fusion is disabled) and a concrete reproduction command with traceback. The fix is actionable: add a guard or route shared-expert weights correctly. Existing PRs overlap semantically but do not directly address this issue, so the contribution remains valuable."
+  },
   "1cb6cb60744ca6624683d8981e21489b35c5019198e94d35cfe562b7e64dabbb": {
     "confidence": 0.85,
     "contradictions": [],
@@ -49100,6 +49132,40 @@
       "Exact implementation details of the contributor's patch are not fully provided, but the approach is described sufficiently."
     ],
     "why": "Issue clearly identifies a process-wide global causing incorrect KV head splitting for multiple models, with a concrete root cause and a suggested fix mirroring an existing per-model approach. A contributor has a ready implementation with local regression tests, and the validation path is well-defined."
+  },
+  "d88edf8687254ebc048af39763950f52a0fb536fbd8ee18c6f80123fecd9e663": {
+    "confidence": 0.85,
+    "contradictions": [
+      "shing100's kernel exists in a fork, not upstream; upstream may not have it"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "sparse_mla_kernels.py",
+      "platforms/cuda.py",
+      "FlashInferMLASparseTRTLLMBackend"
+    ],
+    "risks": [
+      "Kernel may not be upstreamed or may conflict with existing sparse MLA paths",
+      "Performance implications for SM120 not yet measured",
+      "Need to ensure chunked kernel handles all topk values used by GLM"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run repro_d512_glm.py on SM120 to validate kernel correctness",
+      "Add unit test for rope-free sparse MLA with qk_rope_head_dim=0",
+      "Integration test booting GLM-5.3-Flash on SM120 with TP=4"
+    ],
+    "unknowns": [
+      "Whether the fork's kernel can be cleanly upstreamed",
+      "Exact performance characteristics on SM120",
+      "Maintainer interest in supporting this configuration"
+    ],
+    "why": "Issue identifies a concrete kernel gap for rope-free sparse MLA on SM120, with three failure modes and a precise shape guard. Commenter provides a working kernel implementation and validation against a torch reference, establishing a clear fix path."
   },
   "d89f4a7b39b7a43715f1e9e96b359f2915f673bb39e90e609fee9f510165daf4": {
     "confidence": 0.8,
