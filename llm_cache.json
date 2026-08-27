@@ -19198,6 +19198,38 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue provides a clear root cause (MCP SDK task group cancellation swallows HTTP 401) and a concrete repro, but the suggested fix has two design options (unwrap ExceptionGroup vs. upstream SDK change) and requires maintainer confirmation on preferred approach and API behavior. The deterministic gate is HUMAN_REVIEW, and no maintainer approval or design confirmation is present."
   },
+  "56354f8319e7a6099ad08f0e358a3bdbe9f868f9e529402a19d66559d3f3f754": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "ChatToolExecutor.executeSelectQuery result formatter",
+      "ChatPrompts.swift SQL examples",
+      "ChatPromptBuilder.currentDatetimeString",
+      "Other LLM-facing timestamp paths on desktop surfaces"
+    ],
+    "risks": [
+      "Potential overlap with open PR #12236, though issue explicitly states it is a different class and should not be stacked.",
+      "Need to ensure Windows parity if similar examples exist.",
+      "Risk of changing behavior in other timestamp paths if not carefully scoped."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add component test with UTC instant 2026-08-27T19:59:51Z and America/New_York timezone, assert output contains 3:59:51 PM and timezone token, not 7:59:51 PM unlabeled.",
+      "Add filter examples/tests for 'today'/'yesterday' bounds to ensure no UTC offset shift.",
+      "Run make preflight and scripts/pr-preflight --suggest."
+    ],
+    "unknowns": [
+      "Exact code locations for all timestamp paths (e.g., semantic_search, daily recap) not fully enumerated in evidence.",
+      "Whether maintainer has design preferences for timezone formatting (e.g., IANA id vs offset)."
+    ],
+    "why": "Issue provides a clear, verified root cause (UTC-naive timestamps in desktop SQL rendered without timezone conversion) and a concrete, mechanical fix with acceptance criteria and test fixtures. The candidate is actionable and valuable."
+  },
   "5642f05e6c9aaf635583758b5785782037a95198fc210dffcd00422436bf69b9": {
     "confidence": 0.7,
     "contradictions": [
@@ -27731,6 +27763,39 @@
     "wait_reason": null,
     "why": "Issue clearly describes a bug where GPU counting assumes device plugin and fails with DRA ResourceClaims, causing global planner crash and local planner warnings. Root cause is identified in specific code paths (dgd_services.py, kubernetes.py, kubernetes_capacity_manager.py). No competing PR or related issue found. Actionable fix: extend GPU counting to support DRA ResourceClaims."
   },
+  "78d681b7d49e89a39fada31c60ec64fd905efcdb87b4463f81d36d759ef69dcb": {
+    "confidence": 0.85,
+    "contradictions": [
+      "tfolkman reports trigger is NVFP4_KV_CACHE=1, while others confirm PR #36556 fixes the loop; suggests multiple root causes or interaction effects."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "constrained/reasoner_grammar_backend.py",
+      "sparse decode path for SM120/SM121",
+      "speculative decoding interaction with grammar backend"
+    ],
+    "risks": [
+      "PR #36556 may not cover all root causes (e.g., FP4 KV cache corruption mentioned by tfolkman), so additional fixes may be needed.",
+      "The fix may affect performance or correctness on other architectures or configurations."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the exact reproduction from the issue (Qwen3.8-Flash-Next with thinking, tools, qwen3_coder parser) on SM120/SM121 with and without PR #36556, verifying no token-0 loop and proper tool_calls.",
+      "Add a regression test that exercises the sparse-decode path with reasoning and tools, checking for token-0 repetition and correct tool call output."
+    ],
+    "unknowns": [
+      "Whether PR #36556 fully resolves all reported variants (e.g., FP4 KV cache issue) or if additional changes are required.",
+      "Exact mechanism of the token-0 loop in the sparse-decode path is not fully confirmed."
+    ],
+    "why": "Issue provides a concrete reproduction with ordered steps, minimal example, and control experiments. Multiple independent commenters confirm PR #36556 fixes the token-0 loop on SM120/SM121, with detailed A/B testing and root-cause hypotheses pointing to the sparse-decode path in reasoner_grammar_backend.py. The evidence supports a clear validation path and actionable code change."
+  },
   "78e61498ae4ad3052df9899eec903410f6838c131873daa97be33e671d183879": {
     "confidence": 0.85,
     "contradictions": [],
@@ -28603,6 +28668,39 @@
       "Whether a fix is already in progress"
     ],
     "why": "The issue reports a reproducible bug in the internal MCP self-connection path, but the root cause is not precisely identified and the fix requires design decisions about URL derivation and error handling. No maintainer confirmation or open PR exists, and the repository requires AI disclosure, blocking automated public action."
+  },
+  "7cb153fcab217ac2f7612eef992472bdeea8bc2003aefc7a5a4a0144f72365bf": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #54110 has semantic overlap but does not directly address the rope-free SM120 kernel gap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/attention/backends/mla/sparse_mla_kernels.py",
+      "vllm/platforms/cuda.py",
+      "FlashInferMLASparseTRTLLMBackend supports_combination"
+    ],
+    "risks": [
+      "Kernel may not integrate cleanly with existing sparse-MLA backend; need to handle chunked attention and topk>1152",
+      "Potential performance regression on SM120 compared to DeepSeek-shaped kernels"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run repro_d512_glm.py on SM120 to verify kernel correctness against torch softmax reference",
+      "Boot GLM-5.3-Flash with TP=4 on RTX PRO 6000 to confirm end-to-end attention works"
+    ],
+    "unknowns": [
+      "Whether the proposed kernel from jasl/vllm branch is upstreamable without licensing or compatibility issues",
+      "Exact integration points for the chunked kernel in the existing backend"
+    ],
+    "why": "Issue identifies a concrete kernel gap: rope-free sparse-MLA (qk_rope_head_dim=0) has no SM120 path, with three failure modes and a precise shape guard. Commenter provides a working kernel implementation and validation against a torch reference, establishing a clear fix path."
   },
   "7ce34cb84c64dd25da9de07be55d738ebb6558915635681053a42f751a0f12bd": {
     "confidence": 0.7,
@@ -30915,6 +31013,33 @@
       "Whether maintainers prefer fixing agentgateway upstream or adding a compatibility mode in Rust EPP."
     ],
     "why": "The issue provides a clear root cause: agentgateway's protocol_config omits send_body_without_waiting_for_header_response, causing the Rust EPP to reject the stream. The suggested fix is concrete and the validation path is well-defined. The open PR #13700 lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
+  "870957387f9d3611feb060997016798e9e5fd82f44f46c68147fc28b22f71ac8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add an observer/detachable connection mode for Alt+O pop-outs of inline workers",
+      "Modify disconnect cleanup to skip session removal, swarm membership removal, and task abort for observer connections"
+    ],
+    "risks": [
+      "Potential behavior change for existing pop-out workflows that rely on ownership semantics",
+      "Need to ensure visible workers with intentional lifecycle ownership retain current behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by spawning an inline worker, pressing Alt+O, closing the terminal, and verifying the worker remains in the swarm and task completes",
+      "Add a regression test that simulates an observer disconnect and asserts no destructive cleanup occurs"
+    ],
+    "unknowns": [
+      "Maintainer design preference on whether the behavior is intentional or a bug"
+    ],
+    "why": "Issue provides a clear root cause: Alt+O pop-out reuses the ordinary resume path without marking the connection as non-owning, so disconnect cleanup removes the inline worker and aborts its task. Expected behavior and suggested direction are concrete, with code anchors and a reproducible test path."
   },
   "870fe6b71eafd806a4db3956b4911b399c68bcdad6edebb8cd49ed59247fee83": {
     "confidence": 0.85,
@@ -55923,6 +56048,43 @@
       "Whether maintainers prefer the proposed fix over existing PR #20285"
     ],
     "why": "Issue provides a clear root cause and actionable fix direction, but the deterministic gate requires HUMAN_REVIEW and existing PR #20285 has semantic overlap with the same code paths, needing maintainer comparison before new work starts."
+  },
+  "f121d77de0589d3f2c7a60cd488615c6871be32a9c995ed8eb7bcdd7f1b9f0c7": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Long-context correlation in OP vs short-prompt repro in comments",
+      "DSPARK-specific vs plain prefill path (independent of speculative decoding)"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "sampling/logits sanitization",
+      "tokenizer special-token handling",
+      "stop-token filtering for pad",
+      "DSPARK draft path NaN guards"
+    ],
+    "risks": [
+      "Fix may mask underlying NaN source; sanitization changes failure mode to uniform-random garbage",
+      "Potential overlap with existing PR #34647 or #33206 requiring manual comparison"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with short prompt and low max_tokens as in comment; verify no PAD storm after fix",
+      "Run numerical regression with fixed seed comparing logits before/after fix",
+      "Add unit test for NaN logits in sampling kernels returning boundary token"
+    ],
+    "unknowns": [
+      "Whether existing PR #34647 already fixes the root cause",
+      "Exact source of NaN on plain prefill path (not yet isolated)"
+    ],
+    "why": "Issue provides detailed root-cause analysis (NaN contamination from CUDA-graph padding, #32477) with production evidence, multiple independent reproductions, and concrete validation paths (A/B rollout, short-prompt repro). Track=llm_algorithm is satisfied via numerical/algorithmic mechanisms (NaN handling, sampling kernels, distributed TP)."
   },
   "f12f164783897ab5aa6b1b0640740976189952576b86104c02cf46e17076ab2d": {
     "confidence": 0.85,
