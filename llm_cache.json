@@ -17549,6 +17549,28 @@
     ],
     "why": "Issue reports a severe hang but lacks deterministic reproducer and root cause; open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer has not confirmed design or assignment."
   },
+  "504ec7d236c983011e949a8d6438427431f2bd28c9bbfe9c3dd5ae432279f743": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims client_id is sent; maintainer says client_key is already sent."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "No confirmed root cause; any fix may be speculative."
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [],
+    "unknowns": [
+      "Actual TikTok error response body; whether app configuration is correct; whether maintainer will continue investigation."
+    ],
+    "why": "The issue's proposed root cause (client_id vs client_key) is explicitly contradicted by a maintainer comment stating the flow already sends client_key. The maintainer requests additional private data (auth config ID and failure time) to diagnose, and the reporter has withdrawn, saying they switched providers. No concrete root cause or validation path remains actionable."
+  },
   "50506238a6691436c07af23e9b6ef6014d2bdc3584f494d837ec2ed66e7b6747": {
     "confidence": 0.8,
     "contradictions": [
@@ -39157,6 +39179,34 @@
       "Whether maintainers have a preferred fix approach."
     ],
     "why": "Issue provides a high-probability concurrent reproduction, clear expected behavior, and code anchors in the streaming path. Root cause is not pinpointed but the evidence is sufficient to start a concrete fix and regression test."
+  },
+  "b09fcb09043bda3c2e804d6c78d9bb3a2225d299d5bc9695a96f659bbec8399c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Channel handler in Mastra core to consume and forward `context.skipped`",
+      "Possibly expose `skipped` on `ChannelHandlerContext`"
+    ],
+    "risks": [
+      "Changing default behavior may affect existing users relying on current message dropping",
+      "Potential API design decisions on whether to prepend skipped messages or expose them for custom handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test using the provided minimal reproduction with burst strategy and two messages 1.2s apart, verifying both messages reach the agent",
+      "Run targeted unit tests for the channel handler and integration tests for batching strategies"
+    ],
+    "unknowns": [
+      "Maintainer preference on the intended fix design (prepend vs expose)",
+      "Exact location in codebase where the fix should be applied"
+    ],
+    "why": "The issue provides a clear root cause: Mastra's channel handler ignores the `context.skipped` field from the chat SDK, causing message loss with batching strategies. It includes a concrete reproduction scenario and a specific code path, making the fix actionable."
   },
   "b0b15ca84081da9279a79f70a3fe6de5b086346f7abbe5532dc25b5ce61c4b2b": {
     "confidence": 0.7,
