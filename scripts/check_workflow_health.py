@@ -24,6 +24,10 @@ from oss_pr_radar.util import parse_time, sha256_json  # noqa: E402
 _OUTBOUND_LOCK_FD: int | None = None
 
 
+_RELEVANT_EVENTS = {"schedule", "workflow_dispatch"}
+_STATE_JOBS = {"build-state", "persist-pending", "persist-receipt"}
+
+
 def github_json(path: str) -> object:
     last_error = "unknown GitHub API failure"
     for delay in (0.0, 1.0, 3.0):
@@ -57,6 +61,80 @@ def runs(repo: str) -> list[dict]:
     if not isinstance(value, dict):
         return []
     return value.get("workflow_runs") or []
+
+
+def workflow_component_health(repo: str, workflow_runs: list[dict]) -> dict:
+    """Assess the latest completed run below its aggregate conclusion."""
+
+    completed = [
+        item
+        for item in workflow_runs
+        if item.get("event") in _RELEVANT_EVENTS
+        and item.get("status") == "completed"
+        and item.get("id")
+        and (item.get("updated_at") or item.get("created_at"))
+    ]
+    latest = max(
+        completed,
+        key=lambda item: parse_time(str(item.get("updated_at") or item.get("created_at"))),
+        default=None,
+    )
+    if latest is None:
+        return {
+            "assessed": False,
+            "healthy": True,
+            "issues": [],
+            "scanSucceeded": None,
+        }
+
+    run_id = int(latest["id"])
+    base = {
+        "assessed": True,
+        "runId": run_id,
+        "runUrl": latest.get("html_url"),
+        "runEvent": latest.get("event"),
+        "runUpdatedAt": latest.get("updated_at") or latest.get("created_at"),
+    }
+    try:
+        jobs_value = github_json(f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100")
+    except (RuntimeError, TypeError, ValueError) as exc:
+        return {
+            **base,
+            "healthy": False,
+            "issues": ["WORKFLOW_COMPONENT_STATUS_UNAVAILABLE"],
+            "scanSucceeded": None,
+            "error": f"{type(exc).__name__}:{str(exc)[:200]}",
+        }
+    jobs = jobs_value.get("jobs") if isinstance(jobs_value, dict) else None
+    if not isinstance(jobs, list):
+        return {
+            **base,
+            "healthy": False,
+            "issues": ["WORKFLOW_COMPONENT_STATUS_UNAVAILABLE"],
+            "scanSucceeded": None,
+        }
+    conclusions = {
+        str(job.get("name")): str(job.get("conclusion") or job.get("status") or "unknown")
+        for job in jobs
+        if isinstance(job, dict) and job.get("name")
+    }
+    issues: list[str] = []
+    scan_succeeded = conclusions.get("scan") == "success"
+    if not scan_succeeded:
+        issues.append("SCAN_JOB_DEGRADED")
+    if conclusions.get("pr-followup") != "success":
+        issues.append("PR_FOLLOWUP_DEGRADED")
+    if any(conclusions.get(name) != "success" for name in _STATE_JOBS):
+        issues.append("STATE_PERSISTENCE_DEGRADED")
+    if conclusions.get("notify") != "success":
+        issues.append("NOTIFICATION_DEGRADED")
+    return {
+        **base,
+        "healthy": not issues,
+        "issues": issues,
+        "scanSucceeded": scan_succeeded,
+        "jobs": conclusions,
+    }
 
 
 def github_actions_external_blocker(repo: str, workflow_runs: list[dict]) -> dict | None:
@@ -199,6 +277,7 @@ def effective_scan_freshness(
     now: datetime | None = None,
     max_age: timedelta = timedelta(minutes=110),
     active_grace: timedelta = timedelta(minutes=50),
+    component_health: dict | None = None,
 ) -> dict:
     """Treat a recent fallback run as healthy and avoid duplicate repairs."""
 
@@ -227,11 +306,25 @@ def effective_scan_freshness(
     success_fresh = bool(
         latest_success and parse_time(latest_success["updated_at"]) >= current - max_age
     )
+    component_success_fresh = False
+    component_url = None
+    if component_health and component_health.get("scanSucceeded") is True:
+        component_updated_at = component_health.get("runUpdatedAt")
+        if component_updated_at:
+            component_success_fresh = (
+                parse_time(str(component_updated_at)) >= current - max_age
+            )
+            component_url = component_health.get("runUrl")
     return {
-        "fresh": success_fresh or latest_active is not None,
-        "recentSuccess": success_fresh,
+        "fresh": success_fresh or component_success_fresh or latest_active is not None,
+        "recentSuccess": success_fresh or component_success_fresh,
+        "recentScanJobSuccess": component_success_fresh,
         "recentActive": latest_active is not None,
-        "latestEffectiveUrl": ((latest_active or latest_success or {}).get("html_url")),
+        "latestEffectiveUrl": (
+            (latest_active or {}).get("html_url")
+            or component_url
+            or (latest_success or {}).get("html_url")
+        ),
         "maxAgeMinutes": int(max_age.total_seconds() // 60),
     }
 
@@ -332,6 +425,8 @@ def main() -> int:
             return 2
     workflow_runs = runs(args.repo)
     result = health(workflow_runs, coverage_window_hours=args.coverage_window_hours)
+    component_health = workflow_component_health(args.repo, workflow_runs)
+    result["componentHealth"] = component_health
     external_blocker = github_actions_external_blocker(args.repo, workflow_runs)
     if external_blocker:
         code = str(external_blocker["code"])
@@ -346,6 +441,7 @@ def main() -> int:
     effective = effective_scan_freshness(
         workflow_runs,
         max_age=timedelta(minutes=max(15, args.max_effective_age_minutes)),
+        component_health=component_health,
     )
     repair_triggered = False
     repair_reconciled = False
@@ -378,8 +474,19 @@ def main() -> int:
     result["repairWouldTrigger"] = repair_would_trigger
     result["repairError"] = repair_error
     result["repairSuppressedReason"] = repair_suppressed_reason
-    result["operationalHealthy"] = effective["fresh"] or repair_triggered or repair_reconciled
-    if args.notify and (repair_would_trigger or repair_error):
+    result["operationalHealthy"] = bool(
+        (effective["fresh"] or repair_triggered or repair_reconciled)
+        and component_health.get("healthy") is True
+    )
+    result["operationalIssues"] = list(
+        dict.fromkeys(
+            [*result["issues"], *(component_health.get("issues") or [])]
+            + ([f"REPAIR_FAILED:{repair_error}"] if repair_error else [])
+        )
+    )
+    if args.notify and (
+        repair_would_trigger or repair_error or component_health.get("healthy") is False
+    ):
         app_id = os.environ.get("FEISHU_APP_ID")
         app_secret = os.environ.get("FEISHU_APP_SECRET")
         chat_id = os.environ.get("FEISHU_CHAT_ID")
@@ -398,16 +505,15 @@ def main() -> int:
                         "text": {
                             "tag": "lark_md",
                             "content": "\n".join(
-                                result["issues"]
+                                result["operationalIssues"]
                                 + (["FALLBACK_DISPATCH_TRIGGERED"] if repair_triggered else [])
-                                + ([f"REPAIR_FAILED: {repair_error}"] if repair_error else [])
                             ),
                         },
                     }
                 ],
             },
             idempotency_key=sha256_json(
-                {"issues": result["issues"], "hour": result["checkedAt"][:13]}
+                {"issues": result["operationalIssues"], "hour": result["checkedAt"][:13]}
             ),
         )
     print(json.dumps(result, ensure_ascii=False))

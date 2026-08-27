@@ -86,6 +86,7 @@ jobs:
       - name: Ensure managed Ledger schema
         run: PYTHONPATH=src python -c "from pathlib import Path; from oss_pr_radar.managed_adapter import ManagedAdapter; ManagedAdapter(Path.cwd()).ensure()"
       - name: Check open PR reviews, CI, and conflicts
+        id: pr_followup_check
         continue-on-error: true
         run: >-
           python scripts/check_open_prs.py
@@ -102,6 +103,20 @@ jobs:
             state/pr_followup.json
           if-no-files-found: error
           retention-days: 14
+      - name: Surface incomplete PR follow-up
+        if: steps.pr_followup_check.outcome == 'failure'
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("reports/pr_updates.json").read_text(encoding="utf-8"))
+          errors = report.get("errors") or ["PR follow-up did not complete"]
+          message = str(errors[0])[:500]
+          message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=PR_FOLLOWUP_DEGRADED::{message}")
+          raise SystemExit("PR_FOLLOWUP_DEGRADED")
+          PY
 
   scan:
     needs: watch
@@ -190,6 +205,9 @@ jobs:
 
   build-state:
     needs: [scan, pr-followup]
+    if: >-
+      always() && needs.scan.result == 'success' &&
+      (needs.pr-followup.result == 'success' || needs.pr-followup.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -299,6 +317,7 @@ jobs:
           name: pending-state-${{ github.run_id }}
           path: .
       - name: Send authenticated War Room Feishu projection
+        id: war_room_send
         continue-on-error: true
         run: >-
           python scripts/send_war_room_outbox.py
@@ -314,10 +333,17 @@ jobs:
             receipt/war_room_feishu_outbox.json
           if-no-files-found: error
           retention-days: 14
+      - name: Surface incomplete War Room delivery
+        if: steps.war_room_send.outcome == 'failure'
+        run: |
+          echo "::error title=NOTIFICATION_DEGRADED::War Room delivery did not complete"
+          exit 1
 
   persist-receipt:
     needs: notify
-    if: always() && needs.notify.result == 'success'
+    if: >-
+      always() &&
+      (needs.notify.result == 'success' || needs.notify.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

@@ -118,6 +118,91 @@ def test_runs_retries_transient_github_api_failure(monkeypatch):
     assert delays == [1.0]
 
 
+def test_component_health_checks_each_required_job_below_green_run(monkeypatch):
+    workflow_runs = [
+        {
+            "id": 7,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-08-04T01:20:00Z",
+            "updated_at": "2026-08-04T01:30:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/7",
+        }
+    ]
+    monkeypatch.setattr(
+        MODULE,
+        "github_json",
+        lambda path: {
+            "jobs": [
+                {"name": name, "conclusion": "success"}
+                for name in (
+                    "scan",
+                    "pr-followup",
+                    "build-state",
+                    "persist-pending",
+                    "notify",
+                    "persist-receipt",
+                )
+            ]
+        }
+        if path.endswith("/jobs?per_page=100")
+        else pytest.fail(path),
+    )
+
+    result = MODULE.workflow_component_health("a/b", workflow_runs)
+
+    assert result["healthy"] is True
+    assert result["scanSucceeded"] is True
+    assert result["issues"] == []
+
+
+def test_component_health_exposes_followup_failure_without_discarding_fresh_scan(
+    monkeypatch,
+):
+    workflow_runs = [
+        {
+            "id": 8,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "failure",
+            "created_at": "2026-08-04T01:20:00Z",
+            "updated_at": "2026-08-04T01:30:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/8",
+        }
+    ]
+    conclusions = {
+        "scan": "success",
+        "pr-followup": "failure",
+        "build-state": "success",
+        "persist-pending": "success",
+        "notify": "success",
+        "persist-receipt": "success",
+    }
+    monkeypatch.setattr(
+        MODULE,
+        "github_json",
+        lambda _path: {
+            "jobs": [
+                {"name": name, "conclusion": conclusion}
+                for name, conclusion in conclusions.items()
+            ]
+        },
+    )
+
+    component = MODULE.workflow_component_health("a/b", workflow_runs)
+    freshness = MODULE.effective_scan_freshness(
+        workflow_runs,
+        now=NOW,
+        component_health=component,
+    )
+
+    assert component["healthy"] is False
+    assert component["issues"] == ["PR_FOLLOWUP_DEGRADED"]
+    assert freshness["fresh"] is True
+    assert freshness["recentScanJobSuccess"] is True
+
+
 def test_github_actions_billing_block_is_detected_from_job_annotation(monkeypatch):
     workflow_runs = [
         {
@@ -360,6 +445,16 @@ def test_main_suppresses_futile_repair_when_actions_billing_is_blocked(monkeypat
     monkeypatch.setattr(MODULE, "runs", lambda _repo: failed_runs)
     monkeypatch.setattr(
         MODULE,
+        "workflow_component_health",
+        lambda *_args: {
+            "assessed": True,
+            "healthy": False,
+            "issues": ["WORKFLOW_COMPONENT_STATUS_UNAVAILABLE"],
+            "scanSucceeded": None,
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
         "github_actions_external_blocker",
         lambda *_args: {
             "code": "GITHUB_ACTIONS_BILLING_BLOCKED",
@@ -386,6 +481,52 @@ def test_main_suppresses_futile_repair_when_actions_billing_is_blocked(monkeypat
     assert result["repairTriggered"] is False
     assert result["repairWouldTrigger"] is False
     assert result["repairSuppressedReason"] == "GITHUB_ACTIONS_BILLING_BLOCKED"
+
+
+def test_component_degradation_is_unhealthy_without_repeating_a_successful_scan(
+    monkeypatch, capsys
+):
+    failed_run = {
+        "id": 44,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "failure",
+        "created_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
+        "html_url": "https://github.com/a/b/actions/runs/44",
+    }
+    component = {
+        "assessed": True,
+        "healthy": False,
+        "issues": ["PR_FOLLOWUP_DEGRADED"],
+        "scanSucceeded": True,
+        "runUpdatedAt": failed_run["updated_at"],
+        "runUrl": failed_run["html_url"],
+    }
+    dispatched = []
+    monkeypatch.setattr(MODULE, "runs", lambda _repo: [failed_run])
+    monkeypatch.setattr(MODULE, "workflow_component_health", lambda *_args: component)
+    monkeypatch.setattr(MODULE, "github_actions_external_blocker", lambda *_args: None)
+    monkeypatch.setattr(
+        MODULE,
+        "dispatch_scan",
+        lambda repo, ref, **_kwargs: dispatched.append((repo, ref)),
+    )
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", "--repair"],
+    )
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert dispatched == []
+    assert result["effectiveScan"]["fresh"] is True
+    assert result["repairWouldTrigger"] is False
+    assert result["operationalHealthy"] is False
+    assert "PR_FOLLOWUP_DEGRADED" in result["operationalIssues"]
 
 
 @pytest.mark.parametrize("flag", ["--repair", "--notify"])
