@@ -20,6 +20,11 @@ from oss_pr_radar.agentscope_events import (  # noqa: E402
     github_event_effective_time,
 )
 from oss_pr_radar.local_publication import run_bridge  # noqa: E402
+from scripts.migrate_event_recovery_chains import (  # noqa: E402
+    _declared_lineage_ids,
+    _event_source,
+    migrate_recovery_chains,
+)
 
 
 def _is_agentscope_record(value: dict) -> bool:
@@ -48,6 +53,180 @@ def _outcome_recovery_event_id(root_event_id: str) -> str:
     """Return one fixed-length recovery identity for an original event."""
     digest = hashlib.sha256(str(root_event_id).encode("utf-8")).hexdigest()
     return f"outcome-reconcile:{RECOVERY_EVENT_NAMESPACE}:{digest}"
+
+
+def _valid_machine_outcome(event_id: str, event_key: str, outcome: dict) -> bool:
+    """Accept only the exact restricted terminal receipt for this event."""
+    if outcome.get("error"):
+        return False
+    if outcome.get("schemaVersion") != "agentscope_event_outcome_v1":
+        return False
+    if str(outcome.get("eventId") or "") != str(event_id):
+        return False
+    if str(outcome.get("publicKey") or "") != str(event_key):
+        return False
+    state = str(outcome.get("state") or "")
+    if state not in {"no_action", "claimed_or_pr", "design_wait"}:
+        return False
+    expected_keys = {"schemaVersion", "eventId", "publicKey", "state"}
+    if state == "design_wait":
+        expected_keys.update({"waitStartedAt", "waitUntil"})
+    if set(outcome) != expected_keys:
+        return False
+    if state == "design_wait":
+        try:
+            started = datetime.fromisoformat(
+                str(outcome["waitStartedAt"]).replace("Z", "+00:00")
+            )
+            until = datetime.fromisoformat(
+                str(outcome["waitUntil"]).replace("Z", "+00:00")
+            )
+            if started.tzinfo is None or until.tzinfo is None:
+                return False
+        except (KeyError, TypeError, ValueError):
+            return False
+        try:
+            invalid_window = until < started or until - started > timedelta(hours=24)
+        except TypeError:
+            return False
+        if invalid_window:
+            return False
+    return True
+
+
+def _enqueue_unresolved_outcome_recoveries(lane: EventLane) -> dict[str, int]:
+    """Create one stable, read-only recovery event for each unresolved root."""
+    with lane.connect() as db:
+        all_event_rows = db.execute(
+            "SELECT e.event_id,e.status,e.payload_json,t.status AS turn_status "
+            "FROM event_lane_events e LEFT JOIN event_lane_turns t USING(event_id)"
+        ).fetchall()
+        rows = db.execute(
+            "SELECT e.event_id,e.payload_json,e.status AS event_status,"
+            "t.status AS turn_status,t.receipt_json "
+            "FROM event_lane_events e LEFT JOIN event_lane_turns t USING(event_id) "
+            "WHERE e.status='needs_reconcile' OR "
+            "(e.status='delivered' AND t.status='needs_reconcile') "
+            "ORDER BY e.created_at,e.event_id"
+        ).fetchall()
+    all_events: dict[str, dict] = {}
+    recovery_events: set[str] = set()
+    unresolved_recoveries: set[str] = set()
+    for row in all_event_rows:
+        try:
+            value = json.loads(row["payload_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            value = {}
+        event_id = str(row["event_id"])
+        all_events[event_id] = value if isinstance(value, dict) else {}
+        if (
+            event_id.startswith("outcome-reconcile:")
+            or value.get("kind") == "outcome_reconcile"
+        ):
+            recovery_events.add(event_id)
+            if not (
+                str(row["status"] or "") == "coalesced"
+                and str(row["turn_status"] or "") in {"", "superseded"}
+            ):
+                unresolved_recoveries.add(event_id)
+
+    blocked_roots: set[str] = set()
+    ordinary_ids = set(all_events) - recovery_events
+    for recovery_id in unresolved_recoveries:
+        pending = [recovery_id]
+        visited: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current in visited or current not in recovery_events:
+                continue
+            visited.add(current)
+            current_event = all_events[current]
+            source = _event_source(
+                current,
+                current_event,
+                namespace=RECOVERY_EVENT_NAMESPACE,
+            )
+            declared = _declared_lineage_ids(current_event)
+            if source:
+                declared.add(source)
+            for candidate in declared:
+                if candidate in recovery_events:
+                    pending.append(candidate)
+                elif candidate in ordinary_ids:
+                    blocked_roots.add(candidate)
+    candidates = 0
+    inserted = 0
+    existing = 0
+    skipped = 0
+    for row in rows:
+        try:
+            event = json.loads(row["payload_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            skipped += 1
+            continue
+        if (
+            str(row["event_id"]).startswith("outcome-reconcile:")
+            or event.get("kind") == "outcome_reconcile"
+        ):
+            continue
+        event_key = str(
+            event.get("eventKey")
+            or event.get("targetKey")
+            or (
+                f"{event.get('repo')}#{event.get('number')}"
+                if event.get("repo") and event.get("number") is not None
+                else ""
+            )
+        )
+        if not event_key.casefold().startswith(f"{REPO.casefold()}#") or event_key.endswith("#"):
+            skipped += 1
+            continue
+        root_event_id = str(row["event_id"])
+        candidates += 1
+        if root_event_id in blocked_roots:
+            existing += 1
+            continue
+        try:
+            receipt = json.loads(row["receipt_json"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            receipt = {}
+        reason = str(
+            event.get("terminalReason")
+            or receipt.get("terminalReason")
+            or "legacy_needs_reconcile"
+        )
+        recovery = {
+            "eventId": _outcome_recovery_event_id(root_event_id),
+            "kind": "outcome_reconcile",
+            "eventKey": event_key,
+            "rootEventId": root_event_id,
+            "eventIdSource": root_event_id,
+            "payload": {
+                "eventId": root_event_id,
+                "rootEventId": root_event_id,
+                "publicKey": event_key,
+                "reason": reason,
+            },
+        }
+        if lane.append(recovery, priority=250):
+            inserted += 1
+        else:
+            existing += 1
+    return {
+        "candidates": candidates,
+        "inserted": inserted,
+        "existing": existing,
+        "skipped": skipped,
+    }
+
+
+def _central_handler_busy(lane: EventLane) -> bool:
+    """Do not spend an event attempt while the one central task is occupied."""
+    with lane.connect() as db:
+        return db.execute(
+            "SELECT 1 FROM event_lane_turns "
+            "WHERE status IN ('reserved','started') LIMIT 1"
+        ).fetchone() is not None
 
 
 def _event_artifact_path(
@@ -122,14 +301,17 @@ def _retry_or_exhaust_outcome_recovery(
             event = json.loads(row["payload_json"])
         except (TypeError, ValueError, json.JSONDecodeError):
             event = {"eventId": str(event_id), "kind": "outcome_reconcile"}
-        event["rootEventId"] = str(root_event_id)
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
         payload.update({
-            "eventId": str(root_event_id),
-            "rootEventId": str(root_event_id),
             "outcome": outcome,
             "reason": "invalid_or_missing_outcome",
         })
+        stable_identity = str(event_id) == _outcome_recovery_event_id(root_event_id)
+        if stable_identity:
+            event["rootEventId"] = str(root_event_id)
+            event["eventIdSource"] = str(root_event_id)
+            payload["eventId"] = str(root_event_id)
+            payload["rootEventId"] = str(root_event_id)
         event["payload"] = payload
         attempts = int(row["attempts"] or 0)
         if attempts < lane.max_attempts:
@@ -320,8 +502,11 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
     elif target.get("kind") == "outcome_reconcile":
         prompt = (
             f"Recover the invalid AgentScope event outcome for {key} in the existing thread. "
-            "Do not claim new work or create a PR. Verify the actual terminal state and write a valid outcome JSON "
-            "for this exact event/public key using the restricted schema before completion."
+            "This recovery is strictly read-only: do not claim work, create or change a PR, comment, "
+            "label, assign, push, rerun workflows, or perform any other GitHub or external mutation. "
+            "Only inspect existing state and write the private outcome file. Verify the actual terminal "
+            "state and write a valid outcome JSON for this exact event/public key using the restricted "
+            "schema before completion."
         )
     elif target.get("kind") == "issue_closeout":
         prompt = (
@@ -476,7 +661,9 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
             lane.mark_design_wait(str(row["event_id"]))
         outcome = value.get("outcome") if isinstance(value.get("outcome"), dict) else {}
         outcome_state = str(outcome.get("state") or "")
-        if outcome.get("error") or not outcome_state:
+        if terminal != "completed" or not _valid_machine_outcome(
+            str(row["event_id"]), str(row["event_key"]), outcome
+        ):
             root_event_id, is_recovery = _outcome_recovery_lineage(
                 lane, str(row["event_id"])
             )
@@ -657,12 +844,19 @@ def run_once(
 ) -> dict:
     state = root / "state"
     lane = EventLane(state / "agentscope-events.sqlite3")
+    production_delivery = deliver is None
     seed_items = _sync_public_work_seed(root, lane)
     bootstrap_boundary, bootstrap = _bootstrap_boundary(root, lane)
     receipts_reconciled = reconcile_detached_receipts(root, lane)
     current = (now or datetime.now(UTC)).astimezone(UTC)
     expired = lane.expire_claims(now=current.timestamp())
     turns_expired = lane.expire_handler_turns(now=current.timestamp())
+    recovery_migration = migrate_recovery_chains(
+        lane.path,
+        namespace=RECOVERY_EVENT_NAMESPACE,
+        apply=True,
+    )
+    recovery_queue = _enqueue_unresolved_outcome_recoveries(lane)
     poll = GitHubIssuePoller(state / "agentscope-poll.json")
     had_poll_state = (state / "agentscope-poll.json").exists()
     try:
@@ -725,11 +919,15 @@ def run_once(
         audit["terminalized"] = bootstrap["terminalized"]
         lane.set_state_value(BOOTSTRAP_BOUNDARY_STATE_KEY, audit)
     drained = {"claimed": 0, "delivered": 0, "pending": lane.pending()}
+    central_task_busy = production_delivery and _central_handler_busy(lane)
     if deliver is None:
         def deliver(event):
             bridge_delivery(root, lane, event)
-    if lane.pending() > 0:
-        drained = dispatch_once(lane, deliver)
+    if lane.pending() > 0 and not central_task_busy:
+        # One central task can own only one running turn.  Claiming a batch
+        # made the later rows spend retry attempts merely because the first
+        # row was still running.
+        drained = dispatch_once(lane, deliver, limit=1 if production_delivery else 3)
     return {
         "ok": True,
         "status": result.status,
@@ -743,6 +941,9 @@ def run_once(
         "legacyQueueRetired": legacy_queue_retired,
         "claimsExpired": expired,
         "turnsExpired": turns_expired,
+        "recoveryMigration": recovery_migration,
+        "recoveryQueue": recovery_queue,
+        "centralTaskBusy": central_task_busy,
         "fullReconciliation": bool(full_result is not None),
         "fullReconciliationEvents": len(full_result.events) if full_result is not None else 0,
         "publicWorkSeedItems": seed_items,

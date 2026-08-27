@@ -5515,9 +5515,15 @@ def _validated_agentscope_event_outcome(
         return {"error": "OUTCOME_MISSING_OR_INVALID"}
     if value.get("eventId") != event_id or value.get("publicKey") != public_key:
         return {"error": "OUTCOME_IDENTITY_MISMATCH"}
-    if value.get("state") not in {"no_action", "claimed_or_pr", "design_wait"}:
+    state = value.get("state")
+    if state not in {"no_action", "claimed_or_pr", "design_wait"}:
         return {"error": "OUTCOME_STATE_INVALID"}
-    if value.get("state") == "design_wait":
+    expected_keys = {"schemaVersion", "eventId", "publicKey", "state"}
+    if state == "design_wait":
+        expected_keys.update({"waitStartedAt", "waitUntil"})
+    if set(value) != expected_keys:
+        return {"error": "OUTCOME_SCHEMA_INVALID"}
+    if state == "design_wait":
         try:
             started = datetime.fromisoformat(str(value["waitStartedAt"]).replace("Z", "+00:00"))
             until = datetime.fromisoformat(str(value["waitUntil"]).replace("Z", "+00:00"))

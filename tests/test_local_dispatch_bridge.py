@@ -76,6 +76,14 @@ def test_agentscope_outcome_validation_is_fail_closed(tmp_path):
     assert MODULE._validated_agentscope_event_outcome(
         path, allowed_dir=allowed, event_id="e1", public_key="agentscope-ai/agentscope#1"
     )["error"] == "OUTCOME_IDENTITY_MISMATCH"
+    path.write_text(json.dumps({
+        "schemaVersion": "agentscope_event_outcome_v1", "eventId": "e1",
+        "publicKey": "agentscope-ai/agentscope#1", "state": "no_action",
+        "unexpected": "field",
+    }))
+    assert MODULE._validated_agentscope_event_outcome(
+        path, allowed_dir=allowed, event_id="e1", public_key="agentscope-ai/agentscope#1"
+    )["error"] == "OUTCOME_SCHEMA_INVALID"
 
 
 @pytest.fixture(autouse=True)

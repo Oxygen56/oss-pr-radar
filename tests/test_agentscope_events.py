@@ -18,6 +18,7 @@ from oss_pr_radar.agentscope_events import (
     _github_event_identity,
     dispatch_once,
 )
+from scripts import migrate_event_recovery_chains as recovery_migration
 
 CENTRAL_THREAD = "01a0399e-f694-7213-98e6-9d7c4808dfa2"
 
@@ -415,6 +416,80 @@ def test_material_time_after_boundary_is_dispatchable_even_with_old_issue_update
     assert result["drain"]["delivered"] == 3
     assert result["drain"]["pending"] == 0
     assert [event["eventId"] for event in delivered] == [event["eventId"] for event in events]
+
+
+def test_production_worker_claims_only_one_central_turn_per_cycle(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    events = tuple(
+        _github_event(number, f"2026-08-23T12:0{number}:00Z")
+        for number in (1, 2, 3)
+    )
+    monkeypatch.setattr(worker.GitHubIssuePoller, "poll", lambda _self: type(
+        "Poll", (), {"events": events, "status": "ok"}
+    )())
+    delivered = []
+    monkeypatch.setattr(
+        worker,
+        "bridge_delivery",
+        lambda _root, _lane, event: delivered.append(event["eventId"]),
+    )
+
+    result = worker.run_once(tmp_path)
+
+    assert result["eventsInserted"] == 3
+    assert result["drain"] == {"claimed": 1, "delivered": 1, "pending": 2}
+    assert delivered == [events[0]["eventId"]]
+
+
+def test_busy_central_task_does_not_spend_pending_attempts_across_cycles(
+    tmp_path, monkeypatch
+):
+    worker = _event_worker_module()
+    monkeypatch.setattr(worker.GitHubIssuePoller, "poll", lambda _self: type(
+        "Poll", (), {"events": (), "status": "not_modified"}
+    )())
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    lane.append({
+        "eventId": "active-event",
+        "eventKey": "agentscope-ai/agentscope#1",
+        "kind": "issue_update",
+    })
+    lane.reserve_handler_turn(
+        "agentscope-ai/agentscope#1", "active-event", "client:active"
+    )
+    lane.bind_handler_turn(
+        "agentscope-ai/agentscope#1",
+        "active-event",
+        CENTRAL_THREAD,
+        "turn-active",
+        {"turnStarted": True, "workerPid": os.getpid()},
+        status="started",
+    )
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET status='delivered' WHERE event_id='active-event'"
+        )
+    lane.append({
+        "eventId": "waiting-event",
+        "eventKey": "agentscope-ai/agentscope#2",
+        "kind": "issue_update",
+    })
+    monkeypatch.setattr(
+        worker,
+        "bridge_delivery",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("busy task dispatched")),
+    )
+
+    results = [worker.run_once(tmp_path) for _ in range(3)]
+
+    assert all(result["centralTaskBusy"] is True for result in results)
+    assert all(result["drain"]["claimed"] == 0 for result in results)
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id='waiting-event'"
+        ).fetchone()
+    assert row["status"] == "pending"
+    assert row["attempts"] == 0
 
 
 def test_material_times_at_or_before_boundary_are_baseline(tmp_path, monkeypatch):
@@ -866,6 +941,11 @@ def test_invalid_outcome_creates_durable_recovery_event(tmp_path, monkeypatch):
     worker.issue_handler_delivery(tmp_path, lane, recovery_event)
     extra = calls[0][2]["extra_args"]
     assert extra[extra.index("--thread-id") + 1] == central
+    prompt = extra[extra.index("--prompt") + 1]
+    assert "strictly read-only" in prompt
+    for forbidden_write in ("comment", "label", "assign", "push", "rerun workflows"):
+        assert forbidden_write in prompt
+    assert "Only inspect existing state and write the private outcome file" in prompt
     assert lane.handler_thread("agentscope-ai/agentscope#1")["thread_id"] == central
     with lane.connect() as db:
         status = db.execute(
@@ -873,6 +953,331 @@ def test_invalid_outcome_creates_durable_recovery_event(tmp_path, monkeypatch):
             (recovery_id,),
         ).fetchone()["status"]
     assert status != "delivered"
+
+
+def test_unresolved_root_gets_one_stable_read_only_recovery_event(tmp_path):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    root_event_id = "github:agentscope-ai/agentscope:2448:issue_update:failed"
+    event_key = "agentscope-ai/agentscope#2448"
+    lane.append({
+        "eventId": root_event_id,
+        "eventKey": event_key,
+        "repo": "agentscope-ai/agentscope",
+        "number": 2448,
+        "kind": "issue_update",
+        "terminalReason": "handler_start_exception",
+    })
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET status='needs_reconcile',attempts=3 "
+            "WHERE event_id=?",
+            (root_event_id,),
+        )
+    for status in ("baseline", "watch_only", "coalesced", "pending", "leased"):
+        ignored_id = f"ignored-{status}"
+        lane.append({
+            "eventId": ignored_id,
+            "eventKey": f"agentscope-ai/agentscope#{len(status)}",
+            "kind": "issue_update",
+        })
+        lane.reserve_handler_turn(
+            f"agentscope-ai/agentscope#{len(status)}",
+            ignored_id,
+            f"client:{status}",
+        )
+        lane.bind_handler_turn(
+            f"agentscope-ai/agentscope#{len(status)}",
+            ignored_id,
+            "",
+            "",
+            {"terminalReason": "handler_turn_timeout"},
+            status="needs_reconcile",
+        )
+        with lane.writer() as db:
+            db.execute(
+                "UPDATE event_lane_events SET status=? WHERE event_id=?",
+                (status, ignored_id),
+            )
+
+    first = worker._enqueue_unresolved_outcome_recoveries(lane)
+    second = worker._enqueue_unresolved_outcome_recoveries(lane)
+    recovery_id = worker._outcome_recovery_event_id(root_event_id)
+    assert first == {"candidates": 1, "inserted": 1, "existing": 0, "skipped": 0}
+    assert second == {"candidates": 1, "inserted": 0, "existing": 1, "skipped": 0}
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT priority,payload_json FROM event_lane_events WHERE event_id=?",
+            (recovery_id,),
+        ).fetchone()
+    recovery = json.loads(row["payload_json"])
+    assert row["priority"] == 250
+    assert recovery["rootEventId"] == root_event_id
+    assert recovery["eventIdSource"] == root_event_id
+    assert recovery["eventKey"] == event_key
+    assert recovery["payload"]["reason"] == "handler_start_exception"
+
+
+def test_existing_unresolved_legacy_recovery_blocks_a_duplicate_stable_recovery(
+    tmp_path,
+):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    root_event_id = "github:agentscope-ai/agentscope:1:issue_update:legacy"
+    event_key = "agentscope-ai/agentscope#1"
+    legacy_id = "outcome-reconcile:agentscope:legacy-pending"
+    assert lane.append({
+        "eventId": root_event_id,
+        "eventKey": event_key,
+        "repo": "agentscope-ai/agentscope",
+        "number": 1,
+        "kind": "issue_update",
+    })
+    assert lane.append({
+        "eventId": legacy_id,
+        "eventKey": event_key,
+        "kind": "outcome_reconcile",
+        "eventIdSource": root_event_id,
+        "payload": {"eventId": root_event_id, "publicKey": event_key},
+    })
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
+            (root_event_id,),
+        )
+        db.execute(
+            "UPDATE event_lane_events SET status='pending',attempts=2 WHERE event_id=?",
+            (legacy_id,),
+        )
+
+    result = worker._enqueue_unresolved_outcome_recoveries(lane)
+
+    assert result == {"candidates": 1, "inserted": 0, "existing": 1, "skipped": 0}
+    with lane.connect() as db:
+        rows = db.execute(
+            "SELECT event_id,attempts FROM event_lane_events "
+            "WHERE event_id LIKE 'outcome-reconcile:%'"
+        ).fetchall()
+    assert [(row["event_id"], row["attempts"]) for row in rows] == [
+        (legacy_id, 2)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("recovery_id", "kind"),
+    [
+        ("outcome-reconcile:agentscope:missing-kind", "issue_update"),
+        ("recovery-without-prefix", "outcome_reconcile"),
+    ],
+)
+def test_malformed_recovery_like_sibling_blocks_duplicate_enqueue(
+    tmp_path,
+    recovery_id,
+    kind,
+):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    root = "github:agentscope-ai/agentscope:1:issue_update:root"
+    key = "agentscope-ai/agentscope#1"
+    assert lane.append({
+        "eventId": root,
+        "eventKey": key,
+        "repo": "agentscope-ai/agentscope",
+        "number": 1,
+        "kind": "issue_update",
+    })
+    assert lane.append({
+        "eventId": recovery_id,
+        "eventKey": key,
+        "kind": kind,
+        "eventIdSource": root,
+        "payload": {"eventId": root, "publicKey": key},
+    })
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET status='needs_reconcile' "
+            "WHERE event_id IN (?,?)",
+            (root, recovery_id),
+        )
+
+    result = worker._enqueue_unresolved_outcome_recoveries(lane)
+
+    assert result == {"candidates": 1, "inserted": 0, "existing": 1, "skipped": 0}
+    with lane.connect() as db:
+        assert db.execute(
+            "SELECT count(*) FROM event_lane_events WHERE event_id=?",
+            (worker._outcome_recovery_event_id(root),),
+        ).fetchone()[0] == 0
+
+
+def test_structurally_invalid_terminal_outcome_retries_recovery(tmp_path):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    event_key = "agentscope-ai/agentscope#1"
+    root_event_id = "root-invalid-schema"
+    recovery_id = worker._outcome_recovery_event_id(root_event_id)
+    lane.append({
+        "eventId": recovery_id,
+        "kind": "outcome_reconcile",
+        "eventKey": event_key,
+        "rootEventId": root_event_id,
+        "eventIdSource": root_event_id,
+        "payload": {"eventId": root_event_id, "publicKey": event_key},
+    }, priority=250)
+    claimed = lane.claim(limit=1)[0]
+    lane.reserve_handler_turn(event_key, recovery_id, "client:recovery")
+    lane.bind_handler_turn(
+        event_key, recovery_id, "thread-1", "turn-1", {}, status="started"
+    )
+    lane.ack(recovery_id, lease_token=claimed["leaseToken"])
+    receipt = worker._event_artifact_path(
+        tmp_path,
+        worker.EVENT_RECEIPT_DIR,
+        recovery_id,
+        attempt=1,
+        is_recovery=True,
+    )
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(json.dumps({
+        "turnStatus": "completed",
+        "outcome": {
+            "eventId": recovery_id,
+            "publicKey": event_key,
+            "state": "no_action",
+        },
+    }))
+
+    assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id=?",
+            (recovery_id,),
+        ).fetchone()
+    assert row["status"] == "pending"
+    assert row["attempts"] == 1
+
+
+def test_legacy_recovery_retry_preserves_legacy_identity_and_can_migrate(
+    tmp_path,
+):
+    worker = _event_worker_module()
+    database = tmp_path / "state" / "agentscope-events.sqlite3"
+    lane = EventLane(database)
+    root_event_id = "legacy-root"
+    event_key = "agentscope-ai/agentscope#1"
+    legacy_recovery_id = "outcome-reconcile:agentscope:legacy-retry"
+    assert lane.append({
+        "eventId": root_event_id,
+        "eventKey": event_key,
+        "kind": "issue_update",
+    })
+    assert lane.append({
+        "eventId": legacy_recovery_id,
+        "eventKey": event_key,
+        "kind": "outcome_reconcile",
+        "eventIdSource": root_event_id,
+        "payload": {
+            "eventId": root_event_id,
+            "publicKey": event_key,
+        },
+    })
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
+            (root_event_id,),
+        )
+
+    assert worker._retry_or_exhaust_outcome_recovery(
+        lane,
+        event_id=legacy_recovery_id,
+        root_event_id=root_event_id,
+        outcome={"error": "invalid"},
+    ) == "retry"
+    with lane.connect() as db:
+        payload = json.loads(db.execute(
+            "SELECT payload_json FROM event_lane_events WHERE event_id=?",
+            (legacy_recovery_id,),
+        ).fetchone()[0])
+    assert payload["eventIdSource"] == root_event_id
+    assert payload["payload"]["eventId"] == root_event_id
+    assert "rootEventId" not in payload
+    assert "rootEventId" not in payload["payload"]
+
+    lane.reserve_handler_turn(event_key, legacy_recovery_id, "client:legacy")
+    lane.bind_handler_turn(
+        event_key,
+        legacy_recovery_id,
+        "thread-legacy",
+        "turn-legacy",
+        {
+            "turnStatus": "completed",
+            "eventId": legacy_recovery_id,
+            "eventKey": event_key,
+            "outcome": {
+                "schemaVersion": "agentscope_event_outcome_v1",
+                "eventId": legacy_recovery_id,
+                "publicKey": event_key,
+                "state": "no_action",
+            },
+        },
+        status="completed",
+    )
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET status='delivered' WHERE event_id=?",
+            (legacy_recovery_id,),
+        )
+    preview = recovery_migration.migrate_recovery_chains(
+        database, namespace="agentscope"
+    )
+    assert preview["rootEventsToCoalesce"] == 1
+    assert preview["eventsToCoalesce"] == 1
+
+
+@pytest.mark.parametrize("terminal", ["failed", "interrupted"])
+def test_noncompleted_turn_cannot_publish_a_structurally_valid_outcome(
+    tmp_path, terminal
+):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    event_id = f"root-{terminal}"
+    event_key = "agentscope-ai/agentscope#1"
+    lane.append({
+        "eventId": event_id,
+        "eventKey": event_key,
+        "repo": "agentscope-ai/agentscope",
+        "number": 1,
+        "kind": "issue_update",
+    })
+    claimed = lane.claim(limit=1)[0]
+    lane.reserve_handler_turn(event_key, event_id, f"client:{terminal}")
+    lane.bind_handler_turn(
+        event_key, event_id, "thread-1", f"turn-{terminal}", {}, status="started"
+    )
+    lane.ack(event_id, lease_token=claimed["leaseToken"])
+    receipt = worker._event_artifact_path(
+        tmp_path, worker.EVENT_RECEIPT_DIR, event_id
+    )
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(json.dumps({
+        "turnStatus": terminal,
+        "outcome": {
+            "schemaVersion": "agentscope_event_outcome_v1",
+            "eventId": event_id,
+            "publicKey": event_key,
+            "state": "no_action",
+        },
+    }))
+
+    assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
+    assert lane.handler_turn(event_id)["status"] == "needs_reconcile"
+    with lane.connect() as db:
+        recovery_count = db.execute(
+            "SELECT count(*) FROM event_lane_events "
+            "WHERE event_id=?",
+            (worker._outcome_recovery_event_id(event_id),),
+        ).fetchone()[0]
+    assert recovery_count == 1
 
 
 def test_invalid_recovery_reuses_one_event_and_exhausts_existing_attempt_budget(tmp_path):
