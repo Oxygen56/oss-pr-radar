@@ -71,6 +71,27 @@ def test_radar_scan_exports_authenticated_state_with_the_managed_key():
         assert "RADAR_DISPATCH_HMAC_KEY: ${{ secrets.RADAR_DISPATCH_HMAC_KEY }}" in section
 
 
+def test_partial_failures_are_visible_without_skipping_durable_state():
+    workflow = (ROOT / ".github/workflows/radar.yml").read_text(encoding="utf-8")
+    assert "id: pr_followup_check" in workflow
+    assert "if: steps.pr_followup_check.outcome == 'failure'" in workflow
+    assert "PR_FOLLOWUP_DEGRADED" in workflow
+    assert "id: war_room_send" in workflow
+    assert "if: steps.war_room_send.outcome == 'failure'" in workflow
+    assert "NOTIFICATION_DEGRADED" in workflow
+
+    build_state_header = workflow.split("\n  build-state:\n", 1)[1].split(
+        "\n    runs-on:", 1
+    )[0]
+    assert "needs.scan.result == 'success'" in build_state_header
+    assert "needs.pr-followup.result == 'failure'" in build_state_header
+
+    receipt_header = workflow.split("\n  persist-receipt:\n", 1)[1].split(
+        "\n    runs-on:", 1
+    )[0]
+    assert "needs.notify.result == 'failure'" in receipt_header
+
+
 def test_radar_scan_applies_controller_decision_feedback_before_scanning():
     workflow = (ROOT / ".github/workflows/radar.yml").read_text(encoding="utf-8")
     scan = workflow.split("\n  scan:\n", 1)[1].split("\n  build-state:\n", 1)[0]
