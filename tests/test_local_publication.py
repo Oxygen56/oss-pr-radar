@@ -887,6 +887,11 @@ def test_slow_worker_persists_backoff_after_network_failure(monkeypatch, tmp_pat
     backoff = json.loads((tmp_path / "state" / "slow-worker-backoff.json").read_text())
     assert backoff["failureCount"] == 1
     assert backoff["backoffSeconds"] == 60
+    health = json.loads((tmp_path / "state" / "runtime-health.json").read_text())
+    slow = health["workers"]["slow"]
+    assert slow["lastExitCode"] == 1
+    assert slow["consecutiveFailures"] == 1
+    assert slow["consecutiveSuccesses"] == 0
 
 
 @pytest.mark.parametrize(
@@ -896,7 +901,9 @@ def test_slow_worker_persists_backoff_after_network_failure(monkeypatch, tmp_pat
         (True, "PERSISTED_INFLIGHT_BACKOFF"),
     ],
 )
-def test_slow_worker_persisted_backoff_first_run_records_fresh_health(tmp_path, in_flight, reason):
+def test_slow_worker_persisted_backoff_does_not_manufacture_success_health(
+    tmp_path, in_flight, reason
+):
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     retry_at = time.time() + 3600
@@ -922,12 +929,7 @@ def test_slow_worker_persisted_backoff_first_run_records_fresh_health(tmp_path, 
     assert result["ok"] is True
     assert result["deferred"] is True
     assert result["reason"] == reason
-    health = json.loads((state_dir / "runtime-health.json").read_text(encoding="utf-8"))
-    slow = health["workers"]["slow"]
-    assert slow["lastSuccessAt"]
-    assert slow["lastExitCode"] == 0
-    assert slow["consecutiveFailures"] == 0
-    assert "slowNoopReason" not in slow
+    assert not (state_dir / "runtime-health.json").exists()
 
 
 def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(monkeypatch, tmp_path):

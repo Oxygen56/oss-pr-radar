@@ -2134,6 +2134,75 @@ def test_stalled_dispatch_gets_one_write_ahead_recovery(tmp_path):
     assert store.cleanup_candidates() == []
 
 
+def test_exhausted_dispatched_recovery_is_queryable_and_releases_wip(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    assert store.active_task_count() == 1
+    assert store.exhausted_recovery_blockers() == []
+
+    recovery = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.exhaust_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+
+    blocker = store.exhausted_recovery_blockers()[0]
+    assert blocker["key"] == "a/b#1"
+    assert blocker["intentId"] == "intent-1"
+    assert blocker["threadId"] == "thread-1"
+    assert blocker["recoveryKind"] == "DISPATCHED_TASK"
+    assert blocker["reason"] == "RECOVERY_RETRY_EXHAUSTED"
+    assert blocker["occupiesTaskSlot"] is False
+    assert store.active_task_count() == 0
+
+    store.enqueue(
+        intent(
+            intentId="intent-2",
+            key="c/d#2",
+            repo="c/d",
+            issueNumber=2,
+            issueUrl="https://github.com/c/d/issues/2",
+        )
+    )
+    assert store.claim("intent-2", "worker", max_active=1) is not None
+
+
+def test_new_result_clears_exhausted_dispatched_recovery_blocker(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    recovery = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.exhaust_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    assert store.active_task_count() == 0
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="new-result-digest",
+        stage="IMPLEMENTATION_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+
+    assert store.exhausted_recovery_blockers() == []
+    assert store.active_task_count() == 1
+
+
 def test_recent_dispatch_can_be_authorized_for_terminal_error_recovery(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())

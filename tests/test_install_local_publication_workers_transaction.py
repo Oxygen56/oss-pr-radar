@@ -524,6 +524,136 @@ def test_worker_status_is_read_only_and_requires_only_runtime_binding(
     assert not (tmp_path / "state").exists()
 
 
+def test_worker_status_uses_complete_runtime_state_without_cross_worker_false_alarms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    worker_specs = specs(tmp_path)
+    _write_staged_plists(home, worker_specs)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    now = time.time()
+    (state_dir / "runtime-health.json").write_text(
+        json.dumps(
+            {
+                "workers": {
+                    "fast": {
+                        "lastSuccessAt": now - 10,
+                        "lastExitCode": 0,
+                        "consecutiveFailures": 0,
+                    },
+                    "slow": {
+                        "lastSuccessAt": now - 10,
+                        "lastExitCode": 0,
+                        "consecutiveFailures": 0,
+                    },
+                    "queue-importer": {
+                        "queueImportSuccessAt": now - 10,
+                        "queueLastExitCode": 0,
+                        "queueConsecutiveFailures": 0,
+                    },
+                },
+                "deployment": {
+                    "manifestVerified": True,
+                    "deploymentDirty": False,
+                    "releaseVersion": "r1",
+                    "policyDigest": "p1",
+                    "pendingPublicationEffects": 0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (state_dir / "slow-worker-backoff.json").write_text(
+        json.dumps(
+            {
+                "failureCount": 1,
+                "nextAttemptAt": now + 60,
+                "inFlight": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    domain = "gui/4242"
+    services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
+    outputs = {service: "runs = 1\nlast exit code = 0\n" for service in services}
+    monkeypatch.setattr(INSTALL, "launchctl", FakeLaunchctl(domain, services, print_outputs=outputs))
+    monkeypatch.setattr(
+        INSTALL,
+        "active_release_evidence",
+        lambda _root: {"valid": True, "releaseId": "r1", "policyDigest": "p1"},
+    )
+    monkeypatch.setattr(INSTALL, "disk_snapshot", lambda _root: {"level": "ok"})
+    monkeypatch.setattr(INSTALL, "pending_publication_effects", lambda _path: 0)
+    monkeypatch.setattr(
+        INSTALL,
+        "pid_probe",
+        lambda *_args, **_kwargs: {"alive": False, "versionMatched": True},
+    )
+
+    statuses = [
+        INSTALL.service_status(
+            f"{domain}/{spec['Label']}",
+            plist_path(home, str(spec["Label"])),
+            spec,
+        )
+        for spec in worker_specs
+    ]
+
+    assert [status["ok"] for status in statuses] == [True, False, True]
+    assert statuses[0]["runtimeHealth"]["healthy"] is False
+    assert statuses[0]["workerRuntimeHealth"]["healthy"] is True
+    assert statuses[1]["workerRuntimeHealth"]["lastExitCode"] == 1
+
+
+def test_status_top_level_ok_aggregates_worker_health(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    worker_specs = specs(tmp_path)
+    worker_health = {
+        str(worker_specs[0]["Label"]): True,
+        str(worker_specs[1]["Label"]): False,
+        str(worker_specs[2]["Label"]): True,
+    }
+    monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(
+        INSTALL,
+        "active_release_evidence",
+        lambda _root: {
+            "valid": True,
+            "path": str(tmp_path / "release"),
+            "releaseId": "r1",
+        },
+    )
+    monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: worker_specs)
+    monkeypatch.setattr(
+        INSTALL,
+        "service_status",
+        lambda _service, _plist_path, expected: {
+            "ok": worker_health[str(expected["Label"])],
+            "installed": True,
+        },
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "install_local_publication_workers.py",
+            "--runtime-root",
+            str(tmp_path),
+            "--status",
+        ],
+    )
+
+    assert INSTALL.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is False
+    assert [worker["ok"] for worker in result["workers"]] == [True, False, True]
+
+
 def test_legacy_installer_is_only_a_compatibility_forwarder():
     legacy = SCRIPT.parent / "install_local_publication_agent.py"
     text = legacy.read_text(encoding="utf-8")

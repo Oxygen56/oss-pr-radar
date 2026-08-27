@@ -79,9 +79,11 @@ from oss_pr_radar.release_binding import (  # noqa: E402
 from oss_pr_radar.repo_probe import (  # noqa: E402
     PATHS_VERIFIED,
     REPRODUCED_VALIDATED,
+    ProbeUnavailable,
     attest_task_reproduction_result,
     rebind_probe_receipt,
     run_repo_probe,
+    validate_indexable_checkout_paths,
     verify_probe_receipt,
 )
 from oss_pr_radar.target_branch import (  # noqa: E402
@@ -1619,12 +1621,45 @@ def _worktree_belongs_to_source(worktree: Path, source: Path) -> bool:
         return False
 
 
+def _expand_sparse_checkout_paths(worktree: Path, paths: list[str]) -> list[str]:
+    """Make declared task paths writable through the checkout's normal index policy."""
+
+    normalized = _validated_changed_files(paths)
+    sparse = subprocess.run(
+        ["git", "config", "--bool", "core.sparseCheckout"],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if sparse.returncode not in {0, 1}:
+        raise RuntimeError("unable to inspect sparse-checkout policy")
+    if sparse.returncode == 0 and sparse.stdout.strip() == "true":
+        command(
+            ["git", "sparse-checkout", "add", "--skip-checks", "--", *normalized],
+            cwd=worktree,
+            timeout=600,
+        )
+    return normalized
+
+
+def _prepare_indexable_worktree_paths(worktree: Path, paths: list[str]) -> list[str]:
+    normalized = _expand_sparse_checkout_paths(worktree, paths)
+    try:
+        validate_indexable_checkout_paths(worktree, normalized)
+    except ProbeUnavailable as exc:
+        raise RuntimeError(f"task code paths are not indexable: {exc}") from exc
+    return normalized
+
+
 def prepare_managed_worktree(
     source: Path,
     *,
     intent_id: str,
     repo: str,
     target_base: dict[str, Any] | None = None,
+    code_paths: list[str] | None = None,
 ) -> Path:
     """Create an isolated source checkout inside the broad GitHub project."""
 
@@ -1664,6 +1699,8 @@ def prepare_managed_worktree(
             shutil.rmtree(worktree.parent, ignore_errors=True)
         raise RuntimeError("managed worktree does not belong to source repository")
     _exclude_private_task_dir(worktree)
+    if code_paths:
+        _prepare_indexable_worktree_paths(worktree, code_paths)
     return worktree.resolve()
 
 
@@ -4128,6 +4165,11 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
                 intent_id=str(intent["intentId"]),
                 repo=str(intent["repo"]),
                 target_base=target_base,
+                code_paths=(
+                    list(probe.get("codePaths") or [])
+                    if probe.get("codePathsVerified") is True
+                    else []
+                ),
             )
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             store.release_claim(
@@ -4967,6 +5009,15 @@ def write_task_context(
         raw_probe_level = "UNVERIFIED"
     task_stage = raw_task_stage
     reproduction_only = task_stage == "REPRODUCTION_REQUIRED"
+    declared_code_paths = [
+        str(path) for path in (context.get("codePaths") or []) if str(path).strip()
+    ]
+    # Reproduction-only contexts may still carry symbol anchors (for example,
+    # ``runtime_symbol``) until the probe resolves them to repository files.
+    # Implementation contexts are backed by a verified receipt, so their paths
+    # are concrete and must already be writable through the Git index.
+    if declared_code_paths and not reproduction_only:
+        context["codePaths"] = _prepare_indexable_worktree_paths(cwd, declared_code_paths)
     allowed_actions = (
         ["read_issue", "read_repo", "run_reproduction_probe", "write_structured_result"]
         if reproduction_only
@@ -9855,6 +9906,7 @@ def _finalize_controller_merge(
 ) -> tuple[dict[str, Any], bytes]:
     worktree = result_access.worktree
     changed_files = _validated_changed_files(value.get("changedFiles"))
+    _expand_sparse_checkout_paths(worktree, changed_files)
     branch = str(value.get("branch") or "").strip()
     commit_message = str(value.get("commitMessage") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{2,119}", branch):
@@ -10255,6 +10307,7 @@ def _finalize_controller_commit(
 
     worktree = result_access.worktree
     changed_files = _validated_changed_files(value.get("changedFiles"))
+    _expand_sparse_checkout_paths(worktree, changed_files)
     branch = str(value.get("branch") or "").strip()
     commit_message = str(value.get("commitMessage") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{2,119}", branch):
@@ -15454,6 +15507,8 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     quarantined_reader = getattr(store, "quarantined_validation_followups", lambda: [])
     quarantined = list(quarantined_reader())
+    exhausted_reader = getattr(store, "exhausted_recovery_blockers", lambda: [])
+    recovery_retry_exhausted = list(exhausted_reader())
     unresolved = store.unresolved_recoveries()
     if not THREAD_DB.is_file():
         # A fresh machine may not have a Codex thread database yet.  Recovery
@@ -15482,6 +15537,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
             "blocked": blocked,
             "unresolved": unresolved_with_recovery,
             "quarantined": quarantined,
+            "recoveryRetryExhausted": recovery_retry_exhausted,
         }
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
@@ -15747,6 +15803,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
         "blocked": blocked,
         "unresolved": unresolved_with_recovery,
         "quarantined": quarantined,
+        "recoveryRetryExhausted": recovery_retry_exhausted,
     }
 
 

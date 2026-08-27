@@ -41,10 +41,12 @@ from oss_pr_radar.operational_auth import (  # noqa: E402
 )
 from oss_pr_radar.release_binding import runtime_ledger_path  # noqa: E402
 from oss_pr_radar.runtime import (  # noqa: E402
+    REQUIRED_WORKERS,
     disk_snapshot,
     evaluate_health,
     pending_publication_effects,
     pid_probe,
+    read_json,
 )
 from oss_pr_radar.runtime_audit import active_release_evidence  # noqa: E402
 
@@ -249,25 +251,46 @@ def service_status(service: str, plist_path: Path, expected: dict) -> dict:
         FIXED_WORKER_LABELS[2]: "queue-importer",
     }.get(str(expected.get("Label")), "fast")
     release = active_release_evidence(root)
-    # Status is deliberately observational: build the health input in memory
-    # and never update runtime-health.json or the managed ledger.
-    runtime_state = {
-        "workers": {
-            worker: {
-                "lastExitCode": last_exit_code,
-                "pid": pid,
-                "pidAlive": process["alive"],
-                "processVersionMatched": process["versionMatched"],
-            }
-        },
-        "deployment": {
+    # Status is deliberately observational: evaluate the complete persisted
+    # worker state in memory and never update runtime-health.json or the ledger.
+    persisted = read_json(root / "state" / "runtime-health.json", {})
+    persisted = persisted if isinstance(persisted, dict) else {}
+    runtime_state = dict(persisted)
+    deployment = (
+        dict(persisted.get("deployment"))
+        if isinstance(persisted.get("deployment"), dict)
+        else {}
+    )
+    deployment.update(
+        {
             "manifestVerified": release.get("valid") is True,
             "deploymentDirty": release.get("valid") is not True,
             "releaseVersion": release.get("releaseId"),
             "policyDigest": release.get("policyDigest"),
             "pendingPublicationEffects": pending_publication_effects(runtime_ledger_path(root)),
-        },
-    }
+        }
+    )
+    runtime_state["deployment"] = deployment
+    backoff = read_json(root / "state" / "slow-worker-backoff.json", {})
+    backoff = backoff if isinstance(backoff, dict) else {}
+    try:
+        backoff_failures = max(0, int(backoff.get("failureCount") or 0))
+    except (TypeError, ValueError):
+        backoff_failures = 0
+    if backoff_failures:
+        workers = (
+            dict(runtime_state.get("workers"))
+            if isinstance(runtime_state.get("workers"), dict)
+            else {}
+        )
+        slow_state = dict(workers.get("slow") or {})
+        slow_state["consecutiveFailures"] = max(
+            int(slow_state.get("consecutiveFailures") or 0), backoff_failures
+        )
+        if slow_state.get("lastExitCode") in {None, 0}:
+            slow_state["lastExitCode"] = 1
+        workers["slow"] = slow_state
+        runtime_state["workers"] = workers
     disk = disk_snapshot(root)
     log_bytes = sum(
         path.stat().st_size
@@ -290,8 +313,22 @@ def service_status(service: str, plist_path: Path, expected: dict) -> dict:
     if pid is not None and not process["versionMatched"]:
         health["issues"].append("PROCESS_VERSION_MISMATCH")
         health["healthy"] = False
+    worker_health = (health.get("workers") or {}).get(worker) or {}
+    shared_issues = [
+        issue
+        for issue in health.get("issues") or []
+        if not any(issue.startswith(f"{required}:") for required in REQUIRED_WORKERS)
+    ]
     return {
-        "ok": loaded and config_current and health["healthy"],
+        "ok": (
+            loaded
+            and config_current
+            and worker_health.get("healthy") is True
+            and not shared_issues
+            and last_exit_code in {None, 0}
+            and (pid is None or process["alive"] is True)
+            and (pid is None or process["versionMatched"] is True)
+        ),
         "installed": loaded,
         "configCurrent": config_current,
         "runs": int(runs.group(1)) if runs else 0,
@@ -300,6 +337,7 @@ def service_status(service: str, plist_path: Path, expected: dict) -> dict:
         "pid": pid,
         "process": process,
         "runtimeHealth": health,
+        "workerRuntimeHealth": worker_health,
         "label": str(expected.get("Label")),
     }
 
@@ -593,7 +631,15 @@ def main() -> int:
                 status = service_status(f"{domain}/{label}", plist_path, spec)
                 status["label"] = label
                 statuses.append(status)
-            print(json.dumps({"ok": True, "workers": statuses}, sort_keys=True))
+            print(
+                json.dumps(
+                    {
+                        "ok": all(status.get("ok") is True for status in statuses),
+                        "workers": statuses,
+                    },
+                    sort_keys=True,
+                )
+            )
             return 0
         if args.uninstall:
             require_operational_authorization(runtime_root)

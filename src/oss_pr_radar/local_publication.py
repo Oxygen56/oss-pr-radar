@@ -90,15 +90,6 @@ def _slow_worker_diagnostic(
     }
 
 
-def _record_successful_slow_noop_cycle(root: Path, *, started_at: float) -> None:
-    _record_slow_cycle(
-        root,
-        ok=True,
-        exit_code=0,
-        started_at=started_at,
-    )
-
-
 def _record_slow_cycle(
     root: Path,
     *,
@@ -554,7 +545,6 @@ def slow_advance_once(
             backoff = backoff if isinstance(backoff, dict) else {}
             retry_at = float(backoff.get("retryAfter") or backoff.get("nextAttemptAt") or 0)
             if backoff.get("inFlight") and now < retry_at:
-                _record_successful_slow_noop_cycle(root, started_at=started)
                 return {
                     "ok": True,
                     "deferred": True,
@@ -562,7 +552,6 @@ def slow_advance_once(
                     "retryAt": retry_at,
                 }
             if now < float(backoff.get("nextAttemptAt") or 0):
-                _record_successful_slow_noop_cycle(root, started_at=started)
                 return {
                     "ok": True,
                     "deferred": True,

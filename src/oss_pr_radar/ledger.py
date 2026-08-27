@@ -248,6 +248,56 @@ RECOVERED_TITLE_STATE = {
     "CLOSED": "PR_OPEN",
 }
 
+_EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE = """
+    i.status='DISPATCHED'
+    AND i.thread_id IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM events exhausted
+      JOIN events recovery
+        ON recovery.opportunity_key=exhausted.opportunity_key
+       AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+       AND recovery.dedupe_key=exhausted.dedupe_key
+      WHERE exhausted.opportunity_key=i.opportunity_key
+        AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+        AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+        AND recovery.id>(
+          SELECT COALESCE(MAX(dispatched.id),0)
+          FROM events dispatched
+          WHERE dispatched.opportunity_key=i.opportunity_key
+            AND dispatched.event_type='DISPATCHED'
+            AND dispatched.dedupe_key=i.thread_id
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM events later
+          WHERE later.opportunity_key=exhausted.opportunity_key
+            AND later.id>exhausted.id
+            AND (
+              later.event_type IN (
+                'TASK_RESULT_INGESTED',
+                'PUBLISHED_TASK_RESULT_BACKFILLED',
+                'PR_FOLLOWUP_RESULT_INGESTED',
+                'IMPLEMENTATION_CONTEXT_REPAIRED',
+                'AUDIT_PASS',
+                'AUDIT_NO_GO',
+                'VALIDATION_PENDING',
+                'FIX_READY',
+                'PR_OPEN',
+                'CI_GREEN',
+                'MAINTAINER_ACCEPTED',
+                'MERGED',
+                'CLOSED'
+              )
+              OR (
+                later.event_type='THREAD_RECOVERY_RESERVED'
+                AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+              )
+            )
+        )
+    )
+"""
+
 
 class LedgerError(RuntimeError):
     pass
@@ -2703,7 +2753,7 @@ class RadarLedger:
         now: str,
         exclude_intent_id: str | None = None,
     ) -> int:
-        intent_filter = "" if exclude_intent_id is None else "AND intent_id<>?"
+        intent_filter = "" if exclude_intent_id is None else "AND i.intent_id<>?"
         event_filter = (
             ""
             if exclude_intent_id is None
@@ -2719,10 +2769,12 @@ class RadarLedger:
         return int(
             connection.execute(
                 f"""SELECT COUNT(*) FROM (
-                     SELECT opportunity_key FROM intents
-                     WHERE status IN ('LEASED','CREATING','DISPATCHED')
-                       AND (status IN ('CREATING','DISPATCHED') OR lease_until>?)
+                     SELECT i.opportunity_key FROM intents i
+                     JOIN opportunities o ON o.key=i.opportunity_key
+                     WHERE i.status IN ('LEASED','CREATING','DISPATCHED')
+                       AND (i.status IN ('CREATING','DISPATCHED') OR i.lease_until>?)
                        {intent_filter}
+                       AND NOT ({_EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE})
                      UNION
                      SELECT r.opportunity_key FROM events r
                      WHERE r.event_type='PR_FOLLOWUP_RESERVED'
@@ -2829,6 +2881,87 @@ class RadarLedger:
                 now=iso_z(datetime.now(UTC)),
                 exclude_intent_id=exclude_intent_id,
             )
+
+    def exhausted_recovery_blockers(self) -> list[dict[str, Any]]:
+        """Return dispatched intents whose latest recovery attempt was exhausted."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT o.key,o.issue_url,o.title,o.stage,
+                           i.intent_id,i.status AS intent_status,i.thread_id,i.worktree_path,
+                           exhausted.dedupe_key AS reservation_digest,
+                           exhausted.payload_json,exhausted.created_at AS exhausted_at,
+                           recovery.created_at AS reserved_at
+                    FROM opportunities o
+                    JOIN intents i ON i.opportunity_key=o.key
+                    JOIN events exhausted ON exhausted.opportunity_key=o.key
+                      AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                    JOIN events recovery ON recovery.opportunity_key=exhausted.opportunity_key
+                      AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                      AND recovery.dedupe_key=exhausted.dedupe_key
+                    WHERE {_EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE}
+                      AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+                      AND recovery.id>(
+                        SELECT COALESCE(MAX(dispatched.id),0)
+                        FROM events dispatched
+                        WHERE dispatched.opportunity_key=i.opportunity_key
+                          AND dispatched.event_type='DISPATCHED'
+                          AND dispatched.dedupe_key=i.thread_id
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM events later
+                        WHERE later.opportunity_key=exhausted.opportunity_key
+                          AND later.id>exhausted.id
+                          AND (
+                            later.event_type IN (
+                              'TASK_RESULT_INGESTED',
+                              'PUBLISHED_TASK_RESULT_BACKFILLED',
+                              'PR_FOLLOWUP_RESULT_INGESTED',
+                              'IMPLEMENTATION_CONTEXT_REPAIRED',
+                              'AUDIT_PASS',
+                              'AUDIT_NO_GO',
+                              'VALIDATION_PENDING',
+                              'FIX_READY',
+                              'PR_OPEN',
+                              'CI_GREEN',
+                              'MAINTAINER_ACCEPTED',
+                              'MERGED',
+                              'CLOSED'
+                            )
+                            OR (
+                              later.event_type='THREAD_RECOVERY_RESERVED'
+                              AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                            )
+                          )
+                      )
+                    ORDER BY exhausted.created_at,exhausted.id"""
+            ).fetchall()
+        blockers: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            blockers.append(
+                {
+                    "key": row["key"],
+                    "issueUrl": row["issue_url"],
+                    "title": row["title"],
+                    "stage": row["stage"],
+                    "intentId": row["intent_id"],
+                    "intentStatus": row["intent_status"],
+                    "threadId": row["thread_id"],
+                    "worktreePath": row["worktree_path"],
+                    "recoveryKind": payload.get("recoveryKind"),
+                    "followupDigest": payload.get("followupDigest"),
+                    "recoveryNonce": payload.get("recoveryNonce"),
+                    "reservationDigest": row["reservation_digest"],
+                    "reservedAt": row["reserved_at"],
+                    "exhaustedAt": row["exhausted_at"],
+                    "blockerCode": "RECOVERY_RETRY_EXHAUSTED",
+                    "reason": "RECOVERY_RETRY_EXHAUSTED",
+                    "occupiesTaskSlot": False,
+                }
+            )
+        return blockers
 
     def recovery_candidates(
         self,

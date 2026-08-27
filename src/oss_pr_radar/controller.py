@@ -320,10 +320,12 @@ def controller_cycle(
 def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
     checks = {
+        "resultIngestion": ("errors",),
+        "resultIngestionAfterReview": ("errors",),
         "finalOrphans": ("blocked",),
         "finalPrFollowups": ("blocked", "unresolved", "restoreRequired"),
         "finalValidationFollowups": ("unresolved", "stale", "errors"),
-        "finalRecovery": ("blocked", "unresolved"),
+        "finalRecovery": ("blocked", "unresolved", "recoveryRetryExhausted"),
         "finalRestore": ("restore", "blocked"),
         "finalTitles": ("blocked",),
         "finalCleanup": ("cleanup", "blocked"),
@@ -335,6 +337,20 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
             items = value.get(key) or []
             if items:
                 blockers.append({"stage": stage, "queue": key, "count": len(items)})
+    local_status = stages.get("finalLocalAgentStatus") or {}
+    if local_status.get("ok") is False:
+        unhealthy = [
+            worker
+            for worker in (local_status.get("workers") or [])
+            if isinstance(worker, dict) and worker.get("ok") is False
+        ]
+        blockers.append(
+            {
+                "stage": "finalLocalAgentStatus",
+                "queue": "unhealthy",
+                "count": max(1, len(unhealthy)),
+            }
+        )
     return blockers
 
 

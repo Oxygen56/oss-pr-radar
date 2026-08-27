@@ -99,6 +99,36 @@ class FakeGitHub:
         return [{"path": path, "type": "blob"} for path in self.paths]
 
 
+def test_repo_probe_verifies_an_exact_blob_path(monkeypatch):
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", KEY)
+
+    receipt = run_repo_probe(
+        FakeGitHub("base-a", paths=["src/pkg/runtime.py"]),
+        repo="owner/repo",
+        default_branch="main",
+        selected_base_sha="base-a",
+        code_paths=["src/pkg/runtime.py"],
+    )
+
+    assert receipt["probeLevel"] == PATHS_VERIFIED
+    assert receipt["codePathsVerified"] is True
+
+
+def test_repo_probe_does_not_verify_a_directory_from_its_blob_children(monkeypatch):
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", KEY)
+
+    receipt = run_repo_probe(
+        FakeGitHub("base-a", paths=["src/pkg/runtime.py"]),
+        repo="owner/repo",
+        default_branch="main",
+        selected_base_sha="base-a",
+        code_paths=["src/pkg"],
+    )
+
+    assert receipt["probeLevel"] == "UNVERIFIED"
+    assert receipt["codePathsVerified"] is False
+
+
 def intent(*, base_sha: str = "base-a", maturity: str = "mature") -> dict:
     return {
         "intentId": "intent-7",

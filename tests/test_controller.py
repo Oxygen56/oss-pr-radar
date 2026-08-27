@@ -329,6 +329,35 @@ def test_pending_title_update_and_quarantine_are_not_controller_blockers():
     assert blockers == []
 
 
+def test_controller_blockers_include_execution_failures_and_exhausted_recovery():
+    from oss_pr_radar.controller import _final_blockers
+
+    blockers = _final_blockers(
+        {
+            "resultIngestion": {"ok": False, "errors": [{"key": "a/b#1"}]},
+            "finalRecovery": {
+                "blocked": [],
+                "unresolved": [],
+                "recoveryRetryExhausted": [{"key": "a/b#2"}],
+            },
+            "finalLocalAgentStatus": {
+                "ok": False,
+                "workers": [{"label": "slow", "ok": False}],
+            },
+        }
+    )
+
+    assert blockers == [
+        {"stage": "resultIngestion", "queue": "errors", "count": 1},
+        {
+            "stage": "finalRecovery",
+            "queue": "recoveryRetryExhausted",
+            "count": 1,
+        },
+        {"stage": "finalLocalAgentStatus", "queue": "unhealthy", "count": 1},
+    ]
+
+
 def test_compact_controller_result_exposes_one_desktop_handoff():
     handoff = {
         "deliveryKind": "validation-followup",

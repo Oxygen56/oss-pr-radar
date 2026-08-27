@@ -977,6 +977,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     state = json.loads(health_path.read_text(encoding="utf-8"))
     state["workers"] = {
         "fast": {"lastSuccessAt": now, "lastExitCode": 0},
+        "slow": {"lastSuccessAt": now, "lastExitCode": 0},
         "queue-importer": {"queueImportSuccessAt": now, "queueLastExitCode": 0},
     }
     health_path.write_text(json.dumps(state), encoding="utf-8")
@@ -1000,7 +1001,10 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
 
     slow_result = slow_advance_once(runtime, runner=must_not_run_slow)
     assert slow_result["reason"] == "PERSISTED_BACKOFF"
-    assert json.loads(health_path.read_text(encoding="utf-8"))["workers"]["slow"]["lastSuccessAt"]
+    assert json.loads(health_path.read_text(encoding="utf-8"))["workers"]["slow"] == {
+        "lastSuccessAt": now,
+        "lastExitCode": 0,
+    }
     report_dir = tmp_path / "stage6"
     report_dir.mkdir()
     report = report_dir / "report.json"

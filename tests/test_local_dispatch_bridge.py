@@ -4707,6 +4707,260 @@ def test_prepare_managed_worktree_is_isolated_under_github_project(monkeypatch, 
     assert run_git(worktree, "status", "--porcelain") == ""
 
 
+def test_prepare_managed_worktree_expands_declared_sparse_paths(monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    run_git(source, "init")
+    run_git(source, "config", "user.name", "Test Contributor")
+    run_git(source, "config", "user.email", "test@example.com")
+    (source / "src" / "plugins").mkdir(parents=True)
+    (source / "src" / "frontends").mkdir(parents=True)
+    (source / "src" / "plugins" / "keep.py").write_text("keep = True\n", encoding="utf-8")
+    (source / "src" / "frontends" / "target.py").write_text(
+        "target = True\n", encoding="utf-8"
+    )
+    run_git(source, "add", ".")
+    run_git(source, "commit", "-m", "baseline")
+    run_git(source, "update-ref", "refs/remotes/origin/main", "HEAD")
+    run_git(source, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    run_git(source, "sparse-checkout", "set", "src/plugins")
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+
+    worktree = MODULE.prepare_managed_worktree(
+        source,
+        intent_id="intent-sparse",
+        repo="a/b",
+        code_paths=["src/frontends/target.py"],
+    )
+
+    target = worktree / "src" / "frontends" / "target.py"
+    assert target.read_text(encoding="utf-8") == "target = True\n"
+    target.write_text("target = False\n", encoding="utf-8")
+    run_git(worktree, "add", "--", "src/frontends/target.py")
+    assert run_git(worktree, "diff", "--cached", "--name-only") == (
+        "src/frontends/target.py"
+    )
+
+
+def test_controller_commit_expands_result_paths_outside_sparse_checkout(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    (worktree / "src" / "plugins").mkdir(parents=True)
+    (worktree / "src" / "frontends").mkdir(parents=True)
+    (worktree / "src" / "plugins" / "keep.py").write_text("keep = True\n", encoding="utf-8")
+    (worktree / "src" / "frontends" / "target.py").write_text(
+        "target = True\n", encoding="utf-8"
+    )
+    run_git(worktree, "add", ".")
+    run_git(worktree, "commit", "-m", "baseline")
+    run_git(worktree, "branch", "-M", "main")
+    run_git(worktree, "switch", "-c", "fix/1-sparse")
+    run_git(worktree, "sparse-checkout", "set", "src/plugins")
+    run_git(worktree, "update-index", "--no-skip-worktree", "--", "src/frontends/target.py")
+    target = worktree / "src" / "frontends" / "target.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("target = False\n", encoding="utf-8")
+    value = {
+        "handoffMode": "controller_commit_required",
+        "commitSha": None,
+        "branch": "fix/1-sparse",
+        "commitMessage": "fix: update sparse target",
+        "changedFiles": ["src/frontends/target.py"],
+    }
+
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate={"worktreePath": str(worktree)},
+        context={},
+        value=value,
+    )
+
+    assert finalized["handoffMode"] == "controller_commit_complete"
+    assert finalized["controllerCommitChangedFiles"] == ["src/frontends/target.py"]
+    assert run_git(worktree, "show", "--pretty=format:", "--name-only", "HEAD") == (
+        "src/frontends/target.py"
+    )
+
+
+def test_recovery_list_exposes_exhausted_recovery_as_a_blocker(monkeypatch, tmp_path):
+    blocker = {
+        "key": "a/b#1",
+        "threadId": "thread-1",
+        "recoveryKind": "DISPATCHED_TASK",
+        "reason": "RECOVERY_RETRY_EXHAUSTED",
+        "occupiesTaskSlot": False,
+    }
+
+    class Store:
+        def quarantined_validation_followups(self):
+            return []
+
+        def unresolved_recoveries(self):
+            return []
+
+        def recovery_candidates(self, **_kwargs):
+            return []
+
+        def exhausted_recovery_blockers(self):
+            return [blocker]
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "THREAD_DB", tmp_path / "missing-thread-db.sqlite3")
+
+    result = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert result["ok"] is True
+    assert result["recoveryRetryExhausted"] == [blocker]
+
+
+def test_recovery_reserve_rearms_same_exhausted_dispatch(monkeypatch, tmp_path):
+    store, worktree = registered_store(tmp_path)
+    legacy = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=legacy["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=legacy["recoveryNonce"])
+    store.exhaust_recovery(thread_id="thread-1", nonce=legacy["recoveryNonce"])
+    assert store.exhausted_recovery_blockers()[0]["key"] == "a/b#1"
+
+    with sqlite3.connect(MODULE.THREAD_DB) as connection:
+        connection.execute(
+            "INSERT INTO threads "
+            "(id,title,archived,updated_at,rollout_path,first_user_message,cwd,git_origin_url) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-1",
+                "task",
+                0,
+                0,
+                None,
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(worktree),
+                "https://github.com/a/b.git",
+            ),
+        )
+
+    interrupted = {
+        "status": "interrupted",
+        "code": "turn_interrupted",
+        "message": "interrupted",
+        "turnId": "turn-legacy-recovery",
+    }
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "latest_thread_turn_state", lambda _path: interrupted)
+
+    listed = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert listed["ok"] is True
+    assert listed["recoveryRetryExhausted"][0]["key"] == "a/b#1"
+    candidate = listed["recoverable"][0]
+    assert candidate["rearmedFromExhausted"]["exhaustedNonce"] == legacy[
+        "recoveryNonce"
+    ]
+
+    reserved = MODULE.recovery_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            recovery_nonce=candidate["recoveryNonce"],
+        )
+    )
+
+    assert reserved["ok"] is True
+    assert reserved["rearmedFromExhausted"] == candidate["rearmedFromExhausted"]
+    assert store.exhausted_recovery_blockers() == []
+
+
+def test_recovery_reserve_ignores_another_tasks_exhausted_blocker(monkeypatch, tmp_path):
+    blocker = {
+        "key": "a/b#1",
+        "threadId": "thread-1",
+        "recoveryKind": "DISPATCHED_TASK",
+        "reason": "RECOVERY_RETRY_EXHAUSTED",
+        "occupiesTaskSlot": False,
+    }
+    candidate = {
+        "key": "c/d#2",
+        "issueUrl": "https://github.com/c/d/issues/2",
+        "threadId": "thread-2",
+        "worktreePath": str(tmp_path / "unrelated-worktree"),
+        "dispatchedAt": "2026-08-20T00:00:00Z",
+        "recoveryKind": "VALIDATION_FOLLOWUP_RESULT",
+        "followupDigest": "result-2",
+        "recoveryNonce": "nonce-2",
+    }
+    reserve_calls = []
+
+    class Store:
+        def quarantined_validation_followups(self):
+            return []
+
+        def unresolved_recoveries(self):
+            return []
+
+        def recovery_candidates(self, **_kwargs):
+            return [candidate]
+
+        def exhausted_recovery_blockers(self):
+            return [blocker]
+
+        def reserve_recovery(self, **kwargs):
+            reserve_calls.append(kwargs)
+            return candidate
+
+    worktree = Path(candidate["worktreePath"])
+    worktree.mkdir()
+    with sqlite3.connect(MODULE.THREAD_DB) as connection:
+        connection.execute(
+            "INSERT INTO threads "
+            "(id,title,archived,updated_at,rollout_path,first_user_message,cwd,git_origin_url) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-2",
+                "task",
+                0,
+                0,
+                None,
+                MODULE.issue_prompt(candidate["issueUrl"]),
+                str(worktree),
+                "https://github.com/c/d.git",
+            ),
+        )
+
+    interrupted = {
+        "status": "interrupted",
+        "code": "turn_interrupted",
+        "message": "interrupted",
+        "turnId": "turn-unrelated-recovery",
+    }
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "latest_thread_turn_state", lambda _path: interrupted)
+
+    listed = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert listed["ok"] is True
+    assert listed["recoverable"][0]["key"] == "c/d#2"
+    assert listed["recoveryRetryExhausted"] == [blocker]
+
+    reserved = MODULE.recovery_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-2",
+            recovery_nonce="nonce-2",
+        )
+    )
+
+    assert reserved["ok"] is True
+    assert reserved["threadId"] == "thread-2"
+    assert reserve_calls == [{"thread_id": "thread-2", "nonce": "nonce-2"}]
+
+
 def test_worktree_membership_uses_common_repository_for_linked_source(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
@@ -5454,6 +5708,85 @@ def test_prepare_claim_returns_single_project_root_and_isolated_worktree(monkeyp
         },
     }
     assert "projectId" not in result["createThreadRequest"]
+
+
+def test_prepare_claim_does_not_treat_unverified_symbol_alias_as_a_path(
+    monkeypatch, tmp_path
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-1",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+    probe = {
+        "probeLevel": "UNVERIFIED",
+        "codePathsVerified": False,
+        "codePaths": ["`runtime_symbol`"],
+    }
+    evidence = SimpleNamespace(
+        digest="evidence",
+        probe_level="UNVERIFIED",
+        repo_probe_receipt=probe,
+        as_dict=lambda: {
+            "digest": "evidence",
+            "complete": True,
+            "repo": "a/b",
+            "issue": {"labels": []},
+        },
+    )
+    verdict = SimpleNamespace(
+        status="ALLOW",
+        reason_code="ALLOW",
+        as_dict=lambda: {"status": "ALLOW", "reasonCode": "ALLOW"},
+    )
+    source = tmp_path / "source"
+    worktree = tmp_path / "worktree"
+    prepared: list[dict] = []
+
+    def prepare(_source, **kwargs):
+        prepared.append(kwargs)
+        return worktree
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "_audit_intent", lambda _intent: (evidence, verdict))
+    monkeypatch.setattr(
+        MODULE,
+        "resolve_target_base",
+        lambda _client, _repo, _issue: {
+            "branch": "main",
+            "sha": "a" * 40,
+            "source": "repository_default",
+            "defaultBranch": "main",
+        },
+    )
+    monkeypatch.setattr(MODULE, "source_repo", lambda _repo, **_kwargs: source)
+    monkeypatch.setattr(MODULE, "prepare_managed_worktree", prepare)
+
+    result = MODULE.claim_intent(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            intent_id="intent-1",
+            owner="controller",
+            lease_minutes=15,
+            prepare=True,
+        )
+    )
+
+    assert result["claimed"] is True
+    assert prepared[0]["code_paths"] == []
 
 
 def test_creation_start_infers_active_lease_owner(monkeypatch, tmp_path):
