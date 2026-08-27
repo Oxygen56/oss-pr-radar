@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,23 @@ SPEC.loader.exec_module(MODULE)
 
 def git(*args, cwd):
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+
+
+def test_state_writer_children_inherit_the_outbound_lock_descriptor(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(*_args, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+    monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
+    MODULE._OUTBOUND_LOCK_FD = 41
+    try:
+        MODULE.git("status", cwd=tmp_path)
+    finally:
+        MODULE._OUTBOUND_LOCK_FD = None
+
+    assert captured["pass_fds"] == (41,)
 
 
 def initialized_repo(tmp_path):
@@ -123,6 +141,41 @@ def publish_raw_state(root: Path, branch: str, available: dict[str, Path]) -> No
         capture_output=True,
         text=True,
     )
+
+
+@pytest.mark.parametrize("operation", ["publish", "migrate"])
+def test_state_branch_cli_blocks_writes_while_outbound_pause_is_active(
+    monkeypatch, tmp_path, operation
+):
+    @contextmanager
+    def blocked_guard(_root, _ledger):
+        raise PermissionError("GITHUB_OUTBOUND_PAUSED")
+        yield
+
+    monkeypatch.setattr(MODULE, "outbound_effect_guard", blocked_guard)
+    monkeypatch.setattr(
+        MODULE,
+        "publish",
+        lambda *_args, **_kwargs: pytest.fail("paused state branch must not push"),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "migrate",
+        lambda *_args, **_kwargs: pytest.fail("paused state migration must not push"),
+    )
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        [
+            "state_branch.py",
+            operation,
+            "--root",
+            str(tmp_path),
+        ],
+    )
+
+    with pytest.raises(PermissionError, match="GITHUB_OUTBOUND_PAUSED"):
+        MODULE.main()
 
 
 def test_publish_and_restore_verify_manifest(tmp_path):

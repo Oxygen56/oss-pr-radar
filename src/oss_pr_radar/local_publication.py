@@ -735,6 +735,7 @@ def advance_once(
         }
     ingestion = runner(root, "ingest-results")
     ingestion_quarantined = list(ingestion.get("quarantined") or [])
+    ingestion_work_blocked = list(ingestion.get("workBlocked") or [])
     ingestion_errors = list(ingestion.get("errors") or [])
     if ingestion.get("ok") is False or ingestion_errors:
         return {
@@ -743,6 +744,7 @@ def advance_once(
             "resultsIngested": list(ingestion.get("ingested") or []),
             "publicationRequests": list(ingestion.get("publicationRequests") or []),
             "validationDeferred": list(ingestion.get("validationDeferred") or []),
+            "workBlocked": ingestion_work_blocked,
             "published": [],
             "contextsSynced": [],
             "pending": [],
@@ -756,15 +758,49 @@ def advance_once(
             or [{"error": "task result ingestion failed before publication"}],
         }
     independent_review = runner(root, "independent-review-run")
-    review_errors = list(independent_review.get("errors") or [])
+    reported_review_errors = list(independent_review.get("errors") or [])
+    review_candidate_errors = [
+        *list(independent_review.get("candidateErrors") or []),
+        *[
+            item
+            for item in reported_review_errors
+            if isinstance(item, dict) and item.get("key")
+        ],
+    ]
+    review_errors = [item for item in reported_review_errors if item not in review_candidate_errors]
+    review_retry_exhausted = list(independent_review.get("retryExhausted") or [])
+    review_work_blocked = [
+        {
+            "key": str(item.get("key") or ""),
+            "reason": "INDEPENDENT_REVIEW_FAILED",
+            "error": str(item.get("error") or "")[:300],
+        }
+        for item in review_candidate_errors
+        if isinstance(item, dict)
+    ] + [
+        {
+            "key": str(item.get("key") or ""),
+            "reason": str(
+                item.get("reason") or "INDEPENDENT_REVIEW_RETRY_EXHAUSTED"
+            ),
+            "attempts": int(item.get("attempts") or 0),
+            "alreadyRecorded": True,
+        }
+        for item in review_retry_exhausted
+        if isinstance(item, dict)
+    ]
     review_updated = bool(independent_review.get("updated"))
-    if (independent_review.get("ok") is False or review_errors) and not review_updated:
+    review_system_failed = bool(review_errors) or bool(
+        independent_review.get("ok") is False and not review_candidate_errors
+    )
+    if review_system_failed and not review_updated:
         return {
             "ok": False,
             "activity": True,
             "resultsIngested": list(ingestion.get("ingested") or []),
             "publicationRequests": list(ingestion.get("publicationRequests") or []),
             "validationDeferred": list(ingestion.get("validationDeferred") or []),
+            "workBlocked": ingestion_work_blocked + review_work_blocked,
             "independentReview": independent_review,
             "published": [],
             "contextsSynced": [],
@@ -780,10 +816,17 @@ def advance_once(
     post_review_ingestion = (
         runner(root, "ingest-results")
         if review_updated
-        else {"ok": True, "ingested": [], "publicationRequests": [], "validationDeferred": []}
+        else {
+            "ok": True,
+            "ingested": [],
+            "publicationRequests": [],
+            "validationDeferred": [],
+            "workBlocked": [],
+        }
     )
     post_review_errors = list(post_review_ingestion.get("errors") or [])
     post_review_quarantined = list(post_review_ingestion.get("quarantined") or [])
+    post_review_work_blocked = list(post_review_ingestion.get("workBlocked") or [])
     if post_review_ingestion.get("ok") is False or post_review_errors:
         return {
             "ok": False,
@@ -800,6 +843,9 @@ def advance_once(
                 *list(ingestion.get("validationDeferred") or []),
                 *list(post_review_ingestion.get("validationDeferred") or []),
             ],
+            "workBlocked": (
+                ingestion_work_blocked + review_work_blocked + post_review_work_blocked
+            ),
             "independentReview": independent_review,
             "published": [],
             "contextsSynced": [],
@@ -854,6 +900,9 @@ def advance_once(
         *list(ingestion.get("validationDeferred") or []),
         *list(post_review_ingestion.get("validationDeferred") or []),
     ]
+    work_blocked = (
+        ingestion_work_blocked + review_work_blocked + post_review_work_blocked
+    )
     quarantined = ingestion_quarantined + post_review_quarantined
     blocked = list(publication.get("blocked") or [])
     pending = list(publication.get("pending") or [])
@@ -906,6 +955,7 @@ def advance_once(
         or archived
         or published
         or publication_feedback.get("reconciled")
+        or any(not item.get("alreadyRecorded") for item in work_blocked)
         or non_quarantine_blocked
         or errors
         or drain_activity
@@ -930,6 +980,7 @@ def advance_once(
         "resultsIngested": ingested,
         "publicationRequests": requests,
         "validationDeferred": validation_deferred,
+        "workBlocked": work_blocked,
         "independentReview": independent_review,
         "titlesRenamed": renamed,
         "threadsArchived": archived,
@@ -968,6 +1019,7 @@ def compact_advance_result(result: dict[str, Any]) -> dict[str, Any]:
             "resultsIngested": len(result.get("resultsIngested") or []),
             "publicationRequests": len(result.get("publicationRequests") or []),
             "validationDeferred": len(result.get("validationDeferred") or []),
+            "workBlocked": len(result.get("workBlocked") or []),
             "reviewsUpdated": len(review.get("updated") or []),
             "titlesRenamed": len(result.get("titlesRenamed") or []),
             "threadsArchived": len(result.get("threadsArchived") or []),

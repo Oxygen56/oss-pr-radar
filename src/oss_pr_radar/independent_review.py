@@ -31,6 +31,7 @@ REVIEWABLE_STAGES = {
 PUBLISHED_STAGES = {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "MERGED", "CLOSED"}
 BLOCKING_SEVERITIES = {"P0", "P1", "P2"}
 MAX_REVIEW_OUTPUT_BYTES = 128 * 1024
+MAX_REVIEW_ATTEMPTS = 3
 REVIEW_PREREQUISITE_FIELDS = tuple(
     field for field in QUALITY_FIELDS if field != "independent_review_passed"
 )
@@ -103,6 +104,19 @@ def _review_cursor_path(root: Path) -> Path:
     return root / "state" / "independent_review_cursor.json"
 
 
+def _review_failure_path(
+    root: Path, *, candidate: dict[str, Any], source_digest: str, commit_sha: str
+) -> Path:
+    identity = sha256_json(
+        {
+            "key": str(candidate.get("key") or ""),
+            "sourceDigest": source_digest,
+            "commitSha": commit_sha,
+        }
+    )
+    return root / "state" / "independent_review_failures" / f"{identity}.json"
+
+
 def _ordered_candidates(root: Path, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     path = _review_cursor_path(root)
     try:
@@ -127,12 +141,20 @@ def _record_review_failure(
     commit_sha: str,
     error: Exception,
 ) -> None:
-    path = _review_cursor_path(root)
+    failure_path = _review_failure_path(
+        root,
+        candidate=candidate,
+        source_digest=source_digest,
+        commit_sha=commit_sha,
+    )
     attempts = 1
     try:
-        prior = json.loads(path.read_text(encoding="utf-8"))
+        prior = json.loads(failure_path.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError):
-        prior = None
+        try:
+            prior = json.loads(_review_cursor_path(root).read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            prior = None
     if (
         isinstance(prior, dict)
         and prior.get("key") == candidate.get("key")
@@ -140,18 +162,50 @@ def _record_review_failure(
         and prior.get("commitSha") == commit_sha
     ):
         attempts = int(prior.get("attempts") or 0) + 1
+    record = {
+        "schemaVersion": "independent-review-failure-v1",
+        "key": str(candidate.get("key") or ""),
+        "sourceDigest": source_digest,
+        "commitSha": commit_sha,
+        "attempts": attempts,
+        "failedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "error": f"{type(error).__name__}:{str(error)[:500]}",
+    }
+    atomic_write_json(failure_path, record)
     atomic_write_json(
-        path,
-        {
+        _review_cursor_path(root),
+        record
+        | {
             "schemaVersion": "independent-review-cursor-v1",
-            "key": str(candidate.get("key") or ""),
-            "sourceDigest": source_digest,
-            "commitSha": commit_sha,
-            "attempts": attempts,
-            "failedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-            "error": f"{type(error).__name__}:{str(error)[:500]}",
         },
     )
+
+
+def _review_failure_attempts(
+    root: Path, *, candidate: dict[str, Any], source_digest: str, commit_sha: str
+) -> int:
+    failure_path = _review_failure_path(
+        root,
+        candidate=candidate,
+        source_digest=source_digest,
+        commit_sha=commit_sha,
+    )
+    try:
+        value = json.loads(failure_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        try:
+            value = json.loads(_review_cursor_path(root).read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            return 0
+    if not isinstance(value, dict):
+        return 0
+    if (
+        value.get("key") != candidate.get("key")
+        or value.get("sourceDigest") != source_digest
+        or value.get("commitSha") != commit_sha
+    ):
+        return 0
+    return max(0, int(value.get("attempts") or 0))
 
 
 def _load_review_receipt(root: Path, value: dict[str, Any]) -> dict[str, Any] | None:
@@ -551,6 +605,7 @@ def review_once(
         store = RadarLedger(ledger_path)
         skipped: list[dict[str, str]] = []
         errors: list[dict[str, str]] = []
+        retry_exhausted: list[dict[str, Any]] = []
         candidates = _ordered_candidates(root, store.task_result_candidates())
         for candidate in candidates:
             review_attempted = False
@@ -563,6 +618,23 @@ def review_once(
                 result_path, value = prepared
                 source_digest = _source_digest(value)
                 commit_sha = str(value.get("commitSha") or "")
+                attempts = _review_failure_attempts(
+                    root,
+                    candidate=candidate,
+                    source_digest=source_digest,
+                    commit_sha=commit_sha,
+                )
+                if attempts >= MAX_REVIEW_ATTEMPTS:
+                    retry_exhausted.append(
+                        {
+                            "key": str(candidate["key"]),
+                            "reason": "INDEPENDENT_REVIEW_RETRY_EXHAUSTED",
+                            "attempts": attempts,
+                            "sourceDigest": source_digest,
+                            "commitSha": commit_sha,
+                        }
+                    )
+                    continue
                 result_snapshot_digest = sha256_json(value)
                 receipt_review = _load_review_receipt(root, value)
                 if receipt_review is not None:
@@ -603,6 +675,7 @@ def review_once(
                                 "reason": "RESULT_CHANGED_DURING_REVIEW",
                             },
                         ],
+                        "retryExhausted": retry_exhausted,
                         "errors": errors,
                     }
                 latest_result_path, latest_value = latest_prepared
@@ -624,6 +697,7 @@ def review_once(
                                 "reason": "RESULT_CHANGED_DURING_REVIEW",
                             },
                         ],
+                        "retryExhausted": retry_exhausted,
                         "errors": errors,
                     }
                 finalized_review = {
@@ -666,6 +740,7 @@ def review_once(
                         }
                     ],
                     "skipped": skipped,
+                    "retryExhausted": retry_exhausted,
                     "errors": errors,
                 }
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
@@ -693,5 +768,6 @@ def review_once(
             "busy": False,
             "updated": [],
             "skipped": skipped,
+            "retryExhausted": retry_exhausted,
             "errors": errors,
         }

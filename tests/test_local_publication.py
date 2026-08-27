@@ -671,7 +671,7 @@ def test_independent_review_update_is_reingested_before_publication(tmp_path):
     assert result["independentReview"]["updated"][0]["verdict"] == "PASS"
 
 
-def test_review_update_is_reingested_even_when_an_older_candidate_is_invalid(tmp_path):
+def test_review_update_continues_when_an_older_candidate_is_invalid(tmp_path):
     calls = []
     ingestion_count = 0
 
@@ -708,8 +708,15 @@ def test_review_update_is_reingested_even_when_an_older_candidate_is_invalid(tmp
         "ingest-results",
     ]
     assert result["resultsIngested"] == [{"key": "a/b#2", "stage": "FIX_READY"}]
-    assert result["ok"] is False
-    assert result["errors"] == [{"key": "a/b#1", "error": "invalid old result"}]
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "INDEPENDENT_REVIEW_FAILED",
+            "error": "invalid old result",
+        }
+    ]
 
 
 def test_incomplete_validation_is_healthy_and_quiet(tmp_path):
@@ -737,6 +744,38 @@ def test_incomplete_validation_is_healthy_and_quiet(tmp_path):
     assert result["ok"] is True
     assert result["activity"] is False
     assert result["validationDeferred"] == [deferred]
+
+
+def test_one_evidence_block_does_not_stop_the_rest_of_the_slow_cycle(tmp_path):
+    calls = []
+    blocked = {
+        "key": "a/b#1",
+        "reason": "REPRODUCTION_RECEIPT_INVALID",
+        "alreadyRecorded": False,
+    }
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [{"key": "a/b#2", "stage": "FIX_READY"}],
+                "publicationRequests": [{"requestId": "request-2"}],
+                "validationDeferred": [],
+                "workBlocked": [blocked],
+                "errors": [],
+            }
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert result["workBlocked"] == [blocked]
+    assert result["resultsIngested"] == [{"key": "a/b#2", "stage": "FIX_READY"}]
+    assert "independent-review-run" in calls
+    assert "publication-run" in calls
 
 
 def test_recovery_failure_stops_ingestion_and_publication(tmp_path):
@@ -1451,6 +1490,7 @@ def test_compact_result_keeps_counts_and_omits_large_payloads():
         "resultsIngested": 1,
         "publicationRequests": 1,
         "validationDeferred": 0,
+        "workBlocked": 0,
         "reviewsUpdated": 1,
         "titlesRenamed": 0,
         "threadsArchived": 0,

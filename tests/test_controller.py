@@ -36,6 +36,14 @@ def healthy_response(stage: str) -> dict:
             "filterMissRate": 0.1,
             "hardGateEscapes": 0,
         }
+    if stage == "finalEventLaneHealth":
+        return {
+            "healthy": True,
+            "lanes": {
+                "agentscope": {"healthy": True},
+                "nanobot": {"healthy": True},
+            },
+        }
     return {"ok": True}
 
 
@@ -345,7 +353,11 @@ def test_controller_blockers_include_execution_failures_and_exhausted_recovery()
 
     blockers = _final_blockers(
         {
-            "resultIngestion": {"ok": False, "errors": [{"key": "a/b#1"}]},
+            "resultIngestion": {
+                "ok": False,
+                "errors": [{"key": "a/b#1"}],
+                "workBlocked": [{"key": "a/b#3"}],
+            },
             "finalRecovery": {
                 "blocked": [],
                 "unresolved": [],
@@ -355,17 +367,40 @@ def test_controller_blockers_include_execution_failures_and_exhausted_recovery()
                 "ok": False,
                 "workers": [{"label": "slow", "ok": False}],
             },
+            "finalEventLaneHealth": {
+                "healthy": False,
+                "lanes": {
+                    "agentscope": {"healthy": False},
+                    "nanobot": {"healthy": True},
+                },
+            },
         }
     )
 
     assert blockers == [
         {"stage": "resultIngestion", "queue": "errors", "count": 1},
+        {"stage": "resultIngestion", "queue": "workBlocked", "count": 1},
         {
             "stage": "finalRecovery",
             "queue": "recoveryRetryExhausted",
             "count": 1,
         },
         {"stage": "finalLocalAgentStatus", "queue": "unhealthy", "count": 1},
+        {"stage": "finalEventLaneHealth", "queue": "unhealthy", "count": 1},
+    ]
+
+
+def test_controller_health_checks_fail_closed_on_invalid_results():
+    from oss_pr_radar.controller import _final_blockers
+
+    assert _final_blockers(
+        {
+            "finalWorkflowHealth": {"ok": False, "error": "invalid JSON"},
+            "finalEventLaneHealth": {"ok": False, "error": "command failed"},
+        }
+    ) == [
+        {"stage": "finalWorkflowHealth", "queue": "unhealthy", "count": 1},
+        {"stage": "finalEventLaneHealth", "queue": "unhealthy", "count": 1},
     ]
 
 

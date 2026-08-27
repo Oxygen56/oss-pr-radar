@@ -17,8 +17,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from oss_pr_radar.notifier import FeishuClient  # noqa: E402
 from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
-from oss_pr_radar.release_binding import bind_runtime  # noqa: E402
+from oss_pr_radar.outbound_pause import outbound_effect_guard  # noqa: E402
+from oss_pr_radar.release_binding import bind_runtime, runtime_ledger_path  # noqa: E402
 from oss_pr_radar.util import parse_time, sha256_json  # noqa: E402
+
+_OUTBOUND_LOCK_FD: int | None = None
 
 
 def github_json(path: str) -> object:
@@ -39,6 +42,7 @@ def github_json(path: str) -> object:
                 capture_output=True,
                 text=True,
                 timeout=30,
+                pass_fds=(_OUTBOUND_LOCK_FD,) if _OUTBOUND_LOCK_FD is not None else (),
             )
             if completed.returncode == 0:
                 return json.loads(completed.stdout)
@@ -232,27 +236,50 @@ def effective_scan_freshness(
     }
 
 
-def dispatch_scan(repo: str, ref: str, *, window_hours: float = 2.0) -> None:
-    completed = subprocess.run(
-        [
-            "gh",
-            "workflow",
-            "run",
-            "radar.yml",
-            "--repo",
-            repo,
-            "--ref",
-            ref,
-            "-f",
-            f"window_hours={window_hours:g}",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError((completed.stderr or completed.stdout)[:300])
+def dispatch_scan(
+    repo: str,
+    ref: str,
+    *,
+    runtime_root: Path,
+    window_hours: float = 2.0,
+    max_age_minutes: int = 110,
+) -> bool:
+    """Dispatch once under the outbound guard; return false if another repair won."""
+
+    global _OUTBOUND_LOCK_FD
+    with outbound_effect_guard(runtime_root, runtime_ledger_path(runtime_root)) as effect_lock:
+        _OUTBOUND_LOCK_FD = effect_lock.fileno()
+        try:
+            latest = effective_scan_freshness(
+                runs(repo),
+                max_age=timedelta(minutes=max(15, max_age_minutes)),
+            )
+            if latest["fresh"]:
+                return False
+            completed = subprocess.run(
+                [
+                    "gh",
+                    "workflow",
+                    "run",
+                    "radar.yml",
+                    "--repo",
+                    repo,
+                    "--ref",
+                    ref,
+                    "-f",
+                    f"window_hours={window_hours:g}",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                pass_fds=(effect_lock.fileno(),),
+            )
+            if completed.returncode != 0:
+                raise RuntimeError((completed.stderr or completed.stdout)[:300])
+            return True
+        finally:
+            _OUTBOUND_LOCK_FD = None
 
 
 def main() -> int:
@@ -321,6 +348,7 @@ def main() -> int:
         max_age=timedelta(minutes=max(15, args.max_effective_age_minutes)),
     )
     repair_triggered = False
+    repair_reconciled = False
     repair_would_trigger = False
     repair_error = None
     repair_suppressed_reason = None
@@ -330,16 +358,27 @@ def main() -> int:
         repair_would_trigger = True
         if not args.dry_run_repair:
             try:
-                dispatch_scan(args.repo, args.ref)
-                repair_triggered = True
+                dispatched = dispatch_scan(
+                    args.repo,
+                    args.ref,
+                    runtime_root=args.runtime_root,
+                    max_age_minutes=args.max_effective_age_minutes,
+                )
+                repair_triggered = dispatched is not False
+                repair_reconciled = dispatched is False
+                if repair_reconciled:
+                    repair_suppressed_reason = "REPAIR_ALREADY_SATISFIED"
+            except PermissionError as exc:
+                repair_suppressed_reason = str(exc)
             except (RuntimeError, subprocess.SubprocessError) as exc:
                 repair_error = f"{type(exc).__name__}:{str(exc)[:200]}"
     result["effectiveScan"] = effective
     result["repairTriggered"] = repair_triggered
+    result["repairReconciled"] = repair_reconciled
     result["repairWouldTrigger"] = repair_would_trigger
     result["repairError"] = repair_error
     result["repairSuppressedReason"] = repair_suppressed_reason
-    result["operationalHealthy"] = effective["fresh"] or repair_triggered
+    result["operationalHealthy"] = effective["fresh"] or repair_triggered or repair_reconciled
     if args.notify and (repair_would_trigger or repair_error):
         app_id = os.environ.get("FEISHU_APP_ID")
         app_secret = os.environ.get("FEISHU_APP_SECRET")

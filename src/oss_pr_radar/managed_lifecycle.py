@@ -1398,6 +1398,20 @@ class ManagedLedger:
         finally:
             connection.close()
 
+    def event_by_idempotency_key(self, idempotency_key: str) -> dict[str, Any] | None:
+        """Return the exact managed event without creating a new lifecycle fact."""
+
+        fingerprint = stable_fingerprint(idempotency_key)
+        connection = self._connection()
+        try:
+            row = connection.execute(
+                "SELECT * FROM managed_lifecycle_events WHERE idempotency_fingerprint=?",
+                (fingerprint,),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            connection.close()
+
     def record_task_quarantine(
         self,
         *,

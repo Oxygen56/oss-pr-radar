@@ -123,6 +123,7 @@ def test_controller_never_resolves_executables_from_poisoned_runtime_scripts(tmp
         "local_dispatch_bridge.py",
         "install_local_publication_workers.py",
         "check_workflow_health.py",
+        "event_lane_health.py",
     ):
         (source / "scripts" / name).write_text("# test release executable\n", encoding="utf-8")
     git(source, "add", "scripts")

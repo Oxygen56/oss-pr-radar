@@ -20,6 +20,9 @@ from oss_pr_radar.action_guard import (  # noqa: E402
 )
 from oss_pr_radar.ledger import RadarLedger  # noqa: E402
 from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
+from oss_pr_radar.outbound_pause import (  # noqa: E402
+    outbound_effect_guard,
+)
 from oss_pr_radar.publication import (  # noqa: E402
     ISSUE_URL,
     audit_publication_request,
@@ -38,6 +41,9 @@ class PublicationBlocked(RuntimeError):
     pass
 
 
+_OUTBOUND_LOCK_FD: int | None = None
+
+
 def run(
     args: list[str],
     *,
@@ -53,6 +59,7 @@ def run(
         text=True,
         timeout=timeout,
         input=input_text,
+        pass_fds=(_OUTBOUND_LOCK_FD,) if _OUTBOUND_LOCK_FD is not None else (),
     )
 
 
@@ -372,6 +379,93 @@ def _guarded_publication_action(
         if active_quarantine is not None and active_quarantine(opportunity_key) is not None:
             raise PermissionError(f"publication blocked by active quarantine: {opportunity_key}")
         return action()
+
+
+def ensure_fork(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
+    """Create or validate the exact publication fork while holding the effect lock."""
+
+    return _guarded_publication_action(args, store, lambda: _ensure_fork_unlocked(args, store))
+
+
+def _ensure_fork_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
+    match = ISSUE_URL.match(args.issue_url)
+    if not match or match.group(1).casefold() != args.repo.casefold():
+        raise RuntimeError("fork repository does not match the issue")
+    permit = ensure_permit(
+        store,
+        permit_id=args.permit_id,
+        issue_url=args.issue_url,
+        commit_sha=args.commit_sha,
+        branch=args.branch,
+    )
+    publication = permit_publication(permit)
+    if args.head_owner.casefold() != publication["headOwner"].casefold():
+        raise RuntimeError("fork owner does not match the publication permit")
+
+    repository_name = args.repo.rsplit("/", 1)[1]
+    fork_repo = f"{args.head_owner}/{repository_name}"
+    lookup = run(["gh", "api", f"repos/{fork_repo}"], cwd=Path(args.worktree), timeout=45)
+    created = False
+    if lookup.returncode == 0:
+        raw = lookup.stdout
+    else:
+        detail = output(lookup).casefold()
+        if "404" not in detail and "not found" not in detail:
+            raise RuntimeError(f"publication fork lookup failed: {output(lookup)[:240]}")
+        created_proc = run(
+            ["gh", "repo", "fork", args.repo, "--clone=false"],
+            cwd=Path(args.worktree),
+            timeout=180,
+        )
+        confirmed = run(
+            ["gh", "api", f"repos/{fork_repo}"], cwd=Path(args.worktree), timeout=45
+        )
+        for delay in (1.0, 3.0, 7.0):
+            if confirmed.returncode == 0:
+                break
+            sleep(delay)
+            confirmed = run(
+                ["gh", "api", f"repos/{fork_repo}"],
+                cwd=Path(args.worktree),
+                timeout=45,
+            )
+        if confirmed.returncode != 0:
+            detail = output(created_proc) or output(confirmed)
+            raise RuntimeError(f"publication fork creation could not be reconciled: {detail[:240]}")
+        created = True
+        raw = confirmed.stdout
+    try:
+        metadata = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("publication fork lookup returned invalid JSON") from exc
+    parent = metadata.get("parent") if isinstance(metadata, dict) else None
+    if not isinstance(metadata, dict) or metadata.get("fork") is not True:
+        raise RuntimeError("expected publication repository is not a fork")
+    if (
+        not isinstance(parent, dict)
+        or str(parent.get("full_name") or "").casefold() != args.repo.casefold()
+    ):
+        raise RuntimeError("existing fork does not belong to the target upstream repository")
+
+    worktree = Path(args.worktree).resolve()
+    expected_url = f"https://github.com/{fork_repo}.git"
+    remotes_proc = run(["git", "remote"], cwd=worktree)
+    if remotes_proc.returncode != 0:
+        raise RuntimeError(f"publication remote lookup failed: {output(remotes_proc)[:240]}")
+    remotes = remotes_proc.stdout.splitlines()
+    for remote in remotes:
+        current = run(["git", "remote", "get-url", remote], cwd=worktree)
+        if current.returncode == 0 and normalize_origin(current.stdout) == fork_repo.casefold():
+            return {"ok": True, "remote": remote, "forkRepo": fork_repo, "created": created}
+    remote = "radar-fork"
+    if remote in remotes:
+        remote = f"radar-fork-{args.head_owner.casefold()}"
+    if remote in remotes:
+        raise RuntimeError("no safe remote name is available for the publication fork")
+    added = run(["git", "remote", "add", remote, expected_url], cwd=worktree)
+    if added.returncode != 0:
+        raise RuntimeError(f"publication remote setup failed: {output(added)[:240]}")
+    return {"ok": True, "remote": remote, "forkRepo": fork_repo, "created": created}
 
 
 def push(args: argparse.Namespace, store: RadarLedger) -> dict[str, Any]:
@@ -735,11 +829,12 @@ def _create_pr_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[st
 
 
 def main() -> int:
+    global _OUTBOUND_LOCK_FD
     parser = argparse.ArgumentParser()
     parser.add_argument("--ledger", type=Path, default=None)
     parser.add_argument("--runtime-root", type=Path, default=None)
     subparsers = parser.add_subparsers(dest="operation", required=True)
-    for name in ("push", "create-pr"):
+    for name in ("ensure-fork", "push", "create-pr"):
         sub = subparsers.add_parser(name)
         sub.add_argument("--permit-id", required=True)
         sub.add_argument("--issue-url", required=True)
@@ -749,6 +844,8 @@ def main() -> int:
         sub.add_argument("--head-owner", default="Oxygen56")
     push_parser = subparsers.choices["push"]
     push_parser.add_argument("--remote", required=True)
+    fork_parser = subparsers.choices["ensure-fork"]
+    fork_parser.add_argument("--repo", required=True)
     pr_parser = subparsers.choices["create-pr"]
     pr_parser.add_argument("--repo", required=True)
     pr_parser.add_argument("--base", required=True)
@@ -792,15 +889,27 @@ def main() -> int:
             )
         )
         return 2
-    store = RadarLedger(args.ledger)
+    def execute() -> dict[str, Any]:
+        store = RadarLedger(args.ledger)
+        if args.operation == "ensure-fork":
+            return ensure_fork(args, store)
+        return push(args, store) if args.operation == "push" else create_pr(args, store)
+
     try:
-        result = push(args, store) if args.operation == "push" else create_pr(args, store)
+        with outbound_effect_guard(args.runtime_root, args.ledger) as effect_lock:
+            _OUTBOUND_LOCK_FD = effect_lock.fileno()
+            try:
+                result = execute()
+            finally:
+                _OUTBOUND_LOCK_FD = None
     except PublicationDeferred as exc:
         result = {"ok": True, "pending": True, "reason": str(exc)}
     except PublicationBlocked as exc:
         result = {"ok": True, "blocked": True, "reason": str(exc)}
+    except PermissionError as exc:
+        result = {"ok": False, "blocked": True, "reason": str(exc)}
     print(json.dumps(result, ensure_ascii=False))
-    return 0
+    return 0 if result.get("ok") else 2
 
 
 if __name__ == "__main__":

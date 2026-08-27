@@ -19,6 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from oss_pr_radar.managed_snapshot import validate_snapshot  # noqa: E402
+from oss_pr_radar.outbound_pause import (  # noqa: E402
+    outbound_effect_guard,
+)
+from oss_pr_radar.release_binding import runtime_ledger_path  # noqa: E402
 
 FILES = {
     "seen.json": Path("state/seen.json"),
@@ -61,6 +65,8 @@ PROFILES = {
     },
 }
 
+_OUTBOUND_LOCK_FD: int | None = None
+
 
 def isolated_state_ref(branch: str) -> str:
     if (
@@ -86,6 +92,7 @@ def git(
         text=True,
         capture_output=True,
         env={**os.environ, **(env or {})},
+        pass_fds=(_OUTBOUND_LOCK_FD,) if _OUTBOUND_LOCK_FD is not None else (),
     )
 
 
@@ -97,6 +104,7 @@ def git_bytes(
         cwd=cwd,
         check=check,
         capture_output=True,
+        pass_fds=(_OUTBOUND_LOCK_FD,) if _OUTBOUND_LOCK_FD is not None else (),
     )
 
 
@@ -449,6 +457,7 @@ def migrate(
 
 
 def main() -> int:
+    global _OUTBOUND_LOCK_FD
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=("restore", "publish", "migrate"))
     parser.add_argument("--root", type=Path, default=Path.cwd())
@@ -471,10 +480,23 @@ def main() -> int:
             base_sha_path=profile["base_sha"],
             **options,
         )
-    elif args.operation == "publish":
-        publish(args.root, branch, base_sha_path=profile["base_sha"], **options)
     else:
-        migrate(args.root, branch, **options)
+        def write_state() -> None:
+            if args.operation == "publish":
+                publish(args.root, branch, base_sha_path=profile["base_sha"], **options)
+            else:
+                migrate(args.root, branch, **options)
+
+        try:
+            ledger_path = runtime_ledger_path(args.root)
+        except (OSError, RuntimeError, ValueError):
+            ledger_path = args.root.resolve() / "state" / "radar_ledger.sqlite3"
+        with outbound_effect_guard(args.root, ledger_path) as effect_lock:
+            _OUTBOUND_LOCK_FD = effect_lock.fileno()
+            try:
+                write_state()
+            finally:
+                _OUTBOUND_LOCK_FD = None
     return 0
 
 

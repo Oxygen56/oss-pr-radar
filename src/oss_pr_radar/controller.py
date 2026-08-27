@@ -151,6 +151,7 @@ def controller_cycle(
 
     install_script = str(binding.script("scripts/install_local_publication_workers.py"))
     health_script = str(binding.script("scripts/check_workflow_health.py"))
+    event_lane_health_script = str(binding.script("scripts/event_lane_health.py"))
     run_stage("localAgentEnsure", [python, install_script, "--runtime-root", str(root), "--ensure"])
     run_stage(
         "localAgentStatus",
@@ -298,6 +299,12 @@ def controller_cycle(
         [python, install_script, "--runtime-root", str(root), "--status"],
         allowed_codes={0, 1},
     )
+    run_stage(
+        "finalEventLaneHealth",
+        [python, event_lane_health_script, "--root", str(root)],
+        allowed_codes={0, 2},
+        require_ok=False,
+    )
 
     final_blockers = _final_blockers(stages)
     stages["absenceReconcile"] = managed_adapter.reconcile_pending_absences(GitHubAbsenceQueries())
@@ -320,8 +327,9 @@ def controller_cycle(
 def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
     checks = {
-        "resultIngestion": ("errors",),
-        "resultIngestionAfterReview": ("errors",),
+        "resultIngestion": ("errors", "workBlocked"),
+        "resultIngestionAfterReview": ("errors", "workBlocked"),
+        "independentReview": ("candidateErrors", "retryExhausted"),
         "finalOrphans": ("blocked",),
         "finalPrFollowups": ("blocked", "unresolved", "restoreRequired"),
         "finalValidationFollowups": ("unresolved", "stale", "errors"),
@@ -351,6 +359,29 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
                 "count": max(1, len(unhealthy)),
             }
         )
+    workflow_health = stages.get("finalWorkflowHealth") or {}
+    if "finalWorkflowHealth" in stages and workflow_health.get("operationalHealthy") is not True:
+        blockers.append(
+            {
+                "stage": "finalWorkflowHealth",
+                "queue": "unhealthy",
+                "count": 1,
+            }
+        )
+    event_lane_health = stages.get("finalEventLaneHealth") or {}
+    if "finalEventLaneHealth" in stages and event_lane_health.get("healthy") is not True:
+        unhealthy_lanes = [
+            lane
+            for lane in (event_lane_health.get("lanes") or {}).values()
+            if isinstance(lane, dict) and lane.get("healthy") is False
+        ]
+        blockers.append(
+            {
+                "stage": "finalEventLaneHealth",
+                "queue": "unhealthy",
+                "count": max(1, len(unhealthy_lanes)),
+            }
+        )
     return blockers
 
 
@@ -360,14 +391,19 @@ def _compact_summary(stages: dict[str, dict[str, Any]]) -> dict[str, Any]:
     quality = stages.get("quality") or {}
     health = stages.get("finalWorkflowHealth") or stages.get("workflowHealth") or {}
     decision_sessions = stages.get("codexDecisionSessions") or {}
+    result_ingestion = stages.get("resultIngestion") or {}
+    post_review_ingestion = stages.get("resultIngestionAfterReview") or {}
     return {
         "localAgentHealthy": bool((stages.get("finalLocalAgentStatus") or {}).get("ok")),
+        "eventLanesHealthy": bool((stages.get("finalEventLaneHealth") or {}).get("healthy")),
         "operationalHealthy": bool(health.get("operationalHealthy")),
         "githubNaturalScheduleHealthy": bool(health.get("githubNaturalScheduleHealthy")),
         "drainAction": drain.get("action"),
         "drainKey": drain.get("key"),
         "decisionSessionsCreated": len(decision_sessions.get("created") or []),
         "decisionSessionsExisting": len(decision_sessions.get("existing") or []),
+        "workBlockedCount": len(result_ingestion.get("workBlocked") or [])
+        + len(post_review_ingestion.get("workBlocked") or []),
         "pendingCount": len(queue.get("pending") or []),
         "submitReadyRate": quality.get("submitReadyRate"),
         "filterMissRate": quality.get("filterMissRate"),

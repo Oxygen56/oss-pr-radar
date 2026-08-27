@@ -2395,6 +2395,50 @@ def test_historical_state_drift_reopen_entry_keeps_old_intent_rejected(monkeypat
     assert updates[0]["a/b#1"]["status"] == "state_drift"
 
 
+@pytest.mark.parametrize(
+    ("function_name", "arguments"),
+    [
+        (
+            "reopen_false_terminal",
+            {
+                "key": "a/b#1",
+                "expected_reason": "AI_DISCLOSURE_REQUIRES_USER",
+                "migration_reason": "POLICY_MIGRATION",
+            },
+        ),
+        (
+            "reopen_state_drift",
+            {"key": "a/b#1", "intent_id": "intent-drift"},
+        ),
+    ],
+)
+def test_reopen_operations_stop_before_local_mutation_when_publication_is_paused(
+    monkeypatch, tmp_path, function_name, arguments
+):
+    monkeypatch.setattr(
+        MODULE,
+        "_active_publication_pause",
+        lambda _root: {"reason": "MAINTENANCE", "expired": False},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "ledger",
+        lambda _path: pytest.fail("paused reopen must stop before local mutation"),
+    )
+
+    result = getattr(MODULE, function_name)(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            runtime_root=tmp_path,
+            **arguments,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["paused"] is True
+    assert result["stateChanged"] is False
+
+
 def test_terminal_feedback_defers_when_issue_changed_after_dispatch(monkeypatch, tmp_path):
     store, _worktree = registered_store(tmp_path)
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
@@ -5376,6 +5420,30 @@ def test_independent_review_runs_while_issue_task_lifecycle_is_active(monkeypatc
     result = MODULE.independent_review_run(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert result == {"ok": True, "updated": ["a/b#1"]}
+
+
+def test_independent_review_keeps_candidate_failure_out_of_worker_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+    schema_path = tmp_path / "schemas" / "independent_review.schema.json"
+    schema_path.parent.mkdir(parents=True)
+    schema_path.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        MODULE,
+        "review_once",
+        lambda *_args, **_kwargs: {
+            "ok": False,
+            "updated": [],
+            "errors": [{"key": "a/b#1", "error": "invalid candidate"}],
+        },
+    )
+
+    result = MODULE.independent_review_run(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["candidateErrors"] == [
+        {"key": "a/b#1", "error": "invalid candidate"}
+    ]
 
 
 def test_independent_review_missing_schema_is_nonfatal(monkeypatch, tmp_path):
@@ -11159,6 +11227,8 @@ def _controller_commit_result(
     base_branch: str = "main",
     authenticated: bool = True,
     worktree: Path | None = None,
+    additional_changed_files: tuple[str, ...] = (),
+    reported_code_paths: tuple[str, ...] | None = None,
 ) -> tuple[RadarLedger, Path, Path]:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
@@ -11168,7 +11238,12 @@ def _controller_commit_result(
     run_git(worktree, "config", "user.email", "test@example.com")
     source = worktree / "runtime.py"
     source.write_text("value = 1\n", encoding="utf-8")
-    run_git(worktree, "add", "runtime.py")
+    for relative in additional_changed_files:
+        extra = worktree / relative
+        extra.parent.mkdir(parents=True, exist_ok=True)
+        extra.write_text("value = 1\n", encoding="utf-8")
+    changed_files = sorted(["runtime.py", *additional_changed_files])
+    run_git(worktree, "add", *changed_files)
     run_git(worktree, "commit", "-m", "chore: baseline")
     run_git(worktree, "branch", "-M", "main")
     run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
@@ -11181,8 +11256,10 @@ def _controller_commit_result(
     )
     base_sha = run_git(worktree, "rev-parse", "HEAD")
     source.write_text("value = 2\nassert value == 2\n", encoding="utf-8")
+    for relative in additional_changed_files:
+        (worktree / relative).write_text("value = 2\n", encoding="utf-8")
     run_git(worktree, "switch", "-c", "fix/1-runtime-boundary")
-    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "add", *changed_files)
     commit_message = "fix: preserve runtime boundary"
     if dco_required:
         commit_message += "\n\nSigned-off-by: Test Contributor <test@example.com>"
@@ -11301,13 +11378,13 @@ def _controller_commit_result(
         "handoffMode": "controller_commit_complete",
         "commitSha": head_sha,
         "branch": "fix/1-runtime-boundary",
-        "controllerCommitChangedFiles": ["runtime.py"],
+        "controllerCommitChangedFiles": changed_files,
         "commitMessage": "fix: preserve runtime boundary",
-        "changedFiles": ["runtime.py"],
+        "changedFiles": changed_files,
         "headSha": head_sha,
         "selectedBaseSha": base_sha,
         "taskId": "intent-1",
-        "codePaths": ["runtime.py"],
+        "codePaths": list(reported_code_paths or ("runtime.py",)),
         "preTaskEvidence": {
             "defaultBranch": "main",
             "baseSha": base_sha,
@@ -13392,6 +13469,29 @@ def test_controller_commits_validated_child_patch_and_requests_publication(tmp_p
     )
 
 
+def test_controller_accepts_verified_changed_files_beyond_reproduction_scope(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("integration.py",),
+        reported_code_paths=("runtime.py", "integration.py"),
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result
+    assert result["errors"] == []
+    assert result["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(result["publicationRequests"]) == 1
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["codePaths"] == ["runtime.py"]
+    assert finalized["changedFiles"] == ["integration.py", "runtime.py"]
+    assert finalized["controllerCodePathScope"]["reported"] == [
+        "integration.py",
+        "runtime.py",
+    ]
+    assert finalized["reproductionReceipt"]["codePaths"] == ["runtime.py"]
+
+
 def test_child_cannot_self_attest_independent_review(monkeypatch, tmp_path):
     store, _worktree, result_path = _controller_commit_result(tmp_path, authenticated=False)
     monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: None)
@@ -13450,6 +13550,154 @@ def test_final_receipt_rebind_uses_current_valid_receipt_when_context_source_is_
     assert finalized["resultDigest"] != original_digest
     assert finalized["reproductionReceipt"]["resultDigest"] == finalized["resultDigest"]
     assert finalized["reproductionReceipt"]["derivedFromReceiptDigest"]
+
+
+def test_final_receipt_keeps_managed_reproduction_scope_when_child_reports_more_paths(
+    tmp_path,
+):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["codePaths"] = ["runtime.py", "integration.py"]
+    value["changedFiles"] = ["runtime.py", "integration.py"]
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        finalized, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=result_access,
+            managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+        )
+
+    assert finalized["codePaths"] == ["runtime.py"]
+    assert finalized["reproductionReceipt"]["codePaths"] == ["runtime.py"]
+    assert finalized["controllerCodePathScope"] == {
+        "schemaVersion": "controller-code-path-scope-v1",
+        "authority": "managed-reproduction-receipt",
+        "authorized": ["runtime.py"],
+        "reported": ["integration.py", "runtime.py"],
+        "added": ["integration.py"],
+        "omitted": [],
+        "sourceReceiptDigest": context["reproductionReceipt"]["receiptDigest"],
+    }
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        finalized_again, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=finalized,
+            result_access=result_access,
+            managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+        )
+
+    assert finalized_again == finalized
+
+
+def test_final_receipt_never_falls_back_when_managed_durable_binding_disagrees(
+    tmp_path,
+):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    context["reproductionReceipt"] = dict(context["reproductionReceipt"]) | {
+        "receiptDigest": "f" * 64
+    }
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        with pytest.raises(
+            MODULE.TaskResultEvidenceBlocked,
+            match="DURABLE_REPRODUCTION_RECEIPT_CONTEXT_MISMATCH",
+        ):
+            MODULE._bind_final_reproduction_receipt(
+                candidate=candidate,
+                context=context,
+                value=value,
+                result_access=result_access,
+                managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+            )
+
+
+@pytest.mark.parametrize(
+    ("reported", "changed", "reason"),
+    [
+        (["replacement.py"], ["replacement.py"], "REPRODUCTION_SCOPE_OMITTED_OR_REPLACED"),
+        (
+            ["runtime.py", "unrelated.py"],
+            ["runtime.py"],
+            "REPORTED_SCOPE_NOT_IN_COMMITTED_CHANGES",
+        ),
+        (
+            ["runtime.py", "/absolute.py"],
+            ["runtime.py", "/absolute.py"],
+            "REPORTED_SCOPE_PATHS_INVALID",
+        ),
+    ],
+)
+def test_final_receipt_rejects_unsafe_reported_scope(
+    tmp_path, reported, changed, reason
+):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["codePaths"] = reported
+    value["changedFiles"] = changed
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        with pytest.raises(MODULE.TaskResultEvidenceBlocked, match=reason):
+            MODULE._bind_final_reproduction_receipt(
+                candidate=candidate,
+                context=context,
+                value=value,
+                result_access=result_access,
+                managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+            )
+
+
+def test_invalid_final_receipt_is_parked_once_without_failing_result_ingestion(
+    monkeypatch, tmp_path
+):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+
+    def fail_bind(*_args, **_kwargs):
+        raise MODULE.TaskResultEvidenceBlocked("REPRODUCTION_RECEIPT_INVALID")
+
+    monkeypatch.setattr(MODULE, "_bind_final_reproduction_receipt", fail_bind)
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    second = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["errors"] == [], first
+    assert first["ok"] is True, first
+    assert first["ingested"] == []
+    assert first["publicationRequests"] == []
+    assert first["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "REPRODUCTION_RECEIPT_INVALID",
+            "alreadyRecorded": False,
+        }
+    ]
+    assert second["ok"] is True
+    assert second["errors"] == []
+    assert second["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "REPRODUCTION_RECEIPT_INVALID",
+            "alreadyRecorded": True,
+        }
+    ]
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM managed_lifecycle_events
+                   WHERE event_type='TASK_RESULT_EVIDENCE_BLOCKED'"""
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_failed_controller_review_remains_an_actionable_followup(monkeypatch, tmp_path):
@@ -18168,6 +18416,71 @@ def test_validation_prefetch_failure_does_not_reserve_followup(monkeypatch, tmp_
     assert store.unresolved_validation_followups() == []
 
 
+def test_publication_pause_returns_pending_without_starting_managed_publication(
+    monkeypatch, tmp_path
+):
+    class Store:
+        @staticmethod
+        def publication_work_items():
+            return [{"request_id": "request-1", "request": {}}]
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(
+        MODULE,
+        "_active_publication_pause",
+        lambda _root: {
+            "reason": "MAINTENANCE",
+            "expiresAt": "2026-08-28T00:00:00Z",
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "ManagedAdapter",
+        lambda *_args: pytest.fail("paused publication must stop before managed publication"),
+    )
+
+    result = MODULE._run_publication_queue_unlocked(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            runtime_root=tmp_path,
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "paused": True,
+        "pauseReason": "MAINTENANCE",
+        "pauseExpiresAt": "2026-08-28T00:00:00Z",
+        "pauseExpired": False,
+        "published": [],
+        "pending": [{"requestId": "request-1", "reason": "PUBLICATION_PAUSED"}],
+        "blocked": [],
+        "errors": [],
+    }
+
+
+def test_terminal_feedback_pause_stops_before_state_branch_publish(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        MODULE,
+        "_active_publication_pause",
+        lambda _root: {"reason": "MAINTENANCE", "expired": True},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_publish_terminal_feedback_unlocked",
+        lambda _args: pytest.fail("paused terminal feedback must not publish state"),
+    )
+
+    result = MODULE.publish_terminal_feedback(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", runtime_root=tmp_path)
+    )
+
+    assert result["ok"] is True
+    assert result["paused"] is True
+    assert result["pauseExpired"] is True
+    assert result["published"] == 0
+
+
 def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_path):
     fixture = _legal_queue_publication_fixture(tmp_path)
     request = fixture["request"]
@@ -18197,11 +18510,12 @@ def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_p
         "broker_publication_request",
         lambda *_args: {"granted": True, "permit": {"permit_id": "permit-1"}},
     )
-    monkeypatch.setattr(MODULE, "ensure_fork_remote", lambda *_args: "radar-fork")
     calls = []
 
     def executor(operation, arguments, *, ledger_path):
         calls.append((operation, arguments, ledger_path))
+        if operation == "ensure-fork":
+            return {"ok": True, "remote": "radar-fork"}
         if operation == "push":
             return {"ok": True, "reconciled": False}
         return {"ok": True, "prUrl": "https://github.com/a/b/pull/2"}
@@ -18213,7 +18527,7 @@ def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_p
 
     assert result["ok"] is True
     assert result["published"][0]["prUrl"] == "https://github.com/a/b/pull/2"
-    assert [call[0] for call in calls] == ["push", "create-pr"]
+    assert [call[0] for call in calls] == ["ensure-fork", "push", "create-pr"]
     assert all(call[2] == ledger_path for call in calls)
 
 
@@ -18506,7 +18820,6 @@ def test_publication_finalize_failure_reconciles_without_second_create_pr(monkey
     store = Store()
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
     monkeypatch.setattr(MODULE, "controller_review_result", lambda *_args: {"verdict": "PASS"})
-    monkeypatch.setattr(MODULE, "ensure_fork_remote", lambda *_args: "radar-fork")
     monkeypatch.setattr(
         MODULE,
         "broker_publication_request",
@@ -18515,6 +18828,8 @@ def test_publication_finalize_failure_reconciles_without_second_create_pr(monkey
 
     def executor(operation, _arguments, *, ledger_path):
         calls.append(operation)
+        if operation == "ensure-fork":
+            return {"ok": True, "remote": "radar-fork"}
         if operation == "push":
             return {"ok": True}
         result = {
@@ -18579,7 +18894,7 @@ def test_publication_finalize_failure_reconciles_without_second_create_pr(monkey
             "pushReconciled": True,
         }
     ]
-    assert calls == ["push", "create-pr"]
+    assert calls == ["ensure-fork", "push", "create-pr"]
 
 
 def test_publication_update_receipt_reconciles_without_creation_reservation(monkeypatch, tmp_path):
@@ -18709,7 +19024,6 @@ def test_publication_queue_reconciles_interrupted_push_before_pr_confirmation(
             return {"permit_id": "permit-1"}
 
     monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
-    monkeypatch.setattr(MODULE, "ensure_fork_remote", lambda *_args: "radar-fork")
     monkeypatch.setattr(
         MODULE,
         "broker_publication_request",
@@ -18719,6 +19033,8 @@ def test_publication_queue_reconciles_interrupted_push_before_pr_confirmation(
 
     def executor(operation, arguments, *, ledger_path):
         calls.append(operation)
+        if operation == "ensure-fork":
+            return {"ok": True, "remote": "radar-fork"}
         if operation == "push":
             return {"ok": True, "reconciled": True}
         return {"ok": True, "prUrl": "https://github.com/a/b/pull/2"}
@@ -18728,7 +19044,7 @@ def test_publication_queue_reconciles_interrupted_push_before_pr_confirmation(
     result = MODULE.run_publication_queue(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert result["ok"] is True
-    assert calls == ["push", "create-pr"]
+    assert calls == ["ensure-fork", "push", "create-pr"]
 
 
 def test_publication_queue_returns_immediately_when_another_executor_holds_lock(
