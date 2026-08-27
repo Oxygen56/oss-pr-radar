@@ -25,7 +25,10 @@ def main() -> int:
     args = parser.parse_args()
     existing = json.loads(args.state.read_text(encoding="utf-8")) if args.state.exists() else None
     state, report = collect_followup(
-        GitHubClient(), author=args.author, existing=existing, workers=args.workers
+        GitHubClient(retry_delays=(1.0, 3.0, 8.0)),
+        author=args.author,
+        existing=existing,
+        workers=args.workers,
     )
     ManagedAdapter(ROOT).record_followup(state, report)
     atomic_write_json(args.state, state)

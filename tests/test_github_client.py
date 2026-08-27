@@ -69,6 +69,7 @@ def test_default_runner_does_not_proxy_fallback_for_github_http_error(monkeypatc
 def test_transient_errors_include_cli_connectivity_failures():
     assert is_transient_github_error("OpenSSL SSL_connect: SSL_ERROR_SYSCALL")
     assert is_transient_github_error("unexpected EOF while reading")
+    assert is_transient_github_error("unexpected end of JSON input")
     assert is_transient_github_error(
         "Failed to connect to github.com port 443: Couldn't connect to server"
     )
@@ -113,6 +114,44 @@ def test_api_retries_github_cli_connectivity_error_and_then_succeeds():
     assert client.issue("a/b", 1)["number"] == 1
     assert len(calls) == 2
     assert delays == [0.01]
+
+
+def test_api_retries_truncated_json_and_then_succeeds():
+    calls = []
+    delays = []
+
+    def runner(_args, _timeout):
+        calls.append(True)
+        if len(calls) == 1:
+            return '{"number":'
+        return '{"number":1}'
+
+    client = GitHubClient(runner=runner, retry_delays=(0.01,), sleeper=delays.append)
+
+    assert client.issue("a/b", 1)["number"] == 1
+    assert len(calls) == 2
+    assert delays == [0.01]
+
+
+def test_api_can_recover_after_three_transient_server_failures():
+    calls = []
+    delays = []
+
+    def runner(_args, _timeout):
+        calls.append(True)
+        if len(calls) <= 3:
+            raise GitHubError("Server Error: diff temporarily unavailable (HTTP 500)")
+        return '{"number":1}'
+
+    client = GitHubClient(
+        runner=runner,
+        retry_delays=(1.0, 3.0, 8.0),
+        sleeper=delays.append,
+    )
+
+    assert client.issue("a/b", 1)["number"] == 1
+    assert len(calls) == 4
+    assert delays == [1.0, 3.0, 8.0]
 
 
 def test_api_does_not_retry_nontransient_permission_failure():

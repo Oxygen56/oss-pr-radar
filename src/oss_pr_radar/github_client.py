@@ -36,6 +36,8 @@ def _is_connectivity_github_error(error: BaseException | str) -> bool:
         return True
     if re.search(r"\b(?:unexpected\s+)?eof(?:\s+while\s+reading)?\b", message):
         return True
+    if "unexpected end of json input" in message:
+        return True
     if "ssl_error_syscall" in message or re.search(r"\bssl\s+syscall\b", message):
         return True
     return any(
@@ -135,15 +137,15 @@ class GitHubClient:
         for attempt in range(len(self.retry_delays) + 1):
             try:
                 raw = self.runner(args, self.timeout)
+                data = json.loads(raw)
                 break
+            except json.JSONDecodeError as exc:
+                if attempt >= len(self.retry_delays):
+                    raise GitHubError("GitHub returned invalid JSON") from exc
             except (GitHubError, subprocess.TimeoutExpired) as exc:
                 if attempt >= len(self.retry_delays) or not is_transient_github_error(exc):
                     raise
-                self.sleeper(self.retry_delays[attempt])
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise GitHubError("GitHub returned invalid JSON") from exc
+            self.sleeper(self.retry_delays[attempt])
         if not paginate:
             return data
         if not isinstance(data, list):

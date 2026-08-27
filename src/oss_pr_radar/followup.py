@@ -406,6 +406,8 @@ def collect_followup(
         previous_item = previous.get(key, {})
         if error:
             errors.append(f"{key}:{error}")
+            if previous_item:
+                state_items.append(previous_item)
             continue
         head = str((pull.get("head") or {}).get("sha") or "")
         base_ref_name = str((pull.get("_live_base") or {}).get("ref") or "")

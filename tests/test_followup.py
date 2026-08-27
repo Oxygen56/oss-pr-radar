@@ -399,6 +399,28 @@ def test_initial_query_failure_preserves_state_and_emits_report():
     assert state["items"] == existing["items"]
 
 
+def test_single_pr_failure_preserves_its_previous_state():
+    existing, _ = collect_followup(
+        Client(), author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC)
+    )
+
+    class FailingClient(Client):
+        def pull_files(self, repo, number):
+            raise GitHubError("diff temporarily unavailable (HTTP 500)")
+
+    state, report = collect_followup(
+        FailingClient(),
+        author="Oxygen56",
+        existing=existing,
+        now=datetime(2026, 8, 4, 1, tzinfo=UTC),
+    )
+
+    assert report["scan_ok"] is False
+    assert report["candidate_details"] == []
+    assert report["errors"] == ["a/b#9:diff temporarily unavailable (HTTP 500)"]
+    assert state["items"] == existing["items"]
+
+
 def test_failed_check_only_wakes_task_when_evidence_matches_changed_file():
     class CheckClient(Client):
         details_url = "https://example.test/checks/11"
