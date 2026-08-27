@@ -11245,6 +11245,47 @@
     ],
     "why": "The issue identifies a concrete bug in the gemma4 tool parser where tool_choice='required' is not enforced, leading to prose-only responses with finish_reason='tool_calls' and empty tool_calls. The root cause is partially identified (finish_reason logic) and the enforcement gap is clearly described. The issue provides a reproduction methodology (loop script, payload variations) and references related PRs, making it actionable for a code fix."
   },
+  "35898f2dc1cfdf421b63a47128e108fdb753c66eb0dc8666ad366f5e9c8db51d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Candidate algorithm_evidence claims mechanisms like distributed_training and kernel_algorithm, but the issue is about logging memory leak, not algorithm changes. This is a mismatch in evidence labeling."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/logger.py",
+      "vllm/platforms/interface.py",
+      "vllm/platforms/cpu.py",
+      "vllm/platforms/cuda.py",
+      "vllm/utils/deep_gemm.py",
+      "vllm/utils/flashinfer.py",
+      "vllm/compilation/passes/fusion/allreduce_rms_fusion.py"
+    ],
+    "risks": [
+      "Potential behavior change in logging dedup semantics",
+      "Need to ensure formatting compatibility for all exception types"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided minimal repro and assert payload is collectable after gc.collect()",
+      "Add unit test for logger *_once with exception arguments verifying no traceback retention and dedup by formatted message",
+      "Run existing vLLM test suite for affected modules"
+    ],
+    "unknowns": [
+      "Whether the existing PR #54098 fully addresses the root cause and passes CI",
+      "Exact implementation details of the proposed sanitization in _VllmLogger"
+    ],
+    "why": "The issue provides a clear root cause: lru_cache retains exception objects with tracebacks, pinning the LLM instance and breaking dedup. It includes a minimal pure-Python repro and identifies affected call sites. The proposed fix is concrete and testable."
+  },
   "35a70c95f5369b89f4a990e6dbee9a1001de98642deba1ed2a9b112274d8be9a": {
     "confidence": 0.7,
     "contradictions": [],
@@ -42626,6 +42667,37 @@
       "Maintainer preference on fix location (backend vs UI)"
     ],
     "why": "The issue reports a UI display bug where the tool schema is missing from hidden_params in the LiteLLM dashboard, despite being sent to Ollama. The root cause is unclear: it could be a serialization/redaction issue in the logging path or a UI rendering issue. No maintainer confirmation or design direction exists, and the track is agent_ai_infra, not llm_algorithm, so the required algorithm evidence is absent. The candidate is actionable but needs maintainer input to confirm the intended fix location."
+  },
+  "bfba891930a962208b74b80dc57b6d411452f3cc7c97311e2f77cdb290cd7db0": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      ".github/workflows/ci.yml",
+      "tests/utils/test_entity_extraction.py",
+      "tests/utils/test_lemmatization.py"
+    ],
+    "risks": [
+      "Changing CI workflow may require maintainer approval per AGENTS.md; potential pushback on approach.",
+      "Adding spaCy to CI increases dependency installation time and resource usage.",
+      "The suggested fix may not address the silent degradation if the guard is not made loud."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction commands to confirm the 19 skipped tests and silent no-op behavior.",
+      "Apply the suggested CI change (add nlp extra and download en_core_web_sm) and verify the 19 tests pass.",
+      "Introduce a regression test that deliberately breaks extract_entities and lemmatize_for_bm25 and ensure CI fails when spaCy is present."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to add nlp extra or make the skip a hard failure."
+    ],
+    "why": "The issue provides a clear root cause: CI's dependency set omits the 'nlp' extra, causing spaCy-dependent tests to skip silently and allowing regressions in entity extraction and BM25 lemmatization to pass. The reporter includes a concrete reproduction, expected/actual behavior, and a suggested fix. The maintainer has not yet approved, but the issue is actionable and technically valuable."
   },
   "bfdc44c704aeecebe553ffdca4e7e808a712ba21776b34880bba048eae352682": {
     "confidence": 0.85,
