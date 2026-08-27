@@ -1395,6 +1395,8 @@ def registered_store(tmp_path: Path, worktree: Path | None = None) -> tuple[Rada
 
 
 def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
+    from oss_pr_radar.repo_probe import run_repo_probe
+
     store, worktree = registered_store(tmp_path)
     run_git(worktree, "config", "user.name", "Test Contributor")
     run_git(worktree, "config", "user.email", "test@example.com")
@@ -1430,6 +1432,43 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
             (json.dumps(payload, sort_keys=True),),
         )
 
+    class RepositoryClient:
+        def repository(self, repo):
+            assert repo == "a/b"
+            return {"default_branch": "main"}
+
+        def branch(self, repo, branch):
+            assert (repo, branch) == ("a/b", "main")
+            return {"commit": {"sha": base_sha}}
+
+        def repository_tree(self, repo, ref):
+            assert (repo, ref) == ("a/b", base_sha)
+            return [{"path": "runtime.py", "type": "blob"}]
+
+    path_receipt = run_repo_probe(
+        RepositoryClient(),
+        repo="a/b",
+        default_branch="main",
+        selected_base_sha=base_sha,
+        code_paths=["runtime.py"],
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "authorization": {"status": "ALLOW"},
+            "evidenceDigest": "resolved-live-evidence",
+            "liveAudit": {
+                "capturedAt": iso_z(datetime.now(UTC)),
+                "evidence": {
+                    "digest": "resolved-live-evidence",
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": path_receipt,
+                },
+            },
+        },
+        dedupe_key="resolved-live-evidence",
+    )
+
     managed = ManagedLedger(store.path, ensure_schema=True)
     managed.upsert_opportunity(
         opportunity_key="a/b#1",
@@ -1460,6 +1499,16 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
         cwd=worktree,
     )
     context = json.loads(context_path.read_text(encoding="utf-8"))
+    assert context["codePaths"] == ["runtime.py"]
+    context["codePaths"] = ["runtime.py", "missing.py"]
+    context["liveAudit"]["evidence"]["repoProbeReceipt"] = dict(path_receipt) | {
+        "signature": "0" * 64,
+        "codePaths": ["missing.py"],
+    }
+    serialized_context = json.dumps(context, sort_keys=True)
+    context_path.write_text(serialized_context, encoding="utf-8")
+    if context.get("bootstrapContextPath"):
+        Path(context["bootstrapContextPath"]).write_text(serialized_context, encoding="utf-8")
     result_path = Path(context["resultPath"])
     result_path.write_text(
         json.dumps(
@@ -1473,7 +1522,6 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
                 "stage": "AUDIT_NO_GO",
                 "reason": "AUTOMATION_REPRODUCTION_RECEIPT_REQUIRED",
                 "reproductionVerified": True,
-                "codePaths": ["runtime.py"],
                 "evidence": {
                     "summary": "The pinned runtime path reproduces the reported boundary."
                 },
@@ -1501,7 +1549,10 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
     finalized = json.loads(result_path.read_text(encoding="utf-8"))
     assert finalized["stage"] == "REPRODUCED_VALIDATED"
     assert finalized["reason"] == "REPRODUCTION_CONFIRMED"
+    assert finalized["codePaths"] == ["runtime.py"]
     assert finalized["reproductionReceipt"]["profileId"] == "task-result-evidence-v1"
+    assert finalized["reproductionReceipt"]["codePaths"] == finalized["codePaths"]
+    assert finalized["reproductionReceipt"]["resultDigest"] == finalized["resultDigest"]
     with store.connect() as connection:
         payload = json.loads(
             connection.execute(
@@ -11099,6 +11150,18 @@ def _controller_commit_result(
             "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
             (json.dumps(payload, sort_keys=True),),
         )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": probe,
+                }
+            }
+        },
+        dedupe_key="intent-1:repository-probe",
+    )
     if controller_policy_complete:
         store.record_audit_snapshot(
             "a/b#1",
@@ -12820,6 +12883,26 @@ def test_implementation_context_survives_missing_opportunity_code_paths(tmp_path
     assert context["childMayEditFiles"] is True
     assert context["codePaths"] == ["runtime.py"]
     assert context["reproductionReceipt"]["receiptDigest"] == context["probeReceiptDigest"]
+
+
+def test_implementation_context_prefers_durable_receipt_paths(monkeypatch, tmp_path):
+    import oss_pr_radar.ledger as ledger_module
+
+    store, _worktree, _result_path = _controller_commit_result(tmp_path)
+    monkeypatch.setattr(
+        ledger_module,
+        "_audited_probe_code_paths",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("durable receipt must bypass old audit paths")
+        ),
+    )
+
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+
+    assert context["codePaths"] == ["runtime.py"]
+    assert context["reproductionReceipt"]["codePaths"] == ["runtime.py"]
 
 
 def test_implementation_context_survives_expired_transition_receipt(monkeypatch, tmp_path):

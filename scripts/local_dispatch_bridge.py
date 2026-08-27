@@ -13905,24 +13905,35 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     normalized["stage"] = "REPRODUCED_VALIDATED"
                     normalized["reason"] = "REPRODUCTION_CONFIRMED"
                     normalized["probeLevel"] = REPRODUCED_VALIDATED
-                    result_digest = _reproduction_result_digest(normalized)
-                    code_paths = [
-                        str(path)
-                        for path in (
-                            value.get("codePaths")
-                            or context.get("codePaths")
-                            or managed_candidate.get("codePaths")
-                            or (managed_candidate.get("preTaskEvidence") or {}).get("codePathsPlan")
-                            or []
-                        )
-                        if str(path).strip()
-                    ]
                     selected_base = str(
                         context.get("selectedBaseSha")
                         or managed_candidate.get("selectedBaseSha")
                         or (managed_candidate.get("preTaskEvidence") or {}).get("baseSha")
                         or ""
                     )
+                    audited_code_paths = store.audited_probe_code_paths(
+                        intent_id=str(candidate.get("intentId") or ""),
+                        issue_url=str(candidate["issueUrl"]),
+                        thread_id=str(candidate["threadId"]),
+                        worktree_path=str(candidate["worktreePath"]),
+                        expected_base_sha=selected_base,
+                    )
+                    code_paths = [
+                        str(path)
+                        for path in (
+                            audited_code_paths
+                            or managed_candidate.get("codePaths")
+                            or (managed_candidate.get("preTaskEvidence") or {}).get("codePathsPlan")
+                            or []
+                        )
+                        if str(path).strip()
+                    ]
+                    if not code_paths:
+                        raise RuntimeError(
+                            "controller repository paths are unavailable for reproduction attestation"
+                        )
+                    normalized["codePaths"] = code_paths
+                    result_digest = _reproduction_result_digest(normalized)
                     if not isinstance(receipt, dict):
                         issue_match = ISSUE_URL.match(str(candidate["issueUrl"]))
                         if issue_match is None:

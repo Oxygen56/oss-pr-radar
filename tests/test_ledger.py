@@ -40,6 +40,31 @@ def intent(**updates):
     return value
 
 
+def repository_path_receipt(base_sha: str, code_paths: list[str]) -> dict[str, Any]:
+    from oss_pr_radar.repo_probe import run_repo_probe
+
+    class RepositoryClient:
+        def repository(self, repo):
+            assert repo == "a/b"
+            return {"default_branch": "main"}
+
+        def branch(self, repo, branch):
+            assert (repo, branch) == ("a/b", "main")
+            return {"commit": {"sha": base_sha}}
+
+        def repository_tree(self, repo, ref):
+            assert (repo, ref) == ("a/b", base_sha)
+            return [{"path": path, "type": "blob"} for path in code_paths]
+
+    return run_repo_probe(
+        RepositoryClient(),
+        repo="a/b",
+        default_branch="main",
+        selected_base_sha=base_sha,
+        code_paths=code_paths,
+    )
+
+
 def legal_publication_probe(
     tmp_path: Path,
     *,
@@ -1647,6 +1672,289 @@ def test_task_context_recovers_disclosure_policy_from_live_audit(tmp_path):
 
     assert context["submissionPolicy"] == "ai_disclosure_conflict"
     assert context["publicSubmissionAllowed"] is False
+
+
+def test_task_context_prefers_live_audit_verified_paths_over_scanner_plan(tmp_path):
+    from oss_pr_radar.repo_probe import _signed_receipt
+
+    base_sha = "a" * 40
+    current_receipt = repository_path_receipt(base_sha, ["src/runtime.py"])
+    expired_payload = {
+        key: value
+        for key, value in current_receipt.items()
+        if key not in {"keyId", "signature", "receiptDigest"}
+    }
+    expired_payload["observedAt"] = iso_z(datetime.now(UTC) - timedelta(hours=2))
+    expired_payload["expiresAt"] = iso_z(datetime.now(UTC) - timedelta(hours=1))
+    expired_payload["receiptDigest"] = sha256_json(expired_payload)
+    receipt = _signed_receipt(expired_payload)
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["src/runtime.py", "runtime.py"],
+            preTaskEvidence={
+                "baseSha": base_sha,
+                "codePathsPlan": ["src/runtime.py", "runtime.py"],
+            },
+        )
+    )
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": receipt,
+                }
+            }
+        },
+        dedupe_key="verified-path-audit",
+    )
+
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+
+    assert context["codePaths"] == ["src/runtime.py"]
+    with pytest.raises(LedgerError, match="does not match the result context"):
+        store.audited_probe_code_paths(
+            intent_id="intent-1",
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            worktree_path="/tmp/worktree",
+            expected_base_sha="b" * 40,
+        )
+
+
+@pytest.mark.parametrize(
+    ("tamper", "message"),
+    [
+        ("signature", "not authenticated"),
+        ("base", "not authenticated"),
+        ("null", "receipt is invalid"),
+    ],
+)
+def test_task_context_rejects_unauthenticated_live_audit_paths(tmp_path, tamper, message):
+    base_sha = "a" * 40
+    receipt = repository_path_receipt(
+        "b" * 40 if tamper == "base" else base_sha, ["src/runtime.py"]
+    )
+    if tamper == "signature":
+        receipt = dict(receipt) | {"signature": "0" * 64}
+    elif tamper == "null":
+        receipt = None
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["src/runtime.py", "runtime.py"],
+            preTaskEvidence={
+                "baseSha": base_sha,
+                "codePathsPlan": ["src/runtime.py", "runtime.py"],
+            },
+        )
+    )
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": receipt,
+                }
+            }
+        },
+        dedupe_key=f"invalid-path-audit-{tamper}",
+    )
+
+    with pytest.raises(LedgerError, match=message):
+        store.task_context(
+            issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+        )
+
+
+def test_task_context_binds_audit_paths_to_exact_intent(tmp_path):
+    base_sha = "a" * 40
+    receipt_1 = repository_path_receipt(base_sha, ["src/one.py"])
+    receipt_2 = repository_path_receipt(base_sha, ["src/two.py"])
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            probeReceiptDigest=receipt_1["receiptDigest"],
+            codePaths=["one.py"],
+            preTaskEvidence={"baseSha": base_sha, "codePathsPlan": ["one.py"]},
+        )
+    )
+    store.claim("intent-1", "worker-1")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker-1",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree-1",
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": receipt_1,
+                }
+            }
+        },
+        dedupe_key="intent-1:first-audit",
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "policy": {"status": "refreshed"},
+                }
+            }
+        },
+        dedupe_key="intent-1:policy-refresh",
+    )
+    second_intent = intent(
+        intentId="intent-2",
+        decisionDigest="decision-2",
+        selectedBaseSha=base_sha,
+        probeReceiptDigest=receipt_2["receiptDigest"],
+        codePaths=["two.py"],
+        preTaskEvidence={"baseSha": base_sha, "codePathsPlan": ["two.py"]},
+    )
+    # A live opportunity cannot normally have two active intents.  Preserve a
+    # historical second dispatch directly so this regression fixture exercises
+    # audit selection after an intent rollover.
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?,'DISPATCHED',?,?,?,?,?,?,?)""",
+            (
+                "intent-2",
+                "a/b#1",
+                "decision-2",
+                second_intent["issuedAt"],
+                second_intent["expiresAt"],
+                "thread-2",
+                "repo-project",
+                "/tmp/worktree-2",
+                json.dumps(second_intent, sort_keys=True),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": receipt_2,
+                }
+            }
+        },
+        dedupe_key="intent-2:newer-audit",
+    )
+
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+
+    assert context["codePaths"] == ["src/one.py"]
+    assert context["liveAudit"]["evidence"]["policy"] == {"status": "refreshed"}
+
+
+def test_audited_probe_paths_reject_receipt_bound_to_another_intent(tmp_path):
+    base_sha = "a" * 40
+    receipt = repository_path_receipt(base_sha, ["src/other.py"])
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["src/controller.py"],
+            preTaskEvidence={
+                "baseSha": base_sha,
+                "codePathsPlan": ["src/controller.py"],
+            },
+        )
+    )
+    store.claim("intent-1", "worker-1")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker-1",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree-1",
+    )
+    second_intent = intent(
+        intentId="intent-2",
+        decisionDigest="decision-2",
+        selectedBaseSha=base_sha,
+        codePaths=["src/other.py"],
+        preTaskEvidence={"baseSha": base_sha, "codePathsPlan": ["src/other.py"]},
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?,'DISPATCHED',?,?,?,?,?,?,?)""",
+            (
+                "intent-2",
+                "a/b#1",
+                "decision-2",
+                second_intent["issuedAt"],
+                second_intent["expiresAt"],
+                "thread-2",
+                "repo-project",
+                "/tmp/worktree-2",
+                json.dumps(second_intent, sort_keys=True),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": receipt,
+                }
+            }
+        },
+        dedupe_key="intent-2:repository-probe",
+    )
+
+    with pytest.raises(LedgerError, match="not bound to the task intent"):
+        store.audited_probe_code_paths(
+            intent_id="intent-1",
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            worktree_path="/tmp/worktree-1",
+            expected_base_sha=base_sha,
+        )
 
 
 def test_no_go_requires_title_sync_before_cleanup(tmp_path):
