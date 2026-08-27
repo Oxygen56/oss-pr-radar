@@ -27706,6 +27706,36 @@
     ],
     "why": "Issue provides a precise root cause (top-10 truncation before privacy filter), concrete code anchors, and a clear reproduction path. The suggested fix is targeted and testable."
   },
+  "7a05dbf0b95319aff3d597a91f033c1dda5900881a6dfebd32291e193e04edf6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "No contradictions found; the issue explicitly distinguishes from #7211 and the open PRs are not direct competitors."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/messages.py",
+      "pydantic_ai_slim/pydantic_ai/_deferred_capabilities.py",
+      "tests/test_messages.py",
+      "tests/test_capabilities.py"
+    ],
+    "risks": [
+      "Changing validation to reject unknown keys could break consumers relying on lenient behavior; need to decide between preserving unknown keys or raising a clear error, requiring maintainer design input."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided repro script to confirm the failure, then add a regression test that round-trips a ToolReturnPart with unknown content keys and asserts content is preserved or an error is raised; run existing tests test_stripped_tool_kind_part_survives_roundtrip and test_load_capability_parts_round_trip_through_message_history to ensure no regression."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to preserve unknown keys or raise an error; whether assignment is required before implementation."
+    ],
+    "why": "Issue provides a concrete, reproducible data-loss bug in the canonical round-trip serializer, with root cause traced to TypedDict validation silently discarding unknown keys in LoadCapabilityReturnPart.content. The expected behavior (preserve or fail) is supported by existing helper and tests, and the reproduction script and test plan are explicit."
+  },
   "7a433a046ec698544ac5a0b3645938c74f695c63b0b3d94a5fee9331c3c00fd6": {
     "confidence": 0.85,
     "contradictions": [
