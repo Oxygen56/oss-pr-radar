@@ -360,6 +360,15 @@ _EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE = """
               OR (
                 later.event_type='THREAD_RECOVERY_RESERVED'
                 AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                AND json_extract(
+                      later.payload_json,'$.rearmedFromExhausted.exhaustedNonce'
+                    )=exhausted.dedupe_key
+              )
+              OR (
+                later.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                AND json_extract(later.payload_json,'$.recoveryNonce')=
+                    exhausted.dedupe_key
               )
             )
         )
@@ -3000,6 +3009,23 @@ class RadarLedger:
                             OR (
                               later.event_type='THREAD_RECOVERY_RESERVED'
                               AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                              AND json_extract(
+                                    later.payload_json,
+                                    '$.rearmedFromExhausted.exhaustedNonce'
+                                  )=exhausted.dedupe_key
+                            )
+                            OR (
+                              later.event_type=
+                                  'THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED'
+                              AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                              AND json_extract(later.payload_json,'$.recoveryNonce')=
+                                  exhausted.dedupe_key
+                            )
+                            OR (
+                              later.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                              AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                              AND json_extract(later.payload_json,'$.recoveryNonce')=
+                                  exhausted.dedupe_key
                             )
                           )
                       )
@@ -3027,6 +3053,8 @@ class RadarLedger:
                     "blockerCode": "RECOVERY_RETRY_EXHAUSTED",
                     "reason": "RECOVERY_RETRY_EXHAUSTED",
                     "occupiesTaskSlot": False,
+                    "retryCount": payload.get("retryCount"),
+                    "terminalError": payload.get("terminalError"),
                 }
             )
         return blockers
@@ -3072,6 +3100,19 @@ class RadarLedger:
                          AND json_extract(recovery.payload_json,'$.recoveryKind')='DISPATCHED_TASK'
                          AND recovery.created_at>=d.created_at
                      ))
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events advanced
+                       WHERE advanced.opportunity_key=o.key
+                         AND advanced.id>d.id
+                         AND advanced.event_type IN (
+                           'TASK_RESULT_INGESTED',
+                           'PUBLISHED_TASK_RESULT_BACKFILLED',
+                           'PR_FOLLOWUP_RESULT_INGESTED',
+                           'IMPLEMENTATION_FOLLOWUP_SENT',
+                           'VALIDATION_FOLLOWUP_SENT',
+                           'PR_FOLLOWUP_SENT'
+                         )
+                     )
                      AND NOT EXISTS (
                        SELECT 1 FROM events e
                        WHERE e.opportunity_key=o.key
@@ -3277,6 +3318,16 @@ class RadarLedger:
                          AND json_extract(recovery.payload_json,'$.recoveryKind')=
                              'IMPLEMENTATION_FOLLOWUP_RESULT'
                          AND json_extract(recovery.payload_json,'$.followupDigest')=s.dedupe_key
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events rearmed
+                           WHERE rearmed.opportunity_key=exhausted.opportunity_key
+                             AND rearmed.event_type=
+                                 'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                             AND json_extract(rearmed.payload_json,'$.threadId')=i.thread_id
+                             AND json_extract(rearmed.payload_json,'$.recoveryNonce')=
+                                 exhausted.dedupe_key
+                             AND rearmed.id>exhausted.id
+                         )
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events result
@@ -3303,6 +3354,27 @@ class RadarLedger:
                    ORDER BY s.created_at""",
                 (cutoff,),
             ).fetchall()
+            implementation_rearm_rows = connection.execute(
+                """SELECT rearmed.id AS rearm_event_id,
+                          exhausted.id AS exhausted_event_id,
+                          exhausted.opportunity_key AS key,
+                          exhausted.dedupe_key AS exhausted_nonce,
+                          recovery.payload_json AS recovery_payload_json
+                   FROM events rearmed
+                   JOIN events exhausted
+                     ON exhausted.opportunity_key=rearmed.opportunity_key
+                    AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                    AND exhausted.dedupe_key=
+                        json_extract(rearmed.payload_json,'$.recoveryNonce')
+                   JOIN events recovery
+                     ON recovery.opportunity_key=exhausted.opportunity_key
+                    AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                    AND recovery.dedupe_key=exhausted.dedupe_key
+                   WHERE rearmed.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                     AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                         'IMPLEMENTATION_FOLLOWUP_RESULT'
+                   ORDER BY rearmed.id"""
+            ).fetchall()
             exhausted_dispatched_rows = (
                 connection.execute(
                     """SELECT exhausted.id AS event_id,
@@ -3324,6 +3396,20 @@ class RadarLedger:
                 if include_exhausted_dispatched
                 else []
             )
+        implementation_rearms: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for rearm_row in implementation_rearm_rows:
+            recovery_payload = json.loads(rearm_row["recovery_payload_json"])
+            implementation_rearms[
+                (
+                    str(rearm_row["key"]),
+                    str(recovery_payload.get("threadId") or ""),
+                    str(recovery_payload.get("followupDigest") or ""),
+                )
+            ] = {
+                "exhaustedNonce": str(rearm_row["exhausted_nonce"]),
+                "exhaustedEventId": int(rearm_row["exhausted_event_id"]),
+                "rearmEventId": int(rearm_row["rearm_event_id"]),
+            }
         exhausted_by_task: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for exhausted_row in exhausted_dispatched_rows:
             recovery_payload = json.loads(exhausted_row["recovery_payload_json"])
@@ -3384,6 +3470,12 @@ class RadarLedger:
                     for marker in exhausted_by_task.get((str(row["key"]), thread_id), [])
                     if str(marker["recoveryCreatedAt"]) >= str(row["dispatched_at"])
                 ]
+            if recovery_kind == "IMPLEMENTATION_FOLLOWUP_RESULT":
+                marker = implementation_rearms.get(
+                    (str(row["key"]), thread_id, str(followup_digest or ""))
+                )
+                if marker is not None:
+                    candidate["rearmedFromExhausted"] = marker
             previous = candidates.get(thread_id)
             if previous is None or candidate["dispatchedAt"] > previous["dispatchedAt"]:
                 candidates[thread_id] = candidate
@@ -3577,6 +3669,143 @@ class RadarLedger:
                 opportunity_key=str(candidate["key"]),
                 operation="recovery delivery reservation",
             )
+            if candidate["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT":
+                eligible = connection.execute(
+                    """SELECT s.id
+                       FROM events s
+                       WHERE s.opportunity_key=?
+                         AND s.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                         AND s.dedupe_key=?
+                         AND json_extract(s.payload_json,'$.threadId')=?
+                         AND s.id=(
+                           SELECT MAX(latest.id) FROM events latest
+                           WHERE latest.opportunity_key=s.opportunity_key
+                             AND latest.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events result
+                           WHERE result.opportunity_key=s.opportunity_key
+                             AND result.event_type='TASK_RESULT_INGESTED'
+                             AND result.id>s.id
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events exhausted
+                           JOIN events prior_recovery
+                             ON prior_recovery.opportunity_key=
+                                exhausted.opportunity_key
+                            AND prior_recovery.event_type='THREAD_RECOVERY_RESERVED'
+                            AND prior_recovery.dedupe_key=exhausted.dedupe_key
+                           WHERE exhausted.opportunity_key=s.opportunity_key
+                             AND exhausted.event_type=
+                                 'THREAD_RECOVERY_RETRY_EXHAUSTED'
+                             AND json_extract(
+                                   prior_recovery.payload_json,'$.threadId'
+                                 )=?
+                             AND json_extract(
+                                   prior_recovery.payload_json,'$.recoveryKind'
+                                 )='IMPLEMENTATION_FOLLOWUP_RESULT'
+                             AND json_extract(
+                                   prior_recovery.payload_json,'$.followupDigest'
+                                 )=s.dedupe_key
+                             AND NOT EXISTS (
+                               SELECT 1 FROM events rearmed
+                               WHERE rearmed.opportunity_key=exhausted.opportunity_key
+                                 AND rearmed.event_type=
+                                     'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                                 AND json_extract(
+                                       rearmed.payload_json,'$.threadId'
+                                     )=?
+                                 AND json_extract(
+                                       rearmed.payload_json,'$.recoveryNonce'
+                                     )=exhausted.dedupe_key
+                                 AND rearmed.id>exhausted.id
+                             )
+                         )
+                       LIMIT 1""",
+                    (
+                        candidate["key"],
+                        candidate.get("followupDigest"),
+                        thread_id,
+                        thread_id,
+                        thread_id,
+                    ),
+                ).fetchone()
+                if eligible is None:
+                    raise LedgerError("recovery authorization is stale or invalid")
+                epoch_row = connection.execute(
+                    """SELECT MAX(abandoned.created_at) AS recovery_epoch
+                       FROM events abandoned
+                       WHERE abandoned.opportunity_key=?
+                         AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                         AND json_extract(abandoned.payload_json,'$.threadId')=?""",
+                    (candidate["key"], thread_id),
+                ).fetchone()
+                current_epoch = str(epoch_row["recovery_epoch"] or "")
+                expected_nonce = sha256_text(
+                    f"{candidate['key']}|{thread_id}|{candidate['dispatchedAt']}|"
+                    f"{candidate['recoveryKind']}|{candidate.get('followupDigest') or ''}|"
+                    f"{current_epoch}|recovery-v3"
+                )
+                if nonce != expected_nonce:
+                    raise LedgerError("recovery authorization is stale or invalid")
+                lineage = candidate.get("rearmedFromExhausted")
+                latest_rearm = connection.execute(
+                    """SELECT MAX(rearmed.id) AS rearm_event_id
+                       FROM events rearmed
+                       JOIN events exhausted
+                         ON exhausted.opportunity_key=rearmed.opportunity_key
+                        AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                        AND exhausted.dedupe_key=
+                            json_extract(rearmed.payload_json,'$.recoveryNonce')
+                       JOIN events prior_recovery
+                         ON prior_recovery.opportunity_key=exhausted.opportunity_key
+                        AND prior_recovery.event_type='THREAD_RECOVERY_RESERVED'
+                        AND prior_recovery.dedupe_key=exhausted.dedupe_key
+                       WHERE rearmed.opportunity_key=?
+                         AND rearmed.event_type=
+                             'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                         AND json_extract(rearmed.payload_json,'$.threadId')=?
+                         AND json_extract(prior_recovery.payload_json,'$.recoveryKind')=
+                             'IMPLEMENTATION_FOLLOWUP_RESULT'
+                         AND json_extract(prior_recovery.payload_json,'$.followupDigest')=?""",
+                    (candidate["key"], thread_id, candidate.get("followupDigest")),
+                ).fetchone()
+                latest_rearm_id = (
+                    int(latest_rearm["rearm_event_id"])
+                    if latest_rearm["rearm_event_id"] is not None
+                    else None
+                )
+                if lineage is None and latest_rearm_id is not None:
+                    raise LedgerError("recovery authorization is stale or invalid")
+                if lineage is not None:
+                    if latest_rearm_id != int(lineage.get("rearmEventId") or 0):
+                        raise LedgerError("recovery authorization is stale or invalid")
+                    exact_rearm = connection.execute(
+                        """SELECT 1 FROM events rearmed
+                           JOIN events exhausted
+                             ON exhausted.opportunity_key=rearmed.opportunity_key
+                            AND exhausted.event_type=
+                                'THREAD_RECOVERY_RETRY_EXHAUSTED'
+                            AND exhausted.dedupe_key=?
+                           WHERE rearmed.opportunity_key=?
+                             AND rearmed.event_type=
+                                 'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                             AND rearmed.id=?
+                             AND exhausted.id=?
+                             AND json_extract(rearmed.payload_json,'$.threadId')=?
+                             AND json_extract(rearmed.payload_json,'$.recoveryNonce')=?
+                           LIMIT 1""",
+                        (
+                            lineage.get("exhaustedNonce"),
+                            candidate["key"],
+                            lineage.get("rearmEventId"),
+                            lineage.get("exhaustedEventId"),
+                            thread_id,
+                            lineage.get("exhaustedNonce"),
+                        ),
+                    ).fetchone()
+                    if exact_rearm is None:
+                        raise LedgerError("recovery authorization is stale or invalid")
             existing = connection.execute(
                 """SELECT 1 FROM events reserved WHERE opportunity_key=?
                    AND event_type='THREAD_RECOVERY_RESERVED'
@@ -3595,6 +3824,7 @@ class RadarLedger:
             ).fetchone()
             if existing:
                 raise LedgerError("recovery is already reserved")
+            changes_before = connection.total_changes
             self._event(
                 connection,
                 candidate["key"],
@@ -3612,6 +3842,8 @@ class RadarLedger:
                 },
                 now,
             )
+            if connection.total_changes == changes_before:
+                raise LedgerError("recovery authorization is stale or invalid")
         return candidate
 
     def commit_recovery(self, *, thread_id: str, nonce: str) -> None:
@@ -3731,7 +3963,14 @@ class RadarLedger:
                 now,
             )
 
-    def exhaust_recovery(self, *, thread_id: str, nonce: str) -> None:
+    def exhaust_recovery(
+        self,
+        *,
+        thread_id: str,
+        nonce: str,
+        terminal_error: dict[str, Any] | None = None,
+        retry_count: int | None = None,
+    ) -> None:
         """Release a repeatedly interrupted recovery and make the terminal state durable."""
 
         with self.transaction() as connection:
@@ -3788,6 +4027,8 @@ class RadarLedger:
                     "recoveryPromptDigest": reservation.get("recoveryPromptDigest"),
                     "recoveryChainDigest": reservation.get("recoveryChainDigest"),
                     "rearmedFromExhausted": reservation.get("rearmedFromExhausted"),
+                    "retryCount": retry_count,
+                    "terminalError": terminal_error,
                 },
                 now,
             )
@@ -3817,6 +4058,408 @@ class RadarLedger:
                         },
                         now,
                     )
+
+    def acknowledge_exhausted_recovery(
+        self, *, thread_id: str, nonce: str, reason: str
+    ) -> dict[str, Any]:
+        """Park one reviewed implementation recovery without changing its task result."""
+
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", reason):
+            raise LedgerError("recovery acknowledgement reason must be machine-readable")
+        with self.transaction() as connection:
+            existing_ack = connection.execute(
+                """SELECT ack.payload_json,ack.created_at,o.key,o.issue_url,o.title,o.stage,
+                          i.worktree_path
+                   FROM events ack
+                   JOIN opportunities o ON o.key=ack.opportunity_key
+                   JOIN intents i ON i.opportunity_key=ack.opportunity_key
+                    AND i.thread_id=?
+                   WHERE ack.event_type=
+                         'THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED'
+                     AND ack.dedupe_key=?
+                     AND json_extract(ack.payload_json,'$.threadId')=?
+                     AND json_extract(ack.payload_json,'$.recoveryNonce')=?
+                   ORDER BY ack.id DESC LIMIT 1""",
+                (thread_id, nonce, thread_id, nonce),
+            ).fetchone()
+            if existing_ack is not None:
+                existing_payload = json.loads(existing_ack["payload_json"])
+                if existing_payload.get("reason") != reason:
+                    raise LedgerError("exhausted recovery was acknowledged with another reason")
+                return {
+                    "key": existing_ack["key"],
+                    "issueUrl": existing_ack["issue_url"],
+                    "title": existing_ack["title"],
+                    "stage": existing_ack["stage"],
+                    "threadId": thread_id,
+                    "worktreePath": existing_ack["worktree_path"],
+                    "recoveryNonce": nonce,
+                    "recoveryKind": existing_payload.get("recoveryKind"),
+                    "followupDigest": existing_payload.get("followupDigest"),
+                    "reason": reason,
+                    "retryCount": existing_payload.get("retryCount"),
+                    "terminalError": existing_payload.get("terminalError"),
+                    "acknowledgedAt": existing_ack["created_at"],
+                    "alreadyAcknowledged": True,
+                }
+            row = connection.execute(
+                """SELECT exhausted.id AS exhausted_id,
+                          exhausted.opportunity_key AS key,
+                          exhausted.payload_json AS exhausted_payload,
+                          recovery.payload_json AS recovery_payload,
+                          o.issue_url,o.title,o.stage,i.worktree_path
+                   FROM events exhausted
+                   JOIN events recovery
+                     ON recovery.opportunity_key=exhausted.opportunity_key
+                    AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                    AND recovery.dedupe_key=exhausted.dedupe_key
+                   JOIN events followup
+                     ON followup.opportunity_key=exhausted.opportunity_key
+                    AND followup.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                    AND followup.dedupe_key=
+                        json_extract(recovery.payload_json,'$.followupDigest')
+                   JOIN intents i ON i.opportunity_key=exhausted.opportunity_key
+                   JOIN opportunities o ON o.key=exhausted.opportunity_key
+                   WHERE exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                     AND exhausted.dedupe_key=?
+                     AND json_extract(recovery.payload_json,'$.threadId')=?
+                     AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                         'IMPLEMENTATION_FOLLOWUP_RESULT'
+                     AND json_extract(followup.payload_json,'$.threadId')=?
+                     AND followup.id=(
+                       SELECT MAX(latest.id) FROM events latest
+                       WHERE latest.opportunity_key=exhausted.opportunity_key
+                         AND latest.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                     )
+                     AND recovery.id>followup.id
+                     AND i.thread_id=? AND i.status='DISPATCHED'
+                     AND recovery.id>(
+                       SELECT COALESCE(MAX(dispatched.id),0)
+                       FROM events dispatched
+                       WHERE dispatched.opportunity_key=i.opportunity_key
+                         AND dispatched.event_type='DISPATCHED'
+                         AND dispatched.dedupe_key=i.thread_id
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events later
+                       WHERE later.opportunity_key=exhausted.opportunity_key
+                         AND later.id>exhausted.id
+                         AND (
+                           later.event_type IN (
+                             'TASK_RESULT_INGESTED',
+                             'PUBLISHED_TASK_RESULT_BACKFILLED',
+                             'PR_FOLLOWUP_RESULT_INGESTED',
+                             'IMPLEMENTATION_CONTEXT_REPAIRED',
+                             'AUDIT_PASS',
+                             'AUDIT_NO_GO',
+                             'VALIDATION_PENDING',
+                             'FIX_READY',
+                             'PR_OPEN',
+                             'CI_GREEN',
+                             'MAINTAINER_ACCEPTED',
+                             'MERGED',
+                             'CLOSED'
+                           )
+                           OR (
+                             later.event_type='THREAD_RECOVERY_RESERVED'
+                             AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                             AND json_extract(
+                                   later.payload_json,
+                                   '$.rearmedFromExhausted.exhaustedNonce'
+                                 )=exhausted.dedupe_key
+                           )
+                           OR (
+                             later.event_type=
+                                 'THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED'
+                             AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                             AND json_extract(later.payload_json,'$.recoveryNonce')=
+                                 exhausted.dedupe_key
+                           )
+                           OR (
+                             later.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                             AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                             AND json_extract(later.payload_json,'$.recoveryNonce')=
+                                 exhausted.dedupe_key
+                           )
+                         )
+                     )
+                   ORDER BY exhausted.id DESC LIMIT 1""",
+                (nonce, thread_id, thread_id, thread_id),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("active exhausted recovery not found")
+            exhausted = json.loads(row["exhausted_payload"])
+            recovery = json.loads(row["recovery_payload"])
+            now = iso_z(datetime.now(UTC))
+            self._event(
+                connection,
+                row["key"],
+                "THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED",
+                nonce,
+                {
+                    "threadId": thread_id,
+                    "recoveryNonce": nonce,
+                    "reason": reason,
+                    "recoveryKind": recovery.get("recoveryKind"),
+                    "followupDigest": recovery.get("followupDigest"),
+                    "retryCount": exhausted.get("retryCount"),
+                    "terminalError": exhausted.get("terminalError"),
+                    "exhaustedEventId": int(row["exhausted_id"]),
+                },
+                now,
+            )
+            return {
+                "key": row["key"],
+                "issueUrl": row["issue_url"],
+                "title": row["title"],
+                "stage": row["stage"],
+                "threadId": thread_id,
+                "worktreePath": row["worktree_path"],
+                "recoveryNonce": nonce,
+                "recoveryKind": recovery.get("recoveryKind"),
+                "followupDigest": recovery.get("followupDigest"),
+                "reason": reason,
+                "retryCount": exhausted.get("retryCount"),
+                "terminalError": exhausted.get("terminalError"),
+                "acknowledgedAt": now,
+            }
+
+    def acknowledged_exhausted_recoveries(self) -> list[dict[str, Any]]:
+        """Expose reviewed implementation recoveries that remain explicitly parked."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.issue_url,o.title,o.stage,i.intent_id,i.thread_id,
+                          i.worktree_path,ack.payload_json,ack.created_at AS acknowledged_at,
+                          exhausted.created_at AS exhausted_at
+                   FROM events ack
+                   JOIN events exhausted
+                     ON exhausted.opportunity_key=ack.opportunity_key
+                    AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                    AND exhausted.dedupe_key=
+                        json_extract(ack.payload_json,'$.recoveryNonce')
+                   JOIN events recovery
+                     ON recovery.opportunity_key=exhausted.opportunity_key
+                    AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                    AND recovery.dedupe_key=exhausted.dedupe_key
+                   JOIN events followup
+                     ON followup.opportunity_key=exhausted.opportunity_key
+                    AND followup.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                    AND followup.dedupe_key=
+                        json_extract(recovery.payload_json,'$.followupDigest')
+                   JOIN opportunities o ON o.key=ack.opportunity_key
+                   JOIN intents i ON i.opportunity_key=ack.opportunity_key
+                    AND i.thread_id=json_extract(ack.payload_json,'$.threadId')
+                   WHERE ack.event_type=
+                         'THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED'
+                     AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                         'IMPLEMENTATION_FOLLOWUP_RESULT'
+                     AND json_extract(followup.payload_json,'$.threadId')=
+                         json_extract(ack.payload_json,'$.threadId')
+                     AND followup.id=(
+                       SELECT MAX(latest.id) FROM events latest
+                       WHERE latest.opportunity_key=ack.opportunity_key
+                         AND latest.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                     )
+                     AND recovery.id>followup.id
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events later
+                       WHERE later.opportunity_key=ack.opportunity_key
+                         AND later.id>ack.id
+                         AND (
+                           later.event_type IN (
+                             'TASK_RESULT_INGESTED',
+                             'PUBLISHED_TASK_RESULT_BACKFILLED',
+                             'PR_FOLLOWUP_RESULT_INGESTED',
+                             'IMPLEMENTATION_CONTEXT_REPAIRED',
+                             'AUDIT_PASS',
+                             'AUDIT_NO_GO',
+                             'VALIDATION_PENDING',
+                             'FIX_READY',
+                             'PR_OPEN',
+                             'CI_GREEN',
+                             'MAINTAINER_ACCEPTED',
+                             'MERGED',
+                             'CLOSED'
+                           )
+                           OR (
+                             later.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                             AND json_extract(later.payload_json,'$.threadId')=
+                                 json_extract(ack.payload_json,'$.threadId')
+                             AND json_extract(later.payload_json,'$.recoveryNonce')=
+                                 json_extract(ack.payload_json,'$.recoveryNonce')
+                           )
+                         )
+                     )
+                   ORDER BY ack.created_at,ack.id"""
+            ).fetchall()
+        parked: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            parked.append(
+                {
+                    "key": row["key"],
+                    "issueUrl": row["issue_url"],
+                    "title": row["title"],
+                    "stage": row["stage"],
+                    "intentId": row["intent_id"],
+                    "threadId": row["thread_id"],
+                    "worktreePath": row["worktree_path"],
+                    "recoveryNonce": payload.get("recoveryNonce"),
+                    "recoveryKind": payload.get("recoveryKind"),
+                    "followupDigest": payload.get("followupDigest"),
+                    "retryCount": payload.get("retryCount"),
+                    "terminalError": payload.get("terminalError"),
+                    "reason": payload.get("reason"),
+                    "exhaustedAt": row["exhausted_at"],
+                    "acknowledgedAt": row["acknowledged_at"],
+                    "parked": True,
+                    "rearmable": True,
+                    "occupiesTaskSlot": False,
+                }
+            )
+        return parked
+
+    def rearm_acknowledged_recovery(
+        self, *, thread_id: str, nonce: str, reason: str
+    ) -> dict[str, Any]:
+        """Explicitly reopen one reviewed, parked implementation recovery."""
+
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", reason):
+            raise LedgerError("recovery rearm reason must be machine-readable")
+        with self.transaction() as connection:
+            existing_rearm = connection.execute(
+                """SELECT rearmed.payload_json,rearmed.created_at,
+                          o.key,o.issue_url,o.title,o.stage,i.worktree_path
+                   FROM events rearmed
+                   JOIN opportunities o ON o.key=rearmed.opportunity_key
+                   JOIN intents i ON i.opportunity_key=rearmed.opportunity_key
+                    AND i.thread_id=?
+                   WHERE rearmed.event_type=
+                         'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                     AND rearmed.dedupe_key=?
+                     AND json_extract(rearmed.payload_json,'$.threadId')=?
+                     AND json_extract(rearmed.payload_json,'$.recoveryNonce')=?
+                   ORDER BY rearmed.id DESC LIMIT 1""",
+                (thread_id, nonce, thread_id, nonce),
+            ).fetchone()
+            if existing_rearm is not None:
+                existing_payload = json.loads(existing_rearm["payload_json"])
+                if existing_payload.get("reason") != reason:
+                    raise LedgerError("parked recovery was rearmed with another reason")
+                return {
+                    "key": existing_rearm["key"],
+                    "issueUrl": existing_rearm["issue_url"],
+                    "title": existing_rearm["title"],
+                    "stage": existing_rearm["stage"],
+                    "threadId": thread_id,
+                    "worktreePath": existing_rearm["worktree_path"],
+                    "recoveryNonce": nonce,
+                    "recoveryKind": existing_payload.get("recoveryKind"),
+                    "followupDigest": existing_payload.get("followupDigest"),
+                    "reason": reason,
+                    "rearmedAt": existing_rearm["created_at"],
+                    "alreadyRearmed": True,
+                }
+            row = connection.execute(
+                """SELECT ack.id AS acknowledgement_event_id,
+                          exhausted.id AS exhausted_event_id,
+                          ack.opportunity_key AS key,ack.payload_json,
+                          o.issue_url,o.title,o.stage,i.worktree_path
+                   FROM events ack
+                   JOIN events exhausted
+                     ON exhausted.opportunity_key=ack.opportunity_key
+                    AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                    AND exhausted.dedupe_key=?
+                   JOIN events recovery
+                     ON recovery.opportunity_key=exhausted.opportunity_key
+                    AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                    AND recovery.dedupe_key=exhausted.dedupe_key
+                   JOIN events followup
+                     ON followup.opportunity_key=exhausted.opportunity_key
+                    AND followup.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                    AND followup.dedupe_key=
+                        json_extract(recovery.payload_json,'$.followupDigest')
+                   JOIN opportunities o ON o.key=ack.opportunity_key
+                   JOIN intents i ON i.opportunity_key=ack.opportunity_key
+                    AND i.thread_id=? AND i.status='DISPATCHED'
+                   WHERE ack.event_type=
+                         'THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED'
+                     AND json_extract(ack.payload_json,'$.threadId')=?
+                     AND json_extract(ack.payload_json,'$.recoveryNonce')=?
+                     AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                         'IMPLEMENTATION_FOLLOWUP_RESULT'
+                     AND json_extract(followup.payload_json,'$.threadId')=?
+                     AND followup.id=(
+                       SELECT MAX(latest.id) FROM events latest
+                       WHERE latest.opportunity_key=ack.opportunity_key
+                         AND latest.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                     )
+                     AND recovery.id>followup.id
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events later
+                       WHERE later.opportunity_key=ack.opportunity_key
+                         AND later.id>ack.id
+                         AND (
+                           later.event_type IN (
+                             'TASK_RESULT_INGESTED',
+                             'PUBLISHED_TASK_RESULT_BACKFILLED',
+                             'PR_FOLLOWUP_RESULT_INGESTED',
+                             'IMPLEMENTATION_CONTEXT_REPAIRED',
+                             'AUDIT_PASS',
+                             'AUDIT_NO_GO',
+                             'VALIDATION_PENDING',
+                             'FIX_READY',
+                             'PR_OPEN',
+                             'CI_GREEN',
+                             'MAINTAINER_ACCEPTED',
+                             'MERGED',
+                             'CLOSED'
+                           )
+                           OR (
+                             later.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                             AND json_extract(later.payload_json,'$.threadId')=?
+                             AND json_extract(later.payload_json,'$.recoveryNonce')=?
+                           )
+                         )
+                     )
+                   ORDER BY ack.id DESC LIMIT 1""",
+                (nonce, thread_id, thread_id, nonce, thread_id, thread_id, nonce),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("parked exhausted recovery not found")
+            acknowledged = json.loads(row["payload_json"])
+            now = iso_z(datetime.now(UTC))
+            self._event(
+                connection,
+                row["key"],
+                "THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED",
+                nonce,
+                {
+                    "threadId": thread_id,
+                    "recoveryNonce": nonce,
+                    "reason": reason,
+                    "recoveryKind": acknowledged.get("recoveryKind"),
+                    "followupDigest": acknowledged.get("followupDigest"),
+                    "acknowledgementReason": acknowledged.get("reason"),
+                    "acknowledgementEventId": int(row["acknowledgement_event_id"]),
+                    "exhaustedEventId": int(row["exhausted_event_id"]),
+                },
+                now,
+            )
+            return {
+                "key": row["key"],
+                "issueUrl": row["issue_url"],
+                "title": row["title"],
+                "stage": row["stage"],
+                "threadId": thread_id,
+                "worktreePath": row["worktree_path"],
+                "recoveryNonce": nonce,
+                "recoveryKind": acknowledged.get("recoveryKind"),
+                "followupDigest": acknowledged.get("followupDigest"),
+                "reason": reason,
+                "rearmedAt": now,
+            }
 
     def record_validation_deferred(
         self,

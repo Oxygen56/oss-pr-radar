@@ -840,6 +840,7 @@ def evaluate_health(
     worker_states = state.get("workers") if nested else {"runtime": state}
     workers: dict[str, dict[str, Any]] = {}
     issues: list[str] = []
+    warnings: list[str] = []
     for worker in REQUIRED_WORKERS if nested else ("runtime",):
         worker_state = worker_states.get(worker)
         worker_state = worker_state if isinstance(worker_state, dict) else {}
@@ -875,12 +876,13 @@ def evaluate_health(
     if disk and disk.get("level") == "stop":
         issues.append("DISK_STOP_THRESHOLD")
     elif disk and disk.get("level") == "warning":
-        issues.append("DISK_WARNING_THRESHOLD")
+        warnings.append("DISK_WARNING_THRESHOLD")
     if log_bytes is not None and log_bytes > max_log_bytes:
         issues.append("LOG_LIMIT_EXCEEDED")
     return {
         "healthy": not issues,
         "issues": issues,
+        "warnings": warnings,
         "checkedAt": datetime.fromtimestamp(current, UTC).isoformat().replace("+00:00", "Z"),
         "workers": workers,
         "deployment": deployment,

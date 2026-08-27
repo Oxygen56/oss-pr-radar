@@ -90,6 +90,22 @@ def test_health_covers_queue_effect_disk_log_and_policy_boundaries():
     } <= set(result["issues"])
 
 
+def test_disk_warning_is_reported_without_marking_workers_unhealthy():
+    now = time.time()
+
+    result = evaluate_health(
+        healthy_state(now),
+        now=now,
+        expected_release="release-a",
+        expected_policy_digest="policy-a",
+        disk={"level": "warning", "freeBytes": 50 * 1024 * 1024 * 1024},
+    )
+
+    assert result["healthy"] is True
+    assert result["issues"] == []
+    assert result["warnings"] == ["DISK_WARNING_THRESHOLD"]
+
+
 def test_lock_is_non_blocking_and_restart_safe(tmp_path: Path):
     lock_path = tmp_path / "state" / "controller.lock"
     with exclusive_lock(lock_path):

@@ -426,6 +426,19 @@ def compact_controller_result(
     titles = stages.get("finalTitles") or {}
     publication = stages.get("publication") or {}
     feedback = stages.get("terminalFeedbackBeforeSync") or {}
+    final_recovery = stages.get("finalRecovery") or {}
+    local_status = stages.get("finalLocalAgentStatus") or {}
+    local_warning_codes = {
+        str(code)
+        for worker in (local_status.get("workers") or [])
+        if isinstance(worker, dict)
+        for health_key in ("runtimeHealth", "workerRuntimeHealth")
+        for code in (
+            ((worker.get(health_key) or {}).get("warnings") or [])
+            if isinstance(worker.get(health_key), dict)
+            else []
+        )
+    }
     desktop_handoff = _pending_desktop_handoff(stages)
     compact = {
         "ok": result.get("ok"),
@@ -441,6 +454,8 @@ def compact_controller_result(
             "titleUpdatesPending": len(titles.get("titles") or []),
             "publicationBlocked": len(publication.get("blocked") or []),
             "terminalFeedbackDeferred": len(feedback.get("deferred") or []),
+            "parkedRecovery": len(final_recovery.get("parkedRecovery") or []),
+            "diskThresholdWarning": int("DISK_WARNING_THRESHOLD" in local_warning_codes),
         },
     }
     if desktop_handoff is not None:

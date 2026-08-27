@@ -4843,6 +4843,12 @@ def test_recovery_list_exposes_exhausted_recovery_as_a_blocker(monkeypatch, tmp_
         "reason": "RECOVERY_RETRY_EXHAUSTED",
         "occupiesTaskSlot": False,
     }
+    parked = {
+        "key": "c/d#2",
+        "threadId": "thread-2",
+        "recoveryKind": "IMPLEMENTATION_FOLLOWUP_RESULT",
+        "parked": True,
+    }
 
     class Store:
         def quarantined_validation_followups(self):
@@ -4857,6 +4863,9 @@ def test_recovery_list_exposes_exhausted_recovery_as_a_blocker(monkeypatch, tmp_
         def exhausted_recovery_blockers(self):
             return [blocker]
 
+        def acknowledged_exhausted_recoveries(self):
+            return [parked]
+
     monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
     monkeypatch.setattr(MODULE, "THREAD_DB", tmp_path / "missing-thread-db.sqlite3")
 
@@ -4866,6 +4875,65 @@ def test_recovery_list_exposes_exhausted_recovery_as_a_blocker(monkeypatch, tmp_
 
     assert result["ok"] is True
     assert result["recoveryRetryExhausted"] == [blocker]
+    assert result["parkedRecovery"] == [parked]
+
+
+def test_recovery_acknowledge_uses_exact_dead_letter_identity(monkeypatch, tmp_path):
+    calls = []
+
+    class Store:
+        def acknowledge_exhausted_recovery(self, **kwargs):
+            calls.append(kwargs)
+            return {"key": "a/b#1", **kwargs}
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.recovery_acknowledge(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            recovery_nonce="nonce-1",
+            reason="OPERATOR_REVIEWED_EXTERNAL_POLICY_BLOCK",
+        )
+    )
+
+    assert result["ok"] is True
+    assert calls == [
+        {
+            "thread_id": "thread-1",
+            "nonce": "nonce-1",
+            "reason": "OPERATOR_REVIEWED_EXTERNAL_POLICY_BLOCK",
+        }
+    ]
+
+
+def test_recovery_rearm_uses_exact_parked_identity(monkeypatch, tmp_path):
+    calls = []
+
+    class Store:
+        def rearm_acknowledged_recovery(self, **kwargs):
+            calls.append(kwargs)
+            return {"key": "a/b#1", **kwargs}
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.recovery_rearm(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            recovery_nonce="nonce-1",
+            reason="EXECUTION_ENVIRONMENT_CHANGED",
+        )
+    )
+
+    assert result["ok"] is True
+    assert calls == [
+        {
+            "thread_id": "thread-1",
+            "nonce": "nonce-1",
+            "reason": "EXECUTION_ENVIRONMENT_CHANGED",
+        }
+    ]
 
 
 def test_recovery_reserve_rearms_same_exhausted_dispatch(monkeypatch, tmp_path):
@@ -4945,6 +5013,12 @@ def test_recovery_reserve_ignores_another_tasks_exhausted_blocker(monkeypatch, t
         "recoveryNonce": "nonce-2",
     }
     reserve_calls = []
+    parked = {
+        "key": "e/f#3",
+        "threadId": "thread-3",
+        "recoveryKind": "IMPLEMENTATION_FOLLOWUP_RESULT",
+        "parked": True,
+    }
 
     class Store:
         def quarantined_validation_followups(self):
@@ -4958,6 +5032,9 @@ def test_recovery_reserve_ignores_another_tasks_exhausted_blocker(monkeypatch, t
 
         def exhausted_recovery_blockers(self):
             return [blocker]
+
+        def acknowledged_exhausted_recoveries(self):
+            return [parked]
 
         def reserve_recovery(self, **kwargs):
             reserve_calls.append(kwargs)
@@ -4998,6 +5075,7 @@ def test_recovery_reserve_ignores_another_tasks_exhausted_blocker(monkeypatch, t
     assert listed["ok"] is True
     assert listed["recoverable"][0]["key"] == "c/d#2"
     assert listed["recoveryRetryExhausted"] == [blocker]
+    assert listed["parkedRecovery"] == [parked]
 
     reserved = MODULE.recovery_reserve(
         SimpleNamespace(
@@ -7493,7 +7571,19 @@ def test_interrupted_recovery_turn_stops_after_one_rearm(monkeypatch, tmp_path):
 
     assert rearmed == []
     assert exhausted[0]["reason"] == "RECOVERY_RETRY_EXHAUSTED"
-    assert exhausted_calls == [{"thread_id": "thread-1", "nonce": "nonce-2"}]
+    assert exhausted_calls == [
+        {
+            "thread_id": "thread-1",
+            "nonce": "nonce-2",
+            "retry_count": 2,
+            "terminal_error": {
+                "status": "interrupted",
+                "code": "turn_interrupted",
+                "turnId": "turn-2",
+                "message": "interrupted",
+            },
+        }
+    ]
 
 
 def test_new_validation_followup_is_not_blocked_by_prior_sent_recovery(tmp_path):

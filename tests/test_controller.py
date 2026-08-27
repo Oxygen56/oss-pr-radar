@@ -295,6 +295,15 @@ def test_controller_output_is_compact_and_full_evidence_stays_in_report(tmp_path
             "finalTitles": {"titles": [{"key": "a/b#3"}]},
             "publication": {"blocked": []},
             "terminalFeedbackBeforeSync": {"deferred": []},
+            "finalRecovery": {"parkedRecovery": [{"key": "a/b#4"}]},
+            "finalLocalAgentStatus": {
+                "workers": [
+                    {
+                        "runtimeHealth": {"warnings": ["DISK_WARNING_THRESHOLD"]},
+                        "workerRuntimeHealth": {"healthy": True},
+                    }
+                ]
+            },
         },
     }
 
@@ -306,6 +315,8 @@ def test_controller_output_is_compact_and_full_evidence_stays_in_report(tmp_path
     assert compact["warnings"]["validationEnvironmentBlocked"] == 1
     assert compact["warnings"]["prFollowupQuarantined"] == 1
     assert compact["warnings"]["titleUpdatesPending"] == 1
+    assert compact["warnings"]["parkedRecovery"] == 1
+    assert compact["warnings"]["diskThresholdWarning"] == 1
     assert "stages" not in compact
     assert "startupBlocker" not in compact
     assert len(str(compact)) < 1000

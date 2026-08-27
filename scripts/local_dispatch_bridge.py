@@ -7611,7 +7611,19 @@ def _rearm_interrupted_recovery_turns(
             continue
         if int(item.get("retryCount") or 0) >= 1:
             nonce = str((item.get("reservation") or {}).get("recoveryNonce") or "")
-            store.exhaust_recovery(thread_id=item["threadId"], nonce=nonce)
+            store.exhaust_recovery(
+                thread_id=item["threadId"],
+                nonce=nonce,
+                retry_count=int(item.get("retryCount") or 0) + 1,
+                terminal_error={
+                    "status": state.get("status") if isinstance(state, dict) else None,
+                    "code": state.get("code") if isinstance(state, dict) else None,
+                    "turnId": state.get("turnId") if isinstance(state, dict) else None,
+                    "message": str(state.get("message") or "")[:300]
+                    if isinstance(state, dict)
+                    else "",
+                },
+            )
             _discard_negative_task_turn_receipt(
                 delivery_kind="recovery",
                 thread_id=item["threadId"],
@@ -15530,6 +15542,8 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
     quarantined = list(quarantined_reader())
     exhausted_reader = getattr(store, "exhausted_recovery_blockers", lambda: [])
     recovery_retry_exhausted = list(exhausted_reader())
+    parked_reader = getattr(store, "acknowledged_exhausted_recoveries", lambda: [])
+    parked_recovery = list(parked_reader())
     unresolved = store.unresolved_recoveries()
     if not THREAD_DB.is_file():
         # A fresh machine may not have a Codex thread database yet.  Recovery
@@ -15559,6 +15573,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
             "unresolved": unresolved_with_recovery,
             "quarantined": quarantined,
             "recoveryRetryExhausted": recovery_retry_exhausted,
+            "parkedRecovery": parked_recovery,
         }
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
@@ -15825,6 +15840,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
         "unresolved": unresolved_with_recovery,
         "quarantined": quarantined,
         "recoveryRetryExhausted": recovery_retry_exhausted,
+        "parkedRecovery": parked_recovery,
     }
 
 
@@ -15930,6 +15946,28 @@ def recovery_abandon(args: argparse.Namespace) -> dict[str, Any]:
         "recoveryNonce": args.recovery_nonce,
         "abandoned": True,
     }
+
+
+def recovery_acknowledge(args: argparse.Namespace) -> dict[str, Any]:
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", args.reason):
+        raise RuntimeError("acknowledgement reason must be machine-readable")
+    acknowledged = ledger(args.ledger).acknowledge_exhausted_recovery(
+        thread_id=args.thread_id,
+        nonce=args.recovery_nonce,
+        reason=args.reason,
+    )
+    return {"ok": True, "acknowledged": acknowledged}
+
+
+def recovery_rearm(args: argparse.Namespace) -> dict[str, Any]:
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", args.reason):
+        raise RuntimeError("rearm reason must be machine-readable")
+    rearmed = ledger(args.ledger).rearm_acknowledged_recovery(
+        thread_id=args.thread_id,
+        nonce=args.recovery_nonce,
+        reason=args.reason,
+    )
+    return {"ok": True, "rearmed": rearmed}
 
 
 def task_context(args: argparse.Namespace) -> dict[str, Any]:
@@ -16665,6 +16703,14 @@ def main() -> int:
     recovery_abandon_parser.add_argument("--abandon-nonce", required=True)
     recovery_abandon_parser.add_argument("--reason", required=True)
     recovery_abandon_parser.add_argument("--min-age-minutes", type=int, default=5)
+    recovery_acknowledge_parser = subparsers.add_parser("recovery-acknowledge")
+    recovery_acknowledge_parser.add_argument("--thread-id", required=True)
+    recovery_acknowledge_parser.add_argument("--recovery-nonce", required=True)
+    recovery_acknowledge_parser.add_argument("--reason", required=True)
+    recovery_rearm_parser = subparsers.add_parser("recovery-rearm")
+    recovery_rearm_parser.add_argument("--thread-id", required=True)
+    recovery_rearm_parser.add_argument("--recovery-nonce", required=True)
+    recovery_rearm_parser.add_argument("--reason", required=True)
     task_turn_worker_parser = subparsers.add_parser("task-turn-worker")
     task_turn_worker_parser.add_argument(
         "--delivery-kind",
@@ -16874,6 +16920,10 @@ def main() -> int:
         result = recovery_commit(args)
     elif args.operation == "recovery-abandon":
         result = recovery_abandon(args)
+    elif args.operation == "recovery-acknowledge":
+        result = recovery_acknowledge(args)
+    elif args.operation == "recovery-rearm":
+        result = recovery_rearm(args)
     elif args.operation == "task-turn-worker":
         result = task_turn_worker_entry(args)
     elif args.operation == "task-context":

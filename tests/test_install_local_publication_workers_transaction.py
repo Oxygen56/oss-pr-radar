@@ -606,6 +606,85 @@ def test_worker_status_uses_complete_runtime_state_without_cross_worker_false_al
     assert statuses[1]["workerRuntimeHealth"]["lastExitCode"] == 1
 
 
+def test_worker_status_reports_disk_warning_without_failing_loaded_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    worker_specs = specs(tmp_path)
+    _write_staged_plists(home, worker_specs)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    now = time.time()
+    (state_dir / "runtime-health.json").write_text(
+        json.dumps(
+            {
+                "workers": {
+                    "fast": {
+                        "lastSuccessAt": now - 10,
+                        "lastExitCode": 0,
+                        "consecutiveFailures": 0,
+                    },
+                    "slow": {
+                        "lastSuccessAt": now - 10,
+                        "lastExitCode": 0,
+                        "consecutiveFailures": 0,
+                    },
+                    "queue-importer": {
+                        "queueImportSuccessAt": now - 10,
+                        "queueLastExitCode": 0,
+                        "queueConsecutiveFailures": 0,
+                    },
+                },
+                "deployment": {
+                    "manifestVerified": True,
+                    "deploymentDirty": False,
+                    "releaseVersion": "r1",
+                    "policyDigest": "p1",
+                    "pendingPublicationEffects": 0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (state_dir / "slow-worker-backoff.json").write_text("{}\n", encoding="utf-8")
+    domain = "gui/4242"
+    services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
+    outputs = {service: "runs = 1\nlast exit code = 0\n" for service in services}
+    monkeypatch.setattr(
+        INSTALL, "launchctl", FakeLaunchctl(domain, services, print_outputs=outputs)
+    )
+    monkeypatch.setattr(
+        INSTALL,
+        "active_release_evidence",
+        lambda _root: {"valid": True, "releaseId": "r1", "policyDigest": "p1"},
+    )
+    monkeypatch.setattr(
+        INSTALL,
+        "disk_snapshot",
+        lambda _root: {"level": "warning", "freeBytes": 50 * 1024 * 1024 * 1024},
+    )
+    monkeypatch.setattr(INSTALL, "pending_publication_effects", lambda _path: 0)
+    monkeypatch.setattr(
+        INSTALL,
+        "pid_probe",
+        lambda *_args, **_kwargs: {"alive": False, "versionMatched": True},
+    )
+
+    statuses = [
+        INSTALL.service_status(
+            f"{domain}/{spec['Label']}",
+            plist_path(home, str(spec["Label"])),
+            spec,
+        )
+        for spec in worker_specs
+    ]
+
+    assert [status["ok"] for status in statuses] == [True, True, True]
+    assert statuses[0]["runtimeHealth"]["healthy"] is True
+    assert statuses[0]["runtimeHealth"]["issues"] == []
+    assert statuses[0]["runtimeHealth"]["warnings"] == ["DISK_WARNING_THRESHOLD"]
+
+
 def test_status_top_level_ok_aggregates_worker_health(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
