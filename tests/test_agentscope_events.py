@@ -5,6 +5,8 @@ import hashlib
 import importlib.util
 import json
 import os
+import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -48,6 +50,19 @@ def _event_worker_module():
     assert spec and spec.loader
     spec.loader.exec_module(module)
     return module
+
+
+def test_event_worker_starts_from_an_unrelated_working_directory(tmp_path):
+    script = Path(__file__).parents[1] / "scripts" / "agentscope_event_worker.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--root" in result.stdout
 
 
 def _issue(number: int, updated: str, *, pr: bool = False) -> dict:
