@@ -2271,6 +2271,39 @@
     ],
     "why": "The issue provides a clear root cause: a DeepGEMM revision regression between e21c821 and 8b1392b causes CUDA illegal memory access during CUDA graph capture on SM90/H20. The A/B test with controlled variables isolates the failure to the DeepGEMM pin, and the fix is confirmed in main and v0.28.0. This is a concrete, actionable algorithm/kernel bug with a clear validation path."
   },
+  "0a38d37860c49596ab301d245c68f465e2bdbb2541888263035c06c32709cfb6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #53522 is described as a workaround that trades assert for silent memory corruption, yet it is also listed as a potential duplicate with high semantic overlap; the issue clarifies it is insufficient."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "csrc/apis/attention.hpp",
+      "smxx_fp8_fp4_paged_mqa_logits.hpp",
+      "vllm/models/deepseek_v4/attention.py"
+    ],
+    "risks": [
+      "Potential overlap with open PR #53522 which partially addresses the metadata assert but not the kernel launch; must ensure fix covers both paths.",
+      "Requires SM12x hardware (GB10/DGX Spark) for reproduction, which may not be available in CI."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a small model with DSV4 compressed geometry (num_states=2) and run decode-shaped forward on SM12x hardware; assert no assert and no illegal memory access.",
+      "Compare logits against a CPU/float32 reference with fixed seed and tolerance to validate numerical correctness."
+    ],
+    "unknowns": [
+      "Maintainer preference among the three proposed fix directions (a, b, c) is not yet stated, but this does not block actionability as any direction can be validated."
+    ],
+    "why": "The issue provides a precise root cause: DSV4's compressed KV cache geometry (num_states=2) violates the paged MQA kernel's compile-time block_kv template constraints (32/64), causing an assert or silent memory corruption. It includes code anchors, reproduction details, and a concrete validation path via reference comparison and regression tests. The track is llm_algorithm with kernel_algorithm and numerics_quantization mechanisms, satisfying the algorithm requirement."
+  },
   "0a4ac8b4b7346ac989d82d68c9156d254bf895bbab86a139e8f3b07b67d42960": {
     "confidence": 0.7,
     "contradictions": [],
@@ -16663,6 +16696,37 @@
     "wait_reason": null,
     "why": "Issue provides a concrete, reproducible bug in the Sentry MCP attachment download path, with clear expected vs actual behavior and a likely root cause (empty body fetch). The fix is actionable and testable, and no competing PR exists."
   },
+  "4d5459db5fc3d2da81d700ea274ff50b184a07afd6e06dc8f54f94f1840df98a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #7007 has semantic overlap but does not reference the issue; direct code overlap is false."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "livekit-agents/livekit/agents/voice/avatar/_datastream_io.py",
+      "tests/test_datastream_receiver_lost_trailer.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #7007; need to compare implementations to avoid duplicate work.",
+      "Changing receiver behavior may affect healthy slow segments; need to ensure idle timeout and superseded event do not introduce regressions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the attached pytest reproduction tests/test_datastream_receiver_lost_trailer.py against current main to confirm hang, then apply fix and verify tests pass.",
+      "Run targeted unit tests for the datastream receiver and static checks (ruff check, ruff format --check)."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different implementation approach or have design constraints.",
+      "Whether PR #7007 fully covers the root cause or has gaps that need additional work."
+    ],
+    "why": "Issue provides a clear root cause (lost stream trailer blocks DataStreamAudioReceiver forever), a concrete reproduction path, and a proposed fix with code anchors. An open PR (#7007) already implements the proposed solution with tests, but it is not linked to the issue and requires review. The contribution is actionable and valuable."
+  },
   "4d6d3d938173b1f2b96c929c1b96fba3cd7d83c70e1e069edb6ae2fb779350c0": {
     "confidence": 0.7,
     "contradictions": [
@@ -18040,6 +18104,25 @@
       "Exact code location and current implementation details of the temperature exclusion list"
     ],
     "why": "The issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach rather than adding each model to an exclusion list. The root cause is a hardcoded model list in the Bedrock provider. No open PR or issue addresses this, and the issue provides a concrete reproduction."
+  },
+  "5368c6d0815fda3207392bbcedcebf1445c15ee83a0933623fe096e85c455d9a": {
+    "confidence": 0.95,
+    "contradictions": [
+      "Issue claims race condition; maintainer analysis states race window does not exist."
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [
+      "No failing test or observed listener growth provided to contradict maintainer analysis."
+    ],
+    "why": "The issue claims a race condition in createChildAbortController, but the maintainer's triage analysis conclusively demonstrates that the race window does not exist in single-threaded JavaScript, and all reachable cases are already handled. The proposed fix is dead code. No reproduction or observed leak is provided."
   },
   "536ef21b5ac4985d102ae953b6dc6885f81d8b62ea89e67b5e35afac7a28f6e8": {
     "confidence": 0.85,
@@ -32709,6 +32792,35 @@
       "Maintainer design preference"
     ],
     "why": "Issue identifies a clear root cause in _get_oauth_m2m_token's URL derivation, with a concrete reproduction. However, the deterministic gate requires HUMAN_REVIEW, and open PR/related issue lookups timed out, so we cannot rule out existing work. Maintainer design preference is unconfirmed."
+  },
+  "9016d3e26dd326345c1acf4a0d902b69fae0e6713e5936ed8b79365969ae00e7": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Potential duplicate issue #2677 suggests overlap, but the issue is still actionable."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/server/zod-json-schema-compat.ts",
+      "src/server/mcp.ts"
+    ],
+    "risks": [
+      "Changing the default dialect may break clients that expect draft-07; need to consider backward compatibility or provide an opt-out."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that asserts outputSchema uses draft-2020-12 when no target is passed, using the provided repro steps with a sample McpServer tool."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to change default or add explicit target; whether duplicate issue #2677 is already being addressed."
+    ],
+    "why": "The issue provides a clear root cause (mapMiniTarget defaults to draft-7, McpServer never passes target), a concrete reproduction path, and a suggested fix with local confirmation. The evidence includes multiple independent confirmations and a potential duplicate issue #2677, but the issue is actionable and valuable."
   },
   "90182521e884f542be511482949503ccd1b2b115d61c0f144d5b7358435816bc": {
     "confidence": 0.7,
@@ -47503,6 +47615,40 @@
       "Whether maintainers prefer updating code to new TRL API or pinning old TRL."
     ],
     "why": "Issue provides a clear traceback showing PPO fails due to TRL version mismatch: code requires trl>=0.8.6,<=0.9.6 but installed trl==0.24.0. Commenter reproduces and identifies root cause: pyproject.toml allows trl>=0.18.0,<=0.24.0, while trainer.py hard-codes legacy range. This is a concrete, actionable bug in the PPO training path."
+  },
+  "d43738873bd67dd03020c07be2bbd5113fa51d4b612bb80befc0398b8030bd40": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer comment states clamp_value is constant, but reporter provides per-layer use case from StepFun and K-EXAONE models"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "megatron/core/fusions/fused_bias_swiglu.py",
+      "regression test for clamped_swiglu and clamped_swiglu_back",
+      "documentation or workaround for torch._dynamo.config.specialize_float"
+    ],
+    "risks": [
+      "Upstream PyTorch fix may change behavior; need to align with minimum supported PyTorch version",
+      "Changing clamp_value to a 0-D tensor may affect performance or numerical behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided repro_clamped_swiglu.py on CPU and CUDA to confirm the bug",
+      "Add a regression test that invokes clamped_swiglu and clamped_swiglu_back with different clamp values in sequence and asserts zero diff against eager references",
+      "Test with specialize_float=True and aot_eager to verify workaround"
+    ],
+    "unknowns": [
+      "Whether maintainers will accept the per-layer use case as a valid requirement",
+      "Exact PyTorch version where upstream fix will be available"
+    ],
+    "why": "The issue provides a concrete, reproducible bug in Megatron-LM's clamped SwiGLU under torch.compile, with a clear root cause (stale clamp_value due to Dynamo's float specialization) and a validation path via the provided reproducer. The maintainer's initial dismissal is contradicted by the reporter's concrete per-layer use case, making the issue actionable."
   },
   "d43db7b71e91bb6637185008ce0bfb1162d67cf94f99705a214982a47a284672": {
     "confidence": 0.7,
