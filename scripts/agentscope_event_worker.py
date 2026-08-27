@@ -39,6 +39,145 @@ EVENT_LANE_MANIFEST = "event-lane-manifest.json"
 EVENT_LANE_DIGEST = "event-lane-manifest.sha256"
 REPO = "agentscope-ai/agentscope"
 CENTRAL_CWD = Path("/Users/oxygen/Documents/github/agentscope")
+RECOVERY_EVENT_NAMESPACE = "agentscope"
+EVENT_RECEIPT_DIR = "agentscope_event_receipts"
+EVENT_OUTCOME_DIR = "agentscope_event_outcomes"
+
+
+def _outcome_recovery_event_id(root_event_id: str) -> str:
+    """Return one fixed-length recovery identity for an original event."""
+    digest = hashlib.sha256(str(root_event_id).encode("utf-8")).hexdigest()
+    return f"outcome-reconcile:{RECOVERY_EVENT_NAMESPACE}:{digest}"
+
+
+def _event_artifact_path(
+    root: Path,
+    directory: str,
+    event_id: str,
+    *,
+    attempt: int = 1,
+    is_recovery: bool = False,
+) -> Path:
+    """Keep every terminal recovery attempt in a distinct evidence file."""
+    identity = str(event_id)
+    if is_recovery and int(attempt) > 1:
+        identity = f"{identity}:attempt:{int(attempt)}"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return root / "state" / directory / f"{digest}.json"
+
+
+def _outcome_recovery_lineage(lane: EventLane, event_id: str) -> tuple[str, bool]:
+    """Resolve the original event across both stable and legacy recovery rows."""
+    current = str(event_id)
+    visited: set[str] = set()
+    is_recovery = False
+    with lane.connect() as db:
+        while current and current not in visited:
+            visited.add(current)
+            row = db.execute(
+                "SELECT payload_json FROM event_lane_events WHERE event_id=?",
+                (current,),
+            ).fetchone()
+            if row is None:
+                return current, is_recovery
+            try:
+                event = json.loads(row["payload_json"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return current, is_recovery
+            if event.get("kind") != "outcome_reconcile":
+                return current, is_recovery
+            is_recovery = True
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            root_event_id = str(
+                event.get("rootEventId") or payload.get("rootEventId") or ""
+            )
+            if root_event_id:
+                return root_event_id, True
+            source_event_id = str(
+                event.get("eventIdSource") or payload.get("eventId") or ""
+            )
+            if not source_event_id:
+                return current, True
+            current = source_event_id
+    return current or str(event_id), is_recovery
+
+
+def _retry_or_exhaust_outcome_recovery(
+    lane: EventLane,
+    *,
+    event_id: str,
+    root_event_id: str,
+    outcome: dict,
+) -> str:
+    """Reuse one recovery row until its existing EventLane budget is spent."""
+    now = datetime.now(UTC).timestamp()
+    with lane.writer() as db:
+        row = db.execute(
+            "SELECT attempts,payload_json FROM event_lane_events WHERE event_id=?",
+            (str(event_id),),
+        ).fetchone()
+        if row is None:
+            return "missing"
+        try:
+            event = json.loads(row["payload_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            event = {"eventId": str(event_id), "kind": "outcome_reconcile"}
+        event["rootEventId"] = str(root_event_id)
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        payload.update({
+            "eventId": str(root_event_id),
+            "rootEventId": str(root_event_id),
+            "outcome": outcome,
+            "reason": "invalid_or_missing_outcome",
+        })
+        event["payload"] = payload
+        attempts = int(row["attempts"] or 0)
+        if attempts < lane.max_attempts:
+            event.pop("terminalReason", None)
+            event.pop("recoveryExhausted", None)
+            db.execute(
+                "UPDATE event_lane_events SET status='pending',payload_json=?,"
+                "delivered_at=NULL,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+                "WHERE event_id=?",
+                (json.dumps(event, sort_keys=True), str(event_id)),
+            )
+            return "retry"
+
+        event["terminalReason"] = "outcome_recovery_attempts_exhausted"
+        event["recoveryExhausted"] = True
+        event["recoveryAttempts"] = attempts
+        db.execute(
+            "UPDATE event_lane_events SET status='needs_reconcile',payload_json=?,"
+            "delivered_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+            "WHERE event_id=?",
+            (json.dumps(event, sort_keys=True), now, str(event_id)),
+        )
+        turn = db.execute(
+            "SELECT event_key,turn_id,receipt_json FROM event_lane_turns WHERE event_id=?",
+            (str(event_id),),
+        ).fetchone()
+        if turn is not None:
+            try:
+                receipt = json.loads(turn["receipt_json"] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                receipt = {}
+            receipt.update({
+                "terminalReason": "outcome_recovery_attempts_exhausted",
+                "rootEventId": str(root_event_id),
+                "recoveryAttempts": attempts,
+            })
+            receipt_json = json.dumps(receipt, sort_keys=True)
+            db.execute(
+                "UPDATE event_lane_turns SET status='needs_reconcile',receipt_json=? "
+                "WHERE event_id=?",
+                (receipt_json, str(event_id)),
+            )
+            db.execute(
+                "UPDATE event_lane_threads SET status='needs_reconcile',receipt_json=? "
+                "WHERE event_key=? AND turn_id=?",
+                (receipt_json, str(turn["event_key"]), str(turn["turn_id"] or "")),
+            )
+        return "exhausted"
 
 
 def _active_task_config(root: Path, repo: str) -> dict[str, str]:
@@ -165,7 +304,11 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
         lane.defer_event(event_id, lease_token=str(event.get("leaseToken") or ""))
         raise RuntimeError("central_task_busy")
     binding = {"thread_id": central_thread}
+    recovery_attempt = int(event.get("attempts") or 1)
+    is_recovery = event.get("kind") == "outcome_reconcile"
     client_message_id = f"oss-pr-radar:agentscope-event:{event_id}"
+    if is_recovery and recovery_attempt > 1:
+        client_message_id += f":attempt:{recovery_attempt}"
     lane.reserve_handler_turn(key, event_id, client_message_id)
     if target.get("kind") in {"pr_followup", "pr_watch"}:
         prompt = (
@@ -194,11 +337,19 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
             "If eligible, reproduce the behavior, implement the complete issue, run target validation, and prepare the authorized PR. "
             "Before terminal completion, write exactly one machine outcome: no_action, claimed_or_pr, or design_wait with publicKey and wait timestamps."
         )
-    receipt = root / "state" / "agentscope_event_receipts" / (
-        hashlib.sha256(event_id.encode("utf-8")).hexdigest() + ".json"
+    receipt = _event_artifact_path(
+        root,
+        EVENT_RECEIPT_DIR,
+        event_id,
+        attempt=recovery_attempt,
+        is_recovery=is_recovery,
     )
-    outcome_path = root / "state" / "agentscope_event_outcomes" / (
-        hashlib.sha256(event_id.encode("utf-8")).hexdigest() + ".json"
+    outcome_path = _event_artifact_path(
+        root,
+        EVENT_OUTCOME_DIR,
+        event_id,
+        attempt=recovery_attempt,
+        is_recovery=is_recovery,
     )
     outcome_instruction = (
         f" Write the terminal outcome JSON to {outcome_path}: schemaVersion=agentscope_event_outcome_v1, "
@@ -288,12 +439,23 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
     updated = 0
     with lane.connect() as db:
         rows = db.execute(
-            "SELECT event_id,event_key,thread_id,turn_id,receipt_json FROM event_lane_turns "
-            "WHERE status IN ('reserved','started')"
+            "SELECT t.event_id,t.event_key,t.thread_id,t.turn_id,t.receipt_json,"
+            "e.attempts,e.payload_json AS event_payload_json FROM event_lane_turns t "
+            "JOIN event_lane_events e ON e.event_id=t.event_id "
+            "WHERE t.status IN ('reserved','started')"
         ).fetchall()
     for row in rows:
-        receipt = root / "state" / "agentscope_event_receipts" / (
-            hashlib.sha256(str(row["event_id"]).encode("utf-8")).hexdigest() + ".json"
+        event = {}
+        try:
+            event = json.loads(row["event_payload_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+        receipt = _event_artifact_path(
+            root,
+            EVENT_RECEIPT_DIR,
+            str(row["event_id"]),
+            attempt=int(row["attempts"] or 1),
+            is_recovery=event.get("kind") == "outcome_reconcile",
         )
         try:
             value = json.loads(receipt.read_text(encoding="utf-8"))
@@ -315,19 +477,36 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
         outcome = value.get("outcome") if isinstance(value.get("outcome"), dict) else {}
         outcome_state = str(outcome.get("state") or "")
         if outcome.get("error") or not outcome_state:
+            root_event_id, is_recovery = _outcome_recovery_lineage(
+                lane, str(row["event_id"])
+            )
             lane.register_public_work(str(row["event_key"]), status="active", source="outcome-invalid")
             lane.bind_handler_turn(
                 str(row["event_key"]), str(row["event_id"]), str(row["thread_id"]),
                 str(row["turn_id"]), value, status="needs_reconcile",
             )
-            lane.append({
-                "eventId": f"outcome-reconcile:{row['event_id']}:{hashlib.sha256(json.dumps(outcome, sort_keys=True).encode()).hexdigest()[:16]}",
-                "kind": "outcome_reconcile", "eventKey": str(row["event_key"]),
-                "eventIdSource": str(row["event_id"]), "payload": {
-                    "eventId": str(row["event_id"]), "publicKey": str(row["event_key"]),
-                    "outcome": outcome, "reason": "invalid_or_missing_outcome",
-                },
-            }, priority=250)
+            if is_recovery:
+                _retry_or_exhaust_outcome_recovery(
+                    lane,
+                    event_id=str(row["event_id"]),
+                    root_event_id=root_event_id,
+                    outcome=outcome,
+                )
+            else:
+                lane.append({
+                    "eventId": _outcome_recovery_event_id(root_event_id),
+                    "kind": "outcome_reconcile",
+                    "eventKey": str(row["event_key"]),
+                    "rootEventId": root_event_id,
+                    "eventIdSource": str(row["event_id"]),
+                    "payload": {
+                        "eventId": root_event_id,
+                        "rootEventId": root_event_id,
+                        "publicKey": str(row["event_key"]),
+                        "outcome": outcome,
+                        "reason": "invalid_or_missing_outcome",
+                    },
+                }, priority=250)
         elif outcome_state == "design_wait":
             lane.mark_design_wait(str(row["event_id"]))
             until = outcome.get("waitUntil")

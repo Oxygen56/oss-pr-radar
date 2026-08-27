@@ -853,14 +853,16 @@ def test_invalid_outcome_creates_durable_recovery_event(tmp_path, monkeypatch):
     receipt.write_text(json.dumps({"ok": True, "turnStatus": "completed", "threadId": "thread-1", "turnId": "turn-1", "outcome": {"error": "OUTCOME_MISSING_OR_INVALID"}}))
     assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
     with lane.connect() as db:
-        row = db.execute("SELECT payload_json FROM event_lane_events WHERE event_id LIKE 'outcome-reconcile:%'").fetchone()
-    assert json.loads(row["payload_json"])["kind"] == "outcome_reconcile"
-    recovery_event = {
-        "eventId": "outcome-reconcile:event-invalid",
-        "eventKey": "agentscope-ai/agentscope#1",
-        "kind": "outcome_reconcile",
-    }
-    lane.append(recovery_event)
+        row = db.execute(
+            "SELECT event_id,payload_json FROM event_lane_events "
+            "WHERE event_id LIKE 'outcome-reconcile:%'"
+        ).fetchone()
+    recovery_event = json.loads(row["payload_json"])
+    recovery_id = worker._outcome_recovery_event_id(event_id)
+    assert row["event_id"] == recovery_id
+    assert recovery_event["kind"] == "outcome_reconcile"
+    assert recovery_event["rootEventId"] == event_id
+    assert len(recovery_id) < 120
     worker.issue_handler_delivery(tmp_path, lane, recovery_event)
     extra = calls[0][2]["extra_args"]
     assert extra[extra.index("--thread-id") + 1] == central
@@ -868,9 +870,161 @@ def test_invalid_outcome_creates_durable_recovery_event(tmp_path, monkeypatch):
     with lane.connect() as db:
         status = db.execute(
             "SELECT status FROM event_lane_events WHERE event_id=?",
-            ("outcome-reconcile:event-invalid",),
+            (recovery_id,),
         ).fetchone()["status"]
     assert status != "delivered"
+
+
+def test_invalid_recovery_reuses_one_event_and_exhausts_existing_attempt_budget(tmp_path):
+    worker = _event_worker_module()
+    lane = EventLane(
+        tmp_path / "state" / "agentscope-events.sqlite3",
+        max_attempts=3,
+    )
+    event_key = "agentscope-ai/agentscope#1"
+    root_event_id = "event-invalid-" + ("x" * 2048)
+    lane.append({
+        "eventId": root_event_id,
+        "eventKey": event_key,
+        "repo": "agentscope-ai/agentscope",
+        "number": 1,
+    })
+    claimed = lane.claim(owner="event-lane")[0]
+    lane.reserve_handler_turn(event_key, root_event_id, "client:root")
+    lane.bind_handler_turn(
+        event_key, root_event_id, "thread-1", "turn-root", {}, status="started"
+    )
+    assert lane.ack(
+        root_event_id,
+        lease_token=str(claimed["leaseToken"]),
+        owner="event-lane",
+    )
+    receipt_dir = tmp_path / "state" / "agentscope_event_receipts"
+    receipt_dir.mkdir(parents=True)
+    invalid_outcome = {"error": "OUTCOME_MISSING_OR_INVALID"}
+    root_receipt = receipt_dir / (
+        hashlib.sha256(root_event_id.encode()).hexdigest() + ".json"
+    )
+    root_receipt.write_text(json.dumps({
+        "ok": True,
+        "turnStatus": "completed",
+        "threadId": "thread-1",
+        "turnId": "turn-root",
+        "outcome": invalid_outcome,
+    }))
+    assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
+
+    recovery_id = worker._outcome_recovery_event_id(root_event_id)
+    assert len(recovery_id) < 120
+    recovery_receipts = []
+    for attempt in range(1, lane.max_attempts + 1):
+        recovery = lane.claim(owner="event-lane")[0]
+        assert recovery["eventId"] == recovery_id
+        assert recovery["attempts"] == attempt
+        lane.reserve_handler_turn(event_key, recovery_id, f"client:recovery:{attempt}")
+        lane.bind_handler_turn(
+            event_key,
+            recovery_id,
+            "thread-1",
+            f"turn-recovery-{attempt}",
+            {},
+            status="started",
+        )
+        assert lane.ack(
+            recovery_id,
+            lease_token=str(recovery["leaseToken"]),
+            owner="event-lane",
+        )
+        recovery_receipt = worker._event_artifact_path(
+            tmp_path,
+            worker.EVENT_RECEIPT_DIR,
+            recovery_id,
+            attempt=attempt,
+            is_recovery=True,
+        )
+        recovery_receipts.append(recovery_receipt)
+        recovery_receipt.parent.mkdir(parents=True, exist_ok=True)
+        recovery_receipt.write_text(json.dumps({
+            "ok": True,
+            "turnStatus": "completed",
+            "threadId": "thread-1",
+            "turnId": f"turn-recovery-{attempt}",
+            "outcome": invalid_outcome,
+        }))
+        assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
+        with lane.connect() as db:
+            row = db.execute(
+                "SELECT status,attempts,payload_json FROM event_lane_events "
+                "WHERE event_id=?",
+                (recovery_id,),
+            ).fetchone()
+            recovery_count = db.execute(
+                "SELECT count(*) FROM event_lane_events "
+                "WHERE event_id LIKE 'outcome-reconcile:%'"
+            ).fetchone()[0]
+        assert row["attempts"] == attempt
+        assert recovery_count == 1
+        if attempt < lane.max_attempts:
+            assert row["status"] == "pending"
+        else:
+            payload = json.loads(row["payload_json"])
+            assert row["status"] == "needs_reconcile"
+            assert payload["terminalReason"] == "outcome_recovery_attempts_exhausted"
+            assert payload["recoveryExhausted"] is True
+
+    assert lane.claim(owner="event-lane") == []
+    assert len(set(recovery_receipts)) == lane.max_attempts
+    assert all(path.is_file() for path in recovery_receipts)
+
+
+def test_recovery_retry_uses_distinct_bridge_identity_and_evidence_paths(
+    tmp_path, monkeypatch
+):
+    worker = _event_worker_module()
+    _configure_manifest(worker, tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(worker, "run_bridge", lambda _root, _operation, **kwargs: (
+        calls.append(kwargs)
+        or {"ok": True, "threadId": CENTRAL_THREAD, "turnId": "turn-recovery-2"}
+    ))
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    root_event_id = "event-invalid"
+    recovery_id = worker._outcome_recovery_event_id(root_event_id)
+    event = {
+        "eventId": recovery_id,
+        "eventKey": "agentscope-ai/agentscope#1",
+        "kind": "outcome_reconcile",
+        "rootEventId": root_event_id,
+        "attempts": 2,
+    }
+    lane.append(event, priority=250)
+    worker.issue_handler_delivery(tmp_path, lane, event)
+    extra = calls[0]["extra_args"]
+    client_id = extra[extra.index("--client-user-message-id") + 1]
+    receipt = Path(extra[extra.index("--receipt") + 1])
+    outcome = Path(extra[extra.index("--outcome-receipt") + 1])
+    assert client_id.endswith(":attempt:2")
+    assert receipt == worker._event_artifact_path(
+        tmp_path,
+        worker.EVENT_RECEIPT_DIR,
+        recovery_id,
+        attempt=2,
+        is_recovery=True,
+    )
+    assert outcome == worker._event_artifact_path(
+        tmp_path,
+        worker.EVENT_OUTCOME_DIR,
+        recovery_id,
+        attempt=2,
+        is_recovery=True,
+    )
+    assert receipt != worker._event_artifact_path(
+        tmp_path,
+        worker.EVENT_RECEIPT_DIR,
+        recovery_id,
+        attempt=1,
+        is_recovery=True,
+    )
 
 
 def test_foreign_pr_is_not_an_event_source_and_closed_issue_is_noop(tmp_path):
