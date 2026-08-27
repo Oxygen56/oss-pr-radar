@@ -49,18 +49,12 @@ STATE_DRIFT_RECHECK_EVENT = "STATE_DRIFT_RECHECK_REQUIRED"
 PR_UPDATE_REARM_REASONS = {"EXISTING_PR_HEAD_DRIFT", "NON_FAST_FORWARD_PR_UPDATE"}
 PR_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
 ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
+PROBE_RECEIPT_VOLATILE_FIELDS = frozenset(
+    {"observedAt", "expiresAt", "receiptDigest", "signature"}
+)
 
 
-def _audited_probe_code_paths(
-    payload: dict[str, Any], audit_payload: dict[str, Any], issue_url: str
-) -> list[str] | None:
-    """Return the exact repository paths authenticated by the live audit.
-
-    Scanner path plans may still contain unresolved basename candidates. Once
-    the live repository probe has resolved and authenticated concrete blobs,
-    task contexts must not fall back to the broader pre-audit plan.
-    """
-
+def _live_audit_probe_receipt(audit_payload: dict[str, Any]) -> dict[str, Any] | None:
     live_audit = audit_payload.get("liveAudit")
     evidence = live_audit.get("evidence") if isinstance(live_audit, dict) else None
     if not isinstance(evidence, dict):
@@ -76,6 +70,32 @@ def _audited_probe_code_paths(
     receipt = camel_receipt if camel_present else snake_receipt
     if not isinstance(receipt, dict):
         raise LedgerError("live audit repository probe receipt is invalid")
+    return receipt
+
+
+def _probe_receipt_binding_digest(receipt: dict[str, Any]) -> str:
+    return sha256_json(
+        {
+            key: value
+            for key, value in receipt.items()
+            if key not in PROBE_RECEIPT_VOLATILE_FIELDS
+        }
+    )
+
+
+def _audited_probe_code_paths(
+    payload: dict[str, Any], audit_payload: dict[str, Any], issue_url: str
+) -> list[str] | None:
+    """Return the exact repository paths authenticated by the live audit.
+
+    Scanner path plans may still contain unresolved basename candidates. Once
+    the live repository probe has resolved and authenticated concrete blobs,
+    task contexts must not fall back to the broader pre-audit plan.
+    """
+
+    receipt = _live_audit_probe_receipt(audit_payload)
+    if receipt is None:
+        return None
     match = ISSUE_URL_RE.fullmatch(issue_url)
     if match is None:
         raise LedgerError("live audit issue URL is invalid")
@@ -1636,6 +1656,227 @@ class RadarLedger:
                     payload["preTaskEvidence"] = dict(pre_task) | {
                         "codePathsPlan": normalized_paths
                     }
+            connection.execute(
+                "UPDATE intents SET payload_json=?,updated_at=? WHERE intent_id=?",
+                (
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                    iso_z(datetime.now(UTC)),
+                    intent_id,
+                ),
+            )
+            return True
+
+    def record_live_audit_pass_and_bind_probe(
+        self,
+        intent_id: str,
+        *,
+        evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Atomically persist one live audit and bind its canonical probe receipt."""
+
+        evidence_digest = str(evidence.get("evidenceDigest") or "")
+        if not evidence_digest:
+            raise LedgerError("live audit evidence digest is missing")
+        authorization = evidence.get("authorization")
+        if not isinstance(authorization, dict) or authorization.get("status") != "ALLOW":
+            raise LedgerError("live audit authorization is not ALLOW")
+        authorization_digest = str(
+            authorization.get("evidence_digest") or authorization.get("evidenceDigest") or ""
+        )
+        if authorization_digest != evidence_digest:
+            raise LedgerError("live audit authorization digest does not match evidence")
+        incoming_receipt = _live_audit_probe_receipt(evidence)
+        if incoming_receipt is None:
+            raise LedgerError("live audit repository probe receipt is missing")
+        if incoming_receipt.get("probeLevel") != PATHS_VERIFIED:
+            raise LedgerError("live audit repository probe must be PATHS_VERIFIED")
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT i.opportunity_key,i.payload_json,i.status,i.lease_until,
+                          o.issue_url,o.stage
+                   FROM intents i JOIN opportunities o ON o.key=i.opportunity_key
+                   WHERE i.intent_id=?""",
+                (intent_id,),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("live audit intent is not registered")
+            claimable = row["status"] == "PENDING" or (
+                row["status"] == "LEASED"
+                and row["lease_until"]
+                and parse_time(str(row["lease_until"])) <= datetime.now(UTC)
+            )
+            if not claimable or row["stage"] not in {"QUALIFIED", "AUDIT_PASS", "LEASED"}:
+                raise LedgerError("live audit intent is not claimable")
+            payload = json.loads(row["payload_json"])
+            issue_url = str(row["issue_url"] or "")
+            issue_match = ISSUE_URL_RE.fullmatch(issue_url)
+            if issue_match is None:
+                raise LedgerError("live audit issue URL is invalid")
+            code_paths = _audited_probe_code_paths(payload, evidence, issue_url)
+            if not code_paths:
+                raise LedgerError("live audit repository probe binding is incomplete")
+            pre_task = payload.get("preTaskEvidence")
+            pre_task = pre_task if isinstance(pre_task, dict) else {}
+            selected_base = str(payload.get("selectedBaseSha") or pre_task.get("baseSha") or "")
+            if not verify_probe_receipt(
+                incoming_receipt,
+                repo=issue_match.group(1),
+                base_sha=selected_base,
+                code_paths=code_paths,
+                required_level=PATHS_VERIFIED,
+            ):
+                raise LedgerError("live audit repository probe receipt is not fresh")
+            binding_digest = _probe_receipt_binding_digest(incoming_receipt)
+            dedupe_key = f"{intent_id}:{evidence_digest}:{binding_digest}:live-audit-v2"
+            event = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=? AND event_type='AUDIT_PASS' AND dedupe_key=?""",
+                (row["opportunity_key"], dedupe_key),
+            ).fetchone()
+            if event is None:
+                connection.execute(
+                    """UPDATE opportunities SET stage='AUDIT_PASS',terminal_reason=NULL,
+                       updated_at=? WHERE key=?""",
+                    (now, row["opportunity_key"]),
+                )
+                self._event(
+                    connection,
+                    str(row["opportunity_key"]),
+                    "AUDIT_PASS",
+                    dedupe_key,
+                    evidence,
+                    now,
+                )
+                event = connection.execute(
+                    """SELECT payload_json FROM events
+                       WHERE opportunity_key=? AND event_type='AUDIT_PASS' AND dedupe_key=?""",
+                    (row["opportunity_key"], dedupe_key),
+                ).fetchone()
+            if event is None:
+                raise LedgerError("canonical live audit receipt is unavailable")
+            canonical_evidence = json.loads(event["payload_json"])
+            canonical_receipt = _live_audit_probe_receipt(canonical_evidence)
+            if canonical_receipt is None:
+                raise LedgerError("canonical live audit repository probe receipt is missing")
+            canonical_paths = _audited_probe_code_paths(payload, canonical_evidence, issue_url)
+            if (
+                not canonical_paths
+                or _probe_receipt_binding_digest(canonical_receipt) != binding_digest
+            ):
+                raise LedgerError("canonical live audit repository probe binding changed")
+            probe_level = PATHS_VERIFIED
+            task_stage = "REPRODUCTION_REQUIRED"
+            payload["probeLevel"] = probe_level
+            payload["taskStage"] = task_stage
+            payload["probeReceiptDigest"] = str(canonical_receipt.get("receiptDigest") or "")
+            normalized_paths = sorted(
+                {str(path) for path in canonical_paths if str(path).strip()}
+            )
+            payload["codePaths"] = normalized_paths
+            pre_task = payload.get("preTaskEvidence")
+            if isinstance(pre_task, dict):
+                payload["preTaskEvidence"] = dict(pre_task) | {
+                    "codePathsPlan": normalized_paths
+                }
+            connection.execute(
+                "UPDATE intents SET payload_json=?,updated_at=? WHERE intent_id=?",
+                (
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                    now,
+                    intent_id,
+                ),
+            )
+            return {
+                "dedupeKey": dedupe_key,
+                "probeLevel": probe_level,
+                "taskStage": task_stage,
+                "receiptDigest": payload["probeReceiptDigest"],
+                "codePaths": normalized_paths,
+            }
+
+    def reconcile_intent_probe_audit_binding(
+        self,
+        *,
+        intent_id: str,
+        issue_url: str,
+        thread_id: str,
+        worktree_path: str,
+        expected_base_sha: str,
+    ) -> bool:
+        """Repair only an exact semantic match to an intent-bound historical audit."""
+
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT o.issue_url,i.thread_id,i.worktree_path,i.payload_json
+                   FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
+                   WHERE i.intent_id=? AND o.issue_url=? AND i.thread_id=?""",
+                (intent_id, issue_url, thread_id),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("task audit identity is not registered")
+            registered_worktree = str(row["worktree_path"] or "")
+            if not registered_worktree or Path(registered_worktree).resolve() != Path(
+                worktree_path
+            ).resolve():
+                raise LedgerError("task audit worktree does not match the result context")
+            payload = json.loads(row["payload_json"])
+            pre_task = payload.get("preTaskEvidence")
+            pre_task = pre_task if isinstance(pre_task, dict) else {}
+            selected_base = str(payload.get("selectedBaseSha") or pre_task.get("baseSha") or "")
+            if not expected_base_sha or selected_base != expected_base_sha:
+                raise LedgerError("task audit selected base does not match the result context")
+            expected_digest = str(payload.get("probeReceiptDigest") or "")
+            expected_level = str(payload.get("probeLevel") or "UNVERIFIED")
+            expected_paths = sorted(
+                {str(path) for path in (payload.get("codePaths") or []) if str(path).strip()}
+            )
+            if not expected_digest:
+                return False
+            all_rows = connection.execute(
+                """SELECT payload_json,dedupe_key,id FROM events
+                   WHERE opportunity_key=(
+                     SELECT opportunity_key FROM intents WHERE intent_id=?
+                   ) AND event_type IN ('AUDIT_PASS','AUDIT_SNAPSHOT')
+                   ORDER BY id DESC""",
+                (intent_id,),
+            ).fetchall()
+            for audit_row in all_rows:
+                audit_payload = json.loads(audit_row["payload_json"])
+                receipt = _live_audit_probe_receipt(audit_payload)
+                if receipt is None or str(receipt.get("receiptDigest") or "") != expected_digest:
+                    continue
+                _audited_probe_code_paths(payload, audit_payload, issue_url)
+                return False
+            rows = [
+                audit_row
+                for audit_row in all_rows
+                if str(audit_row["dedupe_key"] or "").startswith(f"{intent_id}:")
+            ]
+            compatible: list[tuple[sqlite3.Row, dict[str, Any], str]] = []
+            for audit_row in rows:
+                audit_payload = json.loads(audit_row["payload_json"])
+                receipt = _live_audit_probe_receipt(audit_payload)
+                if receipt is None:
+                    continue
+                paths = _audited_probe_code_paths(payload, audit_payload, issue_url)
+                if (
+                    sorted(paths or []) != expected_paths
+                    or str(receipt.get("probeLevel") or "UNVERIFIED") != expected_level
+                ):
+                    continue
+                receipt_digest = str(receipt.get("receiptDigest") or "")
+                if receipt_digest == expected_digest:
+                    return False
+                compatible.append(
+                    (audit_row, receipt, _probe_receipt_binding_digest(receipt))
+                )
+            if not compatible:
+                raise LedgerError("task audit repository probe receipt digest is unavailable")
+            if len({binding for _, _, binding in compatible}) != 1:
+                raise LedgerError("task audit repository probe binding is ambiguous")
+            canonical_receipt = compatible[0][1]
+            payload["probeReceiptDigest"] = str(canonical_receipt["receiptDigest"])
             connection.execute(
                 "UPDATE intents SET payload_json=?,updated_at=? WHERE intent_id=?",
                 (

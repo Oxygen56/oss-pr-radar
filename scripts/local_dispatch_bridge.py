@@ -4149,24 +4149,31 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
             "error": str(exc)[:240],
             "decision": verdict.as_dict(),
         }
-    store.record_stage(
-        intent["key"],
-        "AUDIT_PASS",
-        evidence=_audit_payload(evidence, verdict, target_base),
-        dedupe_key=f"{intent['intentId']}:{evidence.digest}:live-audit-v1",
-    )
+    audit_payload = _audit_payload(evidence, verdict, target_base)
     probe = getattr(evidence, "repo_probe_receipt", None) or {}
-    probe_level = str(probe.get("probeLevel") or "UNVERIFIED")
-    task_stage = (
-        "IMPLEMENTATION_READY" if probe_level == REPRODUCED_VALIDATED else "REPRODUCTION_REQUIRED"
-    )
-    store.update_intent_probe_metadata(
-        intent["intentId"],
-        probe_level=probe_level,
-        task_stage=task_stage,
-        receipt_digest=str(probe.get("receiptDigest") or ""),
-        code_paths=list(probe.get("codePaths") or []),
-    )
+    if probe.get("receiptDigest"):
+        binding = store.record_live_audit_pass_and_bind_probe(
+            intent["intentId"],
+            evidence=audit_payload,
+        )
+        probe_level = str(binding["probeLevel"])
+        task_stage = str(binding["taskStage"])
+    else:
+        store.record_stage(
+            intent["key"],
+            "AUDIT_PASS",
+            evidence=audit_payload,
+            dedupe_key=f"{intent['intentId']}:{evidence.digest}:live-audit-v1",
+        )
+        probe_level = "UNVERIFIED"
+        task_stage = "REPRODUCTION_REQUIRED"
+        store.update_intent_probe_metadata(
+            intent["intentId"],
+            probe_level=probe_level,
+            task_stage=task_stage,
+            receipt_digest="",
+            code_paths=list(probe.get("codePaths") or []),
+        )
     if intent.get("mode") == "shadow":
         store.observe_shadow(
             intent["intentId"],
@@ -14165,6 +14172,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         or managed_candidate.get("selectedBaseSha")
                         or (managed_candidate.get("preTaskEvidence") or {}).get("baseSha")
                         or ""
+                    )
+                    store.reconcile_intent_probe_audit_binding(
+                        intent_id=str(candidate.get("intentId") or ""),
+                        issue_url=str(candidate["issueUrl"]),
+                        thread_id=str(candidate["threadId"]),
+                        worktree_path=str(candidate["worktreePath"]),
+                        expected_base_sha=selected_base,
                     )
                     audited_code_paths = store.audited_probe_code_paths(
                         intent_id=str(candidate.get("intentId") or ""),
