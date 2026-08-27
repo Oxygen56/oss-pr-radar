@@ -11405,11 +11405,13 @@ def _bind_published_pr_authority_fixture(
     *,
     managed_state: str = "OPEN",
     reservation_opportunity_key: str = "a/b#1",
+    reservation_head_sha: str | None = None,
     explicit_pr_followup: bool = False,
     degrade_stage: bool = True,
 ) -> tuple[ManagedLedger, dict, str]:
     value = json.loads(result_path.read_text(encoding="utf-8"))
     head_sha = str(value["reproductionReceipt"]["commitSha"])
+    publication_head_sha = reservation_head_sha or head_sha
     branch = str(value["branch"])
     pr_url = "https://github.com/a/b/pull/9"
     now = iso_z(datetime.now(UTC))
@@ -11465,7 +11467,7 @@ def _bind_published_pr_authority_fixture(
         request_id="managed-published-authority-request",
         repo="a/b",
         head_ref=branch,
-        head_sha=head_sha,
+        head_sha=publication_head_sha,
         opportunity_key=reservation_opportunity_key,
         idempotency_key="managed-published-authority-reservation",
     )
@@ -11474,7 +11476,7 @@ def _bind_published_pr_authority_fixture(
         owner="a",
         repo="b",
         number=9,
-        head_sha=head_sha,
+        head_sha=publication_head_sha,
         pr_url=pr_url,
         auto_created=True,
         source_kind="MANAGED_PUBLICATION_RECEIPT",
@@ -11483,7 +11485,7 @@ def _bind_published_pr_authority_fixture(
         opportunity_key=reservation_opportunity_key,
         event_idempotency_key="managed-published-authority-receipt",
     )
-    if managed_state != "OPEN":
+    if managed_state != "OPEN" or publication_head_sha != head_sha:
         managed.upsert_pr(
             pr_key="a/b#9",
             owner="a",
@@ -11579,6 +11581,83 @@ def test_ingest_keeps_reservation_bound_published_pr_authoritative(
             == 1
         )
     assert managed.read_task("intent-1") == task_before
+
+
+def test_ingest_keeps_reconciled_current_pr_head_authoritative(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("minimal_fix_verified", "relevant_tests_green"),
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    current_head = str(value["reproductionReceipt"]["commitSha"])
+    reservation_head = "d" * 40
+    managed, degraded_context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        reservation_head_sha=reservation_head,
+    )
+
+    assert degraded_context["publicationReceipt"]["commitSha"] == current_head
+    with managed._connection() as connection:
+        reservation = connection.execute(
+            "SELECT head_sha FROM managed_publication_reservations"
+        ).fetchone()
+        current_pr = connection.execute("SELECT head_sha FROM managed_prs").fetchone()
+    assert reservation["head_sha"] == reservation_head
+    assert current_pr["head_sha"] == current_head
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["ingested"] == []
+    assert result["publicationRequests"] == []
+    assert result["ignored"] == [
+        {"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}
+    ]
+    restored = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert restored["stage"] == "PR_OPEN"
+    assert restored["publicationReceipt"]["prUrl"] == pr_url
+    with managed._connection() as connection:
+        authority_event = connection.execute(
+            """SELECT provenance_json FROM managed_lifecycle_events
+               WHERE event_type='MANAGED_PUBLISHED_PR_AUTHORITATIVE'
+                 AND opportunity_key='a/b#1'"""
+        ).fetchone()
+    authority_provenance = json.loads(authority_event["provenance_json"])
+    assert authority_provenance["authorityAnchor"] == "CURRENT_PR_HEAD"
+    assert authority_provenance["publicationHeadSha"] == reservation_head
+    assert authority_provenance["receiptHeadSha"] == current_head
+    assert authority_provenance["currentPrHeadSha"] == current_head
+
+
+def test_published_pr_authority_rejects_unbound_receipt_head(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        reservation_head_sha="d" * 40,
+    )
+
+    assert (
+        managed.published_pr_authority_for_opportunity(
+            "a/b#1",
+            pr_url=pr_url,
+            receipt_head_sha="f" * 40,
+        )
+        is None
+    )
+    assert (
+        managed.published_pr_authority_for_opportunity(
+            "a/b#1",
+            pr_url="https://github.com/a/b/pull/10",
+            receipt_head_sha="d" * 40,
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize("include_result_receipt", [True, False])
@@ -12061,6 +12140,14 @@ def test_published_pr_authority_requires_exact_opportunity_reservation(tmp_path)
             "a/b#1",
             pr_url=pr_url,
             publication_head_sha=context["publicationReceipt"]["commitSha"],
+        )
+        is None
+    )
+    assert (
+        managed.published_pr_authority_for_opportunity(
+            "a/b#1",
+            pr_url=pr_url,
+            receipt_head_sha=context["publicationReceipt"]["commitSha"],
         )
         is None
     )

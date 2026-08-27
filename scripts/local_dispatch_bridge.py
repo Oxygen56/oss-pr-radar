@@ -13359,10 +13359,10 @@ def _managed_published_pr_authority(
     pr_url = str(receipt.get("prUrl") or "")
     publication_head_sha = str(receipt.get("commitSha") or "")
     try:
-        published_pr = managed_ledger.published_pr_for_opportunity(
+        published_pr = managed_ledger.published_pr_authority_for_opportunity(
             str(candidate["key"]),
             pr_url=pr_url,
-            publication_head_sha=publication_head_sha,
+            receipt_head_sha=publication_head_sha,
         )
     except ValueError:
         return None
@@ -13451,6 +13451,9 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 value=value,
             )
             if published_pr is not None:
+                publication_receipt = context.get("publicationReceipt")
+                assert isinstance(publication_receipt, dict)
+                receipt_head_sha = str(publication_receipt["commitSha"])
                 previous_stage = str(candidate["stage"])
                 restored_stage = _preserved_published_stage(
                     previous_stage, str(published_pr["state"])
@@ -13503,6 +13506,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     provenance={
                         "reservationKey": published_pr["reservation_key"],
                         "publicationHeadSha": published_pr["publication_head_sha"],
+                        "receiptHeadSha": receipt_head_sha,
+                        "currentPrHeadSha": published_pr["head_sha"],
+                        "authorityAnchor": (
+                            "RESERVATION_HEAD"
+                            if receipt_head_sha == published_pr["publication_head_sha"]
+                            else "CURRENT_PR_HEAD"
+                        ),
                         "resultFileDigest": result_file_digest,
                     },
                     payload={

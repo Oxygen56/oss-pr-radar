@@ -411,3 +411,11 @@ def test_active_publication_reservation_is_not_published_authority(tmp_path):
         )
         is None
     )
+    assert (
+        ledger.published_pr_authority_for_opportunity(
+            "owner/repo#1",
+            pr_url=pr_url,
+            receipt_head_sha=publication_head,
+        )
+        is None
+    )
