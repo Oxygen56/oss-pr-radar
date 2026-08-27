@@ -1,8 +1,11 @@
+import json
+import ssl
+import urllib.error
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from oss_pr_radar.notifier import FeishuClient, candidate_card
+from oss_pr_radar.notifier import FeishuClient, NotificationError, candidate_card
 from oss_pr_radar.outbox import (
     build_outbox,
     latest_candidate_notification_history,
@@ -271,6 +274,83 @@ def test_feishu_uuid_is_sent(monkeypatch):
     monkeypatch.setattr(client, "_post", fake_post)
     client.send_card({"elements": []}, idempotency_key="x" * 64)
     assert calls[1][1]["uuid"] == "x" * 50
+
+
+def test_feishu_retries_exact_tls_eof_with_verified_tls12(monkeypatch):
+    calls = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps({"code": 0}).encode()
+
+    def fake_urlopen(request, **kwargs):
+        calls.append((request, kwargs))
+        if len(calls) == 1:
+            raise urllib.error.URLError(
+                ssl.SSLEOFError(8, "unexpected eof while reading")
+            )
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    client = FeishuClient("app", "secret", "chat")
+    payload = {"message": "hello", "uuid": "stable-delivery-id"}
+    result = client._post(
+        "https://open.feishu.cn/example",
+        payload,
+        token="verified-token",
+    )
+
+    assert result == {"code": 0}
+    assert len(calls) == 2
+    assert "context" not in calls[0][1]
+    context = calls[1][1]["context"]
+    assert context.minimum_version == ssl.TLSVersion.TLSv1_2
+    assert context.maximum_version == ssl.TLSVersion.TLSv1_2
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+    assert calls[1][0].get_header("Authorization") == "Bearer verified-token"
+    assert calls[0][0].data == calls[1][0].data == json.dumps(payload).encode()
+    assert calls[0][1]["timeout"] == calls[1][1]["timeout"] == client.timeout
+
+
+def test_feishu_tls12_fallback_runs_only_once(monkeypatch):
+    calls = []
+
+    def fake_urlopen(_request, **kwargs):
+        calls.append(kwargs)
+        raise urllib.error.URLError(
+            ssl.SSLEOFError(8, "unexpected eof while reading")
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    with pytest.raises(NotificationError, match="URLError"):
+        FeishuClient("app", "secret", "chat")._post(
+            "https://open.feishu.cn/example", {"uuid": "stable-delivery-id"}
+        )
+    assert len(calls) == 2
+
+
+def test_feishu_does_not_retry_other_url_errors(monkeypatch):
+    calls = []
+
+    def fake_urlopen(_request, **kwargs):
+        calls.append(kwargs)
+        raise urllib.error.URLError(ConnectionRefusedError("offline"))
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    with pytest.raises(NotificationError, match="URLError"):
+        FeishuClient("app", "secret", "chat")._post(
+            "https://open.feishu.cn/example", {"message": "hello"}
+        )
+    assert len(calls) == 1
 
 
 def test_sparse_watch_card_omits_placeholder_noise():

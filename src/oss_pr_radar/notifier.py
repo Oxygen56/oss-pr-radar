@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -74,18 +75,40 @@ class FeishuClient:
     def _post(
         self, url: str, payload: dict[str, Any], *, token: str | None = None
     ) -> dict[str, Any]:
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json; charset=utf-8"},
-            method="POST",
-        )
-        if token:
-            request.add_header("Authorization", f"Bearer {token}")
+        encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+        def request_value(*, context: ssl.SSLContext | None = None) -> dict[str, Any]:
+            request = urllib.request.Request(
+                url,
+                data=encoded,
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                method="POST",
+            )
+            if token:
+                request.add_header("Authorization", f"Bearer {token}")
+            kwargs: dict[str, Any] = {"timeout": self.timeout}
+            if context is not None:
+                kwargs["context"] = context
+            with urllib.request.urlopen(request, **kwargs) as response:
+                return json.loads(response.read().decode("utf-8"))
+
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                value = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            value = request_value()
+        except urllib.error.URLError as exc:
+            if not isinstance(exc.reason, ssl.SSLEOFError):
+                raise NotificationError(type(exc).__name__) from exc
+            # Some authenticated local HTTP proxies terminate Feishu's TLS 1.3
+            # handshake while still accepting a verified TLS 1.2 connection.
+            # Retry only that exact transport failure and keep normal hostname
+            # and certificate verification enabled.
+            context = ssl.create_default_context()
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            context.maximum_version = ssl.TLSVersion.TLSv1_2
+            try:
+                value = request_value(context=context)
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as retry_exc:
+                raise NotificationError(type(retry_exc).__name__) from retry_exc
+        except (TimeoutError, json.JSONDecodeError) as exc:
             raise NotificationError(type(exc).__name__) from exc
         if not isinstance(value, dict):
             raise NotificationError("invalid Feishu response")
