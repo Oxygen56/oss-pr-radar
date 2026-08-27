@@ -401,6 +401,120 @@ def test_reviewer_failure_rotates_to_next_candidate(tmp_path, monkeypatch):
     assert worktree_one.is_dir()
 
 
+def test_review_retry_stops_after_three_failures_for_the_same_result(tmp_path, monkeypatch):
+    control, _worktree, _result_path, candidate, _base, head = prepared_task(tmp_path)
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+    attempts = 0
+
+    def failing_reviewer(*_args):
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("review transport failed")
+
+    for expected in (1, 2, 3):
+        outcome = module.review_once(
+            control,
+            control / "ledger.sqlite3",
+            reviewer=failing_reviewer,
+        )
+        assert outcome["errors"][0]["key"] == "owner/repo#1"
+        cursor = json.loads(
+            (control / "state" / "independent_review_cursor.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert cursor["attempts"] == expected
+
+    exhausted = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("an exhausted unchanged result must not run again")
+        ),
+    )
+
+    assert attempts == 3
+    assert exhausted["errors"] == []
+    assert len(exhausted["retryExhausted"]) == 1
+    assert exhausted["retryExhausted"][0] == {
+        "key": "owner/repo#1",
+        "reason": "INDEPENDENT_REVIEW_RETRY_EXHAUSTED",
+        "attempts": 3,
+        "sourceDigest": exhausted["retryExhausted"][0]["sourceDigest"],
+        "commitSha": head,
+    }
+
+
+def test_review_retry_counts_survive_alternating_candidate_failures(tmp_path, monkeypatch):
+    control, _worktree_one, result_one, candidate_one, _base_one, _head_one = prepared_task(
+        tmp_path / "one"
+    )
+    _control_two, _worktree_two, result_two, candidate_two, _base_two, _head_two = (
+        prepared_task(tmp_path / "two")
+    )
+    second_value = json.loads(result_two.read_text(encoding="utf-8"))
+    second_value.update(
+        {
+            "key": "owner/repo#2",
+            "issueUrl": "https://github.com/owner/repo/issues/2",
+            "threadId": "thread-2",
+        }
+    )
+    result_two.write_text(json.dumps(second_value), encoding="utf-8")
+    candidate_two.update(
+        {
+            "key": second_value["key"],
+            "issueUrl": second_value["issueUrl"],
+            "threadId": second_value["threadId"],
+        }
+    )
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate_one, candidate_two]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+
+    def failing_reviewer(*_args):
+        raise RuntimeError("review transport failed")
+
+    for _ in range(6):
+        module.review_once(control, control / "ledger.sqlite3", reviewer=failing_reviewer)
+
+    first_value = json.loads(result_one.read_text(encoding="utf-8"))
+    first_attempts = module._review_failure_attempts(
+        control,
+        candidate=candidate_one,
+        source_digest=module._source_digest(first_value),
+        commit_sha=str(first_value["commitSha"]),
+    )
+    second_attempts = module._review_failure_attempts(
+        control,
+        candidate=candidate_two,
+        source_digest=module._source_digest(second_value),
+        commit_sha=str(second_value["commitSha"]),
+    )
+
+    assert first_attempts == 3
+    assert second_attempts == 3
+    exhausted = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("both unchanged results are exhausted")
+        ),
+    )
+    assert {item["key"] for item in exhausted["retryExhausted"]} == {
+        "owner/repo#1",
+        "owner/repo#2",
+    }
+
+
 def test_review_followup_is_bound_to_new_commit_only(tmp_path, monkeypatch):
     control, worktree, result_path, candidate, _base, previous_head = prepared_task(tmp_path)
     (worktree / "service.py").write_text("def value():\n    return 3\n", encoding="utf-8")

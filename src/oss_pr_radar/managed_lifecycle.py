@@ -1398,6 +1398,20 @@ class ManagedLedger:
         finally:
             connection.close()
 
+    def event_by_idempotency_key(self, idempotency_key: str) -> dict[str, Any] | None:
+        """Return the exact managed event without creating a new lifecycle fact."""
+
+        fingerprint = stable_fingerprint(idempotency_key)
+        connection = self._connection()
+        try:
+            row = connection.execute(
+                "SELECT * FROM managed_lifecycle_events WHERE idempotency_fingerprint=?",
+                (fingerprint,),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            connection.close()
+
     def record_task_quarantine(
         self,
         *,
@@ -3736,6 +3750,47 @@ class ManagedLedger:
                             p.observed_at DESC,r.updated_at DESC
                    LIMIT 1""",
                 (opportunity_key, publication_head_sha, pr_url),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            connection.close()
+
+    def published_pr_authority_for_opportunity(
+        self,
+        opportunity_key: str,
+        *,
+        pr_url: str,
+        receipt_head_sha: str,
+    ) -> dict[str, Any] | None:
+        """Return a reservation-bound PR for conservative stale-result handling.
+
+        A task context follows the latest published PR head, while the durable
+        reservation remains bound to the head that first created the PR.  Both
+        are valid authority anchors, but only when the same finalized
+        reservation still binds the opportunity to the exact PR URL.
+        """
+
+        opportunity_key = canonical_opportunity_key(opportunity_key)
+        if _PR_URL_RE.fullmatch(pr_url) is None:
+            raise ValueError("published PR URL is invalid")
+        if not re.fullmatch(r"[0-9a-f]{40}", receipt_head_sha):
+            raise ValueError("published PR receipt head SHA is invalid")
+        connection = self._connection()
+        try:
+            row = connection.execute(
+                """SELECT r.reservation_key,r.opportunity_key,r.pr_key,
+                          r.head_sha AS publication_head_sha,r.state AS reservation_state,
+                          p.pr_url,p.head_sha,p.state,p.observed_at
+                   FROM managed_publication_reservations r
+                   JOIN managed_prs p ON p.pr_key=r.pr_key
+                   WHERE r.opportunity_key=? AND p.pr_url=?
+                     AND (r.head_sha=? OR p.head_sha=?)
+                     AND r.state='FINALIZED'
+                     AND p.state IN ('OPEN','MERGED')
+                   ORDER BY CASE p.state WHEN 'MERGED' THEN 0 ELSE 1 END,
+                            p.observed_at DESC,r.updated_at DESC
+                   LIMIT 1""",
+                (opportunity_key, pr_url, receipt_head_sha, receipt_head_sha),
             ).fetchone()
             return dict(row) if row else None
         finally:

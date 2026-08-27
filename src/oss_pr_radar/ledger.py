@@ -13,7 +13,7 @@ from typing import Any, Iterable, Iterator
 from urllib.parse import quote
 
 from .action_guard import ledger_action_guard_root, opportunity_action_guard
-from .repo_probe import REPRODUCED_VALIDATED, verify_probe_receipt
+from .repo_probe import PATHS_VERIFIED, REPRODUCED_VALIDATED, verify_probe_receipt
 from .task_quarantine import active as active_quarantine
 from .task_quarantine import attach_artifact as attach_quarantine_artifact
 from .task_quarantine import backfill_from_managed_events, backfill_from_radar_events
@@ -49,6 +49,94 @@ STATE_DRIFT_RECHECK_EVENT = "STATE_DRIFT_RECHECK_REQUIRED"
 PR_UPDATE_REARM_REASONS = {"EXISTING_PR_HEAD_DRIFT", "NON_FAST_FORWARD_PR_UPDATE"}
 PR_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
 ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
+PROBE_RECEIPT_VOLATILE_FIELDS = frozenset(
+    {"observedAt", "expiresAt", "receiptDigest", "signature"}
+)
+
+
+def _live_audit_probe_receipt(audit_payload: dict[str, Any]) -> dict[str, Any] | None:
+    live_audit = audit_payload.get("liveAudit")
+    evidence = live_audit.get("evidence") if isinstance(live_audit, dict) else None
+    if not isinstance(evidence, dict):
+        return None
+    camel_present = "repoProbeReceipt" in evidence
+    snake_present = "repo_probe_receipt" in evidence
+    if not camel_present and not snake_present:
+        return None
+    camel_receipt = evidence.get("repoProbeReceipt")
+    snake_receipt = evidence.get("repo_probe_receipt")
+    if camel_present and snake_present and camel_receipt != snake_receipt:
+        raise LedgerError("live audit repository probe receipts disagree")
+    receipt = camel_receipt if camel_present else snake_receipt
+    if not isinstance(receipt, dict):
+        raise LedgerError("live audit repository probe receipt is invalid")
+    return receipt
+
+
+def _probe_receipt_binding_digest(receipt: dict[str, Any]) -> str:
+    return sha256_json(
+        {
+            key: value
+            for key, value in receipt.items()
+            if key not in PROBE_RECEIPT_VOLATILE_FIELDS
+        }
+    )
+
+
+def _audited_probe_code_paths(
+    payload: dict[str, Any], audit_payload: dict[str, Any], issue_url: str
+) -> list[str] | None:
+    """Return the exact repository paths authenticated by the live audit.
+
+    Scanner path plans may still contain unresolved basename candidates. Once
+    the live repository probe has resolved and authenticated concrete blobs,
+    task contexts must not fall back to the broader pre-audit plan.
+    """
+
+    receipt = _live_audit_probe_receipt(audit_payload)
+    if receipt is None:
+        return None
+    match = ISSUE_URL_RE.fullmatch(issue_url)
+    if match is None:
+        raise LedgerError("live audit issue URL is invalid")
+    pre_task = payload.get("preTaskEvidence")
+    pre_task = pre_task if isinstance(pre_task, dict) else {}
+    selected_base = str(payload.get("selectedBaseSha") or pre_task.get("baseSha") or "")
+    code_paths = [
+        str(path) for path in (receipt.get("codePaths") or []) if str(path).strip()
+    ]
+    if not selected_base or not code_paths:
+        raise LedgerError("live audit repository probe binding is incomplete")
+    if not verify_probe_receipt(
+        receipt,
+        repo=match.group(1),
+        base_sha=selected_base,
+        code_paths=code_paths,
+        required_level=PATHS_VERIFIED,
+        enforce_freshness=False,
+    ):
+        raise LedgerError("live audit repository probe receipt is not authenticated")
+    return code_paths
+
+
+def _intent_bound_audit_rows(
+    connection: sqlite3.Connection, opportunity_key: str, intent_id: str
+) -> list[sqlite3.Row]:
+    rows = connection.execute(
+        """SELECT payload_json,created_at,dedupe_key,id FROM events
+           WHERE opportunity_key=?
+             AND event_type IN ('AUDIT_PASS','AUDIT_SNAPSHOT')
+           ORDER BY id DESC""",
+        (opportunity_key,),
+    ).fetchall()
+    prefix = f"{intent_id}:"
+    bound = [row for row in rows if str(row["dedupe_key"] or "").startswith(prefix)]
+    if bound:
+        return bound
+    intent_count = connection.execute(
+        "SELECT COUNT(*) FROM intents WHERE opportunity_key=?", (opportunity_key,)
+    ).fetchone()[0]
+    return list(rows) if int(intent_count) == 1 else []
 
 
 def bind_dispatched_recovery_prompt(
@@ -247,6 +335,65 @@ RECOVERED_TITLE_STATE = {
     "MERGED": "MERGED",
     "CLOSED": "PR_OPEN",
 }
+
+_EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE = """
+    i.status='DISPATCHED'
+    AND i.thread_id IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM events exhausted
+      JOIN events recovery
+        ON recovery.opportunity_key=exhausted.opportunity_key
+       AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+       AND recovery.dedupe_key=exhausted.dedupe_key
+      WHERE exhausted.opportunity_key=i.opportunity_key
+        AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+        AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+        AND recovery.id>(
+          SELECT COALESCE(MAX(dispatched.id),0)
+          FROM events dispatched
+          WHERE dispatched.opportunity_key=i.opportunity_key
+            AND dispatched.event_type='DISPATCHED'
+            AND dispatched.dedupe_key=i.thread_id
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM events later
+          WHERE later.opportunity_key=exhausted.opportunity_key
+            AND later.id>exhausted.id
+            AND (
+              later.event_type IN (
+                'TASK_RESULT_INGESTED',
+                'PUBLISHED_TASK_RESULT_BACKFILLED',
+                'PR_FOLLOWUP_RESULT_INGESTED',
+                'IMPLEMENTATION_CONTEXT_REPAIRED',
+                'AUDIT_PASS',
+                'AUDIT_NO_GO',
+                'VALIDATION_PENDING',
+                'FIX_READY',
+                'PR_OPEN',
+                'CI_GREEN',
+                'MAINTAINER_ACCEPTED',
+                'MERGED',
+                'CLOSED'
+              )
+              OR (
+                later.event_type='THREAD_RECOVERY_RESERVED'
+                AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                AND json_extract(
+                      later.payload_json,'$.rearmedFromExhausted.exhaustedNonce'
+                    )=exhausted.dedupe_key
+              )
+              OR (
+                later.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                AND json_extract(later.payload_json,'$.recoveryNonce')=
+                    exhausted.dedupe_key
+              )
+            )
+        )
+    )
+"""
 
 
 class LedgerError(RuntimeError):
@@ -1519,6 +1666,227 @@ class RadarLedger:
             )
             return True
 
+    def record_live_audit_pass_and_bind_probe(
+        self,
+        intent_id: str,
+        *,
+        evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Atomically persist one live audit and bind its canonical probe receipt."""
+
+        evidence_digest = str(evidence.get("evidenceDigest") or "")
+        if not evidence_digest:
+            raise LedgerError("live audit evidence digest is missing")
+        authorization = evidence.get("authorization")
+        if not isinstance(authorization, dict) or authorization.get("status") != "ALLOW":
+            raise LedgerError("live audit authorization is not ALLOW")
+        authorization_digest = str(
+            authorization.get("evidence_digest") or authorization.get("evidenceDigest") or ""
+        )
+        if authorization_digest != evidence_digest:
+            raise LedgerError("live audit authorization digest does not match evidence")
+        incoming_receipt = _live_audit_probe_receipt(evidence)
+        if incoming_receipt is None:
+            raise LedgerError("live audit repository probe receipt is missing")
+        if incoming_receipt.get("probeLevel") != PATHS_VERIFIED:
+            raise LedgerError("live audit repository probe must be PATHS_VERIFIED")
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT i.opportunity_key,i.payload_json,i.status,i.lease_until,
+                          o.issue_url,o.stage
+                   FROM intents i JOIN opportunities o ON o.key=i.opportunity_key
+                   WHERE i.intent_id=?""",
+                (intent_id,),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("live audit intent is not registered")
+            claimable = row["status"] == "PENDING" or (
+                row["status"] == "LEASED"
+                and row["lease_until"]
+                and parse_time(str(row["lease_until"])) <= datetime.now(UTC)
+            )
+            if not claimable or row["stage"] not in {"QUALIFIED", "AUDIT_PASS", "LEASED"}:
+                raise LedgerError("live audit intent is not claimable")
+            payload = json.loads(row["payload_json"])
+            issue_url = str(row["issue_url"] or "")
+            issue_match = ISSUE_URL_RE.fullmatch(issue_url)
+            if issue_match is None:
+                raise LedgerError("live audit issue URL is invalid")
+            code_paths = _audited_probe_code_paths(payload, evidence, issue_url)
+            if not code_paths:
+                raise LedgerError("live audit repository probe binding is incomplete")
+            pre_task = payload.get("preTaskEvidence")
+            pre_task = pre_task if isinstance(pre_task, dict) else {}
+            selected_base = str(payload.get("selectedBaseSha") or pre_task.get("baseSha") or "")
+            if not verify_probe_receipt(
+                incoming_receipt,
+                repo=issue_match.group(1),
+                base_sha=selected_base,
+                code_paths=code_paths,
+                required_level=PATHS_VERIFIED,
+            ):
+                raise LedgerError("live audit repository probe receipt is not fresh")
+            binding_digest = _probe_receipt_binding_digest(incoming_receipt)
+            dedupe_key = f"{intent_id}:{evidence_digest}:{binding_digest}:live-audit-v2"
+            event = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=? AND event_type='AUDIT_PASS' AND dedupe_key=?""",
+                (row["opportunity_key"], dedupe_key),
+            ).fetchone()
+            if event is None:
+                connection.execute(
+                    """UPDATE opportunities SET stage='AUDIT_PASS',terminal_reason=NULL,
+                       updated_at=? WHERE key=?""",
+                    (now, row["opportunity_key"]),
+                )
+                self._event(
+                    connection,
+                    str(row["opportunity_key"]),
+                    "AUDIT_PASS",
+                    dedupe_key,
+                    evidence,
+                    now,
+                )
+                event = connection.execute(
+                    """SELECT payload_json FROM events
+                       WHERE opportunity_key=? AND event_type='AUDIT_PASS' AND dedupe_key=?""",
+                    (row["opportunity_key"], dedupe_key),
+                ).fetchone()
+            if event is None:
+                raise LedgerError("canonical live audit receipt is unavailable")
+            canonical_evidence = json.loads(event["payload_json"])
+            canonical_receipt = _live_audit_probe_receipt(canonical_evidence)
+            if canonical_receipt is None:
+                raise LedgerError("canonical live audit repository probe receipt is missing")
+            canonical_paths = _audited_probe_code_paths(payload, canonical_evidence, issue_url)
+            if (
+                not canonical_paths
+                or _probe_receipt_binding_digest(canonical_receipt) != binding_digest
+            ):
+                raise LedgerError("canonical live audit repository probe binding changed")
+            probe_level = PATHS_VERIFIED
+            task_stage = "REPRODUCTION_REQUIRED"
+            payload["probeLevel"] = probe_level
+            payload["taskStage"] = task_stage
+            payload["probeReceiptDigest"] = str(canonical_receipt.get("receiptDigest") or "")
+            normalized_paths = sorted(
+                {str(path) for path in canonical_paths if str(path).strip()}
+            )
+            payload["codePaths"] = normalized_paths
+            pre_task = payload.get("preTaskEvidence")
+            if isinstance(pre_task, dict):
+                payload["preTaskEvidence"] = dict(pre_task) | {
+                    "codePathsPlan": normalized_paths
+                }
+            connection.execute(
+                "UPDATE intents SET payload_json=?,updated_at=? WHERE intent_id=?",
+                (
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                    now,
+                    intent_id,
+                ),
+            )
+            return {
+                "dedupeKey": dedupe_key,
+                "probeLevel": probe_level,
+                "taskStage": task_stage,
+                "receiptDigest": payload["probeReceiptDigest"],
+                "codePaths": normalized_paths,
+            }
+
+    def reconcile_intent_probe_audit_binding(
+        self,
+        *,
+        intent_id: str,
+        issue_url: str,
+        thread_id: str,
+        worktree_path: str,
+        expected_base_sha: str,
+    ) -> bool:
+        """Repair only an exact semantic match to an intent-bound historical audit."""
+
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT o.issue_url,i.thread_id,i.worktree_path,i.payload_json
+                   FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
+                   WHERE i.intent_id=? AND o.issue_url=? AND i.thread_id=?""",
+                (intent_id, issue_url, thread_id),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("task audit identity is not registered")
+            registered_worktree = str(row["worktree_path"] or "")
+            if not registered_worktree or Path(registered_worktree).resolve() != Path(
+                worktree_path
+            ).resolve():
+                raise LedgerError("task audit worktree does not match the result context")
+            payload = json.loads(row["payload_json"])
+            pre_task = payload.get("preTaskEvidence")
+            pre_task = pre_task if isinstance(pre_task, dict) else {}
+            selected_base = str(payload.get("selectedBaseSha") or pre_task.get("baseSha") or "")
+            if not expected_base_sha or selected_base != expected_base_sha:
+                raise LedgerError("task audit selected base does not match the result context")
+            expected_digest = str(payload.get("probeReceiptDigest") or "")
+            expected_level = str(payload.get("probeLevel") or "UNVERIFIED")
+            expected_paths = sorted(
+                {str(path) for path in (payload.get("codePaths") or []) if str(path).strip()}
+            )
+            if not expected_digest:
+                return False
+            all_rows = connection.execute(
+                """SELECT payload_json,dedupe_key,id FROM events
+                   WHERE opportunity_key=(
+                     SELECT opportunity_key FROM intents WHERE intent_id=?
+                   ) AND event_type IN ('AUDIT_PASS','AUDIT_SNAPSHOT')
+                   ORDER BY id DESC""",
+                (intent_id,),
+            ).fetchall()
+            for audit_row in all_rows:
+                audit_payload = json.loads(audit_row["payload_json"])
+                receipt = _live_audit_probe_receipt(audit_payload)
+                if receipt is None or str(receipt.get("receiptDigest") or "") != expected_digest:
+                    continue
+                _audited_probe_code_paths(payload, audit_payload, issue_url)
+                return False
+            rows = [
+                audit_row
+                for audit_row in all_rows
+                if str(audit_row["dedupe_key"] or "").startswith(f"{intent_id}:")
+            ]
+            compatible: list[tuple[sqlite3.Row, dict[str, Any], str]] = []
+            for audit_row in rows:
+                audit_payload = json.loads(audit_row["payload_json"])
+                receipt = _live_audit_probe_receipt(audit_payload)
+                if receipt is None:
+                    continue
+                paths = _audited_probe_code_paths(payload, audit_payload, issue_url)
+                if (
+                    sorted(paths or []) != expected_paths
+                    or str(receipt.get("probeLevel") or "UNVERIFIED") != expected_level
+                ):
+                    continue
+                receipt_digest = str(receipt.get("receiptDigest") or "")
+                if receipt_digest == expected_digest:
+                    return False
+                compatible.append(
+                    (audit_row, receipt, _probe_receipt_binding_digest(receipt))
+                )
+            if not compatible:
+                raise LedgerError("task audit repository probe receipt digest is unavailable")
+            if len({binding for _, _, binding in compatible}) != 1:
+                raise LedgerError("task audit repository probe binding is ambiguous")
+            canonical_receipt = compatible[0][1]
+            payload["probeReceiptDigest"] = str(canonical_receipt["receiptDigest"])
+            connection.execute(
+                "UPDATE intents SET payload_json=?,updated_at=? WHERE intent_id=?",
+                (
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                    iso_z(datetime.now(UTC)),
+                    intent_id,
+                ),
+            )
+            return True
+
     def current_lease_owner(self, intent_id: str) -> str:
         """Return the controller that currently owns an active dispatch transaction."""
 
@@ -2703,7 +3071,7 @@ class RadarLedger:
         now: str,
         exclude_intent_id: str | None = None,
     ) -> int:
-        intent_filter = "" if exclude_intent_id is None else "AND intent_id<>?"
+        intent_filter = "" if exclude_intent_id is None else "AND i.intent_id<>?"
         event_filter = (
             ""
             if exclude_intent_id is None
@@ -2719,10 +3087,12 @@ class RadarLedger:
         return int(
             connection.execute(
                 f"""SELECT COUNT(*) FROM (
-                     SELECT opportunity_key FROM intents
-                     WHERE status IN ('LEASED','CREATING','DISPATCHED')
-                       AND (status IN ('CREATING','DISPATCHED') OR lease_until>?)
+                     SELECT i.opportunity_key FROM intents i
+                     JOIN opportunities o ON o.key=i.opportunity_key
+                     WHERE i.status IN ('LEASED','CREATING','DISPATCHED')
+                       AND (i.status IN ('CREATING','DISPATCHED') OR i.lease_until>?)
                        {intent_filter}
+                       AND NOT ({_EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE})
                      UNION
                      SELECT r.opportunity_key FROM events r
                      WHERE r.event_type='PR_FOLLOWUP_RESERVED'
@@ -2830,6 +3200,106 @@ class RadarLedger:
                 exclude_intent_id=exclude_intent_id,
             )
 
+    def exhausted_recovery_blockers(self) -> list[dict[str, Any]]:
+        """Return dispatched intents whose latest recovery attempt was exhausted."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""SELECT o.key,o.issue_url,o.title,o.stage,
+                           i.intent_id,i.status AS intent_status,i.thread_id,i.worktree_path,
+                           exhausted.dedupe_key AS reservation_digest,
+                           exhausted.payload_json,exhausted.created_at AS exhausted_at,
+                           recovery.created_at AS reserved_at
+                    FROM opportunities o
+                    JOIN intents i ON i.opportunity_key=o.key
+                    JOIN events exhausted ON exhausted.opportunity_key=o.key
+                      AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                    JOIN events recovery ON recovery.opportunity_key=exhausted.opportunity_key
+                      AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                      AND recovery.dedupe_key=exhausted.dedupe_key
+                    WHERE {_EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE}
+                      AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+                      AND recovery.id>(
+                        SELECT COALESCE(MAX(dispatched.id),0)
+                        FROM events dispatched
+                        WHERE dispatched.opportunity_key=i.opportunity_key
+                          AND dispatched.event_type='DISPATCHED'
+                          AND dispatched.dedupe_key=i.thread_id
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM events later
+                        WHERE later.opportunity_key=exhausted.opportunity_key
+                          AND later.id>exhausted.id
+                          AND (
+                            later.event_type IN (
+                              'TASK_RESULT_INGESTED',
+                              'PUBLISHED_TASK_RESULT_BACKFILLED',
+                              'PR_FOLLOWUP_RESULT_INGESTED',
+                              'IMPLEMENTATION_CONTEXT_REPAIRED',
+                              'AUDIT_PASS',
+                              'AUDIT_NO_GO',
+                              'VALIDATION_PENDING',
+                              'FIX_READY',
+                              'PR_OPEN',
+                              'CI_GREEN',
+                              'MAINTAINER_ACCEPTED',
+                              'MERGED',
+                              'CLOSED'
+                            )
+                            OR (
+                              later.event_type='THREAD_RECOVERY_RESERVED'
+                              AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                              AND json_extract(
+                                    later.payload_json,
+                                    '$.rearmedFromExhausted.exhaustedNonce'
+                                  )=exhausted.dedupe_key
+                            )
+                            OR (
+                              later.event_type=
+                                  'THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED'
+                              AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                              AND json_extract(later.payload_json,'$.recoveryNonce')=
+                                  exhausted.dedupe_key
+                            )
+                            OR (
+                              later.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                              AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                              AND json_extract(later.payload_json,'$.recoveryNonce')=
+                                  exhausted.dedupe_key
+                            )
+                          )
+                      )
+                    ORDER BY exhausted.created_at,exhausted.id"""
+            ).fetchall()
+        blockers: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            blockers.append(
+                {
+                    "key": row["key"],
+                    "issueUrl": row["issue_url"],
+                    "title": row["title"],
+                    "stage": row["stage"],
+                    "intentId": row["intent_id"],
+                    "intentStatus": row["intent_status"],
+                    "threadId": row["thread_id"],
+                    "worktreePath": row["worktree_path"],
+                    "recoveryKind": payload.get("recoveryKind"),
+                    "followupDigest": payload.get("followupDigest"),
+                    "recoveryNonce": payload.get("recoveryNonce"),
+                    "reservationDigest": row["reservation_digest"],
+                    "reservedAt": row["reserved_at"],
+                    "exhaustedAt": row["exhausted_at"],
+                    "blockerCode": "RECOVERY_RETRY_EXHAUSTED",
+                    "reason": "RECOVERY_RETRY_EXHAUSTED",
+                    "occupiesTaskSlot": False,
+                    "retryCount": payload.get("retryCount"),
+                    "terminalError": payload.get("terminalError"),
+                }
+            )
+        return blockers
+
     def recovery_candidates(
         self,
         *,
@@ -2871,6 +3341,19 @@ class RadarLedger:
                          AND json_extract(recovery.payload_json,'$.recoveryKind')='DISPATCHED_TASK'
                          AND recovery.created_at>=d.created_at
                      ))
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events advanced
+                       WHERE advanced.opportunity_key=o.key
+                         AND advanced.id>d.id
+                         AND advanced.event_type IN (
+                           'TASK_RESULT_INGESTED',
+                           'PUBLISHED_TASK_RESULT_BACKFILLED',
+                           'PR_FOLLOWUP_RESULT_INGESTED',
+                           'IMPLEMENTATION_FOLLOWUP_SENT',
+                           'VALIDATION_FOLLOWUP_SENT',
+                           'PR_FOLLOWUP_SENT'
+                         )
+                     )
                      AND NOT EXISTS (
                        SELECT 1 FROM events e
                        WHERE e.opportunity_key=o.key
@@ -3076,6 +3559,16 @@ class RadarLedger:
                          AND json_extract(recovery.payload_json,'$.recoveryKind')=
                              'IMPLEMENTATION_FOLLOWUP_RESULT'
                          AND json_extract(recovery.payload_json,'$.followupDigest')=s.dedupe_key
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events rearmed
+                           WHERE rearmed.opportunity_key=exhausted.opportunity_key
+                             AND rearmed.event_type=
+                                 'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                             AND json_extract(rearmed.payload_json,'$.threadId')=i.thread_id
+                             AND json_extract(rearmed.payload_json,'$.recoveryNonce')=
+                                 exhausted.dedupe_key
+                             AND rearmed.id>exhausted.id
+                         )
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events result
@@ -3102,6 +3595,27 @@ class RadarLedger:
                    ORDER BY s.created_at""",
                 (cutoff,),
             ).fetchall()
+            implementation_rearm_rows = connection.execute(
+                """SELECT rearmed.id AS rearm_event_id,
+                          exhausted.id AS exhausted_event_id,
+                          exhausted.opportunity_key AS key,
+                          exhausted.dedupe_key AS exhausted_nonce,
+                          recovery.payload_json AS recovery_payload_json
+                   FROM events rearmed
+                   JOIN events exhausted
+                     ON exhausted.opportunity_key=rearmed.opportunity_key
+                    AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                    AND exhausted.dedupe_key=
+                        json_extract(rearmed.payload_json,'$.recoveryNonce')
+                   JOIN events recovery
+                     ON recovery.opportunity_key=exhausted.opportunity_key
+                    AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                    AND recovery.dedupe_key=exhausted.dedupe_key
+                   WHERE rearmed.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                     AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                         'IMPLEMENTATION_FOLLOWUP_RESULT'
+                   ORDER BY rearmed.id"""
+            ).fetchall()
             exhausted_dispatched_rows = (
                 connection.execute(
                     """SELECT exhausted.id AS event_id,
@@ -3123,6 +3637,20 @@ class RadarLedger:
                 if include_exhausted_dispatched
                 else []
             )
+        implementation_rearms: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for rearm_row in implementation_rearm_rows:
+            recovery_payload = json.loads(rearm_row["recovery_payload_json"])
+            implementation_rearms[
+                (
+                    str(rearm_row["key"]),
+                    str(recovery_payload.get("threadId") or ""),
+                    str(recovery_payload.get("followupDigest") or ""),
+                )
+            ] = {
+                "exhaustedNonce": str(rearm_row["exhausted_nonce"]),
+                "exhaustedEventId": int(rearm_row["exhausted_event_id"]),
+                "rearmEventId": int(rearm_row["rearm_event_id"]),
+            }
         exhausted_by_task: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for exhausted_row in exhausted_dispatched_rows:
             recovery_payload = json.loads(exhausted_row["recovery_payload_json"])
@@ -3183,6 +3711,12 @@ class RadarLedger:
                     for marker in exhausted_by_task.get((str(row["key"]), thread_id), [])
                     if str(marker["recoveryCreatedAt"]) >= str(row["dispatched_at"])
                 ]
+            if recovery_kind == "IMPLEMENTATION_FOLLOWUP_RESULT":
+                marker = implementation_rearms.get(
+                    (str(row["key"]), thread_id, str(followup_digest or ""))
+                )
+                if marker is not None:
+                    candidate["rearmedFromExhausted"] = marker
             previous = candidates.get(thread_id)
             if previous is None or candidate["dispatchedAt"] > previous["dispatchedAt"]:
                 candidates[thread_id] = candidate
@@ -3376,6 +3910,143 @@ class RadarLedger:
                 opportunity_key=str(candidate["key"]),
                 operation="recovery delivery reservation",
             )
+            if candidate["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT":
+                eligible = connection.execute(
+                    """SELECT s.id
+                       FROM events s
+                       WHERE s.opportunity_key=?
+                         AND s.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                         AND s.dedupe_key=?
+                         AND json_extract(s.payload_json,'$.threadId')=?
+                         AND s.id=(
+                           SELECT MAX(latest.id) FROM events latest
+                           WHERE latest.opportunity_key=s.opportunity_key
+                             AND latest.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events result
+                           WHERE result.opportunity_key=s.opportunity_key
+                             AND result.event_type='TASK_RESULT_INGESTED'
+                             AND result.id>s.id
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events exhausted
+                           JOIN events prior_recovery
+                             ON prior_recovery.opportunity_key=
+                                exhausted.opportunity_key
+                            AND prior_recovery.event_type='THREAD_RECOVERY_RESERVED'
+                            AND prior_recovery.dedupe_key=exhausted.dedupe_key
+                           WHERE exhausted.opportunity_key=s.opportunity_key
+                             AND exhausted.event_type=
+                                 'THREAD_RECOVERY_RETRY_EXHAUSTED'
+                             AND json_extract(
+                                   prior_recovery.payload_json,'$.threadId'
+                                 )=?
+                             AND json_extract(
+                                   prior_recovery.payload_json,'$.recoveryKind'
+                                 )='IMPLEMENTATION_FOLLOWUP_RESULT'
+                             AND json_extract(
+                                   prior_recovery.payload_json,'$.followupDigest'
+                                 )=s.dedupe_key
+                             AND NOT EXISTS (
+                               SELECT 1 FROM events rearmed
+                               WHERE rearmed.opportunity_key=exhausted.opportunity_key
+                                 AND rearmed.event_type=
+                                     'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                                 AND json_extract(
+                                       rearmed.payload_json,'$.threadId'
+                                     )=?
+                                 AND json_extract(
+                                       rearmed.payload_json,'$.recoveryNonce'
+                                     )=exhausted.dedupe_key
+                                 AND rearmed.id>exhausted.id
+                             )
+                         )
+                       LIMIT 1""",
+                    (
+                        candidate["key"],
+                        candidate.get("followupDigest"),
+                        thread_id,
+                        thread_id,
+                        thread_id,
+                    ),
+                ).fetchone()
+                if eligible is None:
+                    raise LedgerError("recovery authorization is stale or invalid")
+                epoch_row = connection.execute(
+                    """SELECT MAX(abandoned.created_at) AS recovery_epoch
+                       FROM events abandoned
+                       WHERE abandoned.opportunity_key=?
+                         AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                         AND json_extract(abandoned.payload_json,'$.threadId')=?""",
+                    (candidate["key"], thread_id),
+                ).fetchone()
+                current_epoch = str(epoch_row["recovery_epoch"] or "")
+                expected_nonce = sha256_text(
+                    f"{candidate['key']}|{thread_id}|{candidate['dispatchedAt']}|"
+                    f"{candidate['recoveryKind']}|{candidate.get('followupDigest') or ''}|"
+                    f"{current_epoch}|recovery-v3"
+                )
+                if nonce != expected_nonce:
+                    raise LedgerError("recovery authorization is stale or invalid")
+                lineage = candidate.get("rearmedFromExhausted")
+                latest_rearm = connection.execute(
+                    """SELECT MAX(rearmed.id) AS rearm_event_id
+                       FROM events rearmed
+                       JOIN events exhausted
+                         ON exhausted.opportunity_key=rearmed.opportunity_key
+                        AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                        AND exhausted.dedupe_key=
+                            json_extract(rearmed.payload_json,'$.recoveryNonce')
+                       JOIN events prior_recovery
+                         ON prior_recovery.opportunity_key=exhausted.opportunity_key
+                        AND prior_recovery.event_type='THREAD_RECOVERY_RESERVED'
+                        AND prior_recovery.dedupe_key=exhausted.dedupe_key
+                       WHERE rearmed.opportunity_key=?
+                         AND rearmed.event_type=
+                             'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                         AND json_extract(rearmed.payload_json,'$.threadId')=?
+                         AND json_extract(prior_recovery.payload_json,'$.recoveryKind')=
+                             'IMPLEMENTATION_FOLLOWUP_RESULT'
+                         AND json_extract(prior_recovery.payload_json,'$.followupDigest')=?""",
+                    (candidate["key"], thread_id, candidate.get("followupDigest")),
+                ).fetchone()
+                latest_rearm_id = (
+                    int(latest_rearm["rearm_event_id"])
+                    if latest_rearm["rearm_event_id"] is not None
+                    else None
+                )
+                if lineage is None and latest_rearm_id is not None:
+                    raise LedgerError("recovery authorization is stale or invalid")
+                if lineage is not None:
+                    if latest_rearm_id != int(lineage.get("rearmEventId") or 0):
+                        raise LedgerError("recovery authorization is stale or invalid")
+                    exact_rearm = connection.execute(
+                        """SELECT 1 FROM events rearmed
+                           JOIN events exhausted
+                             ON exhausted.opportunity_key=rearmed.opportunity_key
+                            AND exhausted.event_type=
+                                'THREAD_RECOVERY_RETRY_EXHAUSTED'
+                            AND exhausted.dedupe_key=?
+                           WHERE rearmed.opportunity_key=?
+                             AND rearmed.event_type=
+                                 'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                             AND rearmed.id=?
+                             AND exhausted.id=?
+                             AND json_extract(rearmed.payload_json,'$.threadId')=?
+                             AND json_extract(rearmed.payload_json,'$.recoveryNonce')=?
+                           LIMIT 1""",
+                        (
+                            lineage.get("exhaustedNonce"),
+                            candidate["key"],
+                            lineage.get("rearmEventId"),
+                            lineage.get("exhaustedEventId"),
+                            thread_id,
+                            lineage.get("exhaustedNonce"),
+                        ),
+                    ).fetchone()
+                    if exact_rearm is None:
+                        raise LedgerError("recovery authorization is stale or invalid")
             existing = connection.execute(
                 """SELECT 1 FROM events reserved WHERE opportunity_key=?
                    AND event_type='THREAD_RECOVERY_RESERVED'
@@ -3394,6 +4065,7 @@ class RadarLedger:
             ).fetchone()
             if existing:
                 raise LedgerError("recovery is already reserved")
+            changes_before = connection.total_changes
             self._event(
                 connection,
                 candidate["key"],
@@ -3411,6 +4083,8 @@ class RadarLedger:
                 },
                 now,
             )
+            if connection.total_changes == changes_before:
+                raise LedgerError("recovery authorization is stale or invalid")
         return candidate
 
     def commit_recovery(self, *, thread_id: str, nonce: str) -> None:
@@ -3530,7 +4204,14 @@ class RadarLedger:
                 now,
             )
 
-    def exhaust_recovery(self, *, thread_id: str, nonce: str) -> None:
+    def exhaust_recovery(
+        self,
+        *,
+        thread_id: str,
+        nonce: str,
+        terminal_error: dict[str, Any] | None = None,
+        retry_count: int | None = None,
+    ) -> None:
         """Release a repeatedly interrupted recovery and make the terminal state durable."""
 
         with self.transaction() as connection:
@@ -3587,6 +4268,8 @@ class RadarLedger:
                     "recoveryPromptDigest": reservation.get("recoveryPromptDigest"),
                     "recoveryChainDigest": reservation.get("recoveryChainDigest"),
                     "rearmedFromExhausted": reservation.get("rearmedFromExhausted"),
+                    "retryCount": retry_count,
+                    "terminalError": terminal_error,
                 },
                 now,
             )
@@ -3616,6 +4299,408 @@ class RadarLedger:
                         },
                         now,
                     )
+
+    def acknowledge_exhausted_recovery(
+        self, *, thread_id: str, nonce: str, reason: str
+    ) -> dict[str, Any]:
+        """Park one reviewed implementation recovery without changing its task result."""
+
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", reason):
+            raise LedgerError("recovery acknowledgement reason must be machine-readable")
+        with self.transaction() as connection:
+            existing_ack = connection.execute(
+                """SELECT ack.payload_json,ack.created_at,o.key,o.issue_url,o.title,o.stage,
+                          i.worktree_path
+                   FROM events ack
+                   JOIN opportunities o ON o.key=ack.opportunity_key
+                   JOIN intents i ON i.opportunity_key=ack.opportunity_key
+                    AND i.thread_id=?
+                   WHERE ack.event_type=
+                         'THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED'
+                     AND ack.dedupe_key=?
+                     AND json_extract(ack.payload_json,'$.threadId')=?
+                     AND json_extract(ack.payload_json,'$.recoveryNonce')=?
+                   ORDER BY ack.id DESC LIMIT 1""",
+                (thread_id, nonce, thread_id, nonce),
+            ).fetchone()
+            if existing_ack is not None:
+                existing_payload = json.loads(existing_ack["payload_json"])
+                if existing_payload.get("reason") != reason:
+                    raise LedgerError("exhausted recovery was acknowledged with another reason")
+                return {
+                    "key": existing_ack["key"],
+                    "issueUrl": existing_ack["issue_url"],
+                    "title": existing_ack["title"],
+                    "stage": existing_ack["stage"],
+                    "threadId": thread_id,
+                    "worktreePath": existing_ack["worktree_path"],
+                    "recoveryNonce": nonce,
+                    "recoveryKind": existing_payload.get("recoveryKind"),
+                    "followupDigest": existing_payload.get("followupDigest"),
+                    "reason": reason,
+                    "retryCount": existing_payload.get("retryCount"),
+                    "terminalError": existing_payload.get("terminalError"),
+                    "acknowledgedAt": existing_ack["created_at"],
+                    "alreadyAcknowledged": True,
+                }
+            row = connection.execute(
+                """SELECT exhausted.id AS exhausted_id,
+                          exhausted.opportunity_key AS key,
+                          exhausted.payload_json AS exhausted_payload,
+                          recovery.payload_json AS recovery_payload,
+                          o.issue_url,o.title,o.stage,i.worktree_path
+                   FROM events exhausted
+                   JOIN events recovery
+                     ON recovery.opportunity_key=exhausted.opportunity_key
+                    AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                    AND recovery.dedupe_key=exhausted.dedupe_key
+                   JOIN events followup
+                     ON followup.opportunity_key=exhausted.opportunity_key
+                    AND followup.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                    AND followup.dedupe_key=
+                        json_extract(recovery.payload_json,'$.followupDigest')
+                   JOIN intents i ON i.opportunity_key=exhausted.opportunity_key
+                   JOIN opportunities o ON o.key=exhausted.opportunity_key
+                   WHERE exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                     AND exhausted.dedupe_key=?
+                     AND json_extract(recovery.payload_json,'$.threadId')=?
+                     AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                         'IMPLEMENTATION_FOLLOWUP_RESULT'
+                     AND json_extract(followup.payload_json,'$.threadId')=?
+                     AND followup.id=(
+                       SELECT MAX(latest.id) FROM events latest
+                       WHERE latest.opportunity_key=exhausted.opportunity_key
+                         AND latest.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                     )
+                     AND recovery.id>followup.id
+                     AND i.thread_id=? AND i.status='DISPATCHED'
+                     AND recovery.id>(
+                       SELECT COALESCE(MAX(dispatched.id),0)
+                       FROM events dispatched
+                       WHERE dispatched.opportunity_key=i.opportunity_key
+                         AND dispatched.event_type='DISPATCHED'
+                         AND dispatched.dedupe_key=i.thread_id
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events later
+                       WHERE later.opportunity_key=exhausted.opportunity_key
+                         AND later.id>exhausted.id
+                         AND (
+                           later.event_type IN (
+                             'TASK_RESULT_INGESTED',
+                             'PUBLISHED_TASK_RESULT_BACKFILLED',
+                             'PR_FOLLOWUP_RESULT_INGESTED',
+                             'IMPLEMENTATION_CONTEXT_REPAIRED',
+                             'AUDIT_PASS',
+                             'AUDIT_NO_GO',
+                             'VALIDATION_PENDING',
+                             'FIX_READY',
+                             'PR_OPEN',
+                             'CI_GREEN',
+                             'MAINTAINER_ACCEPTED',
+                             'MERGED',
+                             'CLOSED'
+                           )
+                           OR (
+                             later.event_type='THREAD_RECOVERY_RESERVED'
+                             AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                             AND json_extract(
+                                   later.payload_json,
+                                   '$.rearmedFromExhausted.exhaustedNonce'
+                                 )=exhausted.dedupe_key
+                           )
+                           OR (
+                             later.event_type=
+                                 'THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED'
+                             AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                             AND json_extract(later.payload_json,'$.recoveryNonce')=
+                                 exhausted.dedupe_key
+                           )
+                           OR (
+                             later.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                             AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                             AND json_extract(later.payload_json,'$.recoveryNonce')=
+                                 exhausted.dedupe_key
+                           )
+                         )
+                     )
+                   ORDER BY exhausted.id DESC LIMIT 1""",
+                (nonce, thread_id, thread_id, thread_id),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("active exhausted recovery not found")
+            exhausted = json.loads(row["exhausted_payload"])
+            recovery = json.loads(row["recovery_payload"])
+            now = iso_z(datetime.now(UTC))
+            self._event(
+                connection,
+                row["key"],
+                "THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED",
+                nonce,
+                {
+                    "threadId": thread_id,
+                    "recoveryNonce": nonce,
+                    "reason": reason,
+                    "recoveryKind": recovery.get("recoveryKind"),
+                    "followupDigest": recovery.get("followupDigest"),
+                    "retryCount": exhausted.get("retryCount"),
+                    "terminalError": exhausted.get("terminalError"),
+                    "exhaustedEventId": int(row["exhausted_id"]),
+                },
+                now,
+            )
+            return {
+                "key": row["key"],
+                "issueUrl": row["issue_url"],
+                "title": row["title"],
+                "stage": row["stage"],
+                "threadId": thread_id,
+                "worktreePath": row["worktree_path"],
+                "recoveryNonce": nonce,
+                "recoveryKind": recovery.get("recoveryKind"),
+                "followupDigest": recovery.get("followupDigest"),
+                "reason": reason,
+                "retryCount": exhausted.get("retryCount"),
+                "terminalError": exhausted.get("terminalError"),
+                "acknowledgedAt": now,
+            }
+
+    def acknowledged_exhausted_recoveries(self) -> list[dict[str, Any]]:
+        """Expose reviewed implementation recoveries that remain explicitly parked."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.issue_url,o.title,o.stage,i.intent_id,i.thread_id,
+                          i.worktree_path,ack.payload_json,ack.created_at AS acknowledged_at,
+                          exhausted.created_at AS exhausted_at
+                   FROM events ack
+                   JOIN events exhausted
+                     ON exhausted.opportunity_key=ack.opportunity_key
+                    AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                    AND exhausted.dedupe_key=
+                        json_extract(ack.payload_json,'$.recoveryNonce')
+                   JOIN events recovery
+                     ON recovery.opportunity_key=exhausted.opportunity_key
+                    AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                    AND recovery.dedupe_key=exhausted.dedupe_key
+                   JOIN events followup
+                     ON followup.opportunity_key=exhausted.opportunity_key
+                    AND followup.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                    AND followup.dedupe_key=
+                        json_extract(recovery.payload_json,'$.followupDigest')
+                   JOIN opportunities o ON o.key=ack.opportunity_key
+                   JOIN intents i ON i.opportunity_key=ack.opportunity_key
+                    AND i.thread_id=json_extract(ack.payload_json,'$.threadId')
+                   WHERE ack.event_type=
+                         'THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED'
+                     AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                         'IMPLEMENTATION_FOLLOWUP_RESULT'
+                     AND json_extract(followup.payload_json,'$.threadId')=
+                         json_extract(ack.payload_json,'$.threadId')
+                     AND followup.id=(
+                       SELECT MAX(latest.id) FROM events latest
+                       WHERE latest.opportunity_key=ack.opportunity_key
+                         AND latest.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                     )
+                     AND recovery.id>followup.id
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events later
+                       WHERE later.opportunity_key=ack.opportunity_key
+                         AND later.id>ack.id
+                         AND (
+                           later.event_type IN (
+                             'TASK_RESULT_INGESTED',
+                             'PUBLISHED_TASK_RESULT_BACKFILLED',
+                             'PR_FOLLOWUP_RESULT_INGESTED',
+                             'IMPLEMENTATION_CONTEXT_REPAIRED',
+                             'AUDIT_PASS',
+                             'AUDIT_NO_GO',
+                             'VALIDATION_PENDING',
+                             'FIX_READY',
+                             'PR_OPEN',
+                             'CI_GREEN',
+                             'MAINTAINER_ACCEPTED',
+                             'MERGED',
+                             'CLOSED'
+                           )
+                           OR (
+                             later.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                             AND json_extract(later.payload_json,'$.threadId')=
+                                 json_extract(ack.payload_json,'$.threadId')
+                             AND json_extract(later.payload_json,'$.recoveryNonce')=
+                                 json_extract(ack.payload_json,'$.recoveryNonce')
+                           )
+                         )
+                     )
+                   ORDER BY ack.created_at,ack.id"""
+            ).fetchall()
+        parked: list[dict[str, Any]] = []
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            parked.append(
+                {
+                    "key": row["key"],
+                    "issueUrl": row["issue_url"],
+                    "title": row["title"],
+                    "stage": row["stage"],
+                    "intentId": row["intent_id"],
+                    "threadId": row["thread_id"],
+                    "worktreePath": row["worktree_path"],
+                    "recoveryNonce": payload.get("recoveryNonce"),
+                    "recoveryKind": payload.get("recoveryKind"),
+                    "followupDigest": payload.get("followupDigest"),
+                    "retryCount": payload.get("retryCount"),
+                    "terminalError": payload.get("terminalError"),
+                    "reason": payload.get("reason"),
+                    "exhaustedAt": row["exhausted_at"],
+                    "acknowledgedAt": row["acknowledged_at"],
+                    "parked": True,
+                    "rearmable": True,
+                    "occupiesTaskSlot": False,
+                }
+            )
+        return parked
+
+    def rearm_acknowledged_recovery(
+        self, *, thread_id: str, nonce: str, reason: str
+    ) -> dict[str, Any]:
+        """Explicitly reopen one reviewed, parked implementation recovery."""
+
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", reason):
+            raise LedgerError("recovery rearm reason must be machine-readable")
+        with self.transaction() as connection:
+            existing_rearm = connection.execute(
+                """SELECT rearmed.payload_json,rearmed.created_at,
+                          o.key,o.issue_url,o.title,o.stage,i.worktree_path
+                   FROM events rearmed
+                   JOIN opportunities o ON o.key=rearmed.opportunity_key
+                   JOIN intents i ON i.opportunity_key=rearmed.opportunity_key
+                    AND i.thread_id=?
+                   WHERE rearmed.event_type=
+                         'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                     AND rearmed.dedupe_key=?
+                     AND json_extract(rearmed.payload_json,'$.threadId')=?
+                     AND json_extract(rearmed.payload_json,'$.recoveryNonce')=?
+                   ORDER BY rearmed.id DESC LIMIT 1""",
+                (thread_id, nonce, thread_id, nonce),
+            ).fetchone()
+            if existing_rearm is not None:
+                existing_payload = json.loads(existing_rearm["payload_json"])
+                if existing_payload.get("reason") != reason:
+                    raise LedgerError("parked recovery was rearmed with another reason")
+                return {
+                    "key": existing_rearm["key"],
+                    "issueUrl": existing_rearm["issue_url"],
+                    "title": existing_rearm["title"],
+                    "stage": existing_rearm["stage"],
+                    "threadId": thread_id,
+                    "worktreePath": existing_rearm["worktree_path"],
+                    "recoveryNonce": nonce,
+                    "recoveryKind": existing_payload.get("recoveryKind"),
+                    "followupDigest": existing_payload.get("followupDigest"),
+                    "reason": reason,
+                    "rearmedAt": existing_rearm["created_at"],
+                    "alreadyRearmed": True,
+                }
+            row = connection.execute(
+                """SELECT ack.id AS acknowledgement_event_id,
+                          exhausted.id AS exhausted_event_id,
+                          ack.opportunity_key AS key,ack.payload_json,
+                          o.issue_url,o.title,o.stage,i.worktree_path
+                   FROM events ack
+                   JOIN events exhausted
+                     ON exhausted.opportunity_key=ack.opportunity_key
+                    AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                    AND exhausted.dedupe_key=?
+                   JOIN events recovery
+                     ON recovery.opportunity_key=exhausted.opportunity_key
+                    AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                    AND recovery.dedupe_key=exhausted.dedupe_key
+                   JOIN events followup
+                     ON followup.opportunity_key=exhausted.opportunity_key
+                    AND followup.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                    AND followup.dedupe_key=
+                        json_extract(recovery.payload_json,'$.followupDigest')
+                   JOIN opportunities o ON o.key=ack.opportunity_key
+                   JOIN intents i ON i.opportunity_key=ack.opportunity_key
+                    AND i.thread_id=? AND i.status='DISPATCHED'
+                   WHERE ack.event_type=
+                         'THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED'
+                     AND json_extract(ack.payload_json,'$.threadId')=?
+                     AND json_extract(ack.payload_json,'$.recoveryNonce')=?
+                     AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                         'IMPLEMENTATION_FOLLOWUP_RESULT'
+                     AND json_extract(followup.payload_json,'$.threadId')=?
+                     AND followup.id=(
+                       SELECT MAX(latest.id) FROM events latest
+                       WHERE latest.opportunity_key=ack.opportunity_key
+                         AND latest.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                     )
+                     AND recovery.id>followup.id
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events later
+                       WHERE later.opportunity_key=ack.opportunity_key
+                         AND later.id>ack.id
+                         AND (
+                           later.event_type IN (
+                             'TASK_RESULT_INGESTED',
+                             'PUBLISHED_TASK_RESULT_BACKFILLED',
+                             'PR_FOLLOWUP_RESULT_INGESTED',
+                             'IMPLEMENTATION_CONTEXT_REPAIRED',
+                             'AUDIT_PASS',
+                             'AUDIT_NO_GO',
+                             'VALIDATION_PENDING',
+                             'FIX_READY',
+                             'PR_OPEN',
+                             'CI_GREEN',
+                             'MAINTAINER_ACCEPTED',
+                             'MERGED',
+                             'CLOSED'
+                           )
+                           OR (
+                             later.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                             AND json_extract(later.payload_json,'$.threadId')=?
+                             AND json_extract(later.payload_json,'$.recoveryNonce')=?
+                           )
+                         )
+                     )
+                   ORDER BY ack.id DESC LIMIT 1""",
+                (nonce, thread_id, thread_id, nonce, thread_id, thread_id, nonce),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("parked exhausted recovery not found")
+            acknowledged = json.loads(row["payload_json"])
+            now = iso_z(datetime.now(UTC))
+            self._event(
+                connection,
+                row["key"],
+                "THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED",
+                nonce,
+                {
+                    "threadId": thread_id,
+                    "recoveryNonce": nonce,
+                    "reason": reason,
+                    "recoveryKind": acknowledged.get("recoveryKind"),
+                    "followupDigest": acknowledged.get("followupDigest"),
+                    "acknowledgementReason": acknowledged.get("reason"),
+                    "acknowledgementEventId": int(row["acknowledgement_event_id"]),
+                    "exhaustedEventId": int(row["exhausted_event_id"]),
+                },
+                now,
+            )
+            return {
+                "key": row["key"],
+                "issueUrl": row["issue_url"],
+                "title": row["title"],
+                "stage": row["stage"],
+                "threadId": thread_id,
+                "worktreePath": row["worktree_path"],
+                "recoveryNonce": nonce,
+                "recoveryKind": acknowledged.get("recoveryKind"),
+                "followupDigest": acknowledged.get("followupDigest"),
+                "reason": reason,
+                "rearmedAt": now,
+            }
 
     def record_validation_deferred(
         self,
@@ -4602,17 +5687,12 @@ class RadarLedger:
                     ORDER BY i.updated_at DESC LIMIT 1""",
                 tuple(params),
             ).fetchone()
-            audit_row = (
-                connection.execute(
-                    """SELECT payload_json,created_at FROM events
-                       WHERE opportunity_key=?
-                         AND event_type IN ('AUDIT_PASS','AUDIT_SNAPSHOT')
-                       ORDER BY id DESC LIMIT 1""",
-                    (row["key"],),
-                ).fetchone()
+            audit_rows = (
+                _intent_bound_audit_rows(connection, row["key"], row["intent_id"])
                 if row is not None
-                else None
+                else []
             )
+            audit_row = audit_rows[0] if audit_rows else None
             publication_row = (
                 connection.execute(
                     """SELECT r.status AS request_status,r.commit_sha,r.branch,
@@ -4709,6 +5789,25 @@ class RadarLedger:
                         payload["resultDigest"] = current_published["resultDigest"]
         except (OSError, RuntimeError, ValueError, sqlite3.Error, json.JSONDecodeError):
             verified_probe_receipt = None
+        audited_code_paths = None
+        if verified_probe_receipt is None:
+            selected_base = str(
+                payload.get("selectedBaseSha")
+                or (payload.get("preTaskEvidence") or {}).get("baseSha")
+                or ""
+            )
+            # Contexts restored from old publication/follow-up records may not
+            # have a selected repository base at all.  They cannot carry a
+            # base-bound path receipt, so keep their legacy read-only path plan.
+            if selected_base:
+                audited_code_paths = self.audited_probe_code_paths(
+                    intent_id=str(row["intent_id"] or ""),
+                    issue_url=str(row["issue_url"]),
+                    thread_id=str(row["thread_id"] or ""),
+                    worktree_path=str(row["worktree_path"] or ""),
+                    expected_base_sha=selected_base,
+                    require_receipt_digest_match=False,
+                )
         implementation_authorized = verified_probe_receipt is not None
         task_stage = raw_task_stage if implementation_authorized else "REPRODUCTION_REQUIRED"
         implementation_authorized = verified_probe_receipt is not None
@@ -4782,7 +5881,10 @@ class RadarLedger:
             "defaultBranch": payload.get("defaultBranch"),
             "selectedBaseSha": payload.get("selectedBaseSha")
             or (payload.get("preTaskEvidence") or {}).get("baseSha"),
-            "codePaths": payload.get("codePaths")
+            "codePaths": list(verified_probe_receipt["codePaths"])
+            if verified_probe_receipt is not None
+            else audited_code_paths
+            or payload.get("codePaths")
             or (payload.get("preTaskEvidence") or {}).get("codePathsPlan"),
             "resultDigest": payload.get("resultDigest"),
             "headSha": payload.get("headSha"),
@@ -4809,6 +5911,91 @@ class RadarLedger:
             "publicationReceipt": publication_receipt,
             "prFollowup": pr_followup,
         }
+
+    def audited_probe_code_paths(
+        self,
+        *,
+        intent_id: str,
+        issue_url: str,
+        thread_id: str,
+        worktree_path: str,
+        expected_base_sha: str,
+        require_receipt_digest_match: bool = True,
+    ) -> list[str] | None:
+        """Read the live-audit path receipt from the controller-owned ledger."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT o.key,o.issue_url,i.thread_id,i.worktree_path,i.payload_json
+                   FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
+                   WHERE i.intent_id=? AND o.issue_url=? AND i.thread_id=?""",
+                (intent_id, issue_url, thread_id),
+            ).fetchone()
+            all_audit_rows = (
+                connection.execute(
+                    """SELECT payload_json,created_at,dedupe_key,id FROM events
+                       WHERE opportunity_key=?
+                         AND event_type IN ('AUDIT_PASS','AUDIT_SNAPSHOT')
+                       ORDER BY id DESC""",
+                    (row["key"],),
+                ).fetchall()
+                if row is not None
+                else []
+            )
+            bound_audit_rows = (
+                _intent_bound_audit_rows(connection, row["key"], intent_id)
+                if row is not None
+                else []
+            )
+        if row is None:
+            raise LedgerError("task audit identity is not registered")
+        registered_worktree = str(row["worktree_path"] or "")
+        if not registered_worktree or Path(registered_worktree).resolve() != Path(
+            worktree_path
+        ).resolve():
+            raise LedgerError("task audit worktree does not match the result context")
+        payload = json.loads(row["payload_json"])
+        pre_task = payload.get("preTaskEvidence")
+        pre_task = pre_task if isinstance(pre_task, dict) else {}
+        selected_base = str(payload.get("selectedBaseSha") or pre_task.get("baseSha") or "")
+        if not expected_base_sha or selected_base != expected_base_sha:
+            raise LedgerError("task audit selected base does not match the result context")
+        expected_receipt_digest = str(payload.get("probeReceiptDigest") or "")
+        candidates = all_audit_rows if expected_receipt_digest else bound_audit_rows
+        for audit_row in candidates:
+            audit_payload = json.loads(audit_row["payload_json"])
+            live_audit = audit_payload.get("liveAudit")
+            evidence = live_audit.get("evidence") if isinstance(live_audit, dict) else None
+            if not isinstance(evidence, dict):
+                continue
+            camel_present = "repoProbeReceipt" in evidence
+            snake_present = "repo_probe_receipt" in evidence
+            if not camel_present and not snake_present:
+                continue
+            camel_receipt = evidence.get("repoProbeReceipt")
+            snake_receipt = evidence.get("repo_probe_receipt")
+            receipt = camel_receipt if camel_present else snake_receipt
+            receipt_digest = (
+                str(receipt.get("receiptDigest") or "") if isinstance(receipt, dict) else ""
+            )
+            if expected_receipt_digest and receipt_digest != expected_receipt_digest:
+                continue
+            return _audited_probe_code_paths(payload, audit_payload, issue_url)
+        if expected_receipt_digest:
+            if require_receipt_digest_match:
+                raise LedgerError("task audit repository probe receipt digest is unavailable")
+            return None
+        for audit_row in all_audit_rows:
+            audit_payload = json.loads(audit_row["payload_json"])
+            live_audit = audit_payload.get("liveAudit")
+            evidence = live_audit.get("evidence") if isinstance(live_audit, dict) else None
+            if isinstance(evidence, dict) and (
+                "repoProbeReceipt" in evidence or "repo_probe_receipt" in evidence
+            ):
+                raise LedgerError(
+                    "repository probe receipt is not bound to the task intent"
+                )
+        return None
 
     def task_context_candidates(self) -> list[dict[str, Any]]:
         """Return live, thread-bound tasks whose controller context should stay current."""

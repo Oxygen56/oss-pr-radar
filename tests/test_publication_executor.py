@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -842,6 +843,11 @@ def test_authorized_publication_cli_reaches_operation_without_external_process(
         MODULE, "require_operational_authorization", lambda root: calls.append(root)
     )
     monkeypatch.setattr(MODULE, "RadarLedger", lambda _path: object())
+    @contextmanager
+    def effect_guard(_root, _path):
+        yield SimpleNamespace(fileno=lambda: 0)
+
+    monkeypatch.setattr(MODULE, "outbound_effect_guard", effect_guard)
     monkeypatch.setattr(MODULE, "push", lambda _args, _store: {"ok": True, "pushed": True})
     monkeypatch.setattr(
         MODULE.sys,
@@ -869,6 +875,158 @@ def test_authorized_publication_cli_reaches_operation_without_external_process(
     assert MODULE.main() == 0
     assert json.loads(capsys.readouterr().out) == {"ok": True, "pushed": True}
     assert calls == [tmp_path.resolve()]
+
+
+def test_authorized_publication_cli_still_blocks_when_outbound_pause_is_active(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
+    @contextmanager
+    def effect_guard(_root, _path):
+        raise PermissionError("GITHUB_OUTBOUND_PAUSED")
+        yield
+
+    monkeypatch.setattr(MODULE, "outbound_effect_guard", effect_guard)
+    monkeypatch.setattr(
+        MODULE,
+        "RadarLedger",
+        lambda _path: pytest.fail("paused executor must stop before opening publication state"),
+    )
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        [
+            "publication_executor.py",
+            "push",
+            "--runtime-root",
+            str(tmp_path),
+            "--permit-id",
+            "permit-1",
+            "--issue-url",
+            "https://github.com/example/project/issues/1",
+            "--worktree",
+            str(tmp_path),
+            "--commit-sha",
+            "a" * 40,
+            "--branch",
+            "fix-one",
+            "--remote",
+            "origin",
+        ],
+    )
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result == {"ok": False, "blocked": True, "reason": "GITHUB_OUTBOUND_PAUSED"}
+
+
+def test_external_commands_inherit_the_outbound_lock_descriptor(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(*_args, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+    monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
+    MODULE._OUTBOUND_LOCK_FD = 37
+    try:
+        MODULE.run(["git", "status"], cwd=tmp_path)
+    finally:
+        MODULE._OUTBOUND_LOCK_FD = None
+
+    assert captured["pass_fds"] == (37,)
+
+
+def test_ensure_fork_does_not_turn_a_transient_lookup_failure_into_a_write(
+    monkeypatch, tmp_path
+):
+    calls = []
+    monkeypatch.setattr(MODULE, "ensure_permit", lambda *_args, **_kwargs: {"id": "permit"})
+    monkeypatch.setattr(
+        MODULE,
+        "permit_publication",
+        lambda _permit: {"headOwner": "Oxygen56"},
+    )
+
+    def fake_run(arguments, **_kwargs):
+        calls.append(arguments)
+        return subprocess.CompletedProcess(arguments, 1, stdout="", stderr="HTTP 503")
+
+    monkeypatch.setattr(MODULE, "run", fake_run)
+    args = SimpleNamespace(
+        permit_id="permit-1",
+        issue_url="https://github.com/example/project/issues/1",
+        commit_sha="a" * 40,
+        branch="fix-one",
+        head_owner="Oxygen56",
+        repo="example/project",
+        worktree=str(tmp_path),
+    )
+
+    with pytest.raises(RuntimeError, match="fork lookup failed"):
+        MODULE._ensure_fork_unlocked(args, object())
+
+    assert all(call[:3] != ["gh", "repo", "fork"] for call in calls)
+
+
+def test_ensure_fork_creates_once_and_returns_a_validated_remote(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(MODULE, "ensure_permit", lambda *_args, **_kwargs: {"id": "permit"})
+    monkeypatch.setattr(
+        MODULE,
+        "permit_publication",
+        lambda _permit: {"headOwner": "Oxygen56"},
+    )
+    fork = {
+        "fork": True,
+        "parent": {"full_name": "example/project"},
+    }
+
+    def fake_run(arguments, **_kwargs):
+        calls.append(arguments)
+        if arguments[:2] == ["gh", "api"]:
+            api_calls = sum(call[:2] == ["gh", "api"] for call in calls)
+            if api_calls == 1:
+                return subprocess.CompletedProcess(arguments, 1, stdout="", stderr="HTTP 404")
+            return subprocess.CompletedProcess(
+                arguments, 0, stdout=json.dumps(fork), stderr=""
+            )
+        if arguments[:3] == ["gh", "repo", "fork"]:
+            return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
+        if arguments == ["git", "remote"]:
+            return subprocess.CompletedProcess(arguments, 0, stdout="origin\n", stderr="")
+        if arguments[:3] == ["git", "remote", "get-url"]:
+            return subprocess.CompletedProcess(
+                arguments,
+                0,
+                stdout="https://github.com/example/project.git\n",
+                stderr="",
+            )
+        if arguments[:3] == ["git", "remote", "add"]:
+            return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
+        raise AssertionError(arguments)
+
+    monkeypatch.setattr(MODULE, "run", fake_run)
+    args = SimpleNamespace(
+        permit_id="permit-1",
+        issue_url="https://github.com/example/project/issues/1",
+        commit_sha="a" * 40,
+        branch="fix-one",
+        head_owner="Oxygen56",
+        repo="example/project",
+        worktree=str(tmp_path),
+    )
+
+    result = MODULE._ensure_fork_unlocked(args, object())
+
+    assert result == {
+        "ok": True,
+        "remote": "radar-fork",
+        "forkRepo": "Oxygen56/project",
+        "created": True,
+    }
+    assert sum(call[:3] == ["gh", "repo", "fork"] for call in calls) == 1
 
 
 def test_publication_cli_rejects_wrong_release_binding_before_external_process(

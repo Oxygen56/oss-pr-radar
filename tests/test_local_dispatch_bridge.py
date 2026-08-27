@@ -1395,6 +1395,8 @@ def registered_store(tmp_path: Path, worktree: Path | None = None) -> tuple[Rada
 
 
 def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
+    from oss_pr_radar.repo_probe import run_repo_probe
+
     store, worktree = registered_store(tmp_path)
     run_git(worktree, "config", "user.name", "Test Contributor")
     run_git(worktree, "config", "user.email", "test@example.com")
@@ -1430,6 +1432,43 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
             (json.dumps(payload, sort_keys=True),),
         )
 
+    class RepositoryClient:
+        def repository(self, repo):
+            assert repo == "a/b"
+            return {"default_branch": "main"}
+
+        def branch(self, repo, branch):
+            assert (repo, branch) == ("a/b", "main")
+            return {"commit": {"sha": base_sha}}
+
+        def repository_tree(self, repo, ref):
+            assert (repo, ref) == ("a/b", base_sha)
+            return [{"path": "runtime.py", "type": "blob"}]
+
+    path_receipt = run_repo_probe(
+        RepositoryClient(),
+        repo="a/b",
+        default_branch="main",
+        selected_base_sha=base_sha,
+        code_paths=["runtime.py"],
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "authorization": {"status": "ALLOW"},
+            "evidenceDigest": "resolved-live-evidence",
+            "liveAudit": {
+                "capturedAt": iso_z(datetime.now(UTC)),
+                "evidence": {
+                    "digest": "resolved-live-evidence",
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": path_receipt,
+                },
+            },
+        },
+        dedupe_key="resolved-live-evidence",
+    )
+
     managed = ManagedLedger(store.path, ensure_schema=True)
     managed.upsert_opportunity(
         opportunity_key="a/b#1",
@@ -1460,6 +1499,16 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
         cwd=worktree,
     )
     context = json.loads(context_path.read_text(encoding="utf-8"))
+    assert context["codePaths"] == ["runtime.py"]
+    context["codePaths"] = ["runtime.py", "missing.py"]
+    context["liveAudit"]["evidence"]["repoProbeReceipt"] = dict(path_receipt) | {
+        "signature": "0" * 64,
+        "codePaths": ["missing.py"],
+    }
+    serialized_context = json.dumps(context, sort_keys=True)
+    context_path.write_text(serialized_context, encoding="utf-8")
+    if context.get("bootstrapContextPath"):
+        Path(context["bootstrapContextPath"]).write_text(serialized_context, encoding="utf-8")
     result_path = Path(context["resultPath"])
     result_path.write_text(
         json.dumps(
@@ -1473,7 +1522,6 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
                 "stage": "AUDIT_NO_GO",
                 "reason": "AUTOMATION_REPRODUCTION_RECEIPT_REQUIRED",
                 "reproductionVerified": True,
-                "codePaths": ["runtime.py"],
                 "evidence": {
                     "summary": "The pinned runtime path reproduces the reported boundary."
                 },
@@ -1501,7 +1549,10 @@ def test_verified_reproduction_alias_advances_to_implementation(tmp_path):
     finalized = json.loads(result_path.read_text(encoding="utf-8"))
     assert finalized["stage"] == "REPRODUCED_VALIDATED"
     assert finalized["reason"] == "REPRODUCTION_CONFIRMED"
+    assert finalized["codePaths"] == ["runtime.py"]
     assert finalized["reproductionReceipt"]["profileId"] == "task-result-evidence-v1"
+    assert finalized["reproductionReceipt"]["codePaths"] == finalized["codePaths"]
+    assert finalized["reproductionReceipt"]["resultDigest"] == finalized["resultDigest"]
     with store.connect() as connection:
         payload = json.loads(
             connection.execute(
@@ -2342,6 +2393,50 @@ def test_historical_state_drift_reopen_entry_keeps_old_intent_rejected(monkeypat
     assert status == "REJECTED"
     assert stage == "QUALIFIED"
     assert updates[0]["a/b#1"]["status"] == "state_drift"
+
+
+@pytest.mark.parametrize(
+    ("function_name", "arguments"),
+    [
+        (
+            "reopen_false_terminal",
+            {
+                "key": "a/b#1",
+                "expected_reason": "AI_DISCLOSURE_REQUIRES_USER",
+                "migration_reason": "POLICY_MIGRATION",
+            },
+        ),
+        (
+            "reopen_state_drift",
+            {"key": "a/b#1", "intent_id": "intent-drift"},
+        ),
+    ],
+)
+def test_reopen_operations_stop_before_local_mutation_when_publication_is_paused(
+    monkeypatch, tmp_path, function_name, arguments
+):
+    monkeypatch.setattr(
+        MODULE,
+        "_active_publication_pause",
+        lambda _root: {"reason": "MAINTENANCE", "expired": False},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "ledger",
+        lambda _path: pytest.fail("paused reopen must stop before local mutation"),
+    )
+
+    result = getattr(MODULE, function_name)(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            runtime_root=tmp_path,
+            **arguments,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["paused"] is True
+    assert result["stateChanged"] is False
 
 
 def test_terminal_feedback_defers_when_issue_changed_after_dispatch(monkeypatch, tmp_path):
@@ -4707,6 +4802,338 @@ def test_prepare_managed_worktree_is_isolated_under_github_project(monkeypatch, 
     assert run_git(worktree, "status", "--porcelain") == ""
 
 
+def test_prepare_managed_worktree_expands_declared_sparse_paths(monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    run_git(source, "init")
+    run_git(source, "config", "user.name", "Test Contributor")
+    run_git(source, "config", "user.email", "test@example.com")
+    (source / "src" / "plugins").mkdir(parents=True)
+    (source / "src" / "frontends").mkdir(parents=True)
+    (source / "src" / "plugins" / "keep.py").write_text("keep = True\n", encoding="utf-8")
+    (source / "src" / "frontends" / "target.py").write_text(
+        "target = True\n", encoding="utf-8"
+    )
+    run_git(source, "add", ".")
+    run_git(source, "commit", "-m", "baseline")
+    run_git(source, "update-ref", "refs/remotes/origin/main", "HEAD")
+    run_git(source, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    run_git(source, "sparse-checkout", "set", "src/plugins")
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+
+    worktree = MODULE.prepare_managed_worktree(
+        source,
+        intent_id="intent-sparse",
+        repo="a/b",
+        code_paths=["src/frontends/target.py"],
+    )
+
+    target = worktree / "src" / "frontends" / "target.py"
+    assert target.read_text(encoding="utf-8") == "target = True\n"
+    target.write_text("target = False\n", encoding="utf-8")
+    run_git(worktree, "add", "--", "src/frontends/target.py")
+    assert run_git(worktree, "diff", "--cached", "--name-only") == (
+        "src/frontends/target.py"
+    )
+
+
+def test_controller_commit_expands_result_paths_outside_sparse_checkout(tmp_path):
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Test Contributor")
+    run_git(worktree, "config", "user.email", "test@example.com")
+    (worktree / "src" / "plugins").mkdir(parents=True)
+    (worktree / "src" / "frontends").mkdir(parents=True)
+    (worktree / "src" / "plugins" / "keep.py").write_text("keep = True\n", encoding="utf-8")
+    (worktree / "src" / "frontends" / "target.py").write_text(
+        "target = True\n", encoding="utf-8"
+    )
+    run_git(worktree, "add", ".")
+    run_git(worktree, "commit", "-m", "baseline")
+    run_git(worktree, "branch", "-M", "main")
+    run_git(worktree, "switch", "-c", "fix/1-sparse")
+    run_git(worktree, "sparse-checkout", "set", "src/plugins")
+    run_git(worktree, "update-index", "--no-skip-worktree", "--", "src/frontends/target.py")
+    target = worktree / "src" / "frontends" / "target.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("target = False\n", encoding="utf-8")
+    value = {
+        "handoffMode": "controller_commit_required",
+        "commitSha": None,
+        "branch": "fix/1-sparse",
+        "commitMessage": "fix: update sparse target",
+        "changedFiles": ["src/frontends/target.py"],
+    }
+
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate={"worktreePath": str(worktree)},
+        context={},
+        value=value,
+    )
+
+    assert finalized["handoffMode"] == "controller_commit_complete"
+    assert finalized["controllerCommitChangedFiles"] == ["src/frontends/target.py"]
+    assert run_git(worktree, "show", "--pretty=format:", "--name-only", "HEAD") == (
+        "src/frontends/target.py"
+    )
+
+
+def test_recovery_list_exposes_exhausted_recovery_as_a_blocker(monkeypatch, tmp_path):
+    blocker = {
+        "key": "a/b#1",
+        "threadId": "thread-1",
+        "recoveryKind": "DISPATCHED_TASK",
+        "reason": "RECOVERY_RETRY_EXHAUSTED",
+        "occupiesTaskSlot": False,
+    }
+    parked = {
+        "key": "c/d#2",
+        "threadId": "thread-2",
+        "recoveryKind": "IMPLEMENTATION_FOLLOWUP_RESULT",
+        "parked": True,
+    }
+
+    class Store:
+        def quarantined_validation_followups(self):
+            return []
+
+        def unresolved_recoveries(self):
+            return []
+
+        def recovery_candidates(self, **_kwargs):
+            return []
+
+        def exhausted_recovery_blockers(self):
+            return [blocker]
+
+        def acknowledged_exhausted_recoveries(self):
+            return [parked]
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "THREAD_DB", tmp_path / "missing-thread-db.sqlite3")
+
+    result = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert result["ok"] is True
+    assert result["recoveryRetryExhausted"] == [blocker]
+    assert result["parkedRecovery"] == [parked]
+
+
+def test_recovery_acknowledge_uses_exact_dead_letter_identity(monkeypatch, tmp_path):
+    calls = []
+
+    class Store:
+        def acknowledge_exhausted_recovery(self, **kwargs):
+            calls.append(kwargs)
+            return {"key": "a/b#1", **kwargs}
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.recovery_acknowledge(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            recovery_nonce="nonce-1",
+            reason="OPERATOR_REVIEWED_EXTERNAL_POLICY_BLOCK",
+        )
+    )
+
+    assert result["ok"] is True
+    assert calls == [
+        {
+            "thread_id": "thread-1",
+            "nonce": "nonce-1",
+            "reason": "OPERATOR_REVIEWED_EXTERNAL_POLICY_BLOCK",
+        }
+    ]
+
+
+def test_recovery_rearm_uses_exact_parked_identity(monkeypatch, tmp_path):
+    calls = []
+
+    class Store:
+        def rearm_acknowledged_recovery(self, **kwargs):
+            calls.append(kwargs)
+            return {"key": "a/b#1", **kwargs}
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+
+    result = MODULE.recovery_rearm(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            recovery_nonce="nonce-1",
+            reason="EXECUTION_ENVIRONMENT_CHANGED",
+        )
+    )
+
+    assert result["ok"] is True
+    assert calls == [
+        {
+            "thread_id": "thread-1",
+            "nonce": "nonce-1",
+            "reason": "EXECUTION_ENVIRONMENT_CHANGED",
+        }
+    ]
+
+
+def test_recovery_reserve_rearms_same_exhausted_dispatch(monkeypatch, tmp_path):
+    store, worktree = registered_store(tmp_path)
+    legacy = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=legacy["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=legacy["recoveryNonce"])
+    store.exhaust_recovery(thread_id="thread-1", nonce=legacy["recoveryNonce"])
+    assert store.exhausted_recovery_blockers()[0]["key"] == "a/b#1"
+
+    with sqlite3.connect(MODULE.THREAD_DB) as connection:
+        connection.execute(
+            "INSERT INTO threads "
+            "(id,title,archived,updated_at,rollout_path,first_user_message,cwd,git_origin_url) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-1",
+                "task",
+                0,
+                0,
+                None,
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(worktree),
+                "https://github.com/a/b.git",
+            ),
+        )
+
+    interrupted = {
+        "status": "interrupted",
+        "code": "turn_interrupted",
+        "message": "interrupted",
+        "turnId": "turn-legacy-recovery",
+    }
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "latest_thread_turn_state", lambda _path: interrupted)
+
+    listed = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert listed["ok"] is True
+    assert listed["recoveryRetryExhausted"][0]["key"] == "a/b#1"
+    candidate = listed["recoverable"][0]
+    assert candidate["rearmedFromExhausted"]["exhaustedNonce"] == legacy[
+        "recoveryNonce"
+    ]
+
+    reserved = MODULE.recovery_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-1",
+            recovery_nonce=candidate["recoveryNonce"],
+        )
+    )
+
+    assert reserved["ok"] is True
+    assert reserved["rearmedFromExhausted"] == candidate["rearmedFromExhausted"]
+    assert store.exhausted_recovery_blockers() == []
+
+
+def test_recovery_reserve_ignores_another_tasks_exhausted_blocker(monkeypatch, tmp_path):
+    blocker = {
+        "key": "a/b#1",
+        "threadId": "thread-1",
+        "recoveryKind": "DISPATCHED_TASK",
+        "reason": "RECOVERY_RETRY_EXHAUSTED",
+        "occupiesTaskSlot": False,
+    }
+    candidate = {
+        "key": "c/d#2",
+        "issueUrl": "https://github.com/c/d/issues/2",
+        "threadId": "thread-2",
+        "worktreePath": str(tmp_path / "unrelated-worktree"),
+        "dispatchedAt": "2026-08-20T00:00:00Z",
+        "recoveryKind": "VALIDATION_FOLLOWUP_RESULT",
+        "followupDigest": "result-2",
+        "recoveryNonce": "nonce-2",
+    }
+    reserve_calls = []
+    parked = {
+        "key": "e/f#3",
+        "threadId": "thread-3",
+        "recoveryKind": "IMPLEMENTATION_FOLLOWUP_RESULT",
+        "parked": True,
+    }
+
+    class Store:
+        def quarantined_validation_followups(self):
+            return []
+
+        def unresolved_recoveries(self):
+            return []
+
+        def recovery_candidates(self, **_kwargs):
+            return [candidate]
+
+        def exhausted_recovery_blockers(self):
+            return [blocker]
+
+        def acknowledged_exhausted_recoveries(self):
+            return [parked]
+
+        def reserve_recovery(self, **kwargs):
+            reserve_calls.append(kwargs)
+            return candidate
+
+    worktree = Path(candidate["worktreePath"])
+    worktree.mkdir()
+    with sqlite3.connect(MODULE.THREAD_DB) as connection:
+        connection.execute(
+            "INSERT INTO threads "
+            "(id,title,archived,updated_at,rollout_path,first_user_message,cwd,git_origin_url) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-2",
+                "task",
+                0,
+                0,
+                None,
+                MODULE.issue_prompt(candidate["issueUrl"]),
+                str(worktree),
+                "https://github.com/c/d.git",
+            ),
+        )
+
+    interrupted = {
+        "status": "interrupted",
+        "code": "turn_interrupted",
+        "message": "interrupted",
+        "turnId": "turn-unrelated-recovery",
+    }
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "latest_thread_turn_state", lambda _path: interrupted)
+
+    listed = MODULE.recovery_list(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=90)
+    )
+
+    assert listed["ok"] is True
+    assert listed["recoverable"][0]["key"] == "c/d#2"
+    assert listed["recoveryRetryExhausted"] == [blocker]
+    assert listed["parkedRecovery"] == [parked]
+
+    reserved = MODULE.recovery_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id="thread-2",
+            recovery_nonce="nonce-2",
+        )
+    )
+
+    assert reserved["ok"] is True
+    assert reserved["threadId"] == "thread-2"
+    assert reserve_calls == [{"thread_id": "thread-2", "nonce": "nonce-2"}]
+
+
 def test_worktree_membership_uses_common_repository_for_linked_source(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
@@ -4993,6 +5420,30 @@ def test_independent_review_runs_while_issue_task_lifecycle_is_active(monkeypatc
     result = MODULE.independent_review_run(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert result == {"ok": True, "updated": ["a/b#1"]}
+
+
+def test_independent_review_keeps_candidate_failure_out_of_worker_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+    schema_path = tmp_path / "schemas" / "independent_review.schema.json"
+    schema_path.parent.mkdir(parents=True)
+    schema_path.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        MODULE,
+        "review_once",
+        lambda *_args, **_kwargs: {
+            "ok": False,
+            "updated": [],
+            "errors": [{"key": "a/b#1", "error": "invalid candidate"}],
+        },
+    )
+
+    result = MODULE.independent_review_run(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["candidateErrors"] == [
+        {"key": "a/b#1", "error": "invalid candidate"}
+    ]
 
 
 def test_independent_review_missing_schema_is_nonfatal(monkeypatch, tmp_path):
@@ -5454,6 +5905,85 @@ def test_prepare_claim_returns_single_project_root_and_isolated_worktree(monkeyp
         },
     }
     assert "projectId" not in result["createThreadRequest"]
+
+
+def test_prepare_claim_does_not_treat_unverified_symbol_alias_as_a_path(
+    monkeypatch, tmp_path
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-1",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+    probe = {
+        "probeLevel": "UNVERIFIED",
+        "codePathsVerified": False,
+        "codePaths": ["`runtime_symbol`"],
+    }
+    evidence = SimpleNamespace(
+        digest="evidence",
+        probe_level="UNVERIFIED",
+        repo_probe_receipt=probe,
+        as_dict=lambda: {
+            "digest": "evidence",
+            "complete": True,
+            "repo": "a/b",
+            "issue": {"labels": []},
+        },
+    )
+    verdict = SimpleNamespace(
+        status="ALLOW",
+        reason_code="ALLOW",
+        as_dict=lambda: {"status": "ALLOW", "reasonCode": "ALLOW"},
+    )
+    source = tmp_path / "source"
+    worktree = tmp_path / "worktree"
+    prepared: list[dict] = []
+
+    def prepare(_source, **kwargs):
+        prepared.append(kwargs)
+        return worktree
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "_audit_intent", lambda _intent: (evidence, verdict))
+    monkeypatch.setattr(
+        MODULE,
+        "resolve_target_base",
+        lambda _client, _repo, _issue: {
+            "branch": "main",
+            "sha": "a" * 40,
+            "source": "repository_default",
+            "defaultBranch": "main",
+        },
+    )
+    monkeypatch.setattr(MODULE, "source_repo", lambda _repo, **_kwargs: source)
+    monkeypatch.setattr(MODULE, "prepare_managed_worktree", prepare)
+
+    result = MODULE.claim_intent(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            intent_id="intent-1",
+            owner="controller",
+            lease_minutes=15,
+            prepare=True,
+        )
+    )
+
+    assert result["claimed"] is True
+    assert prepared[0]["code_paths"] == []
 
 
 def test_creation_start_infers_active_lease_owner(monkeypatch, tmp_path):
@@ -7109,7 +7639,19 @@ def test_interrupted_recovery_turn_stops_after_one_rearm(monkeypatch, tmp_path):
 
     assert rearmed == []
     assert exhausted[0]["reason"] == "RECOVERY_RETRY_EXHAUSTED"
-    assert exhausted_calls == [{"thread_id": "thread-1", "nonce": "nonce-2"}]
+    assert exhausted_calls == [
+        {
+            "thread_id": "thread-1",
+            "nonce": "nonce-2",
+            "retry_count": 2,
+            "terminal_error": {
+                "status": "interrupted",
+                "code": "turn_interrupted",
+                "turnId": "turn-2",
+                "message": "interrupted",
+            },
+        }
+    ]
 
 
 def test_new_validation_followup_is_not_blocked_by_prior_sent_recovery(tmp_path):
@@ -10685,6 +11227,8 @@ def _controller_commit_result(
     base_branch: str = "main",
     authenticated: bool = True,
     worktree: Path | None = None,
+    additional_changed_files: tuple[str, ...] = (),
+    reported_code_paths: tuple[str, ...] | None = None,
 ) -> tuple[RadarLedger, Path, Path]:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
@@ -10694,7 +11238,12 @@ def _controller_commit_result(
     run_git(worktree, "config", "user.email", "test@example.com")
     source = worktree / "runtime.py"
     source.write_text("value = 1\n", encoding="utf-8")
-    run_git(worktree, "add", "runtime.py")
+    for relative in additional_changed_files:
+        extra = worktree / relative
+        extra.parent.mkdir(parents=True, exist_ok=True)
+        extra.write_text("value = 1\n", encoding="utf-8")
+    changed_files = sorted(["runtime.py", *additional_changed_files])
+    run_git(worktree, "add", *changed_files)
     run_git(worktree, "commit", "-m", "chore: baseline")
     run_git(worktree, "branch", "-M", "main")
     run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
@@ -10707,8 +11256,10 @@ def _controller_commit_result(
     )
     base_sha = run_git(worktree, "rev-parse", "HEAD")
     source.write_text("value = 2\nassert value == 2\n", encoding="utf-8")
+    for relative in additional_changed_files:
+        (worktree / relative).write_text("value = 2\n", encoding="utf-8")
     run_git(worktree, "switch", "-c", "fix/1-runtime-boundary")
-    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "add", *changed_files)
     commit_message = "fix: preserve runtime boundary"
     if dco_required:
         commit_message += "\n\nSigned-off-by: Test Contributor <test@example.com>"
@@ -10766,6 +11317,18 @@ def _controller_commit_result(
             "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
             (json.dumps(payload, sort_keys=True),),
         )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": probe,
+                }
+            }
+        },
+        dedupe_key="intent-1:repository-probe",
+    )
     if controller_policy_complete:
         store.record_audit_snapshot(
             "a/b#1",
@@ -10815,13 +11378,13 @@ def _controller_commit_result(
         "handoffMode": "controller_commit_complete",
         "commitSha": head_sha,
         "branch": "fix/1-runtime-boundary",
-        "controllerCommitChangedFiles": ["runtime.py"],
+        "controllerCommitChangedFiles": changed_files,
         "commitMessage": "fix: preserve runtime boundary",
-        "changedFiles": ["runtime.py"],
+        "changedFiles": changed_files,
         "headSha": head_sha,
         "selectedBaseSha": base_sha,
         "taskId": "intent-1",
-        "codePaths": ["runtime.py"],
+        "codePaths": list(reported_code_paths or ("runtime.py",)),
         "preTaskEvidence": {
             "defaultBranch": "main",
             "baseSha": base_sha,
@@ -11009,11 +11572,13 @@ def _bind_published_pr_authority_fixture(
     *,
     managed_state: str = "OPEN",
     reservation_opportunity_key: str = "a/b#1",
+    reservation_head_sha: str | None = None,
     explicit_pr_followup: bool = False,
     degrade_stage: bool = True,
 ) -> tuple[ManagedLedger, dict, str]:
     value = json.loads(result_path.read_text(encoding="utf-8"))
     head_sha = str(value["reproductionReceipt"]["commitSha"])
+    publication_head_sha = reservation_head_sha or head_sha
     branch = str(value["branch"])
     pr_url = "https://github.com/a/b/pull/9"
     now = iso_z(datetime.now(UTC))
@@ -11069,7 +11634,7 @@ def _bind_published_pr_authority_fixture(
         request_id="managed-published-authority-request",
         repo="a/b",
         head_ref=branch,
-        head_sha=head_sha,
+        head_sha=publication_head_sha,
         opportunity_key=reservation_opportunity_key,
         idempotency_key="managed-published-authority-reservation",
     )
@@ -11078,7 +11643,7 @@ def _bind_published_pr_authority_fixture(
         owner="a",
         repo="b",
         number=9,
-        head_sha=head_sha,
+        head_sha=publication_head_sha,
         pr_url=pr_url,
         auto_created=True,
         source_kind="MANAGED_PUBLICATION_RECEIPT",
@@ -11087,7 +11652,7 @@ def _bind_published_pr_authority_fixture(
         opportunity_key=reservation_opportunity_key,
         event_idempotency_key="managed-published-authority-receipt",
     )
-    if managed_state != "OPEN":
+    if managed_state != "OPEN" or publication_head_sha != head_sha:
         managed.upsert_pr(
             pr_key="a/b#9",
             owner="a",
@@ -11183,6 +11748,83 @@ def test_ingest_keeps_reservation_bound_published_pr_authoritative(
             == 1
         )
     assert managed.read_task("intent-1") == task_before
+
+
+def test_ingest_keeps_reconciled_current_pr_head_authoritative(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("minimal_fix_verified", "relevant_tests_green"),
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    current_head = str(value["reproductionReceipt"]["commitSha"])
+    reservation_head = "d" * 40
+    managed, degraded_context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        reservation_head_sha=reservation_head,
+    )
+
+    assert degraded_context["publicationReceipt"]["commitSha"] == current_head
+    with managed._connection() as connection:
+        reservation = connection.execute(
+            "SELECT head_sha FROM managed_publication_reservations"
+        ).fetchone()
+        current_pr = connection.execute("SELECT head_sha FROM managed_prs").fetchone()
+    assert reservation["head_sha"] == reservation_head
+    assert current_pr["head_sha"] == current_head
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["ingested"] == []
+    assert result["publicationRequests"] == []
+    assert result["ignored"] == [
+        {"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}
+    ]
+    restored = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert restored["stage"] == "PR_OPEN"
+    assert restored["publicationReceipt"]["prUrl"] == pr_url
+    with managed._connection() as connection:
+        authority_event = connection.execute(
+            """SELECT provenance_json FROM managed_lifecycle_events
+               WHERE event_type='MANAGED_PUBLISHED_PR_AUTHORITATIVE'
+                 AND opportunity_key='a/b#1'"""
+        ).fetchone()
+    authority_provenance = json.loads(authority_event["provenance_json"])
+    assert authority_provenance["authorityAnchor"] == "CURRENT_PR_HEAD"
+    assert authority_provenance["publicationHeadSha"] == reservation_head
+    assert authority_provenance["receiptHeadSha"] == current_head
+    assert authority_provenance["currentPrHeadSha"] == current_head
+
+
+def test_published_pr_authority_rejects_unbound_receipt_head(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        reservation_head_sha="d" * 40,
+    )
+
+    assert (
+        managed.published_pr_authority_for_opportunity(
+            "a/b#1",
+            pr_url=pr_url,
+            receipt_head_sha="f" * 40,
+        )
+        is None
+    )
+    assert (
+        managed.published_pr_authority_for_opportunity(
+            "a/b#1",
+            pr_url="https://github.com/a/b/pull/10",
+            receipt_head_sha="d" * 40,
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize("include_result_receipt", [True, False])
@@ -11665,6 +12307,14 @@ def test_published_pr_authority_requires_exact_opportunity_reservation(tmp_path)
             "a/b#1",
             pr_url=pr_url,
             publication_head_sha=context["publicationReceipt"]["commitSha"],
+        )
+        is None
+    )
+    assert (
+        managed.published_pr_authority_for_opportunity(
+            "a/b#1",
+            pr_url=pr_url,
+            receipt_head_sha=context["publicationReceipt"]["commitSha"],
         )
         is None
     )
@@ -12489,6 +13139,26 @@ def test_implementation_context_survives_missing_opportunity_code_paths(tmp_path
     assert context["reproductionReceipt"]["receiptDigest"] == context["probeReceiptDigest"]
 
 
+def test_implementation_context_prefers_durable_receipt_paths(monkeypatch, tmp_path):
+    import oss_pr_radar.ledger as ledger_module
+
+    store, _worktree, _result_path = _controller_commit_result(tmp_path)
+    monkeypatch.setattr(
+        ledger_module,
+        "_audited_probe_code_paths",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("durable receipt must bypass old audit paths")
+        ),
+    )
+
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+
+    assert context["codePaths"] == ["runtime.py"]
+    assert context["reproductionReceipt"]["codePaths"] == ["runtime.py"]
+
+
 def test_implementation_context_survives_expired_transition_receipt(monkeypatch, tmp_path):
     import oss_pr_radar.repo_probe as repo_probe
 
@@ -12799,6 +13469,29 @@ def test_controller_commits_validated_child_patch_and_requests_publication(tmp_p
     )
 
 
+def test_controller_accepts_verified_changed_files_beyond_reproduction_scope(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("integration.py",),
+        reported_code_paths=("runtime.py", "integration.py"),
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result
+    assert result["errors"] == []
+    assert result["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(result["publicationRequests"]) == 1
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["codePaths"] == ["runtime.py"]
+    assert finalized["changedFiles"] == ["integration.py", "runtime.py"]
+    assert finalized["controllerCodePathScope"]["reported"] == [
+        "integration.py",
+        "runtime.py",
+    ]
+    assert finalized["reproductionReceipt"]["codePaths"] == ["runtime.py"]
+
+
 def test_child_cannot_self_attest_independent_review(monkeypatch, tmp_path):
     store, _worktree, result_path = _controller_commit_result(tmp_path, authenticated=False)
     monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: None)
@@ -12857,6 +13550,154 @@ def test_final_receipt_rebind_uses_current_valid_receipt_when_context_source_is_
     assert finalized["resultDigest"] != original_digest
     assert finalized["reproductionReceipt"]["resultDigest"] == finalized["resultDigest"]
     assert finalized["reproductionReceipt"]["derivedFromReceiptDigest"]
+
+
+def test_final_receipt_keeps_managed_reproduction_scope_when_child_reports_more_paths(
+    tmp_path,
+):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["codePaths"] = ["runtime.py", "integration.py"]
+    value["changedFiles"] = ["runtime.py", "integration.py"]
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        finalized, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=result_access,
+            managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+        )
+
+    assert finalized["codePaths"] == ["runtime.py"]
+    assert finalized["reproductionReceipt"]["codePaths"] == ["runtime.py"]
+    assert finalized["controllerCodePathScope"] == {
+        "schemaVersion": "controller-code-path-scope-v1",
+        "authority": "managed-reproduction-receipt",
+        "authorized": ["runtime.py"],
+        "reported": ["integration.py", "runtime.py"],
+        "added": ["integration.py"],
+        "omitted": [],
+        "sourceReceiptDigest": context["reproductionReceipt"]["receiptDigest"],
+    }
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        finalized_again, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=finalized,
+            result_access=result_access,
+            managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+        )
+
+    assert finalized_again == finalized
+
+
+def test_final_receipt_never_falls_back_when_managed_durable_binding_disagrees(
+    tmp_path,
+):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    context["reproductionReceipt"] = dict(context["reproductionReceipt"]) | {
+        "receiptDigest": "f" * 64
+    }
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        with pytest.raises(
+            MODULE.TaskResultEvidenceBlocked,
+            match="DURABLE_REPRODUCTION_RECEIPT_CONTEXT_MISMATCH",
+        ):
+            MODULE._bind_final_reproduction_receipt(
+                candidate=candidate,
+                context=context,
+                value=value,
+                result_access=result_access,
+                managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+            )
+
+
+@pytest.mark.parametrize(
+    ("reported", "changed", "reason"),
+    [
+        (["replacement.py"], ["replacement.py"], "REPRODUCTION_SCOPE_OMITTED_OR_REPLACED"),
+        (
+            ["runtime.py", "unrelated.py"],
+            ["runtime.py"],
+            "REPORTED_SCOPE_NOT_IN_COMMITTED_CHANGES",
+        ),
+        (
+            ["runtime.py", "/absolute.py"],
+            ["runtime.py", "/absolute.py"],
+            "REPORTED_SCOPE_PATHS_INVALID",
+        ),
+    ],
+)
+def test_final_receipt_rejects_unsafe_reported_scope(
+    tmp_path, reported, changed, reason
+):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["codePaths"] = reported
+    value["changedFiles"] = changed
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        with pytest.raises(MODULE.TaskResultEvidenceBlocked, match=reason):
+            MODULE._bind_final_reproduction_receipt(
+                candidate=candidate,
+                context=context,
+                value=value,
+                result_access=result_access,
+                managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+            )
+
+
+def test_invalid_final_receipt_is_parked_once_without_failing_result_ingestion(
+    monkeypatch, tmp_path
+):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+
+    def fail_bind(*_args, **_kwargs):
+        raise MODULE.TaskResultEvidenceBlocked("REPRODUCTION_RECEIPT_INVALID")
+
+    monkeypatch.setattr(MODULE, "_bind_final_reproduction_receipt", fail_bind)
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    second = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["errors"] == [], first
+    assert first["ok"] is True, first
+    assert first["ingested"] == []
+    assert first["publicationRequests"] == []
+    assert first["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "REPRODUCTION_RECEIPT_INVALID",
+            "alreadyRecorded": False,
+        }
+    ]
+    assert second["ok"] is True
+    assert second["errors"] == []
+    assert second["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "REPRODUCTION_RECEIPT_INVALID",
+            "alreadyRecorded": True,
+        }
+    ]
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM managed_lifecycle_events
+                   WHERE event_type='TASK_RESULT_EVIDENCE_BLOCKED'"""
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_failed_controller_review_remains_an_actionable_followup(monkeypatch, tmp_path):
@@ -17575,6 +18416,71 @@ def test_validation_prefetch_failure_does_not_reserve_followup(monkeypatch, tmp_
     assert store.unresolved_validation_followups() == []
 
 
+def test_publication_pause_returns_pending_without_starting_managed_publication(
+    monkeypatch, tmp_path
+):
+    class Store:
+        @staticmethod
+        def publication_work_items():
+            return [{"request_id": "request-1", "request": {}}]
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(
+        MODULE,
+        "_active_publication_pause",
+        lambda _root: {
+            "reason": "MAINTENANCE",
+            "expiresAt": "2026-08-28T00:00:00Z",
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "ManagedAdapter",
+        lambda *_args: pytest.fail("paused publication must stop before managed publication"),
+    )
+
+    result = MODULE._run_publication_queue_unlocked(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            runtime_root=tmp_path,
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "paused": True,
+        "pauseReason": "MAINTENANCE",
+        "pauseExpiresAt": "2026-08-28T00:00:00Z",
+        "pauseExpired": False,
+        "published": [],
+        "pending": [{"requestId": "request-1", "reason": "PUBLICATION_PAUSED"}],
+        "blocked": [],
+        "errors": [],
+    }
+
+
+def test_terminal_feedback_pause_stops_before_state_branch_publish(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        MODULE,
+        "_active_publication_pause",
+        lambda _root: {"reason": "MAINTENANCE", "expired": True},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_publish_terminal_feedback_unlocked",
+        lambda _args: pytest.fail("paused terminal feedback must not publish state"),
+    )
+
+    result = MODULE.publish_terminal_feedback(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", runtime_root=tmp_path)
+    )
+
+    assert result["ok"] is True
+    assert result["paused"] is True
+    assert result["pauseExpired"] is True
+    assert result["published"] == 0
+
+
 def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_path):
     fixture = _legal_queue_publication_fixture(tmp_path)
     request = fixture["request"]
@@ -17604,11 +18510,12 @@ def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_p
         "broker_publication_request",
         lambda *_args: {"granted": True, "permit": {"permit_id": "permit-1"}},
     )
-    monkeypatch.setattr(MODULE, "ensure_fork_remote", lambda *_args: "radar-fork")
     calls = []
 
     def executor(operation, arguments, *, ledger_path):
         calls.append((operation, arguments, ledger_path))
+        if operation == "ensure-fork":
+            return {"ok": True, "remote": "radar-fork"}
         if operation == "push":
             return {"ok": True, "reconciled": False}
         return {"ok": True, "prUrl": "https://github.com/a/b/pull/2"}
@@ -17620,7 +18527,7 @@ def test_privileged_controller_runs_granted_publication_queue(monkeypatch, tmp_p
 
     assert result["ok"] is True
     assert result["published"][0]["prUrl"] == "https://github.com/a/b/pull/2"
-    assert [call[0] for call in calls] == ["push", "create-pr"]
+    assert [call[0] for call in calls] == ["ensure-fork", "push", "create-pr"]
     assert all(call[2] == ledger_path for call in calls)
 
 
@@ -17913,7 +18820,6 @@ def test_publication_finalize_failure_reconciles_without_second_create_pr(monkey
     store = Store()
     monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
     monkeypatch.setattr(MODULE, "controller_review_result", lambda *_args: {"verdict": "PASS"})
-    monkeypatch.setattr(MODULE, "ensure_fork_remote", lambda *_args: "radar-fork")
     monkeypatch.setattr(
         MODULE,
         "broker_publication_request",
@@ -17922,6 +18828,8 @@ def test_publication_finalize_failure_reconciles_without_second_create_pr(monkey
 
     def executor(operation, _arguments, *, ledger_path):
         calls.append(operation)
+        if operation == "ensure-fork":
+            return {"ok": True, "remote": "radar-fork"}
         if operation == "push":
             return {"ok": True}
         result = {
@@ -17986,7 +18894,7 @@ def test_publication_finalize_failure_reconciles_without_second_create_pr(monkey
             "pushReconciled": True,
         }
     ]
-    assert calls == ["push", "create-pr"]
+    assert calls == ["ensure-fork", "push", "create-pr"]
 
 
 def test_publication_update_receipt_reconciles_without_creation_reservation(monkeypatch, tmp_path):
@@ -18116,7 +19024,6 @@ def test_publication_queue_reconciles_interrupted_push_before_pr_confirmation(
             return {"permit_id": "permit-1"}
 
     monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
-    monkeypatch.setattr(MODULE, "ensure_fork_remote", lambda *_args: "radar-fork")
     monkeypatch.setattr(
         MODULE,
         "broker_publication_request",
@@ -18126,6 +19033,8 @@ def test_publication_queue_reconciles_interrupted_push_before_pr_confirmation(
 
     def executor(operation, arguments, *, ledger_path):
         calls.append(operation)
+        if operation == "ensure-fork":
+            return {"ok": True, "remote": "radar-fork"}
         if operation == "push":
             return {"ok": True, "reconciled": True}
         return {"ok": True, "prUrl": "https://github.com/a/b/pull/2"}
@@ -18135,7 +19044,7 @@ def test_publication_queue_reconciles_interrupted_push_before_pr_confirmation(
     result = MODULE.run_publication_queue(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
     assert result["ok"] is True
-    assert calls == ["push", "create-pr"]
+    assert calls == ["ensure-fork", "push", "create-pr"]
 
 
 def test_publication_queue_returns_immediately_when_another_executor_holds_lock(

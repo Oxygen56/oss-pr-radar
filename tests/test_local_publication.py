@@ -671,7 +671,7 @@ def test_independent_review_update_is_reingested_before_publication(tmp_path):
     assert result["independentReview"]["updated"][0]["verdict"] == "PASS"
 
 
-def test_review_update_is_reingested_even_when_an_older_candidate_is_invalid(tmp_path):
+def test_review_update_continues_when_an_older_candidate_is_invalid(tmp_path):
     calls = []
     ingestion_count = 0
 
@@ -708,8 +708,15 @@ def test_review_update_is_reingested_even_when_an_older_candidate_is_invalid(tmp
         "ingest-results",
     ]
     assert result["resultsIngested"] == [{"key": "a/b#2", "stage": "FIX_READY"}]
-    assert result["ok"] is False
-    assert result["errors"] == [{"key": "a/b#1", "error": "invalid old result"}]
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "INDEPENDENT_REVIEW_FAILED",
+            "error": "invalid old result",
+        }
+    ]
 
 
 def test_incomplete_validation_is_healthy_and_quiet(tmp_path):
@@ -737,6 +744,38 @@ def test_incomplete_validation_is_healthy_and_quiet(tmp_path):
     assert result["ok"] is True
     assert result["activity"] is False
     assert result["validationDeferred"] == [deferred]
+
+
+def test_one_evidence_block_does_not_stop_the_rest_of_the_slow_cycle(tmp_path):
+    calls = []
+    blocked = {
+        "key": "a/b#1",
+        "reason": "REPRODUCTION_RECEIPT_INVALID",
+        "alreadyRecorded": False,
+    }
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [{"key": "a/b#2", "stage": "FIX_READY"}],
+                "publicationRequests": [{"requestId": "request-2"}],
+                "validationDeferred": [],
+                "workBlocked": [blocked],
+                "errors": [],
+            }
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert result["workBlocked"] == [blocked]
+    assert result["resultsIngested"] == [{"key": "a/b#2", "stage": "FIX_READY"}]
+    assert "independent-review-run" in calls
+    assert "publication-run" in calls
 
 
 def test_recovery_failure_stops_ingestion_and_publication(tmp_path):
@@ -887,6 +926,11 @@ def test_slow_worker_persists_backoff_after_network_failure(monkeypatch, tmp_pat
     backoff = json.loads((tmp_path / "state" / "slow-worker-backoff.json").read_text())
     assert backoff["failureCount"] == 1
     assert backoff["backoffSeconds"] == 60
+    health = json.loads((tmp_path / "state" / "runtime-health.json").read_text())
+    slow = health["workers"]["slow"]
+    assert slow["lastExitCode"] == 1
+    assert slow["consecutiveFailures"] == 1
+    assert slow["consecutiveSuccesses"] == 0
 
 
 @pytest.mark.parametrize(
@@ -896,7 +940,9 @@ def test_slow_worker_persists_backoff_after_network_failure(monkeypatch, tmp_pat
         (True, "PERSISTED_INFLIGHT_BACKOFF"),
     ],
 )
-def test_slow_worker_persisted_backoff_first_run_records_fresh_health(tmp_path, in_flight, reason):
+def test_slow_worker_persisted_backoff_does_not_manufacture_success_health(
+    tmp_path, in_flight, reason
+):
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     retry_at = time.time() + 3600
@@ -922,12 +968,7 @@ def test_slow_worker_persisted_backoff_first_run_records_fresh_health(tmp_path, 
     assert result["ok"] is True
     assert result["deferred"] is True
     assert result["reason"] == reason
-    health = json.loads((state_dir / "runtime-health.json").read_text(encoding="utf-8"))
-    slow = health["workers"]["slow"]
-    assert slow["lastSuccessAt"]
-    assert slow["lastExitCode"] == 0
-    assert slow["consecutiveFailures"] == 0
-    assert "slowNoopReason" not in slow
+    assert not (state_dir / "runtime-health.json").exists()
 
 
 def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(monkeypatch, tmp_path):
@@ -1449,6 +1490,7 @@ def test_compact_result_keeps_counts_and_omits_large_payloads():
         "resultsIngested": 1,
         "publicationRequests": 1,
         "validationDeferred": 0,
+        "workBlocked": 0,
         "reviewsUpdated": 1,
         "titlesRenamed": 0,
         "threadsArchived": 0,

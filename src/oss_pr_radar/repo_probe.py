@@ -103,6 +103,86 @@ def validate_checkout_paths(checkout: Path, code_paths: list[str]) -> dict[str, 
     return bindings
 
 
+def validate_indexable_checkout_paths(checkout: Path, code_paths: list[str]) -> dict[str, str]:
+    """Validate repository files and prove Git would accept them into its index.
+
+    ``validate_checkout_paths`` intentionally also supports immutable, non-Git
+    probe snapshots.  Task worktrees need one additional guarantee: a declared
+    code path must be writable through the checkout's normal Git index policy.
+    In particular, a file that was manually materialized outside a sparse
+    checkout can exist and pass the filesystem checks while ``git add`` refuses
+    it later.  This helper performs the same operation in dry-run mode so task
+    creation and result ingestion can reject that checkout before work starts.
+    """
+
+    bindings = validate_checkout_paths(checkout, code_paths)
+    root = _checkout_root(checkout)
+    paths = list(bindings)
+    try:
+        identity = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=MAX_PROBE_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ProbeUnavailable("GIT_INDEX_UNAVAILABLE") from exc
+    if identity.returncode != 0:
+        raise ProbeUnavailable("GIT_INDEX_UNAVAILABLE")
+    try:
+        git_root = Path(identity.stdout.strip()).resolve(strict=True)
+    except OSError as exc:
+        raise ProbeUnavailable("GIT_INDEX_UNAVAILABLE") from exc
+    if git_root != root:
+        raise ProbeUnavailable("GIT_CHECKOUT_ROOT_MISMATCH")
+
+    try:
+        sparse = subprocess.run(
+            ["git", "-C", str(root), "config", "--bool", "core.sparseCheckout"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=MAX_PROBE_SECONDS,
+        )
+        if sparse.returncode == 0 and sparse.stdout.strip() == "true":
+            requested = b"\0".join(os.fsencode(path) for path in paths) + b"\0"
+            sparse_check = subprocess.run(
+                ["git", "-C", str(root), "sparse-checkout", "check-rules", "-z"],
+                check=False,
+                capture_output=True,
+                input=requested,
+                timeout=MAX_PROBE_SECONDS,
+            )
+            if sparse_check.returncode == 0:
+                included = {item for item in sparse_check.stdout.split(b"\0") if item}
+                if included != {os.fsencode(path) for path in paths}:
+                    raise ProbeUnavailable("CODE_PATH_OUTSIDE_SPARSE_CHECKOUT")
+
+        index_check = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "--literal-pathspecs",
+                "add",
+                "--dry-run",
+                "--",
+                *paths,
+            ],
+            check=False,
+            capture_output=True,
+            timeout=MAX_PROBE_SECONDS,
+        )
+    except ProbeUnavailable:
+        raise
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ProbeUnavailable("GIT_INDEX_UNAVAILABLE") from exc
+    if index_check.returncode != 0:
+        raise ProbeUnavailable("CODE_PATH_NOT_INDEXABLE")
+    return bindings
+
+
 # Profiles are code-owned.  A profile must name real repository test selectors
 # and may never contain shell syntax or an inline print/eval program.
 TRUSTED_PROBE_PROFILES: dict[str, dict[str, Any]] = {
@@ -548,10 +628,15 @@ def run_repo_probe(
             payload["reason"] = "STATE_DRIFT"
             return _signed_receipt(payload)
         tree = client.repository_tree(repo, selected_base_sha)
-        tree_paths = {str(item.get("path") or "") for item in tree if isinstance(item, dict)}
+        tree_paths = {
+            str(item.get("path") or "")
+            for item in tree
+            if isinstance(item, dict)
+            and item.get("type") == "blob"
+            and str(item.get("path") or "")
+        }
         payload["codePathsVerified"] = bool(payload["codePaths"]) and all(
-            path in tree_paths or any(item.startswith(f"{path}/") for item in tree_paths)
-            for path in payload["codePaths"]
+            path in tree_paths for path in payload["codePaths"]
         )
     except (GitHubError, OSError, RuntimeError) as exc:
         payload["reason"] = f"REPOSITORY_PROBE_UNAVAILABLE:{type(exc).__name__}"

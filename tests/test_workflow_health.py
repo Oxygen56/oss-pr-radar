@@ -379,7 +379,7 @@ def test_main_dispatches_one_fallback_for_stale_effective_scan(monkeypatch):
     monkeypatch.setattr(
         MODULE,
         "dispatch_scan",
-        lambda repo, ref: dispatched.append((repo, ref)),
+        lambda repo, ref, **_kwargs: dispatched.append((repo, ref)),
     )
     monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
@@ -391,6 +391,42 @@ def test_main_dispatches_one_fallback_for_stale_effective_scan(monkeypatch):
 
     assert MODULE.main() == 0
     assert dispatched == [("Oxygen56/oss-pr-radar", "main")]
+
+
+def test_main_suppresses_fallback_when_outbound_pause_wins_the_race(
+    monkeypatch, capsys
+):
+    stale_runs = [
+        {
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2020-01-01T00:00:00Z",
+            "updated_at": "2020-01-01T00:10:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/5",
+        }
+    ]
+    monkeypatch.setattr(MODULE, "runs", lambda _repo: stale_runs)
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
+    monkeypatch.setattr(
+        MODULE,
+        "dispatch_scan",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            PermissionError("GITHUB_OUTBOUND_PAUSED")
+        ),
+    )
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", "--repair"],
+    )
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["repairTriggered"] is False
+    assert result["repairError"] is None
+    assert result["repairSuppressedReason"] == "GITHUB_OUTBOUND_PAUSED"
 
 
 def test_main_suppresses_futile_repair_when_actions_billing_is_blocked(monkeypatch, capsys):
@@ -429,7 +465,7 @@ def test_main_suppresses_futile_repair_when_actions_billing_is_blocked(monkeypat
     monkeypatch.setattr(
         MODULE,
         "dispatch_scan",
-        lambda repo, ref: dispatched.append((repo, ref)),
+        lambda repo, ref, **_kwargs: dispatched.append((repo, ref)),
     )
     monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)

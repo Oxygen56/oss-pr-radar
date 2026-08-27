@@ -40,6 +40,46 @@ def intent(**updates):
     return value
 
 
+def repository_path_receipt(base_sha: str, code_paths: list[str]) -> dict[str, Any]:
+    from oss_pr_radar.repo_probe import run_repo_probe
+
+    class RepositoryClient:
+        def repository(self, repo):
+            assert repo == "a/b"
+            return {"default_branch": "main"}
+
+        def branch(self, repo, branch):
+            assert (repo, branch) == ("a/b", "main")
+            return {"commit": {"sha": base_sha}}
+
+        def repository_tree(self, repo, ref):
+            assert (repo, ref) == ("a/b", base_sha)
+            return [{"path": path, "type": "blob"} for path in code_paths]
+
+    return run_repo_probe(
+        RepositoryClient(),
+        repo="a/b",
+        default_branch="main",
+        selected_base_sha=base_sha,
+        code_paths=code_paths,
+    )
+
+
+def refreshed_repository_path_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+    from oss_pr_radar.repo_probe import _signed_receipt
+
+    now = datetime.now(UTC) + timedelta(seconds=1)
+    payload = {
+        key: value
+        for key, value in receipt.items()
+        if key not in {"keyId", "signature", "receiptDigest", "observedAt", "expiresAt"}
+    }
+    payload["observedAt"] = iso_z(now)
+    payload["expiresAt"] = iso_z(now + timedelta(minutes=30))
+    payload["receiptDigest"] = sha256_json(payload)
+    return _signed_receipt(payload)
+
+
 def legal_publication_probe(
     tmp_path: Path,
     *,
@@ -1649,6 +1689,666 @@ def test_task_context_recovers_disclosure_policy_from_live_audit(tmp_path):
     assert context["publicSubmissionAllowed"] is False
 
 
+def test_task_context_prefers_live_audit_verified_paths_over_scanner_plan(tmp_path):
+    from oss_pr_radar.repo_probe import _signed_receipt
+
+    base_sha = "a" * 40
+    current_receipt = repository_path_receipt(base_sha, ["src/runtime.py"])
+    expired_payload = {
+        key: value
+        for key, value in current_receipt.items()
+        if key not in {"keyId", "signature", "receiptDigest"}
+    }
+    expired_payload["observedAt"] = iso_z(datetime.now(UTC) - timedelta(hours=2))
+    expired_payload["expiresAt"] = iso_z(datetime.now(UTC) - timedelta(hours=1))
+    expired_payload["receiptDigest"] = sha256_json(expired_payload)
+    receipt = _signed_receipt(expired_payload)
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["src/runtime.py", "runtime.py"],
+            preTaskEvidence={
+                "baseSha": base_sha,
+                "codePathsPlan": ["src/runtime.py", "runtime.py"],
+            },
+        )
+    )
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": receipt,
+                }
+            }
+        },
+        dedupe_key="verified-path-audit",
+    )
+
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+
+    assert context["codePaths"] == ["src/runtime.py"]
+    with pytest.raises(LedgerError, match="does not match the result context"):
+        store.audited_probe_code_paths(
+            intent_id="intent-1",
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            worktree_path="/tmp/worktree",
+            expected_base_sha="b" * 40,
+        )
+
+
+@pytest.mark.parametrize(
+    ("tamper", "message"),
+    [
+        ("signature", "not authenticated"),
+        ("base", "not authenticated"),
+        ("null", "receipt is invalid"),
+    ],
+)
+def test_task_context_rejects_unauthenticated_live_audit_paths(tmp_path, tamper, message):
+    base_sha = "a" * 40
+    receipt = repository_path_receipt(
+        "b" * 40 if tamper == "base" else base_sha, ["src/runtime.py"]
+    )
+    if tamper == "signature":
+        receipt = dict(receipt) | {"signature": "0" * 64}
+    elif tamper == "null":
+        receipt = None
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["src/runtime.py", "runtime.py"],
+            preTaskEvidence={
+                "baseSha": base_sha,
+                "codePathsPlan": ["src/runtime.py", "runtime.py"],
+            },
+        )
+    )
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": receipt,
+                }
+            }
+        },
+        dedupe_key=f"invalid-path-audit-{tamper}",
+    )
+
+    with pytest.raises(LedgerError, match=message):
+        store.task_context(
+            issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+        )
+
+
+def test_task_context_binds_audit_paths_to_exact_intent(tmp_path):
+    base_sha = "a" * 40
+    receipt_1 = repository_path_receipt(base_sha, ["src/one.py"])
+    receipt_2 = repository_path_receipt(base_sha, ["src/two.py"])
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            probeReceiptDigest=receipt_1["receiptDigest"],
+            codePaths=["one.py"],
+            preTaskEvidence={"baseSha": base_sha, "codePathsPlan": ["one.py"]},
+        )
+    )
+    store.claim("intent-1", "worker-1")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker-1",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree-1",
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": receipt_1,
+                }
+            }
+        },
+        dedupe_key="intent-1:first-audit",
+    )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "policy": {"status": "refreshed"},
+                }
+            }
+        },
+        dedupe_key="intent-1:policy-refresh",
+    )
+    second_intent = intent(
+        intentId="intent-2",
+        decisionDigest="decision-2",
+        selectedBaseSha=base_sha,
+        probeReceiptDigest=receipt_2["receiptDigest"],
+        codePaths=["two.py"],
+        preTaskEvidence={"baseSha": base_sha, "codePathsPlan": ["two.py"]},
+    )
+    # A live opportunity cannot normally have two active intents.  Preserve a
+    # historical second dispatch directly so this regression fixture exercises
+    # audit selection after an intent rollover.
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?,'DISPATCHED',?,?,?,?,?,?,?)""",
+            (
+                "intent-2",
+                "a/b#1",
+                "decision-2",
+                second_intent["issuedAt"],
+                second_intent["expiresAt"],
+                "thread-2",
+                "repo-project",
+                "/tmp/worktree-2",
+                json.dumps(second_intent, sort_keys=True),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": receipt_2,
+                }
+            }
+        },
+        dedupe_key="intent-2:newer-audit",
+    )
+
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+
+    assert context["codePaths"] == ["src/one.py"]
+    assert context["liveAudit"]["evidence"]["policy"] == {"status": "refreshed"}
+
+
+def test_audited_probe_paths_reject_receipt_bound_to_another_intent(tmp_path):
+    base_sha = "a" * 40
+    receipt = repository_path_receipt(base_sha, ["src/other.py"])
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["src/controller.py"],
+            preTaskEvidence={
+                "baseSha": base_sha,
+                "codePathsPlan": ["src/controller.py"],
+            },
+        )
+    )
+    store.claim("intent-1", "worker-1")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker-1",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree-1",
+    )
+    second_intent = intent(
+        intentId="intent-2",
+        decisionDigest="decision-2",
+        selectedBaseSha=base_sha,
+        codePaths=["src/other.py"],
+        preTaskEvidence={"baseSha": base_sha, "codePathsPlan": ["src/other.py"]},
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?,'DISPATCHED',?,?,?,?,?,?,?)""",
+            (
+                "intent-2",
+                "a/b#1",
+                "decision-2",
+                second_intent["issuedAt"],
+                second_intent["expiresAt"],
+                "thread-2",
+                "repo-project",
+                "/tmp/worktree-2",
+                json.dumps(second_intent, sort_keys=True),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": receipt,
+                }
+            }
+        },
+        dedupe_key="intent-2:repository-probe",
+    )
+
+    with pytest.raises(LedgerError, match="not bound to the task intent"):
+        store.audited_probe_code_paths(
+            intent_id="intent-1",
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            worktree_path="/tmp/worktree-1",
+            expected_base_sha=base_sha,
+        )
+
+
+def test_live_audit_binding_reuses_canonical_receipt_across_timestamp_refresh(tmp_path):
+    base_sha = "a" * 40
+    first_receipt = repository_path_receipt(base_sha, ["src/runtime.py"])
+    refreshed_receipt = refreshed_repository_path_receipt(first_receipt)
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["src/runtime.py"],
+            preTaskEvidence={
+                "baseSha": base_sha,
+                "codePathsPlan": ["src/runtime.py"],
+            },
+        )
+    )
+    first = store.record_live_audit_pass_and_bind_probe(
+        "intent-1",
+        evidence={
+            "evidenceDigest": "audit-evidence",
+            "authorization": {"status": "ALLOW", "evidence_digest": "audit-evidence"},
+            "liveAudit": {"evidence": {"repoProbeReceipt": first_receipt}},
+        },
+    )
+    second = store.record_live_audit_pass_and_bind_probe(
+        "intent-1",
+        evidence={
+            "evidenceDigest": "audit-evidence",
+            "authorization": {"status": "ALLOW", "evidence_digest": "audit-evidence"},
+            "liveAudit": {"evidence": {"repoProbeReceipt": refreshed_receipt}},
+        },
+    )
+
+    with store.connect() as connection:
+        event_count = connection.execute(
+            """SELECT COUNT(*) FROM events
+               WHERE opportunity_key='a/b#1' AND event_type='AUDIT_PASS'
+                 AND dedupe_key LIKE '%:live-audit-v2'"""
+        ).fetchone()[0]
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+    assert event_count == 1
+    assert first["receiptDigest"] == first_receipt["receiptDigest"]
+    assert second["receiptDigest"] == first_receipt["receiptDigest"]
+    assert payload["probeReceiptDigest"] == first_receipt["receiptDigest"]
+
+
+def test_live_audit_binding_does_not_reuse_changed_paths(tmp_path):
+    base_sha = "a" * 40
+    first_receipt = repository_path_receipt(base_sha, ["src/one.py"])
+    second_receipt = repository_path_receipt(base_sha, ["src/two.py"])
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["src/one.py"],
+            preTaskEvidence={"baseSha": base_sha, "codePathsPlan": ["src/one.py"]},
+        )
+    )
+    store.record_live_audit_pass_and_bind_probe(
+        "intent-1",
+        evidence={
+            "evidenceDigest": "audit-evidence",
+            "authorization": {"status": "ALLOW", "evidence_digest": "audit-evidence"},
+            "liveAudit": {"evidence": {"repoProbeReceipt": first_receipt}},
+        },
+    )
+    result = store.record_live_audit_pass_and_bind_probe(
+        "intent-1",
+        evidence={
+            "evidenceDigest": "audit-evidence",
+            "authorization": {"status": "ALLOW", "evidence_digest": "audit-evidence"},
+            "liveAudit": {"evidence": {"repoProbeReceipt": second_receipt}},
+        },
+    )
+
+    with store.connect() as connection:
+        event_count = connection.execute(
+            """SELECT COUNT(*) FROM events
+               WHERE opportunity_key='a/b#1' AND event_type='AUDIT_PASS'
+                 AND dedupe_key LIKE '%:live-audit-v2'"""
+        ).fetchone()[0]
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+    assert event_count == 2
+    assert result["receiptDigest"] == second_receipt["receiptDigest"]
+    assert payload["codePaths"] == ["src/two.py"]
+
+
+def test_live_audit_binding_rolls_back_event_and_intent_together(tmp_path, monkeypatch):
+    base_sha = "a" * 40
+    receipt = repository_path_receipt(base_sha, ["src/runtime.py"])
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["src/runtime.py"],
+            preTaskEvidence={
+                "baseSha": base_sha,
+                "codePathsPlan": ["src/runtime.py"],
+            },
+        )
+    )
+    original_event = store._event
+
+    def interrupted_event(*args, **kwargs):
+        original_event(*args, **kwargs)
+        raise RuntimeError("simulated interruption")
+
+    monkeypatch.setattr(store, "_event", interrupted_event)
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        store.record_live_audit_pass_and_bind_probe(
+            "intent-1",
+            evidence={
+                "evidenceDigest": "audit-evidence",
+                "authorization": {"status": "ALLOW", "evidence_digest": "audit-evidence"},
+                "liveAudit": {"evidence": {"repoProbeReceipt": receipt}},
+            },
+        )
+
+    with store.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type='AUDIT_PASS'"
+        ).fetchone()[0] == 0
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+        stage = connection.execute(
+            "SELECT stage FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()[0]
+    assert "probeReceiptDigest" not in payload
+    assert stage == "QUALIFIED"
+
+
+def test_live_audit_binding_key_rotation_creates_new_canonical_event(tmp_path, monkeypatch):
+    base_sha = "a" * 40
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "old-signing-key")
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "old-key")
+    first_receipt = repository_path_receipt(base_sha, ["src/runtime.py"])
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["src/runtime.py"],
+            preTaskEvidence={
+                "baseSha": base_sha,
+                "codePathsPlan": ["src/runtime.py"],
+            },
+        )
+    )
+    store.record_live_audit_pass_and_bind_probe(
+        "intent-1",
+        evidence={
+            "evidenceDigest": "audit-evidence",
+            "authorization": {"status": "ALLOW", "evidence_digest": "audit-evidence"},
+            "liveAudit": {"evidence": {"repoProbeReceipt": first_receipt}},
+        },
+    )
+
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "new-signing-key")
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "new-key")
+    second_receipt = repository_path_receipt(base_sha, ["src/runtime.py"])
+    result = store.record_live_audit_pass_and_bind_probe(
+        "intent-1",
+        evidence={
+            "evidenceDigest": "audit-evidence",
+            "authorization": {"status": "ALLOW", "evidence_digest": "audit-evidence"},
+            "liveAudit": {"evidence": {"repoProbeReceipt": second_receipt}},
+        },
+    )
+
+    with store.connect() as connection:
+        event_count = connection.execute(
+            """SELECT COUNT(*) FROM events
+               WHERE opportunity_key='a/b#1' AND event_type='AUDIT_PASS'
+                 AND dedupe_key LIKE '%:live-audit-v2'"""
+        ).fetchone()[0]
+    assert event_count == 2
+    assert result["receiptDigest"] == second_receipt["receiptDigest"]
+
+
+def test_live_audit_binding_refuses_an_active_lease(tmp_path):
+    base_sha = "a" * 40
+    receipt = repository_path_receipt(base_sha, ["src/runtime.py"])
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["src/runtime.py"],
+            preTaskEvidence={
+                "baseSha": base_sha,
+                "codePathsPlan": ["src/runtime.py"],
+            },
+        )
+    )
+    assert store.claim("intent-1", "worker") is not None
+
+    with pytest.raises(LedgerError, match="intent is not claimable"):
+        store.record_live_audit_pass_and_bind_probe(
+            "intent-1",
+            evidence={
+                "evidenceDigest": "audit-evidence",
+                "authorization": {"status": "ALLOW", "evidence_digest": "audit-evidence"},
+                "liveAudit": {"evidence": {"repoProbeReceipt": receipt}},
+            },
+        )
+
+
+def test_live_audit_binding_refuses_reproduction_receipt_authority(tmp_path):
+    worktree, base_sha, _, _, receipt, _, _ = legal_publication_probe(tmp_path)
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["runtime.py"],
+            preTaskEvidence={"baseSha": base_sha, "codePathsPlan": ["runtime.py"]},
+            worktree=str(worktree),
+        )
+    )
+
+    with pytest.raises(LedgerError, match="must be PATHS_VERIFIED"):
+        store.record_live_audit_pass_and_bind_probe(
+            "intent-1",
+            evidence={
+                "evidenceDigest": "audit-evidence",
+                "authorization": {"status": "ALLOW", "evidence_digest": "audit-evidence"},
+                "liveAudit": {"evidence": {"repoProbeReceipt": receipt}},
+            },
+        )
+
+
+def test_historical_probe_binding_reconciles_only_exact_semantics(tmp_path):
+    base_sha = "a" * 40
+    canonical_receipt = repository_path_receipt(base_sha, ["src/runtime.py"])
+    refreshed_receipt = refreshed_repository_path_receipt(canonical_receipt)
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["src/runtime.py"],
+            preTaskEvidence={
+                "baseSha": base_sha,
+                "codePathsPlan": ["src/runtime.py"],
+            },
+        )
+    )
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_PASS",
+        evidence={
+            "liveAudit": {"evidence": {"repoProbeReceipt": canonical_receipt}}
+        },
+        dedupe_key="intent-1:audit-evidence:live-audit-v1",
+    )
+    store.update_intent_probe_metadata(
+        "intent-1",
+        probe_level="PATHS_VERIFIED",
+        task_stage="REPRODUCTION_REQUIRED",
+        receipt_digest=refreshed_receipt["receiptDigest"],
+        code_paths=["src/runtime.py"],
+    )
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+
+    assert store.reconcile_intent_probe_audit_binding(
+        intent_id="intent-1",
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        worktree_path="/tmp/worktree",
+        expected_base_sha=base_sha,
+    ) is True
+    assert store.audited_probe_code_paths(
+        intent_id="intent-1",
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        worktree_path="/tmp/worktree",
+        expected_base_sha=base_sha,
+    ) == ["src/runtime.py"]
+
+
+def test_historical_probe_binding_preserves_unprefixed_exact_digest(tmp_path):
+    base_sha = "a" * 40
+    receipt = repository_path_receipt(base_sha, ["src/runtime.py"])
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["src/runtime.py"],
+            probeLevel="PATHS_VERIFIED",
+            taskStage="REPRODUCTION_REQUIRED",
+            probeReceiptDigest=receipt["receiptDigest"],
+            preTaskEvidence={
+                "baseSha": base_sha,
+                "codePathsPlan": ["src/runtime.py"],
+            },
+        )
+    )
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_PASS",
+        evidence={"liveAudit": {"evidence": {"repoProbeReceipt": receipt}}},
+        dedupe_key="legacy-unprefixed-audit",
+    )
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+
+    assert store.reconcile_intent_probe_audit_binding(
+        intent_id="intent-1",
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        worktree_path="/tmp/worktree",
+        expected_base_sha=base_sha,
+    ) is False
+
+
+def test_historical_probe_binding_refuses_different_paths(tmp_path):
+    base_sha = "a" * 40
+    old_receipt = repository_path_receipt(base_sha, ["src/old.py"])
+    current_receipt = repository_path_receipt(base_sha, ["src/current.py"])
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            codePaths=["src/current.py"],
+            probeLevel="PATHS_VERIFIED",
+            taskStage="REPRODUCTION_REQUIRED",
+            probeReceiptDigest=current_receipt["receiptDigest"],
+            preTaskEvidence={
+                "baseSha": base_sha,
+                "codePathsPlan": ["src/current.py"],
+            },
+        )
+    )
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_PASS",
+        evidence={"liveAudit": {"evidence": {"repoProbeReceipt": old_receipt}}},
+        dedupe_key="intent-1:audit-evidence:live-audit-v1",
+    )
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+
+    with pytest.raises(LedgerError, match="receipt digest is unavailable"):
+        store.reconcile_intent_probe_audit_binding(
+            intent_id="intent-1",
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            worktree_path="/tmp/worktree",
+            expected_base_sha=base_sha,
+        )
+
+
 def test_no_go_requires_title_sync_before_cleanup(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())
@@ -2132,6 +2832,292 @@ def test_stalled_dispatch_gets_one_write_ahead_recovery(tmp_path):
     assert candidate["threadId"] == "thread-1"
     store.commit_cleanup(thread_id="thread-1", nonce=candidate["cleanupNonce"])
     assert store.cleanup_candidates() == []
+
+
+def test_exhausted_dispatched_recovery_is_queryable_and_releases_wip(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    assert store.active_task_count() == 1
+    assert store.exhausted_recovery_blockers() == []
+
+    recovery = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.exhaust_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+
+    blocker = store.exhausted_recovery_blockers()[0]
+    assert blocker["key"] == "a/b#1"
+    assert blocker["intentId"] == "intent-1"
+    assert blocker["threadId"] == "thread-1"
+    assert blocker["recoveryKind"] == "DISPATCHED_TASK"
+    assert blocker["reason"] == "RECOVERY_RETRY_EXHAUSTED"
+    assert blocker["occupiesTaskSlot"] is False
+    assert store.active_task_count() == 0
+
+    store.enqueue(
+        intent(
+            intentId="intent-2",
+            key="c/d#2",
+            repo="c/d",
+            issueNumber=2,
+            issueUrl="https://github.com/c/d/issues/2",
+        )
+    )
+    assert store.claim("intent-2", "worker", max_active=1) is not None
+
+
+def test_reviewed_implementation_recovery_is_parked_rearmable_and_auditable(
+    tmp_path, monkeypatch
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "IMPLEMENTATION_FOLLOWUP_SENT",
+            "result-digest",
+            {
+                "threadId": "thread-1",
+                "resultDigest": "result-digest",
+                "attemptDigest": "result-digest",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+    recovery = store.recovery_candidates(min_age_minutes=0)[0]
+    assert recovery["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
+    store.reserve_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.exhaust_recovery(
+        thread_id="thread-1",
+        nonce=recovery["recoveryNonce"],
+        retry_count=2,
+        terminal_error={
+            "status": "failed",
+            "code": "cyber_policy",
+            "turnId": "turn-2",
+            "message": "blocked by policy",
+        },
+    )
+
+    blocker = store.exhausted_recovery_blockers()[0]
+    assert blocker["retryCount"] == 2
+    assert blocker["terminalError"]["code"] == "cyber_policy"
+    assert blocker["terminalError"]["turnId"] == "turn-2"
+    assert store.active_task_count() == 0
+    assert store.recovery_candidates(min_age_minutes=0) == []
+
+    # A foreign acknowledgement on the same opportunity must not hide this nonce.
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED",
+            "foreign-nonce",
+            {
+                "threadId": "thread-1",
+                "recoveryNonce": "foreign-nonce",
+                "reason": "OPERATOR_REVIEWED_OTHER_RECOVERY",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+    assert [item["recoveryNonce"] for item in store.exhausted_recovery_blockers()] == [
+        recovery["recoveryNonce"]
+    ]
+    with pytest.raises(LedgerError, match="active exhausted recovery not found"):
+        store.acknowledge_exhausted_recovery(
+            thread_id="wrong-thread",
+            nonce=recovery["recoveryNonce"],
+            reason="OPERATOR_REVIEWED_EXTERNAL_POLICY_BLOCK",
+        )
+
+    acknowledged = store.acknowledge_exhausted_recovery(
+        thread_id="thread-1",
+        nonce=recovery["recoveryNonce"],
+        reason="OPERATOR_REVIEWED_EXTERNAL_POLICY_BLOCK",
+    )
+
+    assert acknowledged["key"] == "a/b#1"
+    assert store.exhausted_recovery_blockers() == []
+    assert store.active_task_count() == 0
+    parked = store.acknowledged_exhausted_recoveries()
+    assert len(parked) == 1
+    assert parked[0]["recoveryNonce"] == recovery["recoveryNonce"]
+    assert parked[0]["terminalError"]["code"] == "cyber_policy"
+    with pytest.raises(LedgerError, match="parked exhausted recovery not found"):
+        store.rearm_acknowledged_recovery(
+            thread_id="thread-1",
+            nonce="wrong-nonce",
+            reason="EXECUTION_ENVIRONMENT_CHANGED",
+        )
+    repeated_ack = store.acknowledge_exhausted_recovery(
+        thread_id="thread-1",
+        nonce=recovery["recoveryNonce"],
+        reason="OPERATOR_REVIEWED_EXTERNAL_POLICY_BLOCK",
+    )
+    assert repeated_ack["alreadyAcknowledged"] is True
+    with pytest.raises(LedgerError, match="another reason"):
+        store.acknowledge_exhausted_recovery(
+            thread_id="thread-1",
+            nonce=recovery["recoveryNonce"],
+            reason="OPERATOR_REVIEWED_DIFFERENT_REASON",
+        )
+
+    rearmed = store.rearm_acknowledged_recovery(
+        thread_id="thread-1",
+        nonce=recovery["recoveryNonce"],
+        reason="EXECUTION_ENVIRONMENT_CHANGED",
+    )
+    assert rearmed["key"] == "a/b#1"
+    repeated_rearm = store.rearm_acknowledged_recovery(
+        thread_id="thread-1",
+        nonce=recovery["recoveryNonce"],
+        reason="EXECUTION_ENVIRONMENT_CHANGED",
+    )
+    assert repeated_rearm["alreadyRearmed"] is True
+    with pytest.raises(LedgerError, match="another reason"):
+        store.rearm_acknowledged_recovery(
+            thread_id="thread-1",
+            nonce=recovery["recoveryNonce"],
+            reason="DIFFERENT_EXECUTION_ENVIRONMENT_CHANGE",
+        )
+    assert store.acknowledged_exhausted_recoveries() == []
+    assert store.exhausted_recovery_blockers() == []
+    assert store.active_task_count() == 1
+    resumed = store.recovery_candidates(min_age_minutes=0)[0]
+    assert resumed["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
+    assert resumed["followupDigest"] == "result-digest"
+    assert resumed["rearmedFromExhausted"]["exhaustedNonce"] == recovery["recoveryNonce"]
+
+    store.reserve_recovery(thread_id="thread-1", nonce=resumed["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=resumed["recoveryNonce"])
+    store.exhaust_recovery(
+        thread_id="thread-1",
+        nonce=resumed["recoveryNonce"],
+        retry_count=3,
+        terminal_error={"status": "failed", "code": "cyber_policy"},
+    )
+
+    second_blocker = store.exhausted_recovery_blockers()
+    assert len(second_blocker) == 1
+    assert second_blocker[0]["recoveryNonce"] == resumed["recoveryNonce"]
+    assert store.active_task_count() == 0
+    assert store.acknowledged_exhausted_recoveries() == []
+
+    store.acknowledge_exhausted_recovery(
+        thread_id="thread-1",
+        nonce=resumed["recoveryNonce"],
+        reason="OPERATOR_REVIEWED_REPEATED_POLICY_BLOCK",
+    )
+    store.rearm_acknowledged_recovery(
+        thread_id="thread-1",
+        nonce=resumed["recoveryNonce"],
+        reason="EXECUTION_ENVIRONMENT_CHANGED_AGAIN",
+    )
+    fresh = store.recovery_candidates(min_age_minutes=0)[0]
+    assert fresh["recoveryNonce"] != resumed["recoveryNonce"]
+    monkeypatch.setattr(store, "recovery_candidates", lambda **_kwargs: [resumed])
+
+    with pytest.raises(LedgerError, match="stale or invalid"):
+        store.reserve_recovery(thread_id="thread-1", nonce=resumed["recoveryNonce"])
+    assert store.unresolved_recoveries() == []
+
+
+def test_implementation_recovery_reservation_rechecks_new_result_in_transaction(
+    tmp_path, monkeypatch
+):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "IMPLEMENTATION_FOLLOWUP_SENT",
+            "result-digest",
+            {
+                "threadId": "thread-1",
+                "resultDigest": "result-digest",
+                "attemptDigest": "result-digest",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+    stale = store.recovery_candidates(min_age_minutes=0)[0]
+    store.record_task_result_ingested(
+        "a/b#1", digest="new-result", stage="FIX_READY", thread_id="thread-1"
+    )
+    monkeypatch.setattr(store, "recovery_candidates", lambda **_kwargs: [stale])
+
+    with pytest.raises(LedgerError, match="stale or invalid"):
+        store.reserve_recovery(thread_id="thread-1", nonce=stale["recoveryNonce"])
+
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key='a/b#1'
+                     AND event_type='THREAD_RECOVERY_RESERVED'"""
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_new_result_clears_exhausted_dispatched_recovery_blocker(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    recovery = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.exhaust_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    assert store.active_task_count() == 0
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="new-result-digest",
+        stage="IMPLEMENTATION_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+
+    assert store.exhausted_recovery_blockers() == []
+    assert store.active_task_count() == 1
+    with pytest.raises(LedgerError, match="active exhausted recovery not found"):
+        store.acknowledge_exhausted_recovery(
+            thread_id="thread-1",
+            nonce=recovery["recoveryNonce"],
+            reason="OPERATOR_REVIEWED_EXTERNAL_POLICY_BLOCK",
+        )
 
 
 def test_recent_dispatch_can_be_authorized_for_terminal_error_recovery(tmp_path):

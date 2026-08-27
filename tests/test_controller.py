@@ -36,6 +36,14 @@ def healthy_response(stage: str) -> dict:
             "filterMissRate": 0.1,
             "hardGateEscapes": 0,
         }
+    if stage == "finalEventLaneHealth":
+        return {
+            "healthy": True,
+            "lanes": {
+                "agentscope": {"healthy": True},
+                "nanobot": {"healthy": True},
+            },
+        }
     return {"ok": True}
 
 
@@ -295,6 +303,15 @@ def test_controller_output_is_compact_and_full_evidence_stays_in_report(tmp_path
             "finalTitles": {"titles": [{"key": "a/b#3"}]},
             "publication": {"blocked": []},
             "terminalFeedbackBeforeSync": {"deferred": []},
+            "finalRecovery": {"parkedRecovery": [{"key": "a/b#4"}]},
+            "finalLocalAgentStatus": {
+                "workers": [
+                    {
+                        "runtimeHealth": {"warnings": ["DISK_WARNING_THRESHOLD"]},
+                        "workerRuntimeHealth": {"healthy": True},
+                    }
+                ]
+            },
         },
     }
 
@@ -306,6 +323,8 @@ def test_controller_output_is_compact_and_full_evidence_stays_in_report(tmp_path
     assert compact["warnings"]["validationEnvironmentBlocked"] == 1
     assert compact["warnings"]["prFollowupQuarantined"] == 1
     assert compact["warnings"]["titleUpdatesPending"] == 1
+    assert compact["warnings"]["parkedRecovery"] == 1
+    assert compact["warnings"]["diskThresholdWarning"] == 1
     assert "stages" not in compact
     assert "startupBlocker" not in compact
     assert len(str(compact)) < 1000
@@ -327,6 +346,62 @@ def test_pending_title_update_and_quarantine_are_not_controller_blockers():
     )
 
     assert blockers == []
+
+
+def test_controller_blockers_include_execution_failures_and_exhausted_recovery():
+    from oss_pr_radar.controller import _final_blockers
+
+    blockers = _final_blockers(
+        {
+            "resultIngestion": {
+                "ok": False,
+                "errors": [{"key": "a/b#1"}],
+                "workBlocked": [{"key": "a/b#3"}],
+            },
+            "finalRecovery": {
+                "blocked": [],
+                "unresolved": [],
+                "recoveryRetryExhausted": [{"key": "a/b#2"}],
+            },
+            "finalLocalAgentStatus": {
+                "ok": False,
+                "workers": [{"label": "slow", "ok": False}],
+            },
+            "finalEventLaneHealth": {
+                "healthy": False,
+                "lanes": {
+                    "agentscope": {"healthy": False},
+                    "nanobot": {"healthy": True},
+                },
+            },
+        }
+    )
+
+    assert blockers == [
+        {"stage": "resultIngestion", "queue": "errors", "count": 1},
+        {"stage": "resultIngestion", "queue": "workBlocked", "count": 1},
+        {
+            "stage": "finalRecovery",
+            "queue": "recoveryRetryExhausted",
+            "count": 1,
+        },
+        {"stage": "finalLocalAgentStatus", "queue": "unhealthy", "count": 1},
+        {"stage": "finalEventLaneHealth", "queue": "unhealthy", "count": 1},
+    ]
+
+
+def test_controller_health_checks_fail_closed_on_invalid_results():
+    from oss_pr_radar.controller import _final_blockers
+
+    assert _final_blockers(
+        {
+            "finalWorkflowHealth": {"ok": False, "error": "invalid JSON"},
+            "finalEventLaneHealth": {"ok": False, "error": "command failed"},
+        }
+    ) == [
+        {"stage": "finalWorkflowHealth", "queue": "unhealthy", "count": 1},
+        {"stage": "finalEventLaneHealth", "queue": "unhealthy", "count": 1},
+    ]
 
 
 def test_compact_controller_result_exposes_one_desktop_handoff():

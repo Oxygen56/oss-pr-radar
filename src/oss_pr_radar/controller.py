@@ -151,6 +151,7 @@ def controller_cycle(
 
     install_script = str(binding.script("scripts/install_local_publication_workers.py"))
     health_script = str(binding.script("scripts/check_workflow_health.py"))
+    event_lane_health_script = str(binding.script("scripts/event_lane_health.py"))
     run_stage("localAgentEnsure", [python, install_script, "--runtime-root", str(root), "--ensure"])
     run_stage(
         "localAgentStatus",
@@ -298,6 +299,12 @@ def controller_cycle(
         [python, install_script, "--runtime-root", str(root), "--status"],
         allowed_codes={0, 1},
     )
+    run_stage(
+        "finalEventLaneHealth",
+        [python, event_lane_health_script, "--root", str(root)],
+        allowed_codes={0, 2},
+        require_ok=False,
+    )
 
     final_blockers = _final_blockers(stages)
     stages["absenceReconcile"] = managed_adapter.reconcile_pending_absences(GitHubAbsenceQueries())
@@ -320,10 +327,13 @@ def controller_cycle(
 def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
     checks = {
+        "resultIngestion": ("errors", "workBlocked"),
+        "resultIngestionAfterReview": ("errors", "workBlocked"),
+        "independentReview": ("candidateErrors", "retryExhausted"),
         "finalOrphans": ("blocked",),
         "finalPrFollowups": ("blocked", "unresolved", "restoreRequired"),
         "finalValidationFollowups": ("unresolved", "stale", "errors"),
-        "finalRecovery": ("blocked", "unresolved"),
+        "finalRecovery": ("blocked", "unresolved", "recoveryRetryExhausted"),
         "finalRestore": ("restore", "blocked"),
         "finalTitles": ("blocked",),
         "finalCleanup": ("cleanup", "blocked"),
@@ -335,6 +345,43 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
             items = value.get(key) or []
             if items:
                 blockers.append({"stage": stage, "queue": key, "count": len(items)})
+    local_status = stages.get("finalLocalAgentStatus") or {}
+    if local_status.get("ok") is False:
+        unhealthy = [
+            worker
+            for worker in (local_status.get("workers") or [])
+            if isinstance(worker, dict) and worker.get("ok") is False
+        ]
+        blockers.append(
+            {
+                "stage": "finalLocalAgentStatus",
+                "queue": "unhealthy",
+                "count": max(1, len(unhealthy)),
+            }
+        )
+    workflow_health = stages.get("finalWorkflowHealth") or {}
+    if "finalWorkflowHealth" in stages and workflow_health.get("operationalHealthy") is not True:
+        blockers.append(
+            {
+                "stage": "finalWorkflowHealth",
+                "queue": "unhealthy",
+                "count": 1,
+            }
+        )
+    event_lane_health = stages.get("finalEventLaneHealth") or {}
+    if "finalEventLaneHealth" in stages and event_lane_health.get("healthy") is not True:
+        unhealthy_lanes = [
+            lane
+            for lane in (event_lane_health.get("lanes") or {}).values()
+            if isinstance(lane, dict) and lane.get("healthy") is False
+        ]
+        blockers.append(
+            {
+                "stage": "finalEventLaneHealth",
+                "queue": "unhealthy",
+                "count": max(1, len(unhealthy_lanes)),
+            }
+        )
     return blockers
 
 
@@ -344,14 +391,19 @@ def _compact_summary(stages: dict[str, dict[str, Any]]) -> dict[str, Any]:
     quality = stages.get("quality") or {}
     health = stages.get("finalWorkflowHealth") or stages.get("workflowHealth") or {}
     decision_sessions = stages.get("codexDecisionSessions") or {}
+    result_ingestion = stages.get("resultIngestion") or {}
+    post_review_ingestion = stages.get("resultIngestionAfterReview") or {}
     return {
         "localAgentHealthy": bool((stages.get("finalLocalAgentStatus") or {}).get("ok")),
+        "eventLanesHealthy": bool((stages.get("finalEventLaneHealth") or {}).get("healthy")),
         "operationalHealthy": bool(health.get("operationalHealthy")),
         "githubNaturalScheduleHealthy": bool(health.get("githubNaturalScheduleHealthy")),
         "drainAction": drain.get("action"),
         "drainKey": drain.get("key"),
         "decisionSessionsCreated": len(decision_sessions.get("created") or []),
         "decisionSessionsExisting": len(decision_sessions.get("existing") or []),
+        "workBlockedCount": len(result_ingestion.get("workBlocked") or [])
+        + len(post_review_ingestion.get("workBlocked") or []),
         "pendingCount": len(queue.get("pending") or []),
         "submitReadyRate": quality.get("submitReadyRate"),
         "filterMissRate": quality.get("filterMissRate"),
@@ -410,6 +462,19 @@ def compact_controller_result(
     titles = stages.get("finalTitles") or {}
     publication = stages.get("publication") or {}
     feedback = stages.get("terminalFeedbackBeforeSync") or {}
+    final_recovery = stages.get("finalRecovery") or {}
+    local_status = stages.get("finalLocalAgentStatus") or {}
+    local_warning_codes = {
+        str(code)
+        for worker in (local_status.get("workers") or [])
+        if isinstance(worker, dict)
+        for health_key in ("runtimeHealth", "workerRuntimeHealth")
+        for code in (
+            ((worker.get(health_key) or {}).get("warnings") or [])
+            if isinstance(worker.get(health_key), dict)
+            else []
+        )
+    }
     desktop_handoff = _pending_desktop_handoff(stages)
     compact = {
         "ok": result.get("ok"),
@@ -425,6 +490,8 @@ def compact_controller_result(
             "titleUpdatesPending": len(titles.get("titles") or []),
             "publicationBlocked": len(publication.get("blocked") or []),
             "terminalFeedbackDeferred": len(feedback.get("deferred") or []),
+            "parkedRecovery": len(final_recovery.get("parkedRecovery") or []),
+            "diskThresholdWarning": int("DISK_WARNING_THRESHOLD" in local_warning_codes),
         },
     }
     if desktop_handoff is not None:
