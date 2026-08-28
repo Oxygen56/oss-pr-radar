@@ -5465,6 +5465,114 @@ def _wait_for_app_server_terminal_turn(
     return None
 
 
+def _app_server_process_snapshot() -> dict[int, tuple[int, int, str]]:
+    """Read a small process tree snapshot for app-server cleanup."""
+
+    try:
+        completed = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,pgid=,command="],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+    if completed.returncode != 0:
+        return {}
+    snapshot: dict[int, tuple[int, int, str]] = {}
+    for line in completed.stdout.splitlines():
+        fields = line.split(None, 3)
+        if len(fields) < 3:
+            continue
+        try:
+            pid, ppid, pgid = (int(fields[index]) for index in range(3))
+        except ValueError:
+            continue
+        snapshot[pid] = (ppid, pgid, fields[3] if len(fields) == 4 else "")
+    return snapshot
+
+
+def _capture_app_server_descendants(
+    process: subprocess.Popen[Any],
+    *,
+    process_group: int | None,
+) -> tuple[dict[int, set[int]], set[int]]:
+    """Capture descendant groups while the known app-server identity is live.
+
+    The root command and process group must still match the Popen identity. A
+    second snapshot later validates PGID and command, allowing reparenting after
+    app-server exit but rejecting a reused PID. Groups containing unrelated
+    processes are signalled by captured PID only, never with killpg.
+    """
+
+    if process_group is None:
+        return {}, set()
+    snapshot = _app_server_process_snapshot()
+    root = snapshot.get(process.pid)
+    if root is None or root[1] != process_group or "app-server" not in root[2]:
+        return {}, set()
+    descendants: set[int] = set()
+    frontier = [process.pid]
+    while frontier:
+        parent = frontier.pop()
+        for pid, (ppid, _pgid, _command) in snapshot.items():
+            if pid != process.pid and pid not in descendants and ppid == parent:
+                descendants.add(pid)
+                frontier.append(pid)
+    if not descendants:
+        return {}, set()
+    latest = _app_server_process_snapshot()
+    valid = {
+        pid
+        for pid in descendants
+        if pid in latest
+        and pid in snapshot
+        and latest[pid][1:] == snapshot[pid][1:]
+    }
+    if not valid:
+        return {}, set()
+    groups: dict[int, set[int]] = {}
+    for pid in valid:
+        pgid = snapshot[pid][1]
+        if pgid > 1 and pgid != process_group and pgid != os.getpgrp():
+            groups.setdefault(pgid, set()).add(pid)
+    all_group_members: dict[int, set[int]] = {}
+    for pid, (_ppid, pgid, _command) in snapshot.items():
+        all_group_members.setdefault(pgid, set()).add(pid)
+    latest_group_members: dict[int, set[int]] = {}
+    for pid, (_ppid, pgid, _command) in latest.items():
+        latest_group_members.setdefault(pgid, set()).add(pid)
+    safe_groups: dict[int, set[int]] = {}
+    individual_pids: set[int] = set()
+    for pgid, pids in groups.items():
+        if (
+            all_group_members.get(pgid, set()) <= valid
+            and latest_group_members.get(pgid, set()) <= valid
+        ):
+            safe_groups[pgid] = pids
+        else:
+            individual_pids.update(pids)
+    return safe_groups, individual_pids
+
+
+def _signal_app_server_descendants(
+    groups: dict[int, set[int]],
+    individual_pids: set[int],
+    signum: int,
+) -> None:
+    for pgid in groups:
+        try:
+            os.killpg(pgid, signum)
+        except (ProcessLookupError, OSError):
+            pass
+    for pid in individual_pids:
+        try:
+            os.kill(pid, signum)
+        except (ProcessLookupError, OSError):
+            pass
+
+
 def _terminate_app_server_process(process: subprocess.Popen[Any]) -> None:
     """Stop the app-server and any children without killing this worker."""
 
@@ -5474,23 +5582,31 @@ def _terminate_app_server_process(process: subprocess.Popen[Any]) -> None:
         process_group = os.getpgid(process.pid)
     except (AttributeError, OSError, ProcessLookupError, ValueError):
         process_group = None
+    descendant_groups, descendant_pids = _capture_app_server_descendants(
+        process,
+        process_group=process_group,
+    )
     # The app-server is launched in its own session.  Keep the fallback
     # conservative for test doubles and older callers that did not do so.
     own_group = process_group == process.pid if process_group is not None else False
-    try:
-        if own_group:
-            os.killpg(process_group, signal.SIGTERM)
-        else:
-            if exited:
-                return
-            process.terminate()
-    except ProcessLookupError:
-        return
-    if exited:
+    if own_group:
         try:
-            os.killpg(process_group, signal.SIGKILL)
+            os.killpg(process_group, signal.SIGTERM)
         except ProcessLookupError:
             pass
+    elif not exited:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+    if exited:
+        if own_group:
+            try:
+                os.killpg(process_group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        _signal_app_server_descendants(descendant_groups, descendant_pids, signal.SIGTERM)
+        _signal_app_server_descendants(descendant_groups, descendant_pids, signal.SIGKILL)
         return
     try:
         process.wait(timeout=10)
@@ -5501,8 +5617,11 @@ def _terminate_app_server_process(process: subprocess.Popen[Any]) -> None:
             else:
                 process.kill()
         except ProcessLookupError:
-            return
-        process.wait(timeout=5)
+            pass
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
     else:
         # The leader may have exited while descendants remain in its session.
         if own_group:
@@ -5510,6 +5629,8 @@ def _terminate_app_server_process(process: subprocess.Popen[Any]) -> None:
                 os.killpg(process_group, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+    _signal_app_server_descendants(descendant_groups, descendant_pids, signal.SIGTERM)
+    _signal_app_server_descendants(descendant_groups, descendant_pids, signal.SIGKILL)
 
 
 def _write_terminal_turn_receipt(

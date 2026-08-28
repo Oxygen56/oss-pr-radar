@@ -15639,6 +15639,104 @@ def test_app_server_cleanup_reaps_group_after_parent_exit(monkeypatch):
     assert signals == [(456, MODULE.signal.SIGTERM), (456, MODULE.signal.SIGKILL)]
 
 
+def test_app_server_cleanup_terminates_descendant_process_group_safely(monkeypatch):
+    class Process:
+        pid = 100
+
+        def __init__(self):
+            self.calls: list[str] = []
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout):
+            self.calls.append(f"wait:{timeout}")
+            if timeout == 10:
+                raise subprocess.TimeoutExpired("codex", timeout)
+            return 0
+
+        def kill(self):
+            self.calls.append("kill")
+
+    snapshot = {
+        100: (1, 100, "codex app-server --stdio"),
+        101: (100, 200, "sh -c find . -type f | head"),
+        102: (101, 200, "find . -type f"),
+        103: (101, 200, "head"),
+    }
+    process = Process()
+    process_groups: list[tuple[int, int]] = []
+    individual_signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(MODULE, "_app_server_process_snapshot", lambda: snapshot)
+    monkeypatch.setattr(MODULE.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(MODULE.os, "getpgrp", lambda: 999)
+    monkeypatch.setattr(
+        MODULE.os,
+        "killpg",
+        lambda pgid, signum: process_groups.append((pgid, signum)),
+    )
+    monkeypatch.setattr(
+        MODULE.os,
+        "kill",
+        lambda pid, signum: individual_signals.append((pid, signum)),
+    )
+
+    MODULE._terminate_app_server_process(process)
+
+    assert process_groups == [
+        (100, MODULE.signal.SIGTERM),
+        (100, MODULE.signal.SIGKILL),
+        (200, MODULE.signal.SIGTERM),
+        (200, MODULE.signal.SIGKILL),
+    ]
+    assert individual_signals == []
+    assert process.calls == ["wait:10", "wait:5"]
+
+
+def test_app_server_cleanup_signals_only_known_descendants_in_mixed_group(monkeypatch):
+    class Process:
+        pid = 110
+
+        def poll(self):
+            return 0
+
+    snapshot = {
+        110: (1, 110, "codex app-server --stdio"),
+        111: (110, 210, "sh -c find ."),
+        112: (111, 210, "find ."),
+        999: (1, 210, "unrelated-process"),
+    }
+    process = Process()
+    process_groups: list[tuple[int, int]] = []
+    individual_signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(MODULE, "_app_server_process_snapshot", lambda: snapshot)
+    monkeypatch.setattr(MODULE.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(MODULE.os, "getpgrp", lambda: 9999)
+    monkeypatch.setattr(
+        MODULE.os,
+        "killpg",
+        lambda pgid, signum: process_groups.append((pgid, signum)),
+    )
+    monkeypatch.setattr(
+        MODULE.os,
+        "kill",
+        lambda pid, signum: individual_signals.append((pid, signum)),
+    )
+
+    MODULE._terminate_app_server_process(process)
+
+    assert process_groups == [
+        (110, MODULE.signal.SIGTERM),
+        (110, MODULE.signal.SIGKILL),
+    ]
+    assert sorted(individual_signals) == sorted([
+        (111, MODULE.signal.SIGTERM),
+        (112, MODULE.signal.SIGTERM),
+        (111, MODULE.signal.SIGKILL),
+        (112, MODULE.signal.SIGKILL),
+    ])
+
+
 def test_root_task_terminal_receipt_preserves_creation_binding(tmp_path):
     receipt = tmp_path / "root-task.json"
     initial = {
