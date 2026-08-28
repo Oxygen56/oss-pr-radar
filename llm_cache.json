@@ -1415,6 +1415,35 @@
     ],
     "why": "The issue provides a clear root cause: workflow watch events spread prior step results into start/result payloads, causing duplicate state and OOM on Cloudflare Workers. Existing PR #20661 is open but has failing CI and lacks comprehensive tests, leaving room for a materially better PR with focused watch-payload tests and a minimal fix."
   },
+  "06c6c5be1804c06ee5ed678e8b1a307da494bb5a085bf558ed42688e83429176": {
+    "confidence": 0.85,
+    "contradictions": [
+      "User initially reported audio not reaching room, later confirmed it does; maintainer's initial analysis vs final user confirmation."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "AudioRecognition audio routing",
+      "STT stream lifecycle",
+      "Activity transitions"
+    ],
+    "risks": [
+      "Potential overlap with PR #7005; need to coordinate or reference it."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use provided audio.ogg and DEBUG logs to reproduce freeze; add regression test simulating multi-turn audio routing with silence after successful turns."
+    ],
+    "unknowns": [
+      "Exact code path causing freeze; whether PR #7005 fully fixes it."
+    ],
+    "why": "Issue reports a framework-level audio routing freeze with multiple configurations, logs, and recordings. Maintainer confirmed RoomIO stops receiving audio, and user later confirmed audio reaches room but not STT/VAD, narrowing root cause to internal routing. PR #7005 is open and likely addresses this, but is not merged and lacks explicit issue reference, so work remains actionable."
+  },
   "06cd12e50c8cf690a0b388fa670bd8cd278c1d885874f48c618de851528c48ed": {
     "confidence": 0.85,
     "contradictions": [],
@@ -4347,6 +4376,39 @@
       "Whether maintainers have a preferred fix direction; whether existing PRs fully resolve the collision."
     ],
     "why": "Issue clearly identifies a reserved namespace collision in bedrock_mantle, but multiple open PRs already target the same transformation file with overlapping semantics, and the deterministic gate requires HUMAN_REVIEW. A new PR would risk duplicating existing work without maintainer direction."
+  },
+  "13f322a91c77cb561b2c2e3a29257aca37e46d3bdc4ed8aaba437fc6083b37e7": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Rewrite nemotron_h sample-packing monkeypatch to match transformers 5.15 module structure",
+      "Add regression tests for sample_packing with nemotron_h on transformers 5.14.1 and 5.15.0",
+      "Possibly add a loud validation error if patch cannot be applied"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #3945; need to coordinate or differentiate",
+      "Changes may affect other model architectures if shared code paths are modified",
+      "Testing requires specific hardware (RTX 4090) and transformers versions, which may not be available in CI"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the example config with sample_packing true on the exact stack (2x4090, WSL2 docker, Lightning BF16) and verify step 0 succeeds",
+      "Add unit tests that mock the transformers module to simulate 5.14.1 and 5.15.0 symbol availability",
+      "Compare packed-batch outputs against a reference implementation to ensure numerical correctness"
+    ],
+    "unknowns": [
+      "Exact diff of PR #3945 and whether it fully addresses both transformers versions",
+      "Whether maintainers prefer a fix over a validation error",
+      "Availability of test environment matching the reported stack"
+    ],
+    "why": "Issue provides a clear root cause: the nemotron_h sample-packing monkeypatch is incompatible with transformers 5.14.1 and 5.15.0 due to removed symbols and changed kernel path behavior. The issue includes a concrete validation path (run with sample_packing true on the specified stack) and references an open PR (#3945) that claims to fix it but lacks tests. This is a valuable, actionable algorithm bug fix opportunity."
   },
   "1414cd98cf5a7f7de6c1e32bc71a193903e4d0d6762b9f637e136b242484b513": {
     "confidence": 0.85,
@@ -13219,6 +13281,39 @@
     ],
     "why": "The issue describes a plausible bug in categorize.py where LLM reasoning output may cause misclassification, but the proposed fix is a simple string truncation that may not be robust across different LLM formats. The deterministic gate requires HUMAN_REVIEW, and there is no maintainer confirmation or active investigation. The related issue audit timed out, leaving unknowns about existing duplicates or ongoing work."
   },
+  "3d31a38ee6e53cbcbef43f5e4cff171e8e6d0e9f15e68e58cc7e4c538194ae88": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "ChatToolExecutor.executeSelectQuery result formatter",
+      "ChatPrompts.swift SQL examples",
+      "ChatPromptBuilder.currentDatetimeString",
+      "Other LLM-facing timestamp paths on desktop surfaces"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #12326; need to ensure distinct implementation or improvements.",
+      "Risk of changing behavior in other timestamp paths beyond scope; careful to limit changes to desktop chat surfaces."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add component test with UTC instant 2026-08-27T19:59:51Z and America/New_York timezone, asserting output contains 3:59:51 PM and a timezone token, and does not contain 7:59:51 PM unlabeled.",
+      "Add filter tests for 'today'/'yesterday' bounds to ensure no UTC offset shift.",
+      "Run make preflight and scripts/pr-preflight --suggest."
+    ],
+    "unknowns": [
+      "Exact implementation details of existing PR #12326 and whether it already covers the required fix; need to compare to avoid duplication."
+    ],
+    "why": "Issue provides a clear, verified root cause (UTC-naive timestamps in desktop SQL chat) and a concrete acceptance test with fixture and expected output. The fix is mechanical and well-scoped, with explicit out-of-scope items. Existing PR #12326 is open but lacks root-cause coverage, leaving room for a competitive contribution."
+  },
   "3d3e13b5614d3cc45e027bca6f3987e95c9ed16078b2d2a7497ee93410bbd110": {
     "confidence": 0.85,
     "contradictions": [
@@ -14168,6 +14263,35 @@
       "Whether an existing PR already addresses this"
     ],
     "why": "The issue describes a plausible stale-session bug in Continue's PR check pipeline, but the repository is now read-only post-acquisition, the open-PR lookup failed, and the maintainer has not confirmed the design. The suggested fix (keying sessions by head SHA) is reasonable but requires upstream confirmation."
+  },
+  "4197c99aeb44d4d09fe5a3a7dfd3e0f2d2e43504f836c3e092e9461e2bbc89d2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/protocols/openai/chat_completions/delta.rs",
+      "lib/llm/src/protocols/openai/common_ext.rs",
+      "dynamo-protocols response struct for prompt_logprobs field"
+    ],
+    "risks": [
+      "Protocol change may require a dynamo-protocols version bump and could affect existing clients expecting nvext-only behavior.",
+      "Potential mismatch in field naming or placement with native vLLM if not carefully aligned."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sends top-level prompt_logprobs without nvext and asserts response-root prompt_logprobs is present and matches engine_data.prompt_logprobs.",
+      "Run existing Rust unit tests for chat completions and nvext response building."
+    ],
+    "unknowns": [
+      "Exact maintainer preference for response schema (root vs nvext) is not confirmed, but issue proposes a clear direction."
+    ],
+    "why": "Issue provides a clear root cause: Rust frontend gates prompt_logprobs behind nvext.extra_fields, while native vLLM returns it at response root. Reproduction steps and expected/actual JSON are supplied, and code anchors identify the exact gating logic. The fix is localized to lib/llm and is testable via curl against a served model."
   },
   "41ae9cdf7dccb46a8add4be5ce3ea4718f16e2d39f5ad5e6ca1dc751935e869f": {
     "confidence": 0.8,
@@ -23040,6 +23164,33 @@
       "Exact root cause not yet identified; maintainer design preference unknown."
     ],
     "why": "Issue provides a clear regression with exact broken/working versions, isolated variables, and a reproducible command. Root cause is localized to generation/sampling for Qwen3.5-arch, with code anchors. No competing PR covers this path."
+  },
+  "653995c6ac822c38b619a8bc9779d2887e6f66fbb80fefffd36fef45afc952bd": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "docker/nginx/nginx.local.conf",
+      "regression tests for local nginx config"
+    ],
+    "risks": [
+      "Potential maintainer preference for different fix approach",
+      "Fix may not cover all nginx build variants or system-specific paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run targeted regression suite (99 passed) and nginx -t -c docker/nginx/nginx.local.conf -p <repo>",
+      "Reproduce original failure by running make dev with non-root nginx and confirm startup succeeds"
+    ],
+    "unknowns": [
+      "Exact nginx build details and whether the fix is merged into main"
+    ],
+    "why": "Issue reports a concrete local-dev nginx startup failure with clear error log (permission denied on /var/log/nginx/error.log). Recent comments describe a fix already implemented in the worktree with regression tests and validation, indicating the root cause is understood and a concrete fix exists. The candidate is actionable for verification or further refinement."
   },
   "653bbfe1205e227c06b5280be09c82c1e1e3d03e25f33e8348a7e35552e6c828": {
     "confidence": 0.85,
