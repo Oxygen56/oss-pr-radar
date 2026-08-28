@@ -26222,6 +26222,35 @@
     ],
     "why": "The issue reports a clear user-visible bug with a reproducible API behavior, but the root cause is not identified and the related issue audit and open PR lookup failed, leaving uncertainty about duplicates and existing work. The deterministic gate requires HUMAN_REVIEW."
   },
+  "706d737e3bfdb0d94bd70de527aea25081bbb4340029042328e8c5b53e6a679c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Initial suggestion of max_idle_connection_lifetime=60 was later noted as only partial fix, with real fix being connection validation on checkout."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Prisma/quaint connection pool configuration",
+      "retry logic for kind: Closed errors"
+    ],
+    "risks": [
+      "Changing default connection lifetime may affect performance or behavior for existing deployments.",
+      "Retry logic could mask underlying issues or cause duplicate side effects."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Set up a PostgreSQL instance with idle timeout, run LiteLLM with default config, reproduce the error, then apply the fix and verify error rate drops."
+    ],
+    "unknowns": [
+      "Exact version of quaint used by LiteLLM and whether it supports connection validation on checkout.",
+      "Maintainer preference for default value vs. retry approach."
+    ],
+    "why": "The issue provides a clear root cause (idle PostgreSQL connections dropped by RDS, no validation on checkout) and a concrete validation path (reproduce with the given DATABASE_URL parameters and observe error frequency). The suggested fix (default max_idle_connection_lifetime or retry on kind: Closed) is actionable and testable."
+  },
   "70a91257ccf59a6276f5df537f67d07050f4f7f093164083350e0a19c2292bd3": {
     "confidence": 0.85,
     "contradictions": [],
@@ -34687,6 +34716,35 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue accurately identifies a silent security gap on Windows and proposes a clear seam, but the fix direction is an architectural decision (native addon vs helper binary vs docs) that maintainers must confirm. The reporter explicitly asks for direction before implementing, and the triage bot recommends maintainer decision. No competing PR exists, but work cannot start without design confirmation."
+  },
+  "97b3a49f0b52d1e220daff68ddab48b59016f62838e7739fb186e2b05222f698": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comments disagree on whether Ollama supports json_schema mode; one claims it does not, another provides evidence it does."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "graphiti_core/llm_client/client.py",
+      "graphiti_core/llm_client/openai_generic_client.py",
+      "configuration defaults for structured_output_mode"
+    ],
+    "risks": [
+      "Changing default structured_output_mode may affect other providers; need to ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that reproduces the pydantic Field required error using OpenAIGenericClient with Ollama-compatible base_url and structured_output_mode='json_object', then verify the fix by switching to 'json_schema' and asserting successful extraction."
+    ],
+    "unknowns": [
+      "Exact graphiti-core version in the issue (0.18.9) vs current; whether the fix is already merged in a later version."
+    ],
+    "why": "Issue provides a minimal reproduction, expected vs actual behavior, and a traceback showing a pydantic Field required error. Comments identify the root cause as structured output mode incompatibility with Ollama, with a concrete fix (use json_schema mode) and validation across models. This is a user-visible bug in the LLM client path, actionable with a clear test plan."
   },
   "97b780bd117ccb593cfab1009486100cbb42179a609f35a4c02f362c87d53487": {
     "confidence": 0.85,
@@ -53432,6 +53490,43 @@
       "Exact caching backend and configuration used in the production incident, which may affect reproduction of the cache corruption."
     ],
     "why": "The issue provides a clear, reproducible bug with a minimal local repro, a precise traceback pointing to the faulty code path, and a concrete expected behavior. The root cause is identified as a non-iterable object returned when converting a non-streaming response to a fake stream, causing downstream async-for failures and cache corruption. This is a high-value fix in the proxy's streaming and caching logic."
+  },
+  "e4ddcf0f80b091943a8017c548be35ef3fb2daf3a0b98440a6bef47fd9fdf6e0": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "scheduler mamba cache sizing logic",
+      "server info API to expose effective concurrency",
+      "documentation for speculative decoding state-slot cost"
+    ],
+    "risks": [
+      "Changing cache sizing may increase memory usage and affect other models",
+      "Exposing effective concurrency in API could break existing clients",
+      "Correctness issues from related sentinel remap bug may confound results"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run concurrency sweep (c1, c8, c12) on hybrid-KDA model with DFLASH to verify throughput matches expected effective concurrency",
+      "Add regression test asserting max_mamba_cache_size floor is derived from max_running_requests * (1+D) or warning is emitted",
+      "Run fixed-seed greedy correctness check at target concurrency to detect state corruption"
+    ],
+    "unknowns": [
+      "Exact code location for cache sizing derivation",
+      "Maintainer preference among suggested fixes"
+    ],
+    "why": "Issue identifies a concrete algorithmic bug: mamba state cache sizing silently caps concurrency on hybrid-KDA models, with measured throughput impact and a clear root cause in the scheduler's cache derivation. The proposed fixes are actionable and testable via concurrency sweeps and correctness checks."
   },
   "e4fabda8a3fad5d8228b4abed96c24b301d866a617a82a0c7527d5ed0be36096": {
     "confidence": 0.85,
