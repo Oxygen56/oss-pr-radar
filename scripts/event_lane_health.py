@@ -200,12 +200,8 @@ def _read_poll_health(path: Path, *, now: float) -> dict[str, Any]:
             "pollHealthStatus": str(value.get("pollHealthStatus") or "unknown"),
         }
     )
-    degraded_evidence = (
-        consecutive >= POLL_DEGRADED_CONSECUTIVE_FAILURES
-        or (
-            attempts >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS
-            and rate >= POLL_DEGRADED_FAILURE_RATE
-        )
+    degraded_evidence = consecutive >= POLL_DEGRADED_CONSECUTIVE_FAILURES or (
+        attempts >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS and rate >= POLL_DEGRADED_FAILURE_RATE
     )
     status = result["pollHealthStatus"]
     if degraded_evidence or status == "degraded":
@@ -421,9 +417,7 @@ def _poll_health(path: Path, *, now: float) -> dict[str, Any]:
         attempts = int(parsed.get("failureWindowAttempts") or 0)
         return {
             **parsed,
-            "telemetryAvailable": bool(
-                parsed.get("lastAttemptAt") or parsed.get("failureWindow")
-            ),
+            "telemetryAvailable": bool(parsed.get("lastAttemptAt") or parsed.get("failureWindow")),
             "degraded": parsed.get("status") == "degraded",
             "recentOutcomeCount": attempts,
             "recentFailureCount": failures,
@@ -436,7 +430,9 @@ def _poll_health(path: Path, *, now: float) -> dict[str, Any]:
     # Compatibility with the first telemetry patch, which called the bounded
     # journal recentPollOutcomes.  It still requires a fresh successful sample.
     if isinstance(raw, dict) and isinstance(raw.get("recentPollOutcomes"), list):
-        outcomes = [item for item in raw["recentPollOutcomes"] if isinstance(item, dict)][-POLL_OUTCOME_WINDOW:]
+        outcomes = [item for item in raw["recentPollOutcomes"] if isinstance(item, dict)][
+            -POLL_OUTCOME_WINDOW:
+        ]
         failures = [item for item in outcomes if item.get("ok") is False]
         try:
             consecutive = max(0, int(raw.get("consecutiveFailures") or 0))
@@ -449,14 +445,20 @@ def _poll_health(path: Path, *, now: float) -> dict[str, Any]:
         rate = (len(failures) / len(outcomes)) if outcomes else 0.0
         degraded = bool(
             consecutive >= POLL_DEGRADED_CONSECUTIVE_FAILURES
-            or (len(outcomes) >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS and rate >= POLL_DEGRADED_FAILURE_RATE)
+            or (
+                len(outcomes) >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS
+                and rate >= POLL_DEGRADED_FAILURE_RATE
+            )
             or stale
             or attempt_stale
         )
         reasons: list[str] = []
         if consecutive >= POLL_DEGRADED_CONSECUTIVE_FAILURES:
             reasons.append("consecutive_failures")
-        if len(outcomes) >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS and rate >= POLL_DEGRADED_FAILURE_RATE:
+        if (
+            len(outcomes) >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS
+            and rate >= POLL_DEGRADED_FAILURE_RATE
+        ):
             reasons.append("recent_failure_rate")
         if stale:
             reasons.append("last_success_stale")
