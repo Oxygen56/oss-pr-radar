@@ -992,6 +992,13 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
 ):
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "stage7-strict-key" * 4)
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    # This test exercises release/worker evidence, not host capacity.  Keep
+    # the shared disk gate deterministic even when the CI host is near its
+    # hard threshold while the temporary fixture is being built.
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot",
+        lambda _root: {"level": "ok", "freeBytes": 100 * 1024**3},
+    )
     runtime = _runtime(tmp_path)
     source = tmp_path / "source.sqlite3"
     _source(source, "strict")
