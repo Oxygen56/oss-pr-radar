@@ -13725,6 +13725,7 @@ def _backfill_authoritative_fix_ready_result(
     raw: bytes,
     published_pr: dict[str, Any],
     restored_stage: str,
+    controller_review: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
     """Bind the exact submit-ready file to the PR that it already published.
 
@@ -13744,6 +13745,9 @@ def _backfill_authoritative_fix_ready_result(
         not in {"controller_commit_complete", "controller_merge_complete"}
         or not isinstance(quality, dict)
         or quality.get("independent_review_passed") is not True
+        or not isinstance(controller_review, dict)
+        or controller_review.get("verdict") != "PASS"
+        or value.get("independentReview") != controller_review
         or not assess_submit_ready(quality).ready
     ):
         return None
@@ -13756,16 +13760,54 @@ def _backfill_authoritative_fix_ready_result(
     ):
         return None
     task_id = str(candidate.get("intentId") or candidate.get("threadId") or "")
+    issue_url = str(candidate.get("issueUrl") or value.get("issueUrl") or "")
+    issue_match = ISSUE_URL.fullmatch(issue_url)
+    selected_base = str(value.get("selectedBaseSha") or candidate.get("selectedBaseSha") or "")
+    code_paths = [
+        str(path)
+        for path in (value.get("codePaths") or candidate.get("codePaths") or [])
+        if str(path).strip()
+    ]
+    receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+    try:
+        result_digest = _task_result_digest(value, raw)
+    except RuntimeError:
+        return None
+    if (
+        issue_match is None
+        or not task_id
+        or not selected_base
+        or not code_paths
+        or not isinstance(receipt, dict)
+        or value.get("resultDigest") != result_digest
+        or not verify_probe_receipt(
+            receipt,
+            repo=issue_match.group(1),
+            base_sha=selected_base,
+            code_paths=code_paths,
+            required_level=REPRODUCED_VALIDATED,
+            issue_url=issue_url,
+            task_id=task_id,
+            thread_id=str(candidate.get("threadId") or ""),
+            head_sha=head_sha,
+            commit_sha=commit_sha,
+            result_digest=result_digest,
+            enforce_freshness=False,
+        )
+    ):
+        return None
     task = managed_adapter.ledger.read_task(task_id) or {}
     try:
         task_provenance = json.loads(task.get("provenance_json") or "{}")
     except (TypeError, json.JSONDecodeError):
         return None
-    if not isinstance(task_provenance.get("probeReceipt"), dict) or not task_provenance.get(
-        "probeReceiptDigest"
+    durable_receipt = task_provenance.get("probeReceipt")
+    if (
+        not isinstance(durable_receipt, dict)
+        or not task_provenance.get("probeReceiptDigest")
+        or task_provenance.get("probeReceiptDigest") != durable_receipt.get("receiptDigest")
     ):
         return None
-    result_digest = _task_result_digest(value, raw)
     published_value = dict(value)
     published_value.update(
         {
@@ -13931,6 +13973,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     raw=raw,
                     published_pr=published_pr,
                     restored_stage=restored_stage,
+                    controller_review=_controller_review_result(args, value),
                 )
                 managed_ledger.record_event(
                     event_type="MANAGED_PUBLISHED_PR_AUTHORITATIVE",

@@ -520,9 +520,13 @@ def test_terminal_publication_self_heals_and_cannot_be_blocked(tmp_path):
         )
         connection.execute(
             """UPDATE publication_effects
-               SET action='create_pr',status='SUCCEEDED',result_json=?,updated_at=?
+               SET effect_id=?,action='create_pr',status='SUCCEEDED',result_json=?,updated_at=?
                WHERE effect_id='effect-1'""",
-            (json.dumps({"ok": True, "prUrl": pr_url}), old),
+            (
+                sha256_text("permit-1|create_pr|digest"),
+                json.dumps({"ok": True, "prUrl": pr_url}),
+                old,
+            ),
         )
         connection.execute(
             """INSERT INTO events
@@ -552,6 +556,35 @@ def test_terminal_publication_self_heals_and_cannot_be_blocked(tmp_path):
     assert reopened.publication_request("request-1")["reason"] is None
     assert reopened.publication_request("request-2")["status"] == "BLOCKED"
     assert reopened.publication_request("request-2")["reason"] == "BLOCKED_REPRODUCTION_REQUIRED"
+
+    assert (
+        reopened.publication_permit(
+            issue_url="https://github.com/a/b/issues/1",
+            commit_sha="b" * 40,
+            branch="fix/runtime",
+        )
+        is None
+    )
+    assert reopened.publication_permit_by_id("permit-1") is None
+    terminal_permit = reopened.publication_permit_for_effect("permit-1", action="create_pr")
+    assert terminal_permit is not None
+    assert terminal_permit["status"] == "CONSUMED"
+    terminal_effect = reopened.publication_effect_by_request(
+        permit_id="permit-1", action="create_pr", request_digest="digest"
+    )
+    assert terminal_effect is not None
+    assert terminal_effect["status"] == "SUCCEEDED"
+    assert (
+        reopened.publication_effect(
+            permit_id="permit-1", action="create_pr", request_digest="digest"
+        )["created"]
+        is False
+    )
+    with reopened.connect() as connection:
+        permit_status = connection.execute(
+            "SELECT status FROM publication_permits WHERE permit_id='permit-1'"
+        ).fetchone()[0]
+    assert permit_status == "CONSUMED"
 
     reopened.block_publication_request(
         "request-1", "BLOCKED_REPRODUCTION_REQUIRED", evidence={"probeFresh": False}

@@ -354,6 +354,23 @@ def _publication_has_irreversible_terminal_evidence(
     return finalized is not None
 
 
+def _publication_authorization_is_current_or_terminal(
+    connection: sqlite3.Connection,
+    *,
+    request_id: str,
+    opportunity_key: str,
+    request_json: str,
+    evidence: dict[str, Any] | None = None,
+) -> bool:
+    """Accept freshness only before an exact request crosses publication."""
+
+    return _publication_has_irreversible_terminal_evidence(
+        connection,
+        request_id=request_id,
+        opportunity_key=opportunity_key,
+    ) or _publication_probe_valid_json(request_json, evidence)
+
+
 RECOVERABLE_CONTEXT_STAGES = {
     "AUDIT_PASS",
     "VALIDATION_PENDING",
@@ -7804,8 +7821,11 @@ class RadarLedger:
                     opportunity_key=str(request_row["opportunity_key"]),
                     operation="publication permit",
                 )
-            if request_row is None or not _publication_probe_valid_json(
-                request_row["request_json"]
+            if request_row is None or not _publication_authorization_is_current_or_terminal(
+                connection,
+                request_id=str(row["request_id"]),
+                opportunity_key=str(request_row["opportunity_key"]),
+                request_json=str(request_row["request_json"]),
             ):
                 connection.execute(
                     "UPDATE publication_permits SET status='BLOCKED',updated_at=? WHERE permit_id=?",
@@ -7842,8 +7862,11 @@ class RadarLedger:
                     opportunity_key=str(request_row["opportunity_key"]),
                     operation="publication permit",
                 )
-            if request_row is None or not _publication_probe_valid_json(
-                request_row["request_json"]
+            if request_row is None or not _publication_authorization_is_current_or_terminal(
+                connection,
+                request_id=str(row["request_id"]),
+                opportunity_key=str(request_row["opportunity_key"]),
+                request_json=str(request_row["request_json"]),
             ):
                 connection.execute(
                     "UPDATE publication_permits SET status='BLOCKED',updated_at=? WHERE permit_id=?",
@@ -7884,8 +7907,11 @@ class RadarLedger:
                     opportunity_key=str(request_row["opportunity_key"]),
                     operation="publication effect permit",
                 )
-            if request_row is None or not _publication_probe_valid_json(
-                request_row["request_json"]
+            if request_row is None or not _publication_authorization_is_current_or_terminal(
+                connection,
+                request_id=str(permit["request_id"]),
+                opportunity_key=str(request_row["opportunity_key"]),
+                request_json=str(request_row["request_json"]),
             ):
                 connection.execute(
                     "UPDATE publication_permits SET status='BLOCKED',updated_at=? WHERE permit_id=?",
@@ -7925,13 +7951,17 @@ class RadarLedger:
         effect_id = sha256_text(f"{permit_id}|{action}|{request_digest}")
         with self.connect() as connection:
             authorization = connection.execute(
-                """SELECT r.request_json FROM publication_permits p
+                """SELECT p.request_id,r.opportunity_key,r.request_json
+                   FROM publication_permits p
                    JOIN publication_requests r ON r.request_id=p.request_id
                    WHERE p.permit_id=?""",
                 (permit_id,),
             ).fetchone()
-            if authorization is None or not _publication_probe_valid_json(
-                authorization["request_json"]
+            if authorization is None or not _publication_authorization_is_current_or_terminal(
+                connection,
+                request_id=str(authorization["request_id"]),
+                opportunity_key=str(authorization["opportunity_key"]),
+                request_json=str(authorization["request_json"]),
             ):
                 return None
             row = connection.execute(
@@ -7951,11 +7981,27 @@ class RadarLedger:
         blocked = False
         with self.transaction() as connection:
             authorization = connection.execute(
-                """SELECT p.request_id,r.request_json FROM publication_permits p
+                """SELECT p.request_id,r.opportunity_key,r.request_json
+                   FROM publication_permits p
                    JOIN publication_requests r ON r.request_id=p.request_id
                    WHERE p.permit_id=?""",
                 (permit_id,),
             ).fetchone()
+            terminal = bool(
+                authorization is not None
+                and _publication_has_irreversible_terminal_evidence(
+                    connection,
+                    request_id=str(authorization["request_id"]),
+                    opportunity_key=str(authorization["opportunity_key"]),
+                )
+            )
+            existing = connection.execute(
+                "SELECT * FROM publication_effects WHERE effect_id=?", (effect_id,)
+            ).fetchone()
+            if terminal:
+                if existing is not None:
+                    return dict(existing) | {"created": False}
+                raise LedgerError("publication effect cannot be created after terminal publication")
             if authorization is None or not _publication_probe_valid_json(
                 authorization["request_json"]
             ):
@@ -7983,9 +8029,6 @@ class RadarLedger:
                         operation="publication effect",
                     )
             if not blocked:
-                existing = connection.execute(
-                    "SELECT * FROM publication_effects WHERE effect_id=?", (effect_id,)
-                ).fetchone()
                 if existing:
                     return dict(existing) | {"created": False}
                 connection.execute(

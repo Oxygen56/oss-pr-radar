@@ -12071,6 +12071,11 @@ def test_ingest_keeps_reservation_bound_published_pr_authoritative(
 
 def test_published_fix_ready_file_repairs_current_result_and_binds_pr(tmp_path):
     store, worktree, result_path = _controller_commit_result(tmp_path)
+    reviewed_value = json.loads(result_path.read_text(encoding="utf-8"))
+    reviewed_value["independentReview"] = MODULE.controller_review_result(
+        MODULE.ROOT, reviewed_value
+    )
+    result_path.write_text(json.dumps(reviewed_value), encoding="utf-8")
     managed, _context, pr_url = _bind_published_pr_authority_fixture(
         store,
         worktree,
@@ -12130,6 +12135,43 @@ def test_published_fix_ready_file_repairs_current_result_and_binds_pr(tmp_path):
     context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
     assert context["publicationReceipt"]["prUrl"] == pr_url
     assert context["resultDigest"] == reviewed_digest
+
+
+@pytest.mark.parametrize(
+    "missing_binding",
+    ["reproductionReceipt", "resultDigest", "independentReview"],
+)
+def test_published_fix_ready_backfill_requires_exact_authenticated_result_binding(
+    tmp_path, missing_binding
+):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    reviewed_value = json.loads(result_path.read_text(encoding="utf-8"))
+    reviewed_value["independentReview"] = MODULE.controller_review_result(
+        MODULE.ROOT, reviewed_value
+    )
+    result_path.write_text(json.dumps(reviewed_value), encoding="utf-8")
+    managed, _context, _pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.pop(missing_binding)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["ignored"] == [{"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}]
+    assert managed.current_result_for_pr("a/b#9") is None
+    with managed._connection() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM managed_results
+                   WHERE task_id='intent-1' AND pr_key='a/b#9'"""
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_ingest_keeps_reconciled_current_pr_head_authoritative(tmp_path):
