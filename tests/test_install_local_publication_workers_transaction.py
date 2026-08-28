@@ -782,6 +782,217 @@ def test_stage_rejects_loaded_worker_before_writing_any_plist(
     assert not list((home / "Library" / "LaunchAgents").glob("*.plist"))
 
 
+def _previous_release_specs(tmp_path: Path) -> list[dict[str, object]]:
+    previous = []
+    for spec in specs(tmp_path):
+        old = dict(spec)
+        old["ProgramArguments"] = ["/old/immutable-release/worker", str(spec["Label"])]
+        previous.append(old)
+    return previous
+
+
+def test_stage_workers_default_rejects_complete_unloaded_previous_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    current = specs(tmp_path)
+    previous = _previous_release_specs(tmp_path)
+    _write_staged_plists(home, previous)
+    before = {
+        str(spec["Label"]): plist_path(home, str(spec["Label"])).read_bytes() for spec in previous
+    }
+    domain = "gui/4242"
+    monkeypatch.setattr(INSTALL, "launchctl", FakeLaunchctl(domain, set()))
+
+    with pytest.raises(RuntimeError, match="conflicting staged worker configuration"):
+        INSTALL.stage_workers(current, home=home, domain=domain)
+
+    assert all(plist_path(home, label).read_bytes() == raw for label, raw in before.items())
+
+
+def test_authorized_stage_replaces_complete_unloaded_previous_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runtime = tmp_path / "runtime"
+    (runtime / "state").mkdir(parents=True)
+    home = tmp_path / "home"
+    current = specs(tmp_path)
+    _write_staged_plists(home, _previous_release_specs(tmp_path))
+    domain = f"gui/{os.getuid()}"
+    fake = FakeLaunchctl(domain, set())
+    authorization_checks: list[bool] = []
+
+    monkeypatch.setattr(INSTALL, "launchctl", fake)
+    monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(
+        INSTALL,
+        "active_release_evidence",
+        lambda _root: {"valid": True, "path": str(tmp_path / "release"), "releaseId": "r2"},
+    )
+    monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(
+        INSTALL,
+        "require_worker_staging_authorization",
+        lambda *_args, **_kwargs: authorization_checks.append(True),
+    )
+
+    def consume(*_args, worker_records, **_kwargs):
+        assert len(worker_records) == 3
+        assert all(
+            plistlib.loads(plist_path(home, str(spec["Label"])).read_bytes()) == spec
+            for spec in current
+        )
+        return {
+            "schema": "receipt",
+            "state": "CONSUMED",
+            "workerSpecDigest": INSTALL.worker_spec_digest(current),
+        }
+
+    monkeypatch.setattr(INSTALL, "consume_worker_staging_authorization", consume)
+    monkeypatch.setattr(sys, "argv", ["installer", "--runtime-root", str(runtime), "--stage"])
+
+    assert INSTALL.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is True
+    assert result["changed"] is True
+    assert authorization_checks == [True]
+    assert all(
+        plistlib.loads(plist_path(home, str(spec["Label"])).read_bytes()) == spec
+        for spec in current
+    )
+
+
+@pytest.mark.parametrize("existing", ["loaded", "partial", "unsafe-mode"])
+def test_authorized_stage_does_not_expand_recovery_beyond_complete_unloaded_configs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    existing: str,
+) -> None:
+    runtime = tmp_path / "runtime"
+    (runtime / "state").mkdir(parents=True)
+    home = tmp_path / "home"
+    current = specs(tmp_path)
+    previous = _previous_release_specs(tmp_path)
+    if existing == "partial":
+        _write_staged_plists(home, previous[:2])
+    else:
+        _write_staged_plists(home, previous)
+    if existing == "unsafe-mode":
+        plist_path(home, str(previous[0]["Label"])).chmod(0o644)
+    before = {
+        path.name: (path.read_bytes(), path.stat().st_mode & 0o777)
+        for path in (home / "Library" / "LaunchAgents").glob("*.plist")
+    }
+    domain = f"gui/{os.getuid()}"
+    loaded = {f"{domain}/{current[0]['Label']}"} if existing == "loaded" else set()
+    fake = FakeLaunchctl(domain, loaded)
+    monkeypatch.setattr(INSTALL, "launchctl", fake)
+    monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(
+        INSTALL,
+        "active_release_evidence",
+        lambda _root: {"valid": True, "path": str(tmp_path / "release"), "releaseId": "r2"},
+    )
+    monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(
+        INSTALL, "require_worker_staging_authorization", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        INSTALL,
+        "consume_worker_staging_authorization",
+        lambda *_args, **_kwargs: pytest.fail("invalid recovery must not consume authorization"),
+    )
+    monkeypatch.setattr(sys, "argv", ["installer", "--runtime-root", str(runtime), "--stage"])
+
+    assert INSTALL.main() == 1
+    result = json.loads(capsys.readouterr().out)
+    assert "refuse" in result["error"]
+    after = {
+        path.name: (path.read_bytes(), path.stat().st_mode & 0o777)
+        for path in (home / "Library" / "LaunchAgents").glob("*.plist")
+    }
+    assert after == before
+
+
+def test_existing_receipt_never_allows_conflicting_worker_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runtime = tmp_path / "runtime"
+    (runtime / "state").mkdir(parents=True)
+    receipt = INSTALL.staged_worker_receipt_path(runtime)
+    receipt.write_text("existing durable receipt\n", encoding="utf-8")
+    home = tmp_path / "home"
+    current = specs(tmp_path)
+    previous = _previous_release_specs(tmp_path)
+    _write_staged_plists(home, previous)
+    before = {
+        str(spec["Label"]): plist_path(home, str(spec["Label"])).read_bytes() for spec in previous
+    }
+    domain = f"gui/{os.getuid()}"
+    monkeypatch.setattr(INSTALL, "launchctl", FakeLaunchctl(domain, set()))
+    monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(
+        INSTALL,
+        "active_release_evidence",
+        lambda _root: {"valid": True, "path": str(tmp_path / "release"), "releaseId": "r2"},
+    )
+    monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(
+        INSTALL,
+        "require_worker_staging_authorization",
+        lambda *_args, **_kwargs: pytest.fail("receipt recovery must not issue a new permit"),
+    )
+    monkeypatch.setattr(
+        INSTALL,
+        "consume_worker_staging_authorization",
+        lambda *_args, **_kwargs: pytest.fail("conflicting files must fail before receipt read"),
+    )
+    monkeypatch.setattr(sys, "argv", ["installer", "--runtime-root", str(runtime), "--stage"])
+
+    assert INSTALL.main() == 1
+    result = json.loads(capsys.readouterr().out)
+    assert "conflicting staged worker configuration" in result["error"]
+    assert all(plist_path(home, label).read_bytes() == raw for label, raw in before.items())
+
+
+def test_authorized_previous_release_replacement_rolls_back_if_receipt_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runtime = tmp_path / "runtime"
+    (runtime / "state").mkdir(parents=True)
+    home = tmp_path / "home"
+    current = specs(tmp_path)
+    previous = _previous_release_specs(tmp_path)
+    _write_staged_plists(home, previous)
+    before = {
+        str(spec["Label"]): plist_path(home, str(spec["Label"])).read_bytes() for spec in previous
+    }
+    domain = f"gui/{os.getuid()}"
+    monkeypatch.setattr(INSTALL, "launchctl", FakeLaunchctl(domain, set()))
+    monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(
+        INSTALL,
+        "active_release_evidence",
+        lambda _root: {"valid": True, "path": str(tmp_path / "release"), "releaseId": "r2"},
+    )
+    monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(
+        INSTALL, "require_worker_staging_authorization", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        INSTALL,
+        "consume_worker_staging_authorization",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("injected receipt failure")),
+    )
+    monkeypatch.setattr(sys, "argv", ["installer", "--runtime-root", str(runtime), "--stage"])
+
+    assert INSTALL.main() == 1
+    result = json.loads(capsys.readouterr().out)
+    assert "injected receipt failure" in result["error"]
+    assert all(plist_path(home, label).read_bytes() == raw for label, raw in before.items())
+
+
 def test_stage_receipt_uses_fresh_launchctl_observation_not_hardcoded_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

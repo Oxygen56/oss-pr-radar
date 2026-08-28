@@ -376,11 +376,18 @@ def install_workers(
 
 
 def stage_workers(
-    specs: list[dict[str, object]], *, home: Path, domain: str, allow_unload: bool = False
+    specs: list[dict[str, object]],
+    *,
+    home: Path,
+    domain: str,
+    allow_unload: bool = False,
+    replace_complete_unloaded: bool = False,
 ) -> dict[str, object]:
     """Write exact release plists and leave every worker unloaded."""
 
     _validate_specs(specs)
+    if allow_unload and replace_complete_unloaded:
+        raise RuntimeError("worker staging replacement modes are mutually exclusive")
     snapshots = _snapshot_workers(specs, home=home, domain=domain)
     if not allow_unload:
         if any(snapshot.loaded for snapshot in snapshots):
@@ -389,17 +396,22 @@ def stage_workers(
         if any(present) and not all(present):
             raise RuntimeError("partial staged worker configuration refuses recovery")
         if all(present):
-            if any(
-                snapshot.mode != 0o600 or not _config_matches(snapshot.path, spec)
+            if any(snapshot.mode != 0o600 for snapshot in snapshots):
+                raise RuntimeError("unsafe staged worker configuration refuses recovery")
+            conflicting = any(
+                not _config_matches(snapshot.path, spec)
                 for snapshot, spec in zip(snapshots, specs, strict=True)
-            ):
+            )
+            if conflicting and not replace_complete_unloaded:
                 raise RuntimeError("conflicting staged worker configuration refuses recovery")
-            return {
-                "ok": True,
-                "staged": True,
-                "loaded": False,
-                "workers": [{"label": str(spec["Label"]), "staged": True} for spec in specs],
-            }
+            if not conflicting:
+                return {
+                    "ok": True,
+                    "staged": True,
+                    "loaded": False,
+                    "changed": False,
+                    "workers": [{"label": str(spec["Label"]), "staged": True} for spec in specs],
+                }
     touched: list[str] = []
     try:
         for spec, snapshot in zip(specs, snapshots, strict=True):
@@ -421,6 +433,7 @@ def stage_workers(
         "ok": True,
         "staged": True,
         "loaded": False,
+        "changed": True,
         "workers": [{"label": str(spec["Label"]), "staged": True} for spec in specs],
     }
 
@@ -649,31 +662,47 @@ def main() -> int:
             ):
                 raise RuntimeError("--stage refuses to modify an already authorized runtime")
             with worker_staging_transaction_lock(runtime_root):
-                if not staged_worker_receipt_path(runtime_root).exists():
+                receipt_path = staged_worker_receipt_path(runtime_root)
+                replace_complete_unloaded = False
+                if not receipt_path.exists():
                     require_worker_staging_authorization(
                         runtime_root, specs=specs, home=home, _lock_held=True
                     )
+                    # Only a newly verified, release-bound staging permit may
+                    # replace a complete unloaded trio from the prior release.
+                    # Receipt recovery must validate its existing files first.
+                    replace_complete_unloaded = True
                 initial = _snapshot_workers(specs, home=home, domain=domain)
+                changed = False
                 try:
-                    result = stage_workers(specs, home=home, domain=domain)
+                    result = stage_workers(
+                        specs,
+                        home=home,
+                        domain=domain,
+                        replace_complete_unloaded=replace_complete_unloaded,
+                    )
+                    changed = result.get("changed") is True
                     receipt = consume_worker_staging_authorization(
                         runtime_root,
                         specs=specs,
                         worker_records=_staging_records(specs, home=home, domain=domain),
                         _lock_held=True,
                     )
-                except Exception:
-                    # Only remove files created by this transaction. A receipt
-                    # is the durable crash-recovery boundary and must win over
-                    # cleanup after receipt creation.
-                    if not staged_worker_receipt_path(runtime_root).exists():
-                        for snapshot, spec in zip(initial, specs, strict=True):
-                            if (
-                                not snapshot.exists
-                                and not _loaded(snapshot.service)
-                                and _config_matches(snapshot.path, spec)
-                            ):
-                                snapshot.path.unlink(missing_ok=True)
+                except Exception as exc:
+                    # The signed receipt is the durable commit point. Before
+                    # it exists, restore both newly created files and any
+                    # complete unloaded prior-release trio replaced here.
+                    if changed and not receipt_path.exists():
+                        rollback_errors = _rollback(
+                            initial,
+                            [snapshot.service for snapshot in initial],
+                            domain=domain,
+                        )
+                        if rollback_errors:
+                            raise RuntimeError(
+                                "worker staging receipt failed; rollback incomplete: "
+                                + ", ".join(rollback_errors)
+                            ) from exc
                     raise
             result["receipt"] = {
                 "schema": receipt["schema"],
