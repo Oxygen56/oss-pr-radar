@@ -37,6 +37,8 @@ LANES = {
 ACTIVE_EVENT_STATUSES = {"pending", "leased", "needs_reconcile"}
 ACTIVE_TURN_STATUSES = {"reserved", "started", "needs_reconcile"}
 TURN_STALE_SECONDS = 20 * 60
+POLL_SUCCESS_STALE_SECONDS = 15 * 60
+POLL_OUTCOME_WINDOW = 20
 
 
 def _launch_status(label: str) -> dict[str, Any]:
@@ -272,6 +274,75 @@ def _read_only_database(path: Path, *, namespace: str, now: float) -> dict[str, 
     return result
 
 
+def _poll_health(path: Path, *, now: float) -> dict[str, Any]:
+    """Read durable poll outcomes and detect sustained transport failures."""
+    result: dict[str, Any] = {
+        "path": str(path),
+        "telemetryAvailable": False,
+        "healthy": True,
+        "degraded": False,
+        "consecutiveFailures": 0,
+        "recentOutcomeCount": 0,
+        "recentFailureCount": 0,
+        "recentFailureRate": 0.0,
+    }
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return result
+    if not isinstance(value, dict):
+        return result
+    outcomes = value.get("recentPollOutcomes")
+    outcomes = [item for item in outcomes if isinstance(item, dict)] if isinstance(outcomes, list) else []
+    outcomes = outcomes[-POLL_OUTCOME_WINDOW:]
+    failures = [item for item in outcomes if item.get("ok") is False]
+    try:
+        consecutive = max(0, int(value.get("consecutiveFailures") or 0))
+    except (TypeError, ValueError, OverflowError):
+        consecutive = 0
+    last_success = _parse_iso_timestamp(value.get("lastSuccessAt"))
+    stale = last_success is not None and now - last_success > POLL_SUCCESS_STALE_SECONDS
+    rate = (len(failures) / len(outcomes)) if outcomes else 0.0
+    degraded = bool(
+        consecutive >= 3
+        or (len(outcomes) >= 3 and rate >= 0.5)
+        or stale
+    )
+    result.update(
+        {
+            "telemetryAvailable": bool(value.get("lastAttemptAt") or outcomes),
+            "healthy": not degraded,
+            "degraded": degraded,
+            "consecutiveFailures": consecutive,
+            "lastAttemptAt": value.get("lastAttemptAt"),
+            "lastSuccessAt": value.get("lastSuccessAt"),
+            "recentOutcomeCount": len(outcomes),
+            "recentFailureCount": len(failures),
+            "recentFailureRate": round(rate, 4),
+            "successStale": stale,
+        }
+    )
+    if degraded:
+        reasons: list[str] = []
+        if consecutive >= 3:
+            reasons.append("consecutive_failures")
+        if len(outcomes) >= 3 and rate >= 0.5:
+            reasons.append("recent_failure_rate")
+        if stale:
+            reasons.append("last_success_stale")
+        result["degradedReasons"] = reasons
+    return result
+
+
+def _parse_iso_timestamp(value: object) -> float | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def audit(root: Path, *, home: Path | None = None, now: float | None = None) -> dict[str, Any]:
     root = root.absolute()
     home = (home or Path.home()).absolute()
@@ -292,6 +363,10 @@ def audit(root: Path, *, home: Path | None = None, now: float | None = None) -> 
         )
         for namespace in LANES
     }
+    poll_states = {
+        namespace: _poll_health(root / "state" / f"{namespace}-poll.json", now=current)
+        for namespace in LANES
+    }
     try:
         authorization = require_operational_authorization(root)
         authorization_valid = isinstance(authorization, dict)
@@ -303,14 +378,20 @@ def audit(root: Path, *, home: Path | None = None, now: float | None = None) -> 
     for namespace in LANES:
         plist = plists[namespace]
         database = databases[namespace]
+        poll_state = poll_states[namespace]
         launch = plist.get("launch") or {}
         lane_health[namespace] = {
             "healthy": bool(
-                plist.get("bindingOk") and _launch_healthy(launch) and database.get("healthy")
+                plist.get("bindingOk")
+                and _launch_healthy(launch)
+                and database.get("healthy")
+                and poll_state.get("healthy")
             ),
             "bindingOk": bool(plist.get("bindingOk")),
             "launchHealthy": _launch_healthy(launch),
             "databaseHealthy": bool(database.get("healthy")),
+            "pollHealthy": bool(poll_state.get("healthy")),
+            "pollTelemetryAvailable": bool(poll_state.get("telemetryAvailable")),
             "releaseId": plist.get("releaseId"),
         }
     healthy = authorization_valid and all(item.get("healthy") for item in lane_health.values())
@@ -323,6 +404,7 @@ def audit(root: Path, *, home: Path | None = None, now: float | None = None) -> 
         "lanes": lane_health,
         "plists": plists,
         "databases": databases,
+        "pollStates": poll_states,
     }
 
 

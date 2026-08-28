@@ -66,6 +66,66 @@ def test_read_only_database_marks_active_recursive_recovery_unhealthy(tmp_path):
     assert result["healthy"] is False
 
 
+def test_poll_health_degrades_after_three_consecutive_failures(tmp_path):
+    path = tmp_path / "poll.json"
+    path.write_text(
+        json.dumps(
+            {
+                "lastAttemptAt": "1970-01-01T00:16:40Z",
+                "lastSuccessAt": "1970-01-01T00:16:00Z",
+                "consecutiveFailures": 3,
+                "recentPollOutcomes": [
+                    {"at": "1970-01-01T00:16:20Z", "ok": False},
+                    {"at": "1970-01-01T00:16:30Z", "ok": False},
+                    {"at": "1970-01-01T00:16:40Z", "ok": False},
+                ],
+            }
+        )
+    )
+    result = MODULE._poll_health(path, now=1000.0)
+    assert result["telemetryAvailable"] is True
+    assert result["degraded"] is True
+    assert "consecutive_failures" in result["degradedReasons"]
+
+
+def test_poll_health_uses_window_rate_and_keeps_intermittent_failures_healthy(tmp_path):
+    path = tmp_path / "poll.json"
+    path.write_text(
+        json.dumps(
+            {
+                "lastAttemptAt": "1970-01-01T00:16:40Z",
+                "lastSuccessAt": "1970-01-01T00:16:39Z",
+                "consecutiveFailures": 1,
+                "recentPollOutcomes": [
+                    {"at": "1970-01-01T00:16:38Z", "ok": True},
+                    {"at": "1970-01-01T00:16:39Z", "ok": False},
+                    {"at": "1970-01-01T00:16:40Z", "ok": True},
+                ],
+            }
+        )
+    )
+    result = MODULE._poll_health(path, now=1000.0)
+    assert result["healthy"] is True
+    assert result["recentFailureRate"] < 0.5
+
+
+def test_poll_health_degrades_when_success_is_stale(tmp_path):
+    path = tmp_path / "poll.json"
+    path.write_text(
+        json.dumps(
+            {
+                "lastAttemptAt": "1970-01-01T00:00:01Z",
+                "lastSuccessAt": "1970-01-01T00:00:00Z",
+                "consecutiveFailures": 1,
+                "recentPollOutcomes": [{"at": "1970-01-01T00:00:01Z", "ok": False}],
+            }
+        )
+    )
+    result = MODULE._poll_health(path, now=1000.0)
+    assert result["degraded"] is True
+    assert result["successStale"] is True
+
+
 def test_completed_recursive_history_is_warning_only(tmp_path):
     path = tmp_path / "nanobot-events.sqlite3"
     with event_database(path) as connection:
