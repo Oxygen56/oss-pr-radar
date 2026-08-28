@@ -179,12 +179,81 @@ def test_audit_allows_each_lane_to_use_its_own_verified_release(monkeypatch, tmp
         "require_operational_authorization",
         lambda _root: {"authorized": True},
     )
+    monkeypatch.setattr(
+        MODULE,
+        "_poll_health",
+        lambda _path, *, now: {
+            "healthy": True,
+            "telemetryAvailable": True,
+            "status": "healthy",
+        },
+    )
 
     result = MODULE.audit(tmp_path, home=tmp_path / "home", now=1000.0)
 
     assert result["healthy"] is True
     assert result["lanes"]["agentscope"]["releaseId"] == "agentscope-release"
     assert result["lanes"]["nanobot"]["releaseId"] == "nanobot-release"
+
+
+def test_poll_health_new_window_keeps_one_transient_failure_recoverable(tmp_path):
+    path = tmp_path / "poll.json"
+    path.write_text(
+        json.dumps(
+            {
+                "pollHealthSchema": "event_poll_health_v1",
+                "lastAttemptAt": "1970-01-01T00:16:40Z",
+                "lastSuccessAt": "1970-01-01T00:16:39Z",
+                "lastError": "URLError:temporary",
+                "consecutiveFailures": 1,
+                "pollHealthStatus": "recovering",
+                "failureWindow": [
+                    {"at": "1970-01-01T00:16:39Z", "ok": True},
+                    {"at": "1970-01-01T00:16:40Z", "ok": False},
+                ],
+                "failureRate": 0.5,
+            }
+        )
+    )
+    result = MODULE._poll_health(path, now=1000.0)
+    assert result["status"] == "recovering"
+    assert result["healthy"] is True
+    assert result["degraded"] is False
+    assert result["failureWindowFailures"] == 1
+
+
+def test_poll_health_new_window_marks_sustained_failures_degraded_even_exit_zero(tmp_path):
+    path = tmp_path / "poll.json"
+    path.write_text(
+        json.dumps(
+            {
+                "pollHealthSchema": "event_poll_health_v1",
+                "lastAttemptAt": "1970-01-01T00:16:40Z",
+                "lastSuccessAt": "1970-01-01T00:16:37Z",
+                "consecutiveFailures": 3,
+                "pollHealthStatus": "degraded",
+                "failureWindow": [
+                    {"at": "1970-01-01T00:16:37Z", "ok": True},
+                    {"at": "1970-01-01T00:16:38Z", "ok": False},
+                    {"at": "1970-01-01T00:16:39Z", "ok": False},
+                    {"at": "1970-01-01T00:16:40Z", "ok": False},
+                ],
+                "failureRate": 0.75,
+            }
+        )
+    )
+    result = MODULE._poll_health(path, now=1000.0)
+    assert result["status"] == "degraded"
+    assert result["healthy"] is False
+    assert result["failureWindowFailures"] == 3
+
+
+def test_poll_health_missing_telemetry_is_unknown_not_healthy(tmp_path):
+    path = tmp_path / "poll.json"
+    path.write_text(json.dumps({"watermark": "1970-01-01T00:16:00Z"}))
+    result = MODULE._poll_health(path, now=1000.0)
+    assert result["status"] == "unknown"
+    assert result["healthy"] is False
 
 
 def test_running_lane_waits_for_replacement_success():

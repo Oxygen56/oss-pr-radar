@@ -37,6 +37,12 @@ LANES = {
 ACTIVE_EVENT_STATUSES = {"pending", "leased", "needs_reconcile"}
 ACTIVE_TURN_STATUSES = {"reserved", "started", "needs_reconcile"}
 TURN_STALE_SECONDS = 20 * 60
+POLL_SUCCESS_MAX_AGE_SECONDS = 5 * 60
+POLL_FAILURE_WINDOW_SECONDS = 15 * 60
+POLL_FAILURE_WINDOW_MAX_ATTEMPTS = 20
+POLL_DEGRADED_CONSECUTIVE_FAILURES = 3
+POLL_DEGRADED_MIN_WINDOW_ATTEMPTS = 3
+POLL_DEGRADED_FAILURE_RATE = 0.5
 POLL_SUCCESS_STALE_SECONDS = 15 * 60
 POLL_OUTCOME_WINDOW = 20
 
@@ -99,6 +105,129 @@ def _settle_launch_status(
 
 def _launch_healthy(launch: dict[str, Any]) -> bool:
     return bool(launch.get("available") and launch.get("lastExitCode") == 0)
+
+
+def _parse_poll_timestamp(value: object) -> float | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).timestamp()
+
+
+def _read_poll_health(path: Path, *, now: float) -> dict[str, Any]:
+    """Read durable poll evidence; launchd's predecessor exit is not enough."""
+    result: dict[str, Any] = {
+        "path": str(path),
+        "exists": path.is_file() and not path.is_symlink(),
+        "available": False,
+        "healthy": False,
+        "status": "unknown",
+        "issues": [],
+    }
+    if not result["exists"]:
+        result["issues"].append("POLL_STATE_MISSING")
+        return result
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        result["issues"].append(f"POLL_STATE_INVALID:{type(exc).__name__}")
+        return result
+    if not isinstance(value, dict):
+        result["issues"].append("POLL_STATE_INVALID:object_required")
+        return result
+    result["available"] = True
+    result["schemaVersion"] = value.get("schemaVersion")
+    result["pollHealthSchema"] = value.get("pollHealthSchema")
+    result["lastAttemptAt"] = value.get("lastAttemptAt")
+    result["lastSuccessAt"] = value.get("lastSuccessAt")
+    result["lastFailureAt"] = value.get("lastFailureAt")
+    result["lastError"] = str(value.get("lastError") or "")[:400] or None
+    attempt_at = _parse_poll_timestamp(value.get("lastAttemptAt"))
+    success_at = _parse_poll_timestamp(value.get("lastSuccessAt"))
+    result["lastAttemptAgeSeconds"] = max(0.0, now - attempt_at) if attempt_at is not None else None
+    result["lastSuccessAgeSeconds"] = max(0.0, now - success_at) if success_at is not None else None
+    if attempt_at is None:
+        result["issues"].append("POLL_ATTEMPT_MISSING_OR_INVALID")
+    if success_at is None:
+        result["issues"].append("POLL_SUCCESS_MISSING_OR_INVALID")
+    elif now - success_at > POLL_SUCCESS_MAX_AGE_SECONDS:
+        result["issues"].append("POLL_SUCCESS_STALE")
+    if attempt_at is not None and now - attempt_at > POLL_SUCCESS_MAX_AGE_SECONDS:
+        result["issues"].append("POLL_ATTEMPT_STALE")
+
+    try:
+        consecutive = max(0, int(value.get("consecutiveFailures") or 0))
+    except (TypeError, ValueError):
+        consecutive = 0
+        result["issues"].append("POLL_CONSECUTIVE_INVALID")
+    result["consecutiveFailures"] = consecutive
+
+    raw_window = value.get("failureWindow")
+    window: list[dict[str, Any]] = []
+    invalid_window = False
+    if raw_window is not None and not isinstance(raw_window, list):
+        invalid_window = True
+    elif isinstance(raw_window, list):
+        for entry in raw_window:
+            if not isinstance(entry, dict) or not isinstance(entry.get("ok"), bool):
+                invalid_window = True
+                continue
+            entry_at = _parse_poll_timestamp(entry.get("at"))
+            if entry_at is None:
+                invalid_window = True
+                continue
+            if entry_at > now or now - entry_at > POLL_FAILURE_WINDOW_SECONDS:
+                continue
+            window.append({"at": entry.get("at"), "ok": bool(entry["ok"])})
+    if invalid_window:
+        result["issues"].append("POLL_FAILURE_WINDOW_INVALID")
+    window = window[-POLL_FAILURE_WINDOW_MAX_ATTEMPTS:]
+    attempts = len(window)
+    failures = sum(1 for entry in window if not entry["ok"])
+    rate = round(failures / attempts, 3) if attempts else 0.0
+    result.update(
+        {
+            "failureWindow": window,
+            "failureWindowAttempts": attempts,
+            "failureWindowFailures": failures,
+            "failureRate": rate,
+            "persistedFailureRate": value.get("failureRate"),
+            "pollHealthStatus": str(value.get("pollHealthStatus") or "unknown"),
+        }
+    )
+    degraded_evidence = (
+        consecutive >= POLL_DEGRADED_CONSECUTIVE_FAILURES
+        or (
+            attempts >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS
+            and rate >= POLL_DEGRADED_FAILURE_RATE
+        )
+    )
+    status = result["pollHealthStatus"]
+    if degraded_evidence or status == "degraded":
+        result["status"] = "degraded"
+        result["issues"].append("POLL_FAILURES_SUSTAINED")
+    elif success_at is not None and attempt_at is not None:
+        result["status"] = "recovering" if consecutive or status == "recovering" else "healthy"
+    else:
+        result["status"] = "unknown"
+    # A recent successful poll keeps a single recoverable failure from making
+    # the whole controller fatal. Missing/stale success or sustained failures
+    # remain unhealthy even when launchd reports an old exit code of zero.
+    result["healthy"] = bool(
+        result["status"] in {"healthy", "recovering"}
+        and success_at is not None
+        and attempt_at is not None
+        and now - success_at <= POLL_SUCCESS_MAX_AGE_SECONDS
+        and now - attempt_at <= POLL_SUCCESS_MAX_AGE_SECONDS
+        and not invalid_window
+        and not degraded_evidence
+    )
+    return result
 
 
 def _plist_health(path: Path, *, root: Path, namespace: str) -> dict[str, Any]:
@@ -275,63 +404,95 @@ def _read_only_database(path: Path, *, namespace: str, now: float) -> dict[str, 
 
 
 def _poll_health(path: Path, *, now: float) -> dict[str, Any]:
-    """Read durable poll outcomes and detect sustained transport failures."""
-    result: dict[str, Any] = {
-        "path": str(path),
-        "telemetryAvailable": False,
-        "healthy": True,
-        "degraded": False,
-        "consecutiveFailures": 0,
-        "recentOutcomeCount": 0,
-        "recentFailureCount": 0,
-        "recentFailureRate": 0.0,
-    }
+    """Read durable poll outcomes and detect sustained transport failures.
+
+    ``failureWindow`` is the current event-lane format.  The older
+    ``recentPollOutcomes`` shape is accepted for one release so a mixed
+    rollout remains observable; a state file with neither shape is unknown,
+    never silently healthy.
+    """
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError):
-        return result
-    if not isinstance(value, dict):
-        return result
-    outcomes = value.get("recentPollOutcomes")
-    outcomes = [item for item in outcomes if isinstance(item, dict)] if isinstance(outcomes, list) else []
-    outcomes = outcomes[-POLL_OUTCOME_WINDOW:]
-    failures = [item for item in outcomes if item.get("ok") is False]
-    try:
-        consecutive = max(0, int(value.get("consecutiveFailures") or 0))
-    except (TypeError, ValueError, OverflowError):
-        consecutive = 0
-    last_success = _parse_iso_timestamp(value.get("lastSuccessAt"))
-    stale = last_success is not None and now - last_success > POLL_SUCCESS_STALE_SECONDS
-    rate = (len(failures) / len(outcomes)) if outcomes else 0.0
-    degraded = bool(
-        consecutive >= 3
-        or (len(outcomes) >= 3 and rate >= 0.5)
-        or stale
-    )
-    result.update(
-        {
-            "telemetryAvailable": bool(value.get("lastAttemptAt") or outcomes),
+        raw = None
+    if isinstance(raw, dict) and "failureWindow" in raw:
+        parsed = _read_poll_health(path, now=now)
+        failures = int(parsed.get("failureWindowFailures") or 0)
+        attempts = int(parsed.get("failureWindowAttempts") or 0)
+        return {
+            **parsed,
+            "telemetryAvailable": bool(
+                parsed.get("lastAttemptAt") or parsed.get("failureWindow")
+            ),
+            "degraded": parsed.get("status") == "degraded",
+            "recentOutcomeCount": attempts,
+            "recentFailureCount": failures,
+            "recentFailureRate": parsed.get("failureRate", 0.0),
+            "successStale": "POLL_SUCCESS_STALE" in parsed.get("issues", []),
+            "degradedReasons": parsed.get("issues", [])
+            if parsed.get("status") == "degraded"
+            else [],
+        }
+    # Compatibility with the first telemetry patch, which called the bounded
+    # journal recentPollOutcomes.  It still requires a fresh successful sample.
+    if isinstance(raw, dict) and isinstance(raw.get("recentPollOutcomes"), list):
+        outcomes = [item for item in raw["recentPollOutcomes"] if isinstance(item, dict)][-POLL_OUTCOME_WINDOW:]
+        failures = [item for item in outcomes if item.get("ok") is False]
+        try:
+            consecutive = max(0, int(raw.get("consecutiveFailures") or 0))
+        except (TypeError, ValueError, OverflowError):
+            consecutive = 0
+        last_success = _parse_iso_timestamp(raw.get("lastSuccessAt"))
+        last_attempt = _parse_iso_timestamp(raw.get("lastAttemptAt"))
+        stale = last_success is None or now - last_success > POLL_SUCCESS_STALE_SECONDS
+        attempt_stale = last_attempt is None or now - last_attempt > POLL_SUCCESS_STALE_SECONDS
+        rate = (len(failures) / len(outcomes)) if outcomes else 0.0
+        degraded = bool(
+            consecutive >= POLL_DEGRADED_CONSECUTIVE_FAILURES
+            or (len(outcomes) >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS and rate >= POLL_DEGRADED_FAILURE_RATE)
+            or stale
+            or attempt_stale
+        )
+        reasons: list[str] = []
+        if consecutive >= POLL_DEGRADED_CONSECUTIVE_FAILURES:
+            reasons.append("consecutive_failures")
+        if len(outcomes) >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS and rate >= POLL_DEGRADED_FAILURE_RATE:
+            reasons.append("recent_failure_rate")
+        if stale:
+            reasons.append("last_success_stale")
+        if attempt_stale:
+            reasons.append("last_attempt_stale")
+        return {
+            "path": str(path),
+            "telemetryAvailable": bool(raw.get("lastAttemptAt") or outcomes),
             "healthy": not degraded,
             "degraded": degraded,
+            "status": "degraded" if degraded else ("recovering" if consecutive else "healthy"),
             "consecutiveFailures": consecutive,
-            "lastAttemptAt": value.get("lastAttemptAt"),
-            "lastSuccessAt": value.get("lastSuccessAt"),
+            "lastAttemptAt": raw.get("lastAttemptAt"),
+            "lastSuccessAt": raw.get("lastSuccessAt"),
             "recentOutcomeCount": len(outcomes),
             "recentFailureCount": len(failures),
             "recentFailureRate": round(rate, 4),
             "successStale": stale,
+            "issues": (["POLL_SUCCESS_STALE"] if stale else [])
+            + (["POLL_ATTEMPT_STALE"] if attempt_stale else []),
+            "degradedReasons": reasons,
         }
-    )
-    if degraded:
-        reasons: list[str] = []
-        if consecutive >= 3:
-            reasons.append("consecutive_failures")
-        if len(outcomes) >= 3 and rate >= 0.5:
-            reasons.append("recent_failure_rate")
-        if stale:
-            reasons.append("last_success_stale")
-        result["degradedReasons"] = reasons
-    return result
+    return {
+        "path": str(path),
+        "telemetryAvailable": False,
+        "healthy": False,
+        "degraded": False,
+        "status": "unknown",
+        "consecutiveFailures": 0,
+        "recentOutcomeCount": 0,
+        "recentFailureCount": 0,
+        "recentFailureRate": 0.0,
+        "successStale": True,
+        "issues": ["POLL_STATE_MISSING_OR_LEGACY"],
+        "degradedReasons": [],
+    }
 
 
 def _parse_iso_timestamp(value: object) -> float | None:
@@ -392,6 +553,8 @@ def audit(root: Path, *, home: Path | None = None, now: float | None = None) -> 
             "databaseHealthy": bool(database.get("healthy")),
             "pollHealthy": bool(poll_state.get("healthy")),
             "pollTelemetryAvailable": bool(poll_state.get("telemetryAvailable")),
+            "pollStatus": poll_state.get("status"),
+            "pollError": poll_state.get("lastError"),
             "releaseId": plist.get("releaseId"),
         }
     healthy = authorization_valid and all(item.get("healthy") for item in lane_health.values())
