@@ -274,6 +274,69 @@ def test_controller_repairs_after_one_missed_hour_without_tightening_final_healt
     assert "--repair" not in final
 
 
+def test_controller_allows_initial_local_health_to_recover_within_cycle(tmp_path):
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        if stage == "localAgentStatus":
+            return {"ok": False, "workers": [{"label": "fast", "ok": False}]}
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+
+    assert result["ok"] is True
+    assert result["failures"] == []
+    assert result["finalBlockers"] == []
+    assert result["summary"]["localAgentHealthy"] is True
+
+
+def test_controller_fails_closed_when_final_local_health_is_unhealthy(tmp_path):
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        if stage == "finalLocalAgentStatus":
+            return {"ok": False, "workers": [{"label": "slow", "ok": False}]}
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+
+    assert result["ok"] is False
+    assert result["failures"] == []
+    assert result["finalBlockers"] == [
+        {"stage": "finalLocalAgentStatus", "queue": "unhealthy", "count": 1}
+    ]
+    assert result["summary"]["localAgentHealthy"] is False
+
+
+def test_controller_fails_closed_when_final_local_health_omits_ok(tmp_path):
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        if stage == "finalLocalAgentStatus":
+            return {}
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+
+    assert result["ok"] is False
+    assert result["failures"] == []
+    assert result["finalBlockers"] == [
+        {"stage": "finalLocalAgentStatus", "queue": "unhealthy", "count": 1}
+    ]
+
+
 def test_controller_cycle_lock_suppresses_overlap(tmp_path):
     lock_path = tmp_path / "state" / "controller-cycle.lock"
     lock_path.parent.mkdir()

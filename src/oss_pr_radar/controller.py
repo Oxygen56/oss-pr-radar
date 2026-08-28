@@ -157,6 +157,7 @@ def controller_cycle(
         "localAgentStatus",
         [python, install_script, "--runtime-root", str(root), "--status"],
         allowed_codes={0, 1},
+        require_ok=False,
     )
     health = run_stage(
         "workflowHealth",
@@ -298,6 +299,7 @@ def controller_cycle(
         "finalLocalAgentStatus",
         [python, install_script, "--runtime-root", str(root), "--status"],
         allowed_codes={0, 1},
+        require_ok=False,
     )
     run_stage(
         "finalEventLaneHealth",
@@ -346,7 +348,7 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
             if items:
                 blockers.append({"stage": stage, "queue": key, "count": len(items)})
     local_status = stages.get("finalLocalAgentStatus") or {}
-    if local_status.get("ok") is False:
+    if "finalLocalAgentStatus" in stages and local_status.get("ok") is not True:
         unhealthy = [
             worker
             for worker in (local_status.get("workers") or [])

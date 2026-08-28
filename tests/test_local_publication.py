@@ -22,6 +22,7 @@ from oss_pr_radar.local_publication import (
     slow_advance_once,
     slow_launch_agent_spec,
     sync_cloud_queue_if_due,
+    worker_log_paths,
 )
 from oss_pr_radar.runtime import RuntimeLockBusy
 
@@ -1257,6 +1258,20 @@ def test_worker_specs_are_separate_and_use_expected_intervals(tmp_path):
     assert "LowPriorityIO" not in queue
     assert slow["ProgramArguments"][-2:] == ["--root", str((tmp_path / "radar").resolve())]
     assert "queue_importer.py" in queue["ProgramArguments"][-3]
+    assert worker_log_paths(fast["Label"], home=home) == (
+        Path(fast["StandardOutPath"]),
+        Path(fast["StandardErrorPath"]),
+    )
+    assert worker_log_paths(slow["Label"], home=home) == (
+        Path(slow["StandardOutPath"]),
+        Path(slow["StandardErrorPath"]),
+    )
+    assert worker_log_paths(queue["Label"], home=home) == (
+        Path(queue["StandardOutPath"]),
+        Path(queue["StandardErrorPath"]),
+    )
+    assert Path(slow["StandardOutPath"]).name == "local-publication-slow.log"
+    assert Path(queue["StandardOutPath"]).name == "queue-importer.log"
 
 
 def test_due_cloud_queue_sync_imports_and_lists_pending_work(tmp_path):

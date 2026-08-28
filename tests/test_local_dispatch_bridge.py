@@ -78,6 +78,8 @@ def _signed_dispatch_queue(
     intent_overrides: dict | None = None,
 ) -> dict:
     signer = MODULE.DispatchSigner(os.environ["RADAR_DISPATCH_HMAC_KEY"])
+    issued_at = datetime.now(UTC) - timedelta(minutes=1)
+    expires_at = issued_at + timedelta(days=7)
     owner_repo, number_text = key.split("#", 1)
     number = int(number_text)
     issue_url = f"https://github.com/{owner_repo}/issues/{number}"
@@ -96,8 +98,8 @@ def _signed_dispatch_queue(
             "issueNumber": number,
             "issueUrl": issue_url,
             "title": "Useful bug",
-            "issuedAt": "2026-08-21T00:00:00Z",
-            "expiresAt": "2026-08-28T00:00:00Z",
+            "issuedAt": iso_z(issued_at),
+            "expiresAt": iso_z(expires_at),
             "issueUpdatedAt": "2026-08-21T00:00:00Z",
             "policyDigest": "policy-digest",
             "scannerVersion": scanner_version,
@@ -116,7 +118,7 @@ def _signed_dispatch_queue(
     queue = {
         "version": QUEUE_VERSION,
         "mode": "shadow",
-        "issuedAt": "2026-08-21T00:00:00Z",
+        "issuedAt": iso_z(issued_at),
         "scannerVersion": scanner_version,
         "decisionContractDigest": decision_digest,
         "contractDigest": dispatch_contract,

@@ -11,7 +11,11 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from oss_pr_radar.local_publication import slow_advance_once  # noqa: E402
+from oss_pr_radar.local_publication import (  # noqa: E402
+    SLOW_WORKER_LABEL,
+    slow_advance_once,
+    worker_log_paths,
+)
 from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
 from oss_pr_radar.runtime import rotate_log  # noqa: E402
 
@@ -33,9 +37,9 @@ def main() -> int:
             )
         )
         return 1
-    log_dir = Path.home() / "Library" / "Logs" / "oss-pr-radar"
-    rotate_log(log_dir / "publication-slow.log")
-    rotate_log(log_dir / "publication-slow.error.log")
+    stdout_path, stderr_path = worker_log_paths(SLOW_WORKER_LABEL, home=Path.home())
+    rotate_log(stdout_path)
+    rotate_log(stderr_path)
     result = slow_advance_once(args.root)
     print(json.dumps(result, ensure_ascii=False))
     return 0 if result.get("ok") else 1

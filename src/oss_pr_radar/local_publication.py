@@ -1063,7 +1063,7 @@ def launch_agent_spec(
     code_root = root.resolve()
     runtime_root = (runtime_root or root).resolve()
     interval = max(15, min(int(interval_seconds), 300))
-    log_dir = home / "Library" / "Logs" / "oss-pr-radar"
+    stdout_path, stderr_path = worker_log_paths(LAUNCH_AGENT_LABEL, home=home)
     return {
         "Label": LAUNCH_AGENT_LABEL,
         "ProgramArguments": [
@@ -1084,9 +1084,17 @@ def launch_agent_spec(
         "WorkingDirectory": str(runtime_root),
         "RunAtLoad": True,
         "StartInterval": interval,
-        "StandardOutPath": str(log_dir / "publication-agent.log"),
-        "StandardErrorPath": str(log_dir / "publication-agent.error.log"),
+        "StandardOutPath": str(stdout_path),
+        "StandardErrorPath": str(stderr_path),
     }
+
+
+def worker_log_paths(label: str, *, home: Path) -> tuple[Path, Path]:
+    """Return the launchd output paths for one managed worker."""
+
+    log_dir = home / "Library" / "Logs" / "oss-pr-radar"
+    basename = "publication-agent" if label == LAUNCH_AGENT_LABEL else label.rsplit(".", 1)[-1]
+    return log_dir / f"{basename}.log", log_dir / f"{basename}.error.log"
 
 
 def _worker_spec(
@@ -1100,7 +1108,7 @@ def _worker_spec(
 ) -> dict[str, Any]:
     code_root = code_root.resolve()
     runtime_root = (runtime_root or code_root).resolve()
-    log_dir = home / "Library" / "Logs" / "oss-pr-radar"
+    stdout_path, stderr_path = worker_log_paths(label, home=home)
     return {
         "Label": label,
         "ProgramArguments": [
@@ -1119,8 +1127,8 @@ def _worker_spec(
         "WorkingDirectory": str(runtime_root),
         "RunAtLoad": True,
         "StartInterval": max(60, int(interval_seconds)),
-        "StandardOutPath": str(log_dir / f"{label.rsplit('.', 1)[-1]}.log"),
-        "StandardErrorPath": str(log_dir / f"{label.rsplit('.', 1)[-1]}.error.log"),
+        "StandardOutPath": str(stdout_path),
+        "StandardErrorPath": str(stderr_path),
     }
 
 
@@ -1210,9 +1218,9 @@ def main() -> int:
             )
         )
         return 1
-    log_dir = Path.home() / "Library" / "Logs" / "oss-pr-radar"
-    rotate_log(log_dir / "publication-agent.log")
-    rotate_log(log_dir / "publication-agent.error.log")
+    stdout_path, stderr_path = worker_log_paths(LAUNCH_AGENT_LABEL, home=Path.home())
+    rotate_log(stdout_path)
+    rotate_log(stderr_path)
     try:
         if args.mode == "fast":
             result = fast_advance_once(args.root)
