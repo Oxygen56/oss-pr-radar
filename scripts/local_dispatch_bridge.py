@@ -10562,6 +10562,24 @@ def _publication_block_reason(context: dict[str, Any], value: dict[str, Any]) ->
     return None
 
 
+def _controller_attested_fix_ready_dedupe_key(
+    *,
+    result_digest: str,
+    controller_review: dict[str, Any] | None,
+    controller_policy: dict[str, Any] | None,
+) -> str:
+    """Bind a recovered FIX_READY transition to the controller proof that restored it."""
+
+    return sha256_json(
+        {
+            "schemaVersion": "controller_attested_fix_ready_v1",
+            "resultDigest": result_digest,
+            "controllerReview": controller_review,
+            "controllerPolicyVerification": controller_policy,
+        }
+    )
+
+
 def _recover_unbound_pr_followup_preparations(
     store: RadarLedger,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
@@ -14515,6 +14533,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                             stage="VALIDATION_PENDING",
                         )
                     continue
+                fix_ready_dedupe_key = digest
+                if controller_review_recoverable or controller_policy_recoverable:
+                    fix_ready_dedupe_key = _controller_attested_fix_ready_dedupe_key(
+                        result_digest=digest,
+                        controller_review=controller_review,
+                        controller_policy=controller_policy,
+                    )
                 if publication_blocked:
                     managed_adapter.record_task_result(
                         candidate=managed_candidate, value=value, result_digest=digest
@@ -14524,7 +14549,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                             candidate["key"],
                             "FIX_READY",
                             evidence=quality | {"publication_blocked_reason": publication_blocked},
-                            dedupe_key=digest,
+                            dedupe_key=fix_ready_dedupe_key,
                         )
                     ingested.append(
                         {
@@ -14560,7 +14585,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                             candidate["key"],
                             "FIX_READY",
                             evidence=quality,
-                            dedupe_key=digest,
+                            dedupe_key=fix_ready_dedupe_key,
                         )
                     request = _request_publication_from_task_result(
                         store,

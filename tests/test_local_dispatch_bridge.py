@@ -13853,6 +13853,60 @@ def test_existing_fix_ready_result_reopens_validation_after_failed_review(monkey
     assert finalized["independentReview"] == failed_review
 
 
+def test_new_controller_review_can_restore_same_fix_ready_result(monkeypatch, tmp_path):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    original_review = MODULE.controller_review_result(
+        MODULE.ROOT, json.loads(result_path.read_text(encoding="utf-8"))
+    )
+    assert original_review is not None
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    original_digest = json.loads(result_path.read_text(encoding="utf-8"))["resultDigest"]
+    assert first["ok"] is True
+    assert len(first["publicationRequests"]) == 1
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE publication_requests
+               SET status='BLOCKED',reason='CONTROLLER_INDEPENDENT_REVIEW_REQUIRED'
+               WHERE request_id=?""",
+            (first["publicationRequests"][0]["requestId"],),
+        )
+
+    failed_review = {
+        "verdict": "FAIL",
+        "reviewedAt": "2026-08-28T00:00:00Z",
+        "summary": "A blocking integration finding remains.",
+        "findings": [
+            {
+                "severity": "P1",
+                "file": "runtime.py",
+                "line": 1,
+                "message": "The integration still bypasses the corrected value.",
+            }
+        ],
+    }
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: failed_review)
+    deferred = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert deferred["ok"] is True
+    assert store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )["stage"] == "VALIDATION_PENDING"
+
+    recovered_review = dict(original_review) | {"reviewedAt": "2026-08-28T00:01:00Z"}
+    monkeypatch.setattr(
+        MODULE, "controller_review_result", lambda _root, _value: recovered_review
+    )
+    recovered = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert recovered["ok"] is True, recovered
+    assert recovered["errors"] == []
+    assert len(recovered["publicationRequests"]) == 1, recovered
+    assert json.loads(result_path.read_text(encoding="utf-8"))["resultDigest"] == original_digest
+    assert store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )["stage"] == "FIX_READY"
+
+
 def test_controller_policy_snapshot_satisfies_child_policy_quality(tmp_path):
     store, _worktree, result_path = _controller_commit_result(
         tmp_path,
