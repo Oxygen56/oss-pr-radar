@@ -3,10 +3,12 @@
 This file is the authoritative protocol for the `oss-pr-radar` desktop
 heartbeat. The heartbeat is a controller, not an issue implementation task.
 
-Two heartbeats target the durable thread
-`019f71c3-4f26-7030-b126-25f8cfbac4c4`: the hourly controller and the daily
-09:00 War Room. They share the thread only; their schedules and release
-commands remain independent.
+The hourly controller heartbeat targets its durable controller thread
+`019f71c3-4f26-7030-b126-25f8cfbac4c4`. The daily 09:00 War Room heartbeat
+targets the separate durable audit thread
+`01a03bf2-e310-7f63-8db6-a9ec0a39f4aa`. A thread can own only one heartbeat,
+so these fixed targets must not be shared or swapped. Their schedules and
+release commands also remain independent.
 
 ## Fixed boundary
 
@@ -107,8 +109,8 @@ re-audit held candidates every 20 seconds when nothing changed.
   plain Chinese. Mention an internal name only if there is no accurate plain
   description. Do not paste logs, credentials, prompts, or the full JSON.
 
-The daily War Room is a separate 09:00 heartbeat in this same durable thread.
-It uses the same release-bound projection for both channels:
+The daily War Room is a separate 09:00 heartbeat in its fixed audit thread. It
+uses the same release-bound projection for both delivery channels:
 
 ```text
 .venv/bin/python current-release/scripts/daily_war_room_cycle.py \

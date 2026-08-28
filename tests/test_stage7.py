@@ -1137,7 +1137,9 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     assert automation["schema"] == "oss-pr-radar.stage7-automation-snapshot.v3"
     assert automation["generator"] == "stage7-automation-toml-v3"
     assert automation["dailyWarRoom"]["kind"] == "heartbeat"
-    assert automation["dailyWarRoom"]["targetThreadId"] == "019f71c3-4f26-7030-b126-25f8cfbac4c4"
+    assert automation["heartbeat"]["targetThreadId"] == "019f71c3-4f26-7030-b126-25f8cfbac4c4"
+    assert automation["dailyWarRoom"]["targetThreadId"] == ("01a03bf2-e310-7f63-8db6-a9ec0a39f4aa")
+    assert automation["dailyWarRoom"]["targetThreadId"] != automation["heartbeat"]["targetThreadId"]
     assert {
         "model",
         "reasoningEffort",
@@ -1330,8 +1332,28 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     daily_toml.write_text(daily_text, encoding="utf-8")
     daily_toml.write_text(
         daily_text.replace(
-            'target_thread_id = "019f71c3-4f26-7030-b126-25f8cfbac4c4"',
+            'target_thread_id = "01a03bf2-e310-7f63-8db6-a9ec0a39f4aa"',
             'target_thread_id = "wrong-thread"',
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="dailyWarRoom target thread"):
+        build_automation_snapshot(runtime, heartbeat_toml, daily_toml, home=home, observed_at=now)
+    daily_toml.write_text(daily_text, encoding="utf-8")
+    heartbeat_toml.write_text(
+        heartbeat_text.replace(
+            'target_thread_id = "019f71c3-4f26-7030-b126-25f8cfbac4c4"',
+            'target_thread_id = "01a03bf2-e310-7f63-8db6-a9ec0a39f4aa"',
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="heartbeat target thread"):
+        build_automation_snapshot(runtime, heartbeat_toml, daily_toml, home=home, observed_at=now)
+    heartbeat_toml.write_text(heartbeat_text, encoding="utf-8")
+    daily_toml.write_text(
+        daily_text.replace(
+            'target_thread_id = "01a03bf2-e310-7f63-8db6-a9ec0a39f4aa"',
+            'target_thread_id = "019f71c3-4f26-7030-b126-25f8cfbac4c4"',
         ),
         encoding="utf-8",
     )
@@ -1636,11 +1658,9 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     assert contracts["heartbeat"]["releaseCommand"][1].endswith("/scripts/controller_cycle.py")
     assert contracts["heartbeat"]["kind"] == "heartbeat"
     assert contracts["dailyWarRoom"]["kind"] == "heartbeat"
-    assert (
-        contracts["dailyWarRoom"]["targetThreadId"]
-        == contracts["heartbeat"]["targetThreadId"]
-        == "019f71c3-4f26-7030-b126-25f8cfbac4c4"
-    )
+    assert contracts["heartbeat"]["targetThreadId"] == ("019f71c3-4f26-7030-b126-25f8cfbac4c4")
+    assert contracts["dailyWarRoom"]["targetThreadId"] == ("01a03bf2-e310-7f63-8db6-a9ec0a39f4aa")
+    assert contracts["dailyWarRoom"]["targetThreadId"] != contracts["heartbeat"]["targetThreadId"]
     assert contracts["dailyWarRoom"]["rrule"] == ("FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0")
     assert {
         "model",

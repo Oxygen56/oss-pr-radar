@@ -16,6 +16,7 @@ AUTOMATION_STATUS = "ACTIVE"
 HEARTBEAT_RRULE = "FREQ=HOURLY;BYMINUTE=30"
 DAILY_WAR_ROOM_RRULE = "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0"
 HEARTBEAT_TARGET_THREAD_ID = "019f71c3-4f26-7030-b126-25f8cfbac4c4"
+DAILY_WAR_ROOM_TARGET_THREAD_ID = "01a03bf2-e310-7f63-8db6-a9ec0a39f4aa"
 HEARTBEAT_NAME = "OSS PR Radar 控制器（单会话）"
 DAILY_WAR_ROOM_NAME = "Daily GitHub open PR status review"
 AUTOMATION_PROMPT_POLICY = "oss-pr-radar.prompt-bound.v1"
@@ -101,7 +102,7 @@ def build_contracts(runtime_root: Path, *, home: Path | None = None) -> dict[str
             "kind": DAILY_WAR_ROOM_KIND,
             "status": AUTOMATION_STATUS,
             "rrule": DAILY_WAR_ROOM_RRULE,
-            "targetThreadId": HEARTBEAT_TARGET_THREAD_ID,
+            "targetThreadId": DAILY_WAR_ROOM_TARGET_THREAD_ID,
             "releaseCommand": [
                 python,
                 code + "/scripts/daily_war_room_cycle.py",
