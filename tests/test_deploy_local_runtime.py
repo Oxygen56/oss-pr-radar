@@ -13,11 +13,14 @@ from pathlib import Path
 import pytest
 
 from oss_pr_radar import independent_review as independent_review_module
+from oss_pr_radar import operational_auth as operational_auth_module
 from oss_pr_radar import release_binding as release_binding_module
 from oss_pr_radar import runtime as runtime_module
 from oss_pr_radar.managed_lifecycle import ManagedLedger
-from oss_pr_radar.release_binding import active_release
+from oss_pr_radar.managed_security import sign_current
+from oss_pr_radar.release_binding import active_release, runtime_root_digest
 from oss_pr_radar.stage7_cutover import prepare, restore_git_preservation
+from oss_pr_radar.util import iso_z, utc_now
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "deploy_local_runtime.py"
 SPEC = importlib.util.spec_from_file_location("deploy_local_runtime", SCRIPT)
@@ -51,6 +54,53 @@ def make_repositories(tmp_path: Path) -> tuple[Path, Path]:
         "source",
     )
     return source, target
+
+
+def _write_authorization_records(
+    target: Path, payload: bytes = b"signed-record\n"
+) -> dict[str, bytes]:
+    state = target / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    records = {
+        "operational": operational_auth_module.authorization_path(target),
+        "staging": operational_auth_module.worker_staging_authorization_path(target),
+        "receipt": operational_auth_module.staged_worker_receipt_path(target),
+    }
+    before: dict[str, bytes] = {}
+    for key, path in records.items():
+        path.write_bytes(payload + key.encode("ascii"))
+        path.chmod(0o600)
+        before[key] = path.read_bytes()
+    return before
+
+
+def _staging_counts(target: Path, release_id: str, counts_path: Path) -> Path:
+    state = target / "state"
+    ledger_releases = state / "ledger-releases"
+    ledger_releases.mkdir(parents=True, exist_ok=True)
+    ledger = ledger_releases / "ledger.sqlite3"
+    if not ledger.exists():
+        ManagedLedger(ledger, ensure_schema=True)._connection().close()
+        (state / "current-ledger").symlink_to(Path("ledger-releases") / ledger.name)
+    current = operational_auth_module._current_ledger_identity(target)
+    manifest = MODULE.verify_release(target / MODULE.RELEASES / release_id)
+    unsigned = {
+        "schema": "oss-pr-radar.stage7-counts-evidence.v1",
+        "runtimeRootDigest": runtime_root_digest(target),
+        "releaseId": release_id,
+        "releaseHead": manifest["commit"],
+        "observedAt": iso_z(utc_now()),
+        "ledgerGeneration": current["generation"],
+        "ledgerSha256": current["sha256"],
+        "managedPrProjectionDigest": current["managedPrProjectionDigest"],
+    }
+    counts_path.write_text(
+        json.dumps({**unsigned, **sign_current(unsigned, context="stage7-counts-evidence-v1")})
+        + "\n",
+        encoding="utf-8",
+    )
+    counts_path.chmod(0o600)
+    return counts_path
 
 
 def test_deploy_creates_immutable_release_and_preserves_runtime_state(tmp_path):
@@ -106,6 +156,149 @@ def test_deploy_records_release_identity_without_overwriting_worker_health(tmp_p
         "manifestVerified": True,
         "deploymentDirty": False,
     }
+
+
+def test_release_switch_revokes_all_old_authorization_records_before_activation(tmp_path):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    _write_authorization_records(target)
+
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
+    )
+
+    second = MODULE.deploy(source, target)
+
+    assert second["releaseId"] != first["releaseId"]
+    assert (target / MODULE.RELEASE_POINTER).resolve().name == second["releaseId"]
+    assert not operational_auth_module.authorization_path(target).exists()
+    assert not operational_auth_module.worker_staging_authorization_path(target).exists()
+    assert not operational_auth_module.staged_worker_receipt_path(target).exists()
+
+
+def test_release_switch_frees_staging_permit_for_new_release(tmp_path, monkeypatch):
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "deploy-auth-key" * 8)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "deploy-auth-current")
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    counts_a = _staging_counts(target, str(first["releaseId"]), tmp_path / "counts-a.json")
+    operational_auth_module.issue_worker_staging_authorization(
+        target, managed_counts_evidence=counts_a, home=tmp_path / "home"
+    )
+    operational_auth_module.authorization_path(target).write_text(
+        json.dumps({"state": "ACTIVE"}) + "\n", encoding="utf-8"
+    )
+    operational_auth_module.authorization_path(target).chmod(0o600)
+    operational_auth_module.staged_worker_receipt_path(target).write_text(
+        json.dumps({"state": "CONSUMED"}) + "\n", encoding="utf-8"
+    )
+    operational_auth_module.staged_worker_receipt_path(target).chmod(0o600)
+
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
+    )
+    second = MODULE.deploy(source, target)
+
+    counts_b = _staging_counts(target, str(second["releaseId"]), tmp_path / "counts-b.json")
+    renewed = operational_auth_module.issue_worker_staging_authorization(
+        target, managed_counts_evidence=counts_b, home=tmp_path / "home"
+    )
+    assert renewed["state"] == "ACTIVE"
+    assert renewed["releaseId"] == second["releaseId"]
+
+
+def test_same_release_redeploy_preserves_authorization_records(tmp_path):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    before = _write_authorization_records(target)
+
+    result = MODULE.deploy(source, target)
+
+    assert result["releaseId"] == first["releaseId"]
+    for key, path in {
+        "operational": operational_auth_module.authorization_path(target),
+        "staging": operational_auth_module.worker_staging_authorization_path(target),
+        "receipt": operational_auth_module.staged_worker_receipt_path(target),
+    }.items():
+        assert path.read_bytes() == before[key]
+
+
+def test_release_rollback_revokes_authorization_records(tmp_path):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
+    )
+    second = MODULE.deploy(source, target)
+    _write_authorization_records(target)
+
+    MODULE.activate_release(target, first["releaseId"])
+
+    assert (target / MODULE.RELEASE_POINTER).resolve().name == first["releaseId"]
+    assert not operational_auth_module.authorization_path(target).exists()
+    assert not operational_auth_module.worker_staging_authorization_path(target).exists()
+    assert not operational_auth_module.staged_worker_receipt_path(target).exists()
+    assert second["releaseId"] != first["releaseId"]
+
+
+def test_release_switch_fails_closed_when_authorization_revoke_fails(tmp_path, monkeypatch):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    before = _write_authorization_records(target)
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
+    )
+
+    def refuse_revoke(_target: Path, *, _lock_held: bool = False) -> None:
+        raise OSError("authorization revoke failed")
+
+    monkeypatch.setattr(MODULE, "revoke_operational_authorization", refuse_revoke)
+    with pytest.raises(OSError, match="authorization revoke failed"):
+        MODULE.deploy(source, target)
+
+    assert (target / MODULE.RELEASE_POINTER).resolve().name == first["releaseId"]
+    for key, path in {
+        "operational": operational_auth_module.authorization_path(target),
+        "staging": operational_auth_module.worker_staging_authorization_path(target),
+        "receipt": operational_auth_module.staged_worker_receipt_path(target),
+    }.items():
+        assert path.read_bytes() == before[key]
 
 
 def test_deploy_migrates_release_local_review_failures_before_activation(tmp_path):

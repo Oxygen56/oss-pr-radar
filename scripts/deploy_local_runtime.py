@@ -17,11 +17,16 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from oss_pr_radar.independent_review import migrate_legacy_review_state  # noqa: E402
+from oss_pr_radar.operational_auth import (  # noqa: E402
+    revoke_operational_authorization,
+    worker_staging_transaction_lock,
+)
 from oss_pr_radar.release_binding import (  # noqa: E402
     MANIFEST,
     PRESERVED_ROOTS,
     RELEASE_POINTER,
     RELEASES,
+    active_release,
     validate_runtime_layout,
     verify_release,
 )
@@ -180,6 +185,22 @@ def build_manifest(source: Path, files: set[Path], commit: str) -> dict[str, obj
     }
 
 
+def _release_identity(manifest: dict[str, object]) -> tuple[object, ...]:
+    """Return the immutable identity to which runtime authorizations bind."""
+
+    return tuple(
+        manifest.get(field) for field in ("releaseId", "manifestSha256", "commit", "policyDigest")
+    )
+
+
+def _active_release_identity(target: Path) -> tuple[object, ...] | None:
+    pointer = target / RELEASE_POINTER
+    if not pointer.exists() and not pointer.is_symlink():
+        return None
+    _release, manifest = active_release(target)
+    return _release_identity(manifest)
+
+
 def activate_release(target: Path, release_id: str) -> dict[str, object]:
     """Verify and activate an existing immutable release for rollback."""
 
@@ -199,12 +220,18 @@ def activate_release(target: Path, release_id: str) -> dict[str, object]:
     if not os.path.isdir(release) or os.path.islink(release):
         raise RuntimeError("release activation target must be a real directory")
     migrate_legacy_review_state(target)
-    activate_release_pointer(
-        target,
-        release,
-        manifest,
-        expected_release_identity=(release_metadata.st_dev, release_metadata.st_ino),
-    )
+    # The staging lock covers the complete identity check and pointer switch.
+    # Revoke before changing the pointer so a failed activation cannot expose a
+    # new release alongside credentials bound to the previous release.
+    with worker_staging_transaction_lock(target):
+        if _active_release_identity(target) != _release_identity(manifest):
+            revoke_operational_authorization(target, _lock_held=True)
+        activate_release_pointer(
+            target,
+            release,
+            manifest,
+            expected_release_identity=(release_metadata.st_dev, release_metadata.st_ino),
+        )
     return manifest
 
 

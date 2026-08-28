@@ -158,22 +158,30 @@ def _remove_private_and_fsync(path: Path) -> None:
         os.close(directory)
 
 
-def revoke_operational_authorization(runtime_root: Path) -> None:
-    with _WorkerStagingLock(runtime_root):
-        for path in (
-            authorization_path(runtime_root),
-            worker_staging_authorization_path(runtime_root),
-            staged_worker_receipt_path(runtime_root),
-        ):
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                continue
-            directory = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+def _revoke_operational_authorization_unlocked(runtime_root: Path) -> None:
+    """Remove every authorization record while the staging lock is held."""
+
+    for path in (
+        authorization_path(runtime_root),
+        worker_staging_authorization_path(runtime_root),
+        staged_worker_receipt_path(runtime_root),
+    ):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+
+def revoke_operational_authorization(runtime_root: Path, *, _lock_held: bool = False) -> None:
+    """Revoke full and staging authorizations under their transaction lock."""
+
+    with nullcontext() if _lock_held else _WorkerStagingLock(runtime_root):
+        _revoke_operational_authorization_unlocked(runtime_root)
 
 
 def _revoke_worker_staging_authorization_unlocked(runtime_root: Path) -> None:
