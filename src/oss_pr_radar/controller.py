@@ -176,6 +176,13 @@ def controller_cycle(
             "finalBlockers": final_blockers,
             "summary": _compact_summary(stages),
         }
+    run_stage(
+        "eventLaneEnsure",
+        [python, event_lane_health_script, "--root", str(root), "--repair"],
+        allowed_codes={0, 2},
+        timeout=150,
+        require_ok=False,
+    )
     health = run_stage(
         "workflowHealth",
         [
@@ -409,6 +416,15 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
                 "stage": "finalEventLaneHealth",
                 "queue": "unhealthy",
                 "count": max(1, len(unhealthy_lanes)),
+            }
+        )
+    event_lane_ensure = stages.get("eventLaneEnsure") or {}
+    if "eventLaneEnsure" in stages and event_lane_ensure.get("ok") is not True:
+        blockers.append(
+            {
+                "stage": "eventLaneEnsure",
+                "queue": "reconcile_failed",
+                "count": 1,
             }
         )
     return blockers

@@ -81,6 +81,32 @@ def test_controller_cycle_runs_one_ordered_sync_and_drain(tmp_path):
     assert result["summary"]["drainAction"] == "issue_task_dispatched"
 
 
+def test_controller_reconciles_event_lanes_before_final_health(tmp_path):
+    calls: list[tuple[str, list[str]]] = []
+
+    def runner(_root, stage, argv, _allowed, _timeout):
+        calls.append((stage, list(argv)))
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+        project_id="github",
+    )
+
+    assert result["ok"] is True
+    ensure_index = next(i for i, (stage, _argv) in enumerate(calls) if stage == "eventLaneEnsure")
+    final_index = next(
+        i for i, (stage, _argv) in enumerate(calls) if stage == "finalEventLaneHealth"
+    )
+    ensure_argv = calls[ensure_index][1]
+    assert ensure_argv[-1] == "--repair"
+    assert ensure_index < final_index
+
+
 def test_controller_does_not_restore_redacted_snapshot_over_live_task_binding(tmp_path):
     database = tmp_path / "radar.sqlite3"
     migrate_schema(database)

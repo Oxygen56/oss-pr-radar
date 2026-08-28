@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import plistlib
 import sqlite3
+import subprocess
 from pathlib import Path
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "event_lane_health.py"
@@ -161,6 +164,7 @@ def test_audit_allows_each_lane_to_use_its_own_verified_release(monkeypatch, tmp
         return {
             "bindingOk": True,
             "releaseId": observed_releases[namespace],
+            "launchConfigOk": True,
             "launch": {"available": True, "lastExitCode": 0},
         }
 
@@ -194,6 +198,176 @@ def test_audit_allows_each_lane_to_use_its_own_verified_release(monkeypatch, tmp
     assert result["healthy"] is True
     assert result["lanes"]["agentscope"]["releaseId"] == "agentscope-release"
     assert result["lanes"]["nanobot"]["releaseId"] == "nanobot-release"
+
+
+def _reconcile_snapshot(tmp_path, *, agentscope=None, nanobot=None, healthy=True):
+    def lane(namespace, override):
+        value = {
+            "path": str(tmp_path / f"{namespace}.plist"),
+            "exists": True,
+            "bindingOk": True,
+            "launchConfigOk": True,
+            "launch": {"available": True, "lastExitCode": 0},
+        }
+        if override:
+            value.update(override)
+        return value
+
+    return {
+        "healthy": healthy,
+        "operationalAuthorizationValid": True,
+        "plists": {
+            "agentscope": lane("agentscope", agentscope),
+            "nanobot": lane("nanobot", nanobot),
+        },
+        "databases": {
+            "agentscope": {"healthy": True},
+            "nanobot": {"healthy": True},
+        },
+        "pollStates": {
+            "agentscope": {
+                "healthy": True,
+                "lastAttemptAt": "1970-01-01T00:15:00Z",
+            },
+            "nanobot": {
+                "healthy": True,
+                "lastAttemptAt": "1970-01-01T00:15:00Z",
+            },
+        },
+    }
+
+
+def test_reconcile_healthy_independent_lanes_is_idempotent_noop(monkeypatch, tmp_path):
+    snapshot = _reconcile_snapshot(tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        MODULE,
+        "require_operational_authorization",
+        lambda _root: {"state": "ACTIVE"},
+    )
+
+    result = MODULE.reconcile(
+        tmp_path,
+        audit_reader=lambda *_args, **_kwargs: snapshot,
+        launchctl_runner=lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    assert result["ok"] is True
+    assert result["action"] == "noop"
+    assert result["freshPoll"] is True
+    assert calls == []
+
+
+def test_reconcile_fails_closed_when_event_plist_is_missing(tmp_path):
+    snapshot = _reconcile_snapshot(tmp_path, agentscope={"exists": False, "bindingOk": False})
+
+    result = MODULE.reconcile(tmp_path, audit_reader=lambda *_args, **_kwargs: snapshot)
+
+    assert result["ok"] is False
+    assert result["action"] == "blocked"
+    assert "AGENTSCOPE_PLIST_MISSING" in result["errors"]
+
+
+def test_reconcile_fails_closed_when_event_binding_is_invalid(tmp_path):
+    snapshot = _reconcile_snapshot(tmp_path, nanobot={"bindingOk": False})
+
+    result = MODULE.reconcile(tmp_path, audit_reader=lambda *_args, **_kwargs: snapshot)
+
+    assert result["ok"] is False
+    assert result["action"] == "blocked"
+    assert "NANOBOT_BINDING_INVALID" in result["errors"]
+
+
+def test_plist_health_rejects_tampered_event_manifest(tmp_path, monkeypatch):
+    root = tmp_path
+    release = root / "releases" / "agent-release"
+    release.mkdir(parents=True)
+    worker = release / "scripts" / "agentscope_event_worker.py"
+    worker.parent.mkdir()
+    worker.write_text("worker", encoding="utf-8")
+    manifest = release / "event-lane-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "oss-pr-radar-event-lane-v1",
+                "repositories": {
+                    "agentscope-ai/agentscope": {
+                        "activeThreadId": "thread-1",
+                        "cwd": "/Users/oxygen/Documents/github/agentscope",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (release / "event-lane-manifest.sha256").write_text("0" * 64 + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        MODULE,
+        "verify_release",
+        lambda _release: {"releaseId": "agent-release", "manifestSha256": "release-digest"},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_launch_status",
+        lambda _label: {"available": False, "lastExitCode": None},
+    )
+    plist_path = root / "Library" / "LaunchAgents" / "com.oss-pr-radar.agentscope-events.plist"
+    plist_path.parent.mkdir(parents=True)
+    plist_path.write_bytes(
+        plistlib.dumps(
+            {
+                "Label": "com.oss-pr-radar.agentscope-events",
+                "ProgramArguments": ["/usr/bin/python", str(worker), "--root", str(root)],
+                "WorkingDirectory": str(release),
+            }
+        )
+    )
+    os.chmod(plist_path, 0o600)
+
+    result = MODULE._plist_health(plist_path, root=root, namespace="agentscope")
+
+    assert result["bindingOk"] is False
+    assert result["eventManifest"]["error"] == "event_manifest_digest_mismatch"
+
+
+def test_reconcile_bootstraps_unloaded_lane_and_requires_fresh_poll(monkeypatch, tmp_path):
+    before = _reconcile_snapshot(
+        tmp_path,
+        agentscope={
+            "launch": {"available": False, "lastExitCode": None},
+            "launchConfigOk": False,
+        },
+        healthy=False,
+    )
+    locked = json.loads(json.dumps(before))
+    after = _reconcile_snapshot(tmp_path, healthy=True)
+    after["pollStates"]["agentscope"]["lastAttemptAt"] = "1970-01-01T00:16:00Z"
+    snapshots = iter((before, locked, after))
+    observed = []
+    monkeypatch.setattr(
+        MODULE,
+        "require_operational_authorization",
+        lambda _root: {"state": "ACTIVE"},
+    )
+
+    def launchctl(*args, **kwargs):
+        observed.append((args, kwargs))
+        return subprocess.CompletedProcess(["launchctl", *args], 0, "", "")
+
+    result = MODULE.reconcile(
+        tmp_path,
+        now=1000.0,
+        audit_reader=lambda *_args, **_kwargs: next(snapshots),
+        launchctl_runner=launchctl,
+        timeout_seconds=0,
+    )
+
+    assert result["ok"] is True
+    assert result["action"] == "reconciled"
+    assert result["freshPoll"] is True
+    assert observed[0][0][0] == "bootstrap"
+    assert observed[0][0][1].startswith("gui/")
+    assert observed[1][0][0:2] == ("kickstart", "-k")
 
 
 def test_poll_health_new_window_keeps_one_transient_failure_recoverable(tmp_path):
