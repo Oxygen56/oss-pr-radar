@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -328,6 +329,180 @@ def test_plist_health_rejects_tampered_event_manifest(tmp_path, monkeypatch):
 
     assert result["bindingOk"] is False
     assert result["eventManifest"]["error"] == "event_manifest_digest_mismatch"
+
+
+def _valid_event_plist_fixture(tmp_path, monkeypatch):
+    root = tmp_path
+    release = root / "releases" / "agent-release"
+    worker = release / "scripts" / "agentscope_event_worker.py"
+    worker.parent.mkdir(parents=True)
+    worker.write_text("worker", encoding="utf-8")
+    manifest = release / "event-lane-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "oss-pr-radar-event-lane-v1",
+                "repositories": {
+                    "agentscope-ai/agentscope": {
+                        "activeThreadId": "thread-1",
+                        "cwd": "/Users/oxygen/Documents/github/agentscope",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (release / "event-lane-manifest.sha256").write_text(
+        hashlib.sha256(manifest.read_bytes()).hexdigest() + "\n", encoding="utf-8"
+    )
+    interpreter = root / ".venv" / "bin" / "python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.write_text("python", encoding="utf-8")
+    os.chmod(interpreter, 0o755)
+    monkeypatch.setattr(
+        MODULE,
+        "verify_release",
+        lambda _release: {"releaseId": "agent-release", "manifestSha256": "release-digest"},
+    )
+    plist_path = root / "Library" / "LaunchAgents" / "com.oss-pr-radar.agentscope-events.plist"
+    plist_path.parent.mkdir(parents=True)
+    value = {
+        "Label": "com.oss-pr-radar.agentscope-events",
+        "ProgramArguments": [str(interpreter), str(worker), "--root", str(root)],
+        "WorkingDirectory": str(release),
+    }
+    plist_path.write_bytes(plistlib.dumps(value))
+    os.chmod(plist_path, 0o600)
+
+    def launch_status(_label):
+        return {
+            "available": True,
+            "lastExitCode": 0,
+            "programArguments": value["ProgramArguments"],
+            "workingDirectory": str(release),
+            "plistPath": str(plist_path),
+        }
+
+    monkeypatch.setattr(MODULE, "_launch_status", launch_status)
+    return root, release, worker, interpreter, plist_path, value
+
+
+def test_plist_health_rejects_untrusted_interpreter_and_extra_arguments(tmp_path, monkeypatch):
+    root, _release, worker, interpreter, plist_path, value = _valid_event_plist_fixture(
+        tmp_path, monkeypatch
+    )
+
+    value["ProgramArguments"][0] = "/tmp/untrusted-python"
+    plist_path.write_bytes(plistlib.dumps(value))
+    wrong_interpreter = MODULE._plist_health(plist_path, root=root, namespace="agentscope")
+    assert wrong_interpreter["programArgumentsOk"] is False
+    assert wrong_interpreter["bindingOk"] is False
+
+    value["ProgramArguments"] = [str(interpreter), str(worker), "--root", str(root)]
+    value["ProgramArguments"].insert(2, "--unexpected")
+    plist_path.write_bytes(plistlib.dumps(value))
+    extra_argument = MODULE._plist_health(plist_path, root=root, namespace="agentscope")
+    assert extra_argument["programArgumentsOk"] is False
+    assert extra_argument["bindingOk"] is False
+
+
+def test_plist_health_requires_loaded_plist_path_and_records_digest(tmp_path, monkeypatch):
+    root, release, worker, interpreter, plist_path, value = _valid_event_plist_fixture(
+        tmp_path, monkeypatch
+    )
+    raw = plist_path.read_bytes()
+    result = MODULE._plist_health(plist_path, root=root, namespace="agentscope")
+
+    assert result["bindingOk"] is True
+    assert result["launchConfigOk"] is True
+    assert result["launchPathOk"] is True
+    assert result["plistSha256"] == hashlib.sha256(raw).hexdigest()
+    assert result["expectedProgramArguments"] == [
+        str(interpreter),
+        str(worker),
+        "--root",
+        str(root),
+    ]
+
+    monkeypatch.setattr(
+        MODULE,
+        "_launch_status",
+        lambda _label: {
+            "available": True,
+            "lastExitCode": 0,
+            "programArguments": value["ProgramArguments"],
+            "workingDirectory": str(release),
+            "plistPath": str(root / "Library" / "LaunchAgents" / "other.plist"),
+        },
+    )
+    wrong_loaded_path = MODULE._plist_health(plist_path, root=root, namespace="agentscope")
+    assert wrong_loaded_path["bindingOk"] is True
+    assert wrong_loaded_path["launchPathOk"] is False
+    assert wrong_loaded_path["launchConfigOk"] is False
+
+
+def test_launch_status_extracts_loaded_plist_path(monkeypatch):
+    output = """gui/501/com.oss-pr-radar.agentscope-events = {
+    path = /tmp/com.oss-pr-radar.agentscope-events.plist
+    state = waiting
+    program = /tmp/python
+    arguments = {
+        /tmp/python
+        /tmp/worker.py
+        --root
+        /tmp/radar
+    }
+    working directory = /tmp/release
+    last exit code = 0
+}
+"""
+    monkeypatch.setattr(
+        MODULE,
+        "_launchctl",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, output, ""),
+    )
+
+    result = MODULE._launch_status("com.oss-pr-radar.agentscope-events")
+
+    assert result["plistPath"] == "/tmp/com.oss-pr-radar.agentscope-events.plist"
+
+
+def test_binding_fingerprint_covers_plist_and_loaded_launch_configuration(tmp_path):
+    snapshot = _reconcile_snapshot(tmp_path)
+    arguments = [
+        str(tmp_path / ".venv" / "bin" / "python"),
+        str(tmp_path / "releases" / "agent" / "scripts" / "agentscope_event_worker.py"),
+        "--root",
+        str(tmp_path),
+    ]
+    snapshot["plists"]["agentscope"].update(
+        {
+            "plistSha256": "plist-digest",
+            "observedLabel": "com.oss-pr-radar.agentscope-events",
+            "worker": "agentscope_event_worker.py",
+            "programArguments": arguments,
+            "expectedProgramArguments": arguments,
+            "programArgumentsOk": True,
+            "loadedPlistPath": str(tmp_path / "agentscope.plist"),
+            "launchPathOk": True,
+            "launch": {
+                "available": True,
+                "lastExitCode": 0,
+                "plistPath": str(tmp_path / "agentscope.plist"),
+                "programArguments": arguments,
+                "workingDirectory": str(tmp_path / "releases" / "agent"),
+            },
+        }
+    )
+    baseline = MODULE._binding_fingerprint(snapshot)
+
+    changed_plist = json.loads(json.dumps(snapshot))
+    changed_plist["plists"]["agentscope"]["plistSha256"] = "changed"
+    assert MODULE._binding_fingerprint(changed_plist) != baseline
+
+    changed_launch = json.loads(json.dumps(snapshot))
+    changed_launch["plists"]["agentscope"]["launch"]["programArguments"][0] = "/tmp/python"
+    assert MODULE._binding_fingerprint(changed_launch) != baseline
 
 
 def test_reconcile_bootstraps_unloaded_lane_and_requires_fresh_poll(monkeypatch, tmp_path):

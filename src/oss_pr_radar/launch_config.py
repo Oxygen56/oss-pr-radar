@@ -23,7 +23,9 @@ def parse_launchctl_config(output: str) -> dict[str, Any]:
                 arguments.append(stripped.strip('"'))
     program = re.search(r"^\s*program = (.+)$", output, re.MULTILINE)
     workdir = re.search(r"^\s*working directory = (.+)$", output, re.MULTILINE)
+    plist_path = re.search(r"^\s*path = (.+)$", output, re.MULTILINE)
     return {
         "ProgramArguments": arguments or ([program.group(1).strip()] if program else None),
         "WorkingDirectory": workdir.group(1).strip() if workdir else None,
+        "PlistPath": plist_path.group(1).strip() if plist_path else None,
     }

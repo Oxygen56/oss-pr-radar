@@ -132,6 +132,35 @@ def test_disk_pressure_gate_rechecks_then_clears_once(tmp_path: Path):
     assert state["nextCheckAtEpoch"] is None
 
 
+def test_disk_pressure_gate_force_rechecks_after_verified_reclaim(tmp_path: Path):
+    snapshots = iter(
+        [
+            {"level": "stop", "freeBytes": 1},
+            {"level": "warning", "freeBytes": 100 * 1024**3},
+        ]
+    )
+
+    first = disk_pressure_gate(
+        tmp_path,
+        snapshot_fn=lambda _root: next(snapshots),
+        recheck_seconds=300,
+        now=100,
+    )
+    recovered = disk_pressure_gate(
+        tmp_path,
+        snapshot_fn=lambda _root: next(snapshots),
+        recheck_seconds=300,
+        now=101,
+        force_recheck=True,
+    )
+
+    assert first["allowed"] is False
+    assert recovered["allowed"] is True
+    assert recovered["recovered"] is True
+    state = json.loads((tmp_path / "state" / "disk-pressure-gate.json").read_text())
+    assert state["active"] is False
+
+
 def test_disk_pressure_gate_fails_closed_for_nan_snapshot(tmp_path: Path):
     for value in (float("nan"), float("inf"), float("-inf")):
         result = disk_pressure_gate(

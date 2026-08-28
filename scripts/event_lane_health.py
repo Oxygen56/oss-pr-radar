@@ -79,6 +79,7 @@ def _launch_status(label: str) -> dict[str, Any]:
             "service": service,
             "available": False,
             "lastExitCode": None,
+            "plistPath": None,
             "error": f"launch_status_unavailable:{type(exc).__name__}",
         }
     output = (completed.stdout or "") + (completed.stderr or "")
@@ -94,6 +95,7 @@ def _launch_status(label: str) -> dict[str, Any]:
         "lastExitCode": int(exit_code.group(1)) if exit_code else None,
         "programArguments": parsed.get("ProgramArguments"),
         "workingDirectory": parsed.get("WorkingDirectory"),
+        "plistPath": parsed.get("PlistPath"),
     }
 
 
@@ -317,11 +319,57 @@ def _read_event_manifest(code_root: Path, *, namespace: str) -> dict[str, Any]:
     return result
 
 
+def _trusted_event_program(root: Path, code_root: Path, namespace: str) -> list[str]:
+    """Return the one launch command accepted for an event lane.
+
+    Event workers are installed from the runtime virtualenv and must execute
+    the lane worker in the verified immutable release.  The plist is an
+    untrusted input, so its command is compared to this independently derived
+    value instead of being used to construct the expected value.
+    """
+
+    root = root.absolute()
+    code_root = code_root.absolute()
+    interpreter = root / ".venv" / "bin" / "python"
+    worker = code_root / "scripts" / str(LANES[namespace]["worker"])
+    return [str(interpreter), str(worker), "--root", str(root)]
+
+
+def _stable_plist_bytes(path: Path, metadata: os.stat_result) -> tuple[bytes, str]:
+    """Read plist bytes and reject replacement or mutation during the read."""
+
+    raw = path.read_bytes()
+    after = path.lstat()
+    before_identity = (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_mode,
+        metadata.st_uid,
+    )
+    after_identity = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+        after.st_mode,
+        after.st_uid,
+    )
+    if before_identity != after_identity:
+        raise RuntimeError("event plist changed while being read")
+    return raw, hashlib.sha256(raw).hexdigest()
+
+
 def _plist_health(path: Path, *, root: Path, namespace: str) -> dict[str, Any]:
+    path = path.absolute()
+    root = root.absolute()
     lane = LANES[namespace]
     result: dict[str, Any] = {
         "path": str(path),
-        "exists": path.is_file() and not path.is_symlink(),
+        "exists": False,
         "regular": False,
         "symlink": path.is_symlink(),
         "mode": None,
@@ -329,42 +377,70 @@ def _plist_health(path: Path, *, root: Path, namespace: str) -> dict[str, Any]:
         "bindingOk": False,
         "label": lane["label"],
         "worker": lane["worker"],
+        "plistSha256": None,
+        "programArguments": None,
+        "expectedProgramArguments": None,
+        "programArgumentsOk": False,
+        "launchConfigOk": False,
     }
-    if not result["exists"]:
-        return result
     try:
         metadata = path.lstat()
+    except FileNotFoundError:
+        return result
+    except OSError as exc:
+        result["error"] = f"binding_unavailable:{type(exc).__name__}:{str(exc)[:160]}"
+        return result
+    result["exists"] = True
+    try:
         result["regular"] = stat.S_ISREG(metadata.st_mode)
         result["mode"] = oct(stat.S_IMODE(metadata.st_mode))
         result["ownerUid"] = metadata.st_uid
         if not result["regular"] or result["symlink"]:
             result["error"] = "binding_invalid:plist_must_be_regular"
             return result
-        value = plistlib.loads(path.read_bytes())
+        raw, plist_sha256 = _stable_plist_bytes(path, metadata)
+        result["plistSha256"] = plist_sha256
+        value = plistlib.loads(raw)
         if not isinstance(value, dict):
             raise ValueError("plist object required")
-        arguments = [str(item) for item in value.get("ProgramArguments") or []]
-        code_root = Path(str(value.get("WorkingDirectory") or "")).absolute()
+        raw_arguments = value.get("ProgramArguments")
+        arguments_ok_type = isinstance(raw_arguments, list) and all(
+            isinstance(item, str) for item in raw_arguments
+        )
+        arguments = list(raw_arguments) if arguments_ok_type else []
+        result["programArguments"] = arguments
+        working_directory = value.get("WorkingDirectory")
+        if not isinstance(working_directory, str) or not working_directory:
+            raise ValueError("WorkingDirectory string required")
+        code_root = Path(working_directory).absolute()
+        expected_arguments = _trusted_event_program(root, code_root, namespace)
+        result["expectedProgramArguments"] = expected_arguments
+        result["programArgumentsOk"] = arguments_ok_type and arguments == expected_arguments
+        if not arguments_ok_type:
+            raise ValueError("ProgramArguments string list required")
         manifest = verify_release(code_root)
     except (OSError, ValueError, plistlib.InvalidFileException, RuntimeError) as exc:
         result["error"] = f"binding_invalid:{type(exc).__name__}:{str(exc)[:160]}"
         return result
-    try:
-        root_index = arguments.index("--root") + 1
-        runtime_argument = Path(arguments[root_index]).absolute()
-    except (ValueError, IndexError):
-        runtime_argument = None
+    runtime_argument = (
+        Path(arguments[-1]).absolute()
+        if len(arguments) == 4 and arguments[-2] == "--root"
+        else None
+    )
     worker_path = code_root / "scripts" / str(lane["worker"])
     worker_argument = Path(arguments[1]).absolute() if len(arguments) > 1 else None
     release_id = str(manifest.get("releaseId") or "")
     event_manifest = _read_event_manifest(code_root, namespace=namespace)
     launch = _settle_launch_status(str(lane["label"]), _launch_status(str(lane["label"])))
-    expected_arguments = arguments
     loaded_arguments = launch.get("programArguments")
+    expected_plist_path = str(path)
+    loaded_plist_path = launch.get("plistPath")
+    launch_path_ok = loaded_plist_path == expected_plist_path
     launch_config_ok = bool(
         launch.get("available")
         and loaded_arguments == expected_arguments
         and launch.get("workingDirectory") == str(code_root)
+        and launch_path_ok
     )
     releases_root = (root / "releases").absolute()
     release_root_ok = code_root.parent == releases_root
@@ -378,6 +454,8 @@ def _plist_health(path: Path, *, root: Path, namespace: str) -> dict[str, Any]:
             "codeRoot": str(code_root),
             "runtimeRoot": str(runtime_argument) if runtime_argument else None,
             "releaseRootOk": release_root_ok,
+            "loadedPlistPath": loaded_plist_path,
+            "launchPathOk": launch_path_ok,
             "launchConfigOk": launch_config_ok,
             "bindingOk": bool(
                 value.get("Label") == lane["label"]
@@ -390,6 +468,9 @@ def _plist_health(path: Path, *, root: Path, namespace: str) -> dict[str, Any]:
                 and not worker_path.is_symlink()
                 and worker_argument == worker_path
                 and runtime_argument == root
+                and result["programArgumentsOk"]
+                and (root / ".venv" / "bin" / "python").is_file()
+                and os.access(root / ".venv" / "bin" / "python", os.X_OK)
                 and event_manifest.get("ok") is True
             ),
             "launch": launch,
@@ -703,19 +784,41 @@ def audit(root: Path, *, home: Path | None = None, now: float | None = None) -> 
 
 
 def _binding_fingerprint(snapshot: dict[str, Any]) -> dict[str, tuple[Any, ...]]:
-    """Return only immutable lane binding fields for a TOCTOU check."""
+    """Return immutable plist and launch binding fields for a TOCTOU check."""
 
     fingerprints: dict[str, tuple[Any, ...]] = {}
     for namespace in LANES:
         value = (snapshot.get("plists") or {}).get(namespace) or {}
+        launch = value.get("launch") if isinstance(value.get("launch"), dict) else {}
+        program_arguments = value.get("programArguments")
+        expected_arguments = value.get("expectedProgramArguments")
+        loaded_arguments = launch.get("programArguments")
         fingerprints[namespace] = (
             value.get("path"),
+            value.get("plistSha256"),
+            value.get("exists"),
+            value.get("regular"),
+            value.get("symlink"),
+            value.get("mode"),
+            value.get("ownerUid"),
+            value.get("observedLabel"),
+            value.get("worker"),
             value.get("codeRoot"),
             value.get("releaseId"),
             value.get("releaseManifestSha256"),
             value.get("eventManifestSha256"),
             value.get("runtimeRoot"),
+            value.get("releaseRootOk"),
+            tuple(program_arguments) if isinstance(program_arguments, list) else None,
+            tuple(expected_arguments) if isinstance(expected_arguments, list) else None,
+            value.get("programArgumentsOk"),
             value.get("bindingOk"),
+            value.get("loadedPlistPath"),
+            value.get("launchPathOk"),
+            value.get("launchConfigOk"),
+            launch.get("plistPath"),
+            tuple(loaded_arguments) if isinstance(loaded_arguments, list) else None,
+            launch.get("workingDirectory"),
         )
     return fingerprints
 

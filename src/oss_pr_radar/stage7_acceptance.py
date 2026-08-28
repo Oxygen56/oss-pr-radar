@@ -99,9 +99,9 @@ def _publication_pause_snapshot(runtime_root: Path) -> dict[str, Any]:
     idle_valid = False
     if isinstance(idle_at, str):
         try:
-            idle_valid = _utc_datetime(idle_at, field="publication pause idle time") <= datetime.now(
-                UTC
-            )
+            idle_valid = _utc_datetime(
+                idle_at, field="publication pause idle time"
+            ) <= datetime.now(UTC)
         except ValueError:
             idle_valid = False
     valid = (
@@ -547,8 +547,7 @@ def check(
                 if require_publication_pause and publication_pause_valid:
                     try:
                         counts_pause_binding_ok = (
-                            bound.get("publicationPauseSha256")
-                            == publication_pause.get("sha256")
+                            bound.get("publicationPauseSha256") == publication_pause.get("sha256")
                             and bound.get("publicationPauseReleaseId") == binding.release_id
                             and bound.get("publicationPauseIdleConfirmedAt")
                             == publication_pause.get("workflowIdleConfirmedAt")
@@ -909,8 +908,7 @@ def check(
             acceptance_window_ok = (
                 publication_pause_valid
                 and final_publication_pause.get("valid") is True
-                and publication_pause.get("sha256")
-                == final_publication_pause.get("sha256")
+                and publication_pause.get("sha256") == final_publication_pause.get("sha256")
                 and final_evidence.get("managedPrProjectionDigest")
                 == ledger_evidence.get("managedPrProjectionDigest")
                 and final_evidence.get("managedPrStateCounts")
