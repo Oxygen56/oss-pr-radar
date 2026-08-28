@@ -49,9 +49,7 @@ STATE_DRIFT_RECHECK_EVENT = "STATE_DRIFT_RECHECK_REQUIRED"
 PR_UPDATE_REARM_REASONS = {"EXISTING_PR_HEAD_DRIFT", "NON_FAST_FORWARD_PR_UPDATE"}
 PR_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
 ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
-PROBE_RECEIPT_VOLATILE_FIELDS = frozenset(
-    {"observedAt", "expiresAt", "receiptDigest", "signature"}
-)
+PROBE_RECEIPT_VOLATILE_FIELDS = frozenset({"observedAt", "expiresAt", "receiptDigest", "signature"})
 
 
 def _live_audit_probe_receipt(audit_payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -75,11 +73,7 @@ def _live_audit_probe_receipt(audit_payload: dict[str, Any]) -> dict[str, Any] |
 
 def _probe_receipt_binding_digest(receipt: dict[str, Any]) -> str:
     return sha256_json(
-        {
-            key: value
-            for key, value in receipt.items()
-            if key not in PROBE_RECEIPT_VOLATILE_FIELDS
-        }
+        {key: value for key, value in receipt.items() if key not in PROBE_RECEIPT_VOLATILE_FIELDS}
     )
 
 
@@ -102,9 +96,7 @@ def _audited_probe_code_paths(
     pre_task = payload.get("preTaskEvidence")
     pre_task = pre_task if isinstance(pre_task, dict) else {}
     selected_base = str(payload.get("selectedBaseSha") or pre_task.get("baseSha") or "")
-    code_paths = [
-        str(path) for path in (receipt.get("codePaths") or []) if str(path).strip()
-    ]
+    code_paths = [str(path) for path in (receipt.get("codePaths") or []) if str(path).strip()]
     if not selected_base or not code_paths:
         raise LedgerError("live audit repository probe binding is incomplete")
     if not verify_probe_receipt(
@@ -1771,15 +1763,11 @@ class RadarLedger:
             payload["probeLevel"] = probe_level
             payload["taskStage"] = task_stage
             payload["probeReceiptDigest"] = str(canonical_receipt.get("receiptDigest") or "")
-            normalized_paths = sorted(
-                {str(path) for path in canonical_paths if str(path).strip()}
-            )
+            normalized_paths = sorted({str(path) for path in canonical_paths if str(path).strip()})
             payload["codePaths"] = normalized_paths
             pre_task = payload.get("preTaskEvidence")
             if isinstance(pre_task, dict):
-                payload["preTaskEvidence"] = dict(pre_task) | {
-                    "codePathsPlan": normalized_paths
-                }
+                payload["preTaskEvidence"] = dict(pre_task) | {"codePathsPlan": normalized_paths}
             connection.execute(
                 "UPDATE intents SET payload_json=?,updated_at=? WHERE intent_id=?",
                 (
@@ -1817,9 +1805,10 @@ class RadarLedger:
             if row is None:
                 raise LedgerError("task audit identity is not registered")
             registered_worktree = str(row["worktree_path"] or "")
-            if not registered_worktree or Path(registered_worktree).resolve() != Path(
-                worktree_path
-            ).resolve():
+            if (
+                not registered_worktree
+                or Path(registered_worktree).resolve() != Path(worktree_path).resolve()
+            ):
                 raise LedgerError("task audit worktree does not match the result context")
             payload = json.loads(row["payload_json"])
             pre_task = payload.get("preTaskEvidence")
@@ -1869,9 +1858,7 @@ class RadarLedger:
                 receipt_digest = str(receipt.get("receiptDigest") or "")
                 if receipt_digest == expected_digest:
                     return False
-                compatible.append(
-                    (audit_row, receipt, _probe_receipt_binding_digest(receipt))
-                )
+                compatible.append((audit_row, receipt, _probe_receipt_binding_digest(receipt)))
             if not compatible:
                 raise LedgerError("task audit repository probe receipt digest is unavailable")
             if len({binding for _, _, binding in compatible}) != 1:
@@ -5952,9 +5939,10 @@ class RadarLedger:
         if row is None:
             raise LedgerError("task audit identity is not registered")
         registered_worktree = str(row["worktree_path"] or "")
-        if not registered_worktree or Path(registered_worktree).resolve() != Path(
-            worktree_path
-        ).resolve():
+        if (
+            not registered_worktree
+            or Path(registered_worktree).resolve() != Path(worktree_path).resolve()
+        ):
             raise LedgerError("task audit worktree does not match the result context")
         payload = json.loads(row["payload_json"])
         pre_task = payload.get("preTaskEvidence")
@@ -5994,9 +5982,7 @@ class RadarLedger:
             if isinstance(evidence, dict) and (
                 "repoProbeReceipt" in evidence or "repo_probe_receipt" in evidence
             ):
-                raise LedgerError(
-                    "repository probe receipt is not bound to the task intent"
-                )
+                raise LedgerError("repository probe receipt is not bound to the task intent")
         return None
 
     def task_context_candidates(self) -> list[dict[str, Any]]:

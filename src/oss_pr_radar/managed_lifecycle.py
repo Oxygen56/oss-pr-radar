@@ -3426,13 +3426,9 @@ class ManagedLedger:
                 raise PermissionError("published task result is not bound to the current PR")
             task_provenance = json.loads(task["provenance_json"] or "{}")
             receipt = (
-                task_provenance.get("probeReceipt")
-                if isinstance(task_provenance, dict)
-                else None
+                task_provenance.get("probeReceipt") if isinstance(task_provenance, dict) else None
             )
-            if not isinstance(receipt, dict) or not task_provenance.get(
-                "probeReceiptDigest"
-            ):
+            if not isinstance(receipt, dict) or not task_provenance.get("probeReceiptDigest"):
                 raise PermissionError("published task result lacks durable reproduction evidence")
             current = {
                 "stage": stage,
@@ -3503,15 +3499,12 @@ class ManagedLedger:
                                 existing_event["state"]
                                 in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"},
                                 existing_event["source"] == "dispatch-result",
-                                existing_event["provenance_json"]
-                                == _json(event_provenance),
+                                existing_event["provenance_json"] == _json(event_provenance),
                                 existing_event["payload_json"] == _json(payload),
                             )
                         )
                     if not identity_matches or not event_matches:
-                        raise ValueError(
-                            "published task result lifecycle event binding mismatch"
-                        )
+                        raise ValueError("published task result lifecycle event binding mismatch")
                 existing_events[idempotency_key] = existing_event
             legacy_marker_payload = {
                 "taskId": task_id,
@@ -4155,8 +4148,9 @@ class ManagedLedger:
             if receipt_event is not None:
                 existing_event_payload = json_payload(receipt_event["payload_json"])
                 for field in ("prUrl", "headSha", "reservationKey"):
-                    if field in existing_event_payload and existing_event_payload[field] != (
-                        receipt_event_payload[field]
+                    if (
+                        field in existing_event_payload
+                        and existing_event_payload[field] != (receipt_event_payload[field])
                     ):
                         raise PermissionError("publication receipt idempotency binding mismatch")
             projection_observed = (

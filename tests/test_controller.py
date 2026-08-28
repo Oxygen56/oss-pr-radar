@@ -559,9 +559,7 @@ def test_controller_cycle_does_not_reuse_an_ancient_running_marker(tmp_path):
     assert fresh["summary"].get("action") != "ancient"
 
 
-def test_controller_cycle_join_gets_current_runtime_failure_not_old_report(
-    tmp_path, monkeypatch
-):
+def test_controller_cycle_join_gets_current_runtime_failure_not_old_report(tmp_path, monkeypatch):
     write_controller_report(
         tmp_path,
         {
@@ -624,9 +622,7 @@ def test_controller_cycle_join_ignores_expired_completed_marker_during_new_run(
         project_id="github",
     )
     old_run_id = "expired-completed-run"
-    old_checked_at = (datetime.now(UTC) - timedelta(minutes=11)).isoformat().replace(
-        "+00:00", "Z"
-    )
+    old_checked_at = (datetime.now(UTC) - timedelta(minutes=11)).isoformat().replace("+00:00", "Z")
     old_result = {
         "ok": True,
         "checkedAt": old_checked_at,

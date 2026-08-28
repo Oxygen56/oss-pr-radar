@@ -133,6 +133,37 @@ def test_versioned_yaml_check_executes_all_hidden_workflows():
     ]
 
 
+def test_versioned_format_check_matches_ci_and_passes():
+    command = next(
+        item["command"]
+        for item in build_verification_manifest(HEAD)["definitions"]["commands"]
+        if item["id"] == "ruff-format"
+    )
+    root = Path(__file__).parents[1]
+    workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert command == "ruff format --check src scripts tests"
+    assert f"run: {command}" in workflow
+    environment = os.environ.copy()
+    environment["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{environment.get('PATH', '')}"
+    result = subprocess.run(
+        shlex.split(command),
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_verification_manifest_requires_format_result():
+    results = _passed_results()
+    results.pop("ruff-format")
+    manifest = build_verification_manifest(HEAD, results=results)
+    with pytest.raises(ValueError, match=r"missing=\['ruff-format'\]"):
+        validate_verification_manifest(manifest, HEAD)
+
+
 def test_stage6_manifest_requires_bound_results_or_run(tmp_path):
     script = Path(__file__).parents[1] / "scripts" / "stage6_manifest.py"
     artifact_root = tmp_path / "artifact"

@@ -177,6 +177,7 @@ def test_running_lane_keeps_replacement_failure_unhealthy():
 
 
 def test_stopped_lane_keeps_previous_nonzero_exit_unhealthy():
-    assert MODULE._launch_healthy(
-        {"available": True, "state": "not running", "lastExitCode": 1}
-    ) is False
+    assert (
+        MODULE._launch_healthy({"available": True, "state": "not running", "lastExitCode": 1})
+        is False
+    )

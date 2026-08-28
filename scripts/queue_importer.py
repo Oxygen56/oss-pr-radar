@@ -33,9 +33,7 @@ def main() -> int:
             )
         )
         return 1
-    stdout_path, stderr_path = worker_log_paths(
-        "com.oss-pr-radar.queue-importer", home=Path.home()
-    )
+    stdout_path, stderr_path = worker_log_paths("com.oss-pr-radar.queue-importer", home=Path.home())
     rotate_log(stdout_path)
     rotate_log(stderr_path)
     result = queue_import_once(args.root)

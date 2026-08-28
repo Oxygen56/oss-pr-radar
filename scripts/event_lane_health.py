@@ -306,9 +306,7 @@ def audit(root: Path, *, home: Path | None = None, now: float | None = None) -> 
         launch = plist.get("launch") or {}
         lane_health[namespace] = {
             "healthy": bool(
-                plist.get("bindingOk")
-                and _launch_healthy(launch)
-                and database.get("healthy")
+                plist.get("bindingOk") and _launch_healthy(launch) and database.get("healthy")
             ),
             "bindingOk": bool(plist.get("bindingOk")),
             "launchHealthy": _launch_healthy(launch),

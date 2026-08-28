@@ -843,6 +843,7 @@ def test_authorized_publication_cli_reaches_operation_without_external_process(
         MODULE, "require_operational_authorization", lambda root: calls.append(root)
     )
     monkeypatch.setattr(MODULE, "RadarLedger", lambda _path: object())
+
     @contextmanager
     def effect_guard(_root, _path):
         yield SimpleNamespace(fileno=lambda: 0)
@@ -882,6 +883,7 @@ def test_authorized_publication_cli_still_blocks_when_outbound_pause_is_active(
 ):
     monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
+
     @contextmanager
     def effect_guard(_root, _path):
         raise PermissionError("GITHUB_OUTBOUND_PAUSED")
@@ -938,9 +940,7 @@ def test_external_commands_inherit_the_outbound_lock_descriptor(monkeypatch, tmp
     assert captured["pass_fds"] == (37,)
 
 
-def test_ensure_fork_does_not_turn_a_transient_lookup_failure_into_a_write(
-    monkeypatch, tmp_path
-):
+def test_ensure_fork_does_not_turn_a_transient_lookup_failure_into_a_write(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(MODULE, "ensure_permit", lambda *_args, **_kwargs: {"id": "permit"})
     monkeypatch.setattr(
@@ -989,9 +989,7 @@ def test_ensure_fork_creates_once_and_returns_a_validated_remote(monkeypatch, tm
             api_calls = sum(call[:2] == ["gh", "api"] for call in calls)
             if api_calls == 1:
                 return subprocess.CompletedProcess(arguments, 1, stdout="", stderr="HTTP 404")
-            return subprocess.CompletedProcess(
-                arguments, 0, stdout=json.dumps(fork), stderr=""
-            )
+            return subprocess.CompletedProcess(arguments, 0, stdout=json.dumps(fork), stderr="")
         if arguments[:3] == ["gh", "repo", "fork"]:
             return subprocess.CompletedProcess(arguments, 0, stdout="", stderr="")
         if arguments == ["git", "remote"]:

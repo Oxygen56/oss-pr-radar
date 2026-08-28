@@ -481,6 +481,7 @@ def main() -> int:
             **options,
         )
     else:
+
         def write_state() -> None:
             if args.operation == "publish":
                 publish(args.root, branch, base_sha_path=profile["base_sha"], **options)

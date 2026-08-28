@@ -819,10 +819,7 @@ class ManagedAdapter:
             else {}
         )
         pr_url = str(
-            value.get("prUrl")
-            or publication.get("prUrl")
-            or publication_receipt.get("prUrl")
-            or ""
+            value.get("prUrl") or publication.get("prUrl") or publication_receipt.get("prUrl") or ""
         )
         pr_key = pr_key_from_url(pr_url) if pr_url else None
         head_sha = str(value.get("headSha") or value.get("head_sha") or "") or None
@@ -856,18 +853,11 @@ class ManagedAdapter:
                 receipt_digest=str(task_provenance.get("probeReceiptDigest") or ""),
             )
             if publication_receipt or durable_receipt is not None:
-                effective_publication_receipt = (
-                    publication_receipt or context_publication_receipt
-                )
-                publication_commit_sha = str(
-                    effective_publication_receipt.get("commitSha") or ""
-                )
+                effective_publication_receipt = publication_receipt or context_publication_receipt
+                publication_commit_sha = str(effective_publication_receipt.get("commitSha") or "")
                 publication_pr_url = str(effective_publication_receipt.get("prUrl") or "")
                 pr_url = str(
-                    value.get("prUrl")
-                    or publication.get("prUrl")
-                    or publication_pr_url
-                    or ""
+                    value.get("prUrl") or publication.get("prUrl") or publication_pr_url or ""
                 )
                 pr_key = pr_key_from_url(pr_url) if pr_url else None
                 bound_pr = (
@@ -886,8 +876,7 @@ class ManagedAdapter:
                         and context_publication_receipt != publication_receipt
                     )
                     or publication_pr_url != pr_url
-                    or str(publication.get("prUrl") or publication_pr_url)
-                    != publication_pr_url
+                    or str(publication.get("prUrl") or publication_pr_url) != publication_pr_url
                     or pr_key is None
                     or bound_pr is None
                     or bound_pr.get("pr_key") != pr_key

@@ -417,9 +417,7 @@ def _ensure_fork_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[
             cwd=Path(args.worktree),
             timeout=180,
         )
-        confirmed = run(
-            ["gh", "api", f"repos/{fork_repo}"], cwd=Path(args.worktree), timeout=45
-        )
+        confirmed = run(["gh", "api", f"repos/{fork_repo}"], cwd=Path(args.worktree), timeout=45)
         for delay in (1.0, 3.0, 7.0):
             if confirmed.returncode == 0:
                 break
@@ -889,6 +887,7 @@ def main() -> int:
             )
         )
         return 2
+
     def execute() -> dict[str, Any]:
         store = RadarLedger(args.ledger)
         if args.operation == "ensure-fork":

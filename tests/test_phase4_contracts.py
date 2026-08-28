@@ -80,15 +80,11 @@ def test_partial_failures_are_visible_without_skipping_durable_state():
     assert "if: steps.war_room_send.outcome == 'failure'" in workflow
     assert "NOTIFICATION_DEGRADED" in workflow
 
-    build_state_header = workflow.split("\n  build-state:\n", 1)[1].split(
-        "\n    runs-on:", 1
-    )[0]
+    build_state_header = workflow.split("\n  build-state:\n", 1)[1].split("\n    runs-on:", 1)[0]
     assert "needs.scan.result == 'success'" in build_state_header
     assert "needs.pr-followup.result == 'failure'" in build_state_header
 
-    receipt_header = workflow.split("\n  persist-receipt:\n", 1)[1].split(
-        "\n    runs-on:", 1
-    )[0]
+    receipt_header = workflow.split("\n  persist-receipt:\n", 1)[1].split("\n    runs-on:", 1)[0]
     assert "needs.notify.result == 'failure'" in receipt_header
 
 

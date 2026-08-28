@@ -56,9 +56,7 @@ def test_pause_record_write_is_durable_before_it_returns(monkeypatch, tmp_path):
     assert json.loads(path.read_text(encoding="utf-8"))["pauseState"] == "PAUSING"
 
 
-def test_pause_does_not_disable_remote_before_pausing_record_is_durable(
-    monkeypatch, tmp_path
-):
+def test_pause_does_not_disable_remote_before_pausing_record_is_durable(monkeypatch, tmp_path):
     _release, _state, _ledger = _runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
     actions = []
@@ -82,9 +80,7 @@ def test_pause_does_not_disable_remote_before_pausing_record_is_durable(
     assert actions == []
 
 
-def test_resume_does_not_enable_remote_before_resuming_record_is_durable(
-    monkeypatch, tmp_path
-):
+def test_resume_does_not_enable_remote_before_resuming_record_is_durable(monkeypatch, tmp_path):
     _release, state, _ledger = _runtime(monkeypatch, tmp_path)
     record_path = state / MODULE.FILENAME
     record = {
@@ -119,9 +115,7 @@ def test_resume_does_not_enable_remote_before_resuming_record_is_durable(
     assert actions == []
 
 
-def test_resume_rollback_is_uncertain_if_active_record_is_not_durable(
-    monkeypatch, tmp_path
-):
+def test_resume_rollback_is_uncertain_if_active_record_is_not_durable(monkeypatch, tmp_path):
     _release, state, _ledger = _runtime(monkeypatch, tmp_path)
     record_path = state / MODULE.FILENAME
     record = {
@@ -162,9 +156,7 @@ def test_resume_rollback_is_uncertain_if_active_record_is_not_durable(
     assert actions == [True, False]
 
 
-def test_pause_disables_remote_workflow_waits_for_idle_and_records_binding(
-    monkeypatch, tmp_path
-):
+def test_pause_disables_remote_workflow_waits_for_idle_and_records_binding(monkeypatch, tmp_path):
     release, state, _ledger = _runtime(monkeypatch, tmp_path)
     states = iter(["active", "disabled_manually"])
     actions = []
@@ -304,9 +296,7 @@ def test_resume_reenables_only_a_workflow_that_pause_disabled(monkeypatch, tmp_p
     assert actions == [(MODULE.DEFAULT_REPO, MODULE.DEFAULT_WORKFLOW, True)]
 
 
-def test_resume_verification_failure_re_disables_workflow_and_keeps_pause(
-    monkeypatch, tmp_path
-):
+def test_resume_verification_failure_re_disables_workflow_and_keeps_pause(monkeypatch, tmp_path):
     _release, state, _ledger = _runtime(monkeypatch, tmp_path)
     record_path = state / MODULE.FILENAME
     record = {
@@ -369,9 +359,7 @@ def test_resume_crash_after_remote_enable_is_explicitly_resuming(monkeypatch, tm
     assert remaining["pauseState"] == "RESUMING"
 
 
-def test_resume_unlink_failure_rolls_remote_back_and_restores_active_pause(
-    monkeypatch, tmp_path
-):
+def test_resume_unlink_failure_rolls_remote_back_and_restores_active_pause(monkeypatch, tmp_path):
     _release, state, _ledger = _runtime(monkeypatch, tmp_path)
     record_path = state / MODULE.FILENAME
     record = {
@@ -517,9 +505,7 @@ def test_status_never_calls_an_intermediate_state_globally_paused(
     assert result["globallyPaused"] is False
 
 
-def test_status_holds_the_outbound_lock_for_its_complete_remote_snapshot(
-    monkeypatch, tmp_path
-):
+def test_status_holds_the_outbound_lock_for_its_complete_remote_snapshot(monkeypatch, tmp_path):
     _release, _state, ledger = _runtime(monkeypatch, tmp_path)
     record = {
         "paused": True,

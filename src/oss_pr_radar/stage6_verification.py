@@ -19,6 +19,7 @@ VERSIONED_DEFINITIONS: dict[str, Any] = {
             "command": "python -m pytest -q tests/test_legacy_migration.py tests/test_stage6_rehearsal.py tests/test_managed_round8_key_rotation.py",
         },
         {"id": "ruff", "command": "ruff check ."},
+        {"id": "ruff-format", "command": "ruff format --check src scripts tests"},
         {
             "id": "yaml",
             "command": (

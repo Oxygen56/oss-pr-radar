@@ -133,21 +133,23 @@ def test_component_health_checks_each_required_job_below_green_run(monkeypatch):
     monkeypatch.setattr(
         MODULE,
         "github_json",
-        lambda path: {
-            "jobs": [
-                {"name": name, "conclusion": "success"}
-                for name in (
-                    "scan",
-                    "pr-followup",
-                    "build-state",
-                    "persist-pending",
-                    "notify",
-                    "persist-receipt",
-                )
-            ]
-        }
-        if path.endswith("/jobs?per_page=100")
-        else pytest.fail(path),
+        lambda path: (
+            {
+                "jobs": [
+                    {"name": name, "conclusion": "success"}
+                    for name in (
+                        "scan",
+                        "pr-followup",
+                        "build-state",
+                        "persist-pending",
+                        "notify",
+                        "persist-receipt",
+                    )
+                ]
+            }
+            if path.endswith("/jobs?per_page=100")
+            else pytest.fail(path)
+        ),
     )
 
     result = MODULE.workflow_component_health("a/b", workflow_runs)
@@ -229,18 +231,20 @@ def test_component_health_cancelled_run_does_not_hide_previous_failure(monkeypat
     monkeypatch.setattr(
         MODULE,
         "github_json",
-        lambda path: {
-            "jobs": [
-                {"name": "scan", "conclusion": "failure"},
-                {"name": "pr-followup", "conclusion": "success"},
-                {"name": "build-state", "conclusion": "success"},
-                {"name": "persist-pending", "conclusion": "success"},
-                {"name": "notify", "conclusion": "success"},
-                {"name": "persist-receipt", "conclusion": "success"},
-            ]
-        }
-        if path == "repos/a/b/actions/runs/8/jobs?per_page=100"
-        else pytest.fail(path),
+        lambda path: (
+            {
+                "jobs": [
+                    {"name": "scan", "conclusion": "failure"},
+                    {"name": "pr-followup", "conclusion": "success"},
+                    {"name": "build-state", "conclusion": "success"},
+                    {"name": "persist-pending", "conclusion": "success"},
+                    {"name": "notify", "conclusion": "success"},
+                    {"name": "persist-receipt", "conclusion": "success"},
+                ]
+            }
+            if path == "repos/a/b/actions/runs/8/jobs?per_page=100"
+            else pytest.fail(path)
+        ),
     )
 
     result = MODULE.workflow_component_health("a/b", workflow_runs)
@@ -308,8 +312,7 @@ def test_component_health_exposes_followup_failure_without_discarding_fresh_scan
         "github_json",
         lambda _path: {
             "jobs": [
-                {"name": name, "conclusion": conclusion}
-                for name, conclusion in conclusions.items()
+                {"name": name, "conclusion": conclusion} for name, conclusion in conclusions.items()
             ]
         },
     )
@@ -517,9 +520,7 @@ def test_main_dispatches_one_fallback_for_stale_effective_scan(monkeypatch):
     assert dispatched == [("Oxygen56/oss-pr-radar", "main")]
 
 
-def test_main_suppresses_fallback_when_outbound_pause_wins_the_race(
-    monkeypatch, capsys
-):
+def test_main_suppresses_fallback_when_outbound_pause_wins_the_race(monkeypatch, capsys):
     stale_runs = [
         {
             "event": "schedule",
@@ -536,9 +537,7 @@ def test_main_suppresses_fallback_when_outbound_pause_wins_the_race(
     monkeypatch.setattr(
         MODULE,
         "dispatch_scan",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            PermissionError("GITHUB_OUTBOUND_PAUSED")
-        ),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError("GITHUB_OUTBOUND_PAUSED")),
     )
     monkeypatch.setattr(
         MODULE.sys,

@@ -27,9 +27,7 @@ def outbound_effect_lock_path(ledger_path: Path) -> Path:
 
 
 @contextmanager
-def outbound_effect_lock(
-    ledger_path: Path, *, blocking: bool = True
-) -> Iterator[TextIO]:
+def outbound_effect_lock(ledger_path: Path, *, blocking: bool = True) -> Iterator[TextIO]:
     path = outbound_effect_lock_path(ledger_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+", encoding="utf-8") as lock:
@@ -93,9 +91,7 @@ def require_outbound_effects_allowed(runtime_root: Path) -> None:
 
 
 @contextmanager
-def outbound_effect_guard(
-    runtime_root: Path, ledger_path: Path
-) -> Iterator[TextIO]:
+def outbound_effect_guard(runtime_root: Path, ledger_path: Path) -> Iterator[TextIO]:
     """Serialize one real GitHub write and recheck pause after acquiring the lock."""
 
     with outbound_effect_lock(ledger_path) as lock:

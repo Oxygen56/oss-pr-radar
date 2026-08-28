@@ -45,9 +45,7 @@ def _run_gh(arguments: list[str], *, timeout: int = 45) -> subprocess.CompletedP
 
 
 def _workflow_state(repo: str, workflow: str) -> str:
-    completed = _run_gh(
-        ["api", f"repos/{repo}/actions/workflows/{workflow}", "--jq", ".state"]
-    )
+    completed = _run_gh(["api", f"repos/{repo}/actions/workflows/{workflow}", "--jq", ".state"])
     if completed.returncode != 0:
         raise RuntimeError(
             f"workflow state lookup failed: {(completed.stderr or completed.stdout)[:240]}"
@@ -68,9 +66,7 @@ def _set_workflow_enabled(repo: str, workflow: str, *, enabled: bool) -> None:
 
 
 def _active_workflow_runs(repo: str, workflow: str) -> list[dict[str, object]]:
-    completed = _run_gh(
-        ["api", f"repos/{repo}/actions/workflows/{workflow}/runs?per_page=100"]
-    )
+    completed = _run_gh(["api", f"repos/{repo}/actions/workflows/{workflow}/runs?per_page=100"])
     if completed.returncode != 0:
         raise RuntimeError(
             f"workflow run lookup failed: {(completed.stderr or completed.stdout)[:240]}"
@@ -130,9 +126,7 @@ def _read_raw_pause(path: Path) -> dict[str, object] | None:
 
 def _write_pause(path: Path, value: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", dir=path.parent
-    )
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:

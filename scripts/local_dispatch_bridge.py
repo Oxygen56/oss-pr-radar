@@ -189,6 +189,7 @@ def _task_result_evidence_block_key(
         f"{candidate['key']}:{candidate['threadId']}:{snapshot_digest}"
     )
 
+
 PLAIN_LANGUAGE_STATUS_PROMPT = (
     "用户可见回复必须像普通进度通知，不要求用户理解 Git、CI 或项目内部实现。"
     "第一句按真实状态选择：处理中写‘正在处理，暂未创建 PR。’；修改和检查已完成写"
@@ -10235,9 +10236,7 @@ def _validation_publication_changed_files(
     return _target_base_publication_changed_files(worktree=worktree, context=context)
 
 
-def _target_base_publication_changed_files(
-    *, worktree: Path, context: dict[str, Any]
-) -> list[str]:
+def _target_base_publication_changed_files(*, worktree: Path, context: dict[str, Any]) -> list[str]:
     target_value = context.get("targetBase")
     if isinstance(target_value, dict):
         target = validate_target_base(target_value)
@@ -13248,10 +13247,9 @@ def _bind_final_reproduction_receipt(
         )
         if not isinstance(durable_receipt, dict):
             raise TaskResultEvidenceBlocked("DURABLE_REPRODUCTION_RECEIPT_INVALID")
-        if (
-            not isinstance(context_receipt, dict)
-            or context_receipt.get("receiptDigest") != durable_receipt.get("receiptDigest")
-        ):
+        if not isinstance(context_receipt, dict) or context_receipt.get(
+            "receiptDigest"
+        ) != durable_receipt.get("receiptDigest"):
             raise TaskResultEvidenceBlocked("DURABLE_REPRODUCTION_RECEIPT_CONTEXT_MISMATCH")
     authorization_receipt = durable_receipt or context_receipt
     authorized_code_paths = [
@@ -13291,9 +13289,7 @@ def _bind_final_reproduction_receipt(
                 issue_url=issue_url,
                 task_id=task_id,
                 thread_id=(
-                    str(candidate["threadId"])
-                    if current_receipt.get("threadFingerprint")
-                    else None
+                    str(candidate["threadId"]) if current_receipt.get("threadFingerprint") else None
                 ),
                 head_sha=commit_sha,
                 commit_sha=commit_sha,
@@ -13309,23 +13305,15 @@ def _bind_final_reproduction_receipt(
         authorized_scope = set(authorized_code_paths)
         reported_scope = set(reported_code_paths)
         if not authorized_scope.issubset(reported_scope):
-            raise TaskResultEvidenceBlocked(
-                "REPRODUCTION_SCOPE_OMITTED_OR_REPLACED"
-            )
+            raise TaskResultEvidenceBlocked("REPRODUCTION_SCOPE_OMITTED_OR_REPLACED")
         added_scope = reported_scope - authorized_scope
         if added_scope:
             try:
-                verified_changed_files = set(
-                    _validated_changed_files(value.get("changedFiles"))
-                )
+                verified_changed_files = set(_validated_changed_files(value.get("changedFiles")))
             except RuntimeError as exc:
-                raise TaskResultEvidenceBlocked(
-                    "REPORTED_SCOPE_CHANGED_FILES_INVALID"
-                ) from exc
+                raise TaskResultEvidenceBlocked("REPORTED_SCOPE_CHANGED_FILES_INVALID") from exc
             if not added_scope.issubset(verified_changed_files):
-                raise TaskResultEvidenceBlocked(
-                    "REPORTED_SCOPE_NOT_IN_COMMITTED_CHANGES"
-                )
+                raise TaskResultEvidenceBlocked("REPORTED_SCOPE_NOT_IN_COMMITTED_CHANGES")
     normalized = dict(value)
     normalized.update(
         {
@@ -13392,9 +13380,7 @@ def _bind_final_reproduction_receipt(
             current_receipt if current_receipt_reusable else durable_receipt or context_receipt
         )
         if not isinstance(source_receipt, dict):
-            raise TaskResultEvidenceBlocked(
-                "REPRODUCED_VALIDATED_PROBE_RECEIPT_REQUIRED"
-            )
+            raise TaskResultEvidenceBlocked("REPRODUCED_VALIDATED_PROBE_RECEIPT_REQUIRED")
         try:
             rebound = rebind_probe_receipt(
                 source_receipt,
@@ -13691,12 +13677,9 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             )
             if (
                 previous_evidence_block is not None
-                and previous_evidence_block.get("event_type")
-                == "TASK_RESULT_EVIDENCE_BLOCKED"
+                and previous_evidence_block.get("event_type") == "TASK_RESULT_EVIDENCE_BLOCKED"
             ):
-                previous_payload = json.loads(
-                    previous_evidence_block.get("payload_json") or "{}"
-                )
+                previous_payload = json.loads(previous_evidence_block.get("payload_json") or "{}")
                 work_blocked.append(
                     {
                         "key": str(candidate["key"]),
@@ -13874,14 +13857,10 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         current_pr = None
                 controller_authorized_publication = False
                 if not result_publication and context_publication and result_pr_url:
-                    managed_task_id = str(
-                        candidate.get("intentId") or candidate["threadId"]
-                    )
+                    managed_task_id = str(candidate.get("intentId") or candidate["threadId"])
                     managed_task = managed_ledger.read_task(managed_task_id) or {}
                     try:
-                        managed_provenance = json.loads(
-                            managed_task.get("provenance_json") or "{}"
-                        )
+                        managed_provenance = json.loads(managed_task.get("provenance_json") or "{}")
                     except (TypeError, json.JSONDecodeError):
                         managed_provenance = {}
                     managed_receipt = managed_provenance.get("probeReceipt")
@@ -13894,9 +13873,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                                 worktree_path=str(result_access.worktree),
                                 repo=issue_match.group(1),
                                 issue_url=str(candidate["issueUrl"]),
-                                receipt_digest=str(
-                                    managed_receipt.get("receiptDigest") or ""
-                                ),
+                                receipt_digest=str(managed_receipt.get("receiptDigest") or ""),
                             )
                         )
                     if controller_authorized_publication:
@@ -13921,8 +13898,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     published_managed_backfill_required = bool(
                         current_published is None
                         or current_published.get("prUrl") != result_pr_url
-                        or current_published.get("headSha")
-                        != str(value.get("headSha") or "")
+                        or current_published.get("headSha") != str(value.get("headSha") or "")
                         or current_published.get("resultDigest") != initial_digest
                         or not store.published_task_result_backfill_seen(
                             candidate["key"], digest=initial_digest
@@ -14746,9 +14722,7 @@ def _executor(
         value = json.loads(raw)
     except json.JSONDecodeError:
         value = None
-    if completed.returncode != 0 and not (
-        isinstance(value, dict) and value.get("blocked") is True
-    ):
+    if completed.returncode != 0 and not (isinstance(value, dict) and value.get("blocked") is True):
         detail = (completed.stderr or completed.stdout or "publication executor failed").strip()
         raise RuntimeError(detail[-500:])
     if not isinstance(value, dict) or (
@@ -15996,9 +15970,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 # worktree.  Both layouts bind the same verified repository;
                 # rejecting the legacy cwd strands otherwise valid follow-up
                 # and recovery turns after an upgrade.
-                valid_workspace = (
-                    thread_cwd in {GITHUB_ROOT.resolve(), worktree} and valid_origin
-                )
+                valid_workspace = thread_cwd in {GITHUB_ROOT.resolve(), worktree} and valid_origin
             else:
                 valid_workspace = (
                     thread_cwd == worktree
@@ -16802,9 +16774,7 @@ def main() -> int:
     alerts_parser.add_argument("--notify", action="store_true")
     dispatch_notifications_parser = subparsers.add_parser("dispatch-notifications")
     dispatch_notifications_parser.add_argument("--notify", action="store_true")
-    dispatch_notification_suppress_parser = subparsers.add_parser(
-        "dispatch-notifications-suppress"
-    )
+    dispatch_notification_suppress_parser = subparsers.add_parser("dispatch-notifications-suppress")
     dispatch_notification_suppress_parser.add_argument("--cutoff", required=True)
     dispatch_notification_suppress_parser.add_argument("--reason", required=True)
     claim = subparsers.add_parser("claim")

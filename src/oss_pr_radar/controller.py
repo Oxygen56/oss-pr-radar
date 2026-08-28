@@ -384,9 +384,7 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         blockers.append(
             {
                 "stage": "finalLocalAgentStatus",
-                "queue": (
-                    "disk_stop" if _local_agent_disk_stop(local_status) else "unhealthy"
-                ),
+                "queue": ("disk_stop" if _local_agent_disk_stop(local_status) else "unhealthy"),
                 "count": max(1, len(unhealthy)),
             }
         )
@@ -475,9 +473,7 @@ def run_locked_controller_cycle(
                     "summary": {"action": "controller_already_running"},
                 }
             deadline = (
-                None
-                if busy_timeout_seconds is None
-                else time.monotonic() + busy_timeout_seconds
+                None if busy_timeout_seconds is None else time.monotonic() + busy_timeout_seconds
             )
             while True:
                 try:

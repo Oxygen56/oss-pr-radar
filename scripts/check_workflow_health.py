@@ -27,6 +27,7 @@ _OUTBOUND_LOCK_FD: int | None = None
 _RELEVANT_EVENTS = {"schedule", "workflow_dispatch"}
 _STATE_JOBS = {"build-state", "persist-pending", "persist-receipt"}
 
+
 def github_json(path: str) -> object:
     last_error = "unknown GitHub API failure"
     for delay in (0.0, 1.0, 3.0):
@@ -311,9 +312,7 @@ def effective_scan_freshness(
     if component_health and component_health.get("scanSucceeded") is True:
         component_updated_at = component_health.get("runUpdatedAt")
         if component_updated_at:
-            component_success_fresh = (
-                parse_time(str(component_updated_at)) >= current - max_age
-            )
+            component_success_fresh = parse_time(str(component_updated_at)) >= current - max_age
             component_url = component_health.get("runUrl")
     return {
         "fresh": success_fresh or component_success_fresh or latest_active is not None,

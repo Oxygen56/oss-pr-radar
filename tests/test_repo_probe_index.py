@@ -26,9 +26,7 @@ def _checkout(tmp_path: Path) -> Path:
     (checkout / "src" / "plugins").mkdir(parents=True)
     (checkout / "src" / "frontends").mkdir(parents=True)
     (checkout / "src" / "plugins" / "keep.py").write_text("keep = True\n", encoding="utf-8")
-    (checkout / "src" / "frontends" / "target.py").write_text(
-        "target = True\n", encoding="utf-8"
-    )
+    (checkout / "src" / "frontends" / "target.py").write_text("target = True\n", encoding="utf-8")
     _git(checkout, "add", ".")
     _git(checkout, "commit", "--quiet", "-m", "initial")
     return checkout
@@ -39,9 +37,7 @@ def test_indexable_paths_accept_normal_worktree_without_staging(tmp_path: Path) 
     target = checkout / "src" / "frontends" / "target.py"
     target.write_text("target = False\n", encoding="utf-8")
 
-    bindings = repo_probe.validate_indexable_checkout_paths(
-        checkout, ["src/frontends/target.py"]
-    )
+    bindings = repo_probe.validate_indexable_checkout_paths(checkout, ["src/frontends/target.py"])
 
     assert set(bindings) == {"src/frontends/target.py"}
     _git(checkout, "diff", "--cached", "--quiet")

@@ -631,9 +631,7 @@ def run_repo_probe(
         tree_paths = {
             str(item.get("path") or "")
             for item in tree
-            if isinstance(item, dict)
-            and item.get("type") == "blob"
-            and str(item.get("path") or "")
+            if isinstance(item, dict) and item.get("type") == "blob" and str(item.get("path") or "")
         }
         payload["codePathsVerified"] = bool(payload["codePaths"]) and all(
             path in tree_paths for path in payload["codePaths"]

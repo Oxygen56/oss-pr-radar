@@ -4813,9 +4813,7 @@ def test_prepare_managed_worktree_expands_declared_sparse_paths(monkeypatch, tmp
     (source / "src" / "plugins").mkdir(parents=True)
     (source / "src" / "frontends").mkdir(parents=True)
     (source / "src" / "plugins" / "keep.py").write_text("keep = True\n", encoding="utf-8")
-    (source / "src" / "frontends" / "target.py").write_text(
-        "target = True\n", encoding="utf-8"
-    )
+    (source / "src" / "frontends" / "target.py").write_text("target = True\n", encoding="utf-8")
     run_git(source, "add", ".")
     run_git(source, "commit", "-m", "baseline")
     run_git(source, "update-ref", "refs/remotes/origin/main", "HEAD")
@@ -4834,9 +4832,7 @@ def test_prepare_managed_worktree_expands_declared_sparse_paths(monkeypatch, tmp
     assert target.read_text(encoding="utf-8") == "target = True\n"
     target.write_text("target = False\n", encoding="utf-8")
     run_git(worktree, "add", "--", "src/frontends/target.py")
-    assert run_git(worktree, "diff", "--cached", "--name-only") == (
-        "src/frontends/target.py"
-    )
+    assert run_git(worktree, "diff", "--cached", "--name-only") == ("src/frontends/target.py")
 
 
 def test_controller_commit_expands_result_paths_outside_sparse_checkout(tmp_path):
@@ -4848,9 +4844,7 @@ def test_controller_commit_expands_result_paths_outside_sparse_checkout(tmp_path
     (worktree / "src" / "plugins").mkdir(parents=True)
     (worktree / "src" / "frontends").mkdir(parents=True)
     (worktree / "src" / "plugins" / "keep.py").write_text("keep = True\n", encoding="utf-8")
-    (worktree / "src" / "frontends" / "target.py").write_text(
-        "target = True\n", encoding="utf-8"
-    )
+    (worktree / "src" / "frontends" / "target.py").write_text("target = True\n", encoding="utf-8")
     run_git(worktree, "add", ".")
     run_git(worktree, "commit", "-m", "baseline")
     run_git(worktree, "branch", "-M", "main")
@@ -5023,9 +5017,7 @@ def test_recovery_reserve_rearms_same_exhausted_dispatch(monkeypatch, tmp_path):
     assert listed["ok"] is True
     assert listed["recoveryRetryExhausted"][0]["key"] == "a/b#1"
     candidate = listed["recoverable"][0]
-    assert candidate["rearmedFromExhausted"]["exhaustedNonce"] == legacy[
-        "recoveryNonce"
-    ]
+    assert candidate["rearmedFromExhausted"]["exhaustedNonce"] == legacy["recoveryNonce"]
 
     reserved = MODULE.recovery_reserve(
         SimpleNamespace(
@@ -5443,9 +5435,7 @@ def test_independent_review_keeps_candidate_failure_out_of_worker_error(monkeypa
 
     assert result["ok"] is True
     assert result["errors"] == []
-    assert result["candidateErrors"] == [
-        {"key": "a/b#1", "error": "invalid candidate"}
-    ]
+    assert result["candidateErrors"] == [{"key": "a/b#1", "error": "invalid candidate"}]
 
 
 def test_independent_review_missing_schema_is_nonfatal(monkeypatch, tmp_path):
@@ -5679,9 +5669,12 @@ def test_dispatch_notification_survives_fast_terminal_transition(tmp_path, termi
     )
     assert store.dispatch_notification_candidates() == []
     with store.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM events WHERE event_type='DISPATCH_NOTIFICATION_SENT'"
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='DISPATCH_NOTIFICATION_SENT'"
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_dispatch_notification_requires_exact_dispatch_event(tmp_path):
@@ -5909,9 +5902,7 @@ def test_prepare_claim_returns_single_project_root_and_isolated_worktree(monkeyp
     assert "projectId" not in result["createThreadRequest"]
 
 
-def test_prepare_claim_does_not_treat_unverified_symbol_alias_as_a_path(
-    monkeypatch, tmp_path
-):
+def test_prepare_claim_does_not_treat_unverified_symbol_alias_as_a_path(monkeypatch, tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     now = datetime.now(UTC)
     store.enqueue(
@@ -6395,9 +6386,7 @@ def test_recovery_accepts_github_project_thread_with_managed_worktree(monkeypatc
     assert result["recoverable"][0]["threadId"] == "thread-1"
 
 
-def test_recovery_accepts_legacy_thread_bound_to_its_managed_worktree(
-    monkeypatch, tmp_path
-):
+def test_recovery_accepts_legacy_thread_bound_to_its_managed_worktree(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     worktree = project_root / ".oss-pr-radar" / "worktrees" / "task" / "b"
     worktree.mkdir(parents=True)
@@ -11806,12 +11795,8 @@ def test_ingest_keeps_reconciled_current_pr_head_authoritative(tmp_path):
     assert result["ok"] is True, result["errors"]
     assert result["ingested"] == []
     assert result["publicationRequests"] == []
-    assert result["ignored"] == [
-        {"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}
-    ]
-    restored = store.task_context(
-        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
-    )
+    assert result["ignored"] == [{"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}]
+    restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
     assert restored["stage"] == "PR_OPEN"
     assert restored["publicationReceipt"]["prUrl"] == pr_url
     with managed._connection() as connection:
@@ -11885,9 +11870,7 @@ def test_legacy_ingested_published_result_backfills_current_head_and_context(
             "UPDATE managed_tasks SET state='PORTFOLIO_READY' WHERE task_id='intent-1'"
         )
 
-    (worktree / "runtime.py").write_text(
-        "value = 3\nassert value == 3\n", encoding="utf-8"
-    )
+    (worktree / "runtime.py").write_text("value = 3\nassert value == 3\n", encoding="utf-8")
     run_git(worktree, "add", "runtime.py")
     run_git(worktree, "commit", "-m", "fix: refine published runtime boundary")
     current_head = run_git(worktree, "rev-parse", "HEAD")
@@ -11954,9 +11937,7 @@ def test_legacy_ingested_published_result_backfills_current_head_and_context(
         adapter_results.append(result)
         return result
 
-    monkeypatch.setattr(
-        MODULE.ManagedAdapter, "record_task_result", capture_record_task_result
-    )
+    monkeypatch.setattr(MODULE.ManagedAdapter, "record_task_result", capture_record_task_result)
 
     first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
 
@@ -11976,9 +11957,9 @@ def test_legacy_ingested_published_result_backfills_current_head_and_context(
     assert task_after is not None and task_after["state"] == "PORTFOLIO_READY"
     task_provenance_after = json.loads(task_after["provenance_json"])
     assert task_provenance_after["probeReceipt"] == probe_receipt_before
-    assert task_provenance_after["probeReceiptDigest"] == task_provenance_before[
-        "probeReceiptDigest"
-    ]
+    assert (
+        task_provenance_after["probeReceiptDigest"] == task_provenance_before["probeReceiptDigest"]
+    )
     assert task_provenance_after["currentPublishedResult"] == {
         "stage": "PR_OPEN",
         "prKey": "a/b#9",
@@ -12127,9 +12108,9 @@ def test_invalid_published_backfill_does_not_mutate_authorized_task(tmp_path):
     managed_candidate["taskStage"] = context["taskStage"]
     task_before = managed.read_task("intent-1")
     with managed._connection() as connection:
-        result_count_before = connection.execute(
-            "SELECT COUNT(*) FROM managed_results"
-        ).fetchone()[0]
+        result_count_before = connection.execute("SELECT COUNT(*) FROM managed_results").fetchone()[
+            0
+        ]
 
     with pytest.raises(PermissionError, match="not bound to the current PR"):
         MODULE.ManagedAdapter(tmp_path, store.path).record_task_result(
@@ -12271,9 +12252,12 @@ def test_published_backfill_cannot_rollback_a_newer_concurrent_pr_head(tmp_path)
 
     assert managed.read_task("intent-1") == task_before
     with managed._connection() as connection:
-        assert connection.execute(
-            "SELECT head_sha FROM managed_prs WHERE pr_key='a/b#9'"
-        ).fetchone()["head_sha"] == concurrent_head
+        assert (
+            connection.execute("SELECT head_sha FROM managed_prs WHERE pr_key='a/b#9'").fetchone()[
+                "head_sha"
+            ]
+            == concurrent_head
+        )
         assert [
             dict(row)
             for row in connection.execute(
@@ -13178,9 +13162,7 @@ def test_implementation_context_prefers_durable_receipt_paths(monkeypatch, tmp_p
         ),
     )
 
-    context = store.task_context(
-        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
-    )
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
 
     assert context["codePaths"] == ["runtime.py"]
     assert context["reproductionReceipt"]["codePaths"] == ["runtime.py"]
@@ -13378,15 +13360,9 @@ def test_implementation_followup_without_result_uses_bounded_recovery(tmp_path):
     managed = ManagedLedger(store.path, ensure_schema=True)
     provenance = json.loads(managed.read_task("intent-1")["provenance_json"])
     result_digest = str(provenance["probeReceipt"]["resultDigest"])
-    store.record_task_result_ingested(
-        "a/b#1", digest=result_digest, stage="IMPLEMENTATION_READY"
-    )
-    store.reserve_implementation_followup(
-        thread_id="thread-1", result_digest=result_digest
-    )
-    store.commit_implementation_followup(
-        thread_id="thread-1", result_digest=result_digest
-    )
+    store.record_task_result_ingested("a/b#1", digest=result_digest, stage="IMPLEMENTATION_READY")
+    store.reserve_implementation_followup(thread_id="thread-1", result_digest=result_digest)
+    store.commit_implementation_followup(thread_id="thread-1", result_digest=result_digest)
 
     candidate = next(
         item
@@ -13432,23 +13408,15 @@ def test_new_task_result_cancels_implementation_followup_recovery(tmp_path):
     managed = ManagedLedger(store.path, ensure_schema=True)
     provenance = json.loads(managed.read_task("intent-1")["provenance_json"])
     result_digest = str(provenance["probeReceipt"]["resultDigest"])
-    store.record_task_result_ingested(
-        "a/b#1", digest=result_digest, stage="IMPLEMENTATION_READY"
-    )
-    store.reserve_implementation_followup(
-        thread_id="thread-1", result_digest=result_digest
-    )
-    store.commit_implementation_followup(
-        thread_id="thread-1", result_digest=result_digest
-    )
+    store.record_task_result_ingested("a/b#1", digest=result_digest, stage="IMPLEMENTATION_READY")
+    store.reserve_implementation_followup(thread_id="thread-1", result_digest=result_digest)
+    store.commit_implementation_followup(thread_id="thread-1", result_digest=result_digest)
     assert any(
         item["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
         for item in store.recovery_candidates(min_age_minutes=0)
     )
 
-    store.record_task_result_ingested(
-        "a/b#1", digest="implementation-result", stage="FIX_READY"
-    )
+    store.record_task_result_ingested("a/b#1", digest="implementation-result", stage="FIX_READY")
 
     assert not any(
         item["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
@@ -13663,9 +13631,7 @@ def test_final_receipt_never_falls_back_when_managed_durable_binding_disagrees(
         ),
     ],
 )
-def test_final_receipt_rejects_unsafe_reported_scope(
-    tmp_path, reported, changed, reason
-):
+def test_final_receipt_rejects_unsafe_reported_scope(tmp_path, reported, changed, reason):
     store, _worktree, result_path = _controller_commit_result(tmp_path)
     candidate = store.task_result_candidates()[0]
     value = json.loads(result_path.read_text(encoding="utf-8"))
@@ -13888,23 +13854,27 @@ def test_new_controller_review_can_restore_same_fix_ready_result(monkeypatch, tm
     monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: failed_review)
     deferred = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
     assert deferred["ok"] is True
-    assert store.task_context(
-        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
-    )["stage"] == "VALIDATION_PENDING"
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "VALIDATION_PENDING"
+    )
 
     recovered_review = dict(original_review) | {"reviewedAt": "2026-08-28T00:01:00Z"}
-    monkeypatch.setattr(
-        MODULE, "controller_review_result", lambda _root, _value: recovered_review
-    )
+    monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: recovered_review)
     recovered = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
 
     assert recovered["ok"] is True, recovered
     assert recovered["errors"] == []
     assert len(recovered["publicationRequests"]) == 1, recovered
     assert json.loads(result_path.read_text(encoding="utf-8"))["resultDigest"] == original_digest
-    assert store.task_context(
-        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
-    )["stage"] == "FIX_READY"
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "FIX_READY"
+    )
 
 
 def test_controller_policy_snapshot_satisfies_child_policy_quality(tmp_path):

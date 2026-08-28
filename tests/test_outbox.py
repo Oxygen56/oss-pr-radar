@@ -292,9 +292,7 @@ def test_feishu_retries_exact_tls_eof_with_verified_tls12(monkeypatch):
     def fake_urlopen(request, **kwargs):
         calls.append((request, kwargs))
         if len(calls) == 1:
-            raise urllib.error.URLError(
-                ssl.SSLEOFError(8, "unexpected eof while reading")
-            )
+            raise urllib.error.URLError(ssl.SSLEOFError(8, "unexpected eof while reading"))
         return Response()
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
@@ -324,9 +322,7 @@ def test_feishu_tls12_fallback_runs_only_once(monkeypatch):
 
     def fake_urlopen(_request, **kwargs):
         calls.append(kwargs)
-        raise urllib.error.URLError(
-            ssl.SSLEOFError(8, "unexpected eof while reading")
-        )
+        raise urllib.error.URLError(ssl.SSLEOFError(8, "unexpected eof while reading"))
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
 

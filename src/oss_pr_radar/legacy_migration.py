@@ -122,7 +122,9 @@ def compact_recursive_managed_history_copy(
 
     target = target.resolve()
     source = source.resolve()
-    if target == source or (target.exists() and source.exists() and os.path.samefile(target, source)):
+    if target == source or (
+        target.exists() and source.exists() and os.path.samefile(target, source)
+    ):
         raise ValueError("managed history compaction target must be a copy")
     if not target.is_file() or not source.is_file():
         raise FileNotFoundError("managed history compaction requires source and target files")
@@ -171,9 +173,7 @@ def compact_recursive_managed_history_copy(
             )
             tables[table] = tables.get(table, 0) + 1
             payload_bytes += int(row["payload_bytes"] or 0)
-        identity_digest = hashlib.sha256(
-            canonical_json(identities).encode("utf-8")
-        ).hexdigest()
+        identity_digest = hashlib.sha256(canonical_json(identities).encode("utf-8")).hexdigest()
         idempotency_key = f"managed-history-compaction:{identity_digest}"
         timestamp = observed_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
         payload = {

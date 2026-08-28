@@ -257,9 +257,7 @@ def service_status(service: str, plist_path: Path, expected: dict) -> dict:
     persisted = persisted if isinstance(persisted, dict) else {}
     runtime_state = dict(persisted)
     deployment = (
-        dict(persisted.get("deployment"))
-        if isinstance(persisted.get("deployment"), dict)
-        else {}
+        dict(persisted.get("deployment")) if isinstance(persisted.get("deployment"), dict) else {}
     )
     deployment.update(
         {

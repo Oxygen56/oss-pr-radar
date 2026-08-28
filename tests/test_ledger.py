@@ -1737,9 +1737,7 @@ def test_task_context_prefers_live_audit_verified_paths_over_scanner_plan(tmp_pa
         dedupe_key="verified-path-audit",
     )
 
-    context = store.task_context(
-        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
-    )
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
 
     assert context["codePaths"] == ["src/runtime.py"]
     with pytest.raises(LedgerError, match="does not match the result context"):
@@ -1802,9 +1800,7 @@ def test_task_context_rejects_unauthenticated_live_audit_paths(tmp_path, tamper,
     )
 
     with pytest.raises(LedgerError, match=message):
-        store.task_context(
-            issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
-        )
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
 
 
 def test_task_context_binds_audit_paths_to_exact_intent(tmp_path):
@@ -1895,9 +1891,7 @@ def test_task_context_binds_audit_paths_to_exact_intent(tmp_path):
         dedupe_key="intent-2:newer-audit",
     )
 
-    context = store.task_context(
-        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
-    )
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
 
     assert context["codePaths"] == ["src/one.py"]
     assert context["liveAudit"]["evidence"]["policy"] == {"status": "refreshed"}
@@ -2100,17 +2094,20 @@ def test_live_audit_binding_rolls_back_event_and_intent_together(tmp_path, monke
         )
 
     with store.connect() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM events WHERE event_type='AUDIT_PASS'"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='AUDIT_PASS'"
+            ).fetchone()[0]
+            == 0
+        )
         payload = json.loads(
             connection.execute(
                 "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
             ).fetchone()[0]
         )
-        stage = connection.execute(
-            "SELECT stage FROM opportunities WHERE key='a/b#1'"
-        ).fetchone()[0]
+        stage = connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+            0
+        ]
     assert "probeReceiptDigest" not in payload
     assert stage == "QUALIFIED"
 
@@ -2230,9 +2227,7 @@ def test_historical_probe_binding_reconciles_only_exact_semantics(tmp_path):
     store.record_stage(
         "a/b#1",
         "AUDIT_PASS",
-        evidence={
-            "liveAudit": {"evidence": {"repoProbeReceipt": canonical_receipt}}
-        },
+        evidence={"liveAudit": {"evidence": {"repoProbeReceipt": canonical_receipt}}},
         dedupe_key="intent-1:audit-evidence:live-audit-v1",
     )
     store.update_intent_probe_metadata(
@@ -2251,13 +2246,16 @@ def test_historical_probe_binding_reconciles_only_exact_semantics(tmp_path):
         worktree_path="/tmp/worktree",
     )
 
-    assert store.reconcile_intent_probe_audit_binding(
-        intent_id="intent-1",
-        issue_url="https://github.com/a/b/issues/1",
-        thread_id="thread-1",
-        worktree_path="/tmp/worktree",
-        expected_base_sha=base_sha,
-    ) is True
+    assert (
+        store.reconcile_intent_probe_audit_binding(
+            intent_id="intent-1",
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            worktree_path="/tmp/worktree",
+            expected_base_sha=base_sha,
+        )
+        is True
+    )
     assert store.audited_probe_code_paths(
         intent_id="intent-1",
         issue_url="https://github.com/a/b/issues/1",
@@ -2299,13 +2297,16 @@ def test_historical_probe_binding_preserves_unprefixed_exact_digest(tmp_path):
         worktree_path="/tmp/worktree",
     )
 
-    assert store.reconcile_intent_probe_audit_binding(
-        intent_id="intent-1",
-        issue_url="https://github.com/a/b/issues/1",
-        thread_id="thread-1",
-        worktree_path="/tmp/worktree",
-        expected_base_sha=base_sha,
-    ) is False
+    assert (
+        store.reconcile_intent_probe_audit_binding(
+            intent_id="intent-1",
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            worktree_path="/tmp/worktree",
+            expected_base_sha=base_sha,
+        )
+        is False
+    )
 
 
 def test_historical_probe_binding_refuses_different_paths(tmp_path):
@@ -2876,9 +2877,7 @@ def test_exhausted_dispatched_recovery_is_queryable_and_releases_wip(tmp_path):
     assert store.claim("intent-2", "worker", max_active=1) is not None
 
 
-def test_reviewed_implementation_recovery_is_parked_rearmable_and_auditable(
-    tmp_path, monkeypatch
-):
+def test_reviewed_implementation_recovery_is_parked_rearmable_and_auditable(tmp_path, monkeypatch):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())
     store.claim("intent-1", "worker")
@@ -4122,9 +4121,7 @@ def test_stale_validation_followup_requires_result_from_same_thread(tmp_path):
     assert store.stale_validation_followups(min_age_minutes=90)
     assert store.recovery_candidates(min_age_minutes=0)
 
-    store.record_task_result_ingested(
-        "a/b#1", digest="unattributed-result", stage="PR_OPEN"
-    )
+    store.record_task_result_ingested("a/b#1", digest="unattributed-result", stage="PR_OPEN")
     assert store.stale_validation_followups(min_age_minutes=90)
     assert store.recovery_candidates(min_age_minutes=0)
 
@@ -5823,9 +5820,7 @@ def test_publication_work_items_skip_opportunity_that_is_no_longer_submit_ready(
     store = RadarLedger(tmp_path / "stale-stage.sqlite3")
     insert_publication_preflight(store)
     with store.connect() as connection:
-        connection.execute(
-            "UPDATE opportunities SET stage='VALIDATION_PENDING' WHERE key='a/b#1'"
-        )
+        connection.execute("UPDATE opportunities SET stage='VALIDATION_PENDING' WHERE key='a/b#1'")
 
     assert store.publication_work_items() == []
 

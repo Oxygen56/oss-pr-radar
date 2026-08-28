@@ -424,9 +424,7 @@ def test_review_retry_stops_after_three_failures_for_the_same_result(tmp_path, m
         )
         assert outcome["errors"][0]["key"] == "owner/repo#1"
         cursor = json.loads(
-            (control / "state" / "independent_review_cursor.json").read_text(
-                encoding="utf-8"
-            )
+            (control / "state" / "independent_review_cursor.json").read_text(encoding="utf-8")
         )
         assert cursor["attempts"] == expected
 
@@ -454,8 +452,8 @@ def test_review_retry_counts_survive_alternating_candidate_failures(tmp_path, mo
     control, _worktree_one, result_one, candidate_one, _base_one, _head_one = prepared_task(
         tmp_path / "one"
     )
-    _control_two, _worktree_two, result_two, candidate_two, _base_two, _head_two = (
-        prepared_task(tmp_path / "two")
+    _control_two, _worktree_two, result_two, candidate_two, _base_two, _head_two = prepared_task(
+        tmp_path / "two"
     )
     second_value = json.loads(result_two.read_text(encoding="utf-8"))
     second_value.update(

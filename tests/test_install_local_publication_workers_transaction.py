@@ -577,7 +577,9 @@ def test_worker_status_uses_complete_runtime_state_without_cross_worker_false_al
     domain = "gui/4242"
     services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
     outputs = {service: "runs = 1\nlast exit code = 0\n" for service in services}
-    monkeypatch.setattr(INSTALL, "launchctl", FakeLaunchctl(domain, services, print_outputs=outputs))
+    monkeypatch.setattr(
+        INSTALL, "launchctl", FakeLaunchctl(domain, services, print_outputs=outputs)
+    )
     monkeypatch.setattr(
         INSTALL,
         "active_release_evidence",
