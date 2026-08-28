@@ -155,6 +155,8 @@ def _active_cutover_names(root: Path, candidate_names: set[str]) -> set[str]:
     retention pass from invalidating an older signed acceptance artifact.
     """
 
+    if not candidate_names:
+        return set()
     names: set[str] = set()
     sources: list[Path] = []
     authorization = root / "state" / "operational-authorization.json"
@@ -209,9 +211,7 @@ def plan_runtime_retention(
     ordered = sorted(all_dirs, key=_latest_mtime, reverse=True)
     keep_names = {path.name for path in ordered[:keep_latest]}
     active_tokens = _active_release_tokens(root)
-    active_names = _active_cutover_names(root, {path.name for path in all_dirs})
-    candidates: list[dict[str, Any]] = []
-    protected: list[dict[str, Any]] = []
+    preliminary: list[dict[str, Any]] = []
     for path in ordered:
         age = max(0.0, current - _latest_mtime(path))
         reasons: list[str] = []
@@ -219,8 +219,6 @@ def plan_runtime_retention(
             reasons.append("newest_runs")
         if any(token in path.name for token in active_tokens):
             reasons.append("active_release")
-        if path.name in active_names:
-            reasons.append("active_evidence_reference")
         if age < min_age_seconds:
             reasons.append("too_recent")
         envelope = path / "stage6-public-envelope.json"
@@ -237,10 +235,18 @@ def plan_runtime_retention(
             .replace("+00:00", "Z"),
             "reasons": reasons,
         }
-        if reasons:
-            protected.append(item)
-        else:
-            candidates.append(item)
+        preliminary.append(item)
+    # Only scan Stage 7 when a directory has already passed the cheap safety
+    # checks above.  In the normal warning window all recent runs therefore
+    # avoid re-reading the historical evidence tree every 20 seconds.
+    reference_names = {str(item["name"]) for item in preliminary if not item["reasons"]}
+    active_names = _active_cutover_names(root, reference_names)
+    candidates: list[dict[str, Any]] = []
+    protected: list[dict[str, Any]] = []
+    for item in preliminary:
+        if item["name"] in active_names:
+            item["reasons"].append("active_evidence_reference")
+        (protected if item["reasons"] else candidates).append(item)
     if max_candidates is not None:
         if max_candidates < 0:
             raise ValueError("max_candidates must be non-negative")
