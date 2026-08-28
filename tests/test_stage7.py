@@ -1709,6 +1709,28 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     assert check(runtime, home=tmp_path / "home", strict=False)["ok"] is True
 
 
+def test_automation_commands_follow_current_release_pointer(tmp_path):
+    runtime = _runtime(tmp_path)
+    contracts = build_contracts(runtime)
+    stable = str(runtime.resolve() / "current-release")
+    active = str((runtime / "current-release").resolve())
+
+    heartbeat = contracts["heartbeat"]
+    daily = contracts["dailyWarRoom"]
+    assert heartbeat["releaseCommand"][1] == f"{stable}/scripts/controller_cycle.py"
+    assert heartbeat["releaseCommand"][-1] == stable
+    assert daily["releaseCommand"][1] == f"{stable}/scripts/daily_war_room_cycle.py"
+    assert active not in heartbeat["releaseCommand"][1]
+    assert active not in daily["releaseCommand"][1]
+    for spec in (heartbeat, daily):
+        assert spec["releaseBinding"] == {
+            "kind": "active-release-pointer",
+            "path": stable,
+            "releaseId": contracts["release"]["releaseId"],
+            "manifestSha256": contracts["release"]["manifestSha256"],
+        }
+
+
 def test_stage7_prepare_cli_rejects_live_states(tmp_path):
     script = Path(__file__).parents[1] / "scripts" / "stage7_cutover.py"
     result = subprocess.run(

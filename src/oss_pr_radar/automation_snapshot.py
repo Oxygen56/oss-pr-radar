@@ -203,6 +203,9 @@ def _automation_entry(
         "updatedAt": section["updated_at"],
         "targetThreadId": str(expected["targetThreadId"]),
         "releaseCommand": release_command,
+        # Keep the concrete release identity in the signed snapshot while the
+        # command itself follows the stable current-release pointer.
+        "releaseBinding": expected.get("releaseBinding"),
         "runtimeRoot": str(runtime_root.resolve()),
         "promptTemplate": AUTOMATION_PROMPT_TEMPLATE,
         "promptDigest": prompt_digest,

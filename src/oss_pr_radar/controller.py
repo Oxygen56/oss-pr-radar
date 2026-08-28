@@ -485,15 +485,11 @@ def run_locked_controller_cycle(
 ) -> dict[str, Any]:
     if wait_existing and not report_on_complete:
         raise ValueError("joining a controller cycle requires durable reporting")
-    command_digest = _controller_command_digest(
-        code_root=code_root,
-        allow_unreleased_code=allow_unreleased_code,
-        notify=notify,
-        project_id=project_id,
-    )
-    lock_path = root.resolve() / "state" / "controller-cycle.lock"
+    root = root.resolve()
+    lock_path = root / "state" / "controller-cycle.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as lock:
+        joined_existing = False
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -526,6 +522,38 @@ def run_locked_controller_cycle(
                             ],
                         }
                     time.sleep(0.25)
+            joined_existing = True
+        # Resolve the active release only after acquiring the shared lock. A
+        # stable automation command uses ``current-release``; this pins the
+        # cycle to one immutable release and prevents an old fixed-release
+        # invocation from reusing a completion marker from another release.
+        binding = None
+        binding_error: Exception | None = None
+        try:
+            binding = bind_runtime(
+                root,
+                code_root=code_root,
+                allow_unreleased_code=allow_unreleased_code,
+            )
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            binding_error = exc
+            if not report_on_complete:
+                raise
+        bound_code_root = binding.code_root if binding is not None else code_root
+        command_digest = _controller_command_digest(
+            code_root=bound_code_root,
+            allow_unreleased_code=allow_unreleased_code,
+            notify=notify,
+            project_id=project_id,
+        )
+        # A failed release preflight must not reuse an old marker. Continue to
+        # the durable failure-reporting path below instead.
+        can_reuse_marker = binding_error is None
+        if joined_existing and not can_reuse_marker:
+            # The waiter joined an existing process but the caller's release
+            # path is stale/invalid. Do not return that process's result.
+            pass
+        elif joined_existing:
             completed_marker = _read_controller_lock_marker(lock)
             existing = _completed_controller_result(
                 root,
@@ -555,24 +583,25 @@ def run_locked_controller_cycle(
                 }
             return existing
         if wait_existing:
-            previous_marker = _read_controller_lock_marker(lock)
-            previous = _completed_controller_result(
-                root,
-                previous_marker,
-                command_digest=command_digest,
-                max_age_seconds=CONTROLLER_COMPLETED_REUSE_SECONDS,
-            )
-            if previous is not None:
-                return previous
-            recovered = _recover_finished_running_marker(
-                root,
-                previous_marker,
-                command_digest=command_digest,
-            )
-            if recovered is not None:
-                result, completed_marker = recovered
-                _write_controller_lock_marker(lock, completed_marker)
-                return result
+            if can_reuse_marker:
+                previous_marker = _read_controller_lock_marker(lock)
+                previous = _completed_controller_result(
+                    root,
+                    previous_marker,
+                    command_digest=command_digest,
+                    max_age_seconds=CONTROLLER_COMPLETED_REUSE_SECONDS,
+                )
+                if previous is not None:
+                    return previous
+                recovered = _recover_finished_running_marker(
+                    root,
+                    previous_marker,
+                    command_digest=command_digest,
+                )
+                if recovered is not None:
+                    result, completed_marker = recovered
+                    _write_controller_lock_marker(lock, completed_marker)
+                    return result
         started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         run_id = secrets.token_hex(16)
         if report_on_complete:
@@ -586,24 +615,38 @@ def run_locked_controller_cycle(
                     "startedAt": started_at,
                 },
             )
-        try:
-            result = controller_cycle(
-                root,
-                code_root=code_root,
-                allow_unreleased_code=allow_unreleased_code,
-                runner=runner,
-                notify=notify,
-                project_id=project_id,
-            )
-        except RuntimeError as exc:
-            if not report_on_complete:
-                raise
+        if binding_error is not None:
             result = {
                 "ok": False,
                 "checkedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-                "blocked": "operational authorization required",
-                "error": str(exc)[:400],
+                "blocked": "release binding required",
+                "error": str(binding_error)[:400],
             }
+        else:
+            try:
+                result = controller_cycle(
+                    root,
+                    code_root=bound_code_root,
+                    allow_unreleased_code=allow_unreleased_code,
+                    runner=runner,
+                    notify=notify,
+                    project_id=project_id,
+                )
+            except RuntimeError as exc:
+                if not report_on_complete:
+                    raise
+                error = str(exc)[:400]
+                blocked = (
+                    "operational authorization required"
+                    if "operational authorization" in error.lower()
+                    else "controller startup failed"
+                )
+                result = {
+                    "ok": False,
+                    "checkedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    "blocked": blocked,
+                    "error": error,
+                }
         if report_on_complete:
             result = {**result, "controllerRunId": run_id}
             report_path = write_controller_report(root, result)

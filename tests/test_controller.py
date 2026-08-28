@@ -443,6 +443,64 @@ def test_controller_cycle_lock_suppresses_overlap(tmp_path):
     assert result["summary"]["action"] == "controller_already_running"
 
 
+def test_controller_rejects_stale_fixed_release_before_reusing_marker(tmp_path):
+    """A historical release path cannot replay a recent result after cutover."""
+
+    from test_stage7 import _runtime
+
+    runtime = _runtime(tmp_path)
+    stale_release = runtime / "releases" / "old-release"
+    stale_release.mkdir()
+    stale_digest = _controller_command_digest(
+        code_root=stale_release,
+        allow_unreleased_code=False,
+        notify=False,
+        project_id="github",
+    )
+    old_run_id = "stale-release-run"
+    checked_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    report_path = write_controller_report(
+        runtime,
+        {
+            "ok": True,
+            "checkedAt": checked_at,
+            "controllerRunId": old_run_id,
+            "summary": {"action": "old-release"},
+        },
+    )
+    (runtime / "state" / "controller-cycle.lock").write_text(
+        json.dumps(
+            {
+                "schema": CONTROLLER_LOCK_MARKER_SCHEMA,
+                "state": "COMPLETED",
+                "runId": old_run_id,
+                "commandDigest": stale_digest,
+                "startedAt": checked_at,
+                "completedAt": checked_at,
+                "reportCheckedAt": checked_at,
+                "reportSha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_locked_controller_cycle(
+        runtime,
+        code_root=stale_release,
+        notify=False,
+        wait_existing=True,
+        report_on_complete=True,
+        runner=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("stale release must fail before running a cycle")
+        ),
+    )
+
+    assert result["ok"] is False
+    assert result["blocked"] == "release binding required"
+    assert "active immutable release" in result["error"]
+    assert result["controllerRunId"] != old_run_id
+
+
 def test_controller_cycle_can_join_existing_run_after_tool_context_loss(tmp_path):
     acquired = threading.Event()
     completed: list[dict] = []

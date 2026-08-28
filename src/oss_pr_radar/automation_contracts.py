@@ -46,7 +46,13 @@ def build_contracts(runtime_root: Path, *, home: Path | None = None) -> dict[str
     binding = bind_runtime(runtime_root)
     root = runtime_root.resolve()
     python = str(runtime_python(root))
+    # The automation itself must never pin an immutable release directory.
+    # `current-release` is the stable, runtime-owned pointer; the entrypoint
+    # resolves and verifies it before importing any release code.  Other
+    # cutover/worker commands intentionally remain pinned to the verified
+    # release represented by ``binding.code_root``.
     code = str(binding.code_root)
+    automation_code = str(root / "current-release")
     workers = {
         spec["Label"]: {
             "command": spec["ProgramArguments"],
@@ -79,12 +85,18 @@ def build_contracts(runtime_root: Path, *, home: Path | None = None) -> dict[str
             "targetThreadId": HEARTBEAT_TARGET_THREAD_ID,
             "releaseCommand": [
                 python,
-                code + "/scripts/controller_cycle.py",
+                automation_code + "/scripts/controller_cycle.py",
                 "--root",
                 str(root),
                 "--code-root",
-                code,
+                automation_code,
             ],
+            "releaseBinding": {
+                "kind": "active-release-pointer",
+                "path": automation_code,
+                "releaseId": binding.release_id,
+                "manifestSha256": binding.release.get("manifestSha256"),
+            },
             "externalActionsOwnedBy": "controller",
             "promptPolicy": AUTOMATION_PROMPT_POLICY,
             "workerEnsureCommand": [
@@ -105,11 +117,17 @@ def build_contracts(runtime_root: Path, *, home: Path | None = None) -> dict[str
             "targetThreadId": DAILY_WAR_ROOM_TARGET_THREAD_ID,
             "releaseCommand": [
                 python,
-                code + "/scripts/daily_war_room_cycle.py",
+                automation_code + "/scripts/daily_war_room_cycle.py",
                 "--runtime-root",
                 str(root),
                 "--send",
             ],
+            "releaseBinding": {
+                "kind": "active-release-pointer",
+                "path": automation_code,
+                "releaseId": binding.release_id,
+                "manifestSha256": binding.release.get("manifestSha256"),
+            },
             "sendFlag": "--send",
             "artifactRoot": str(root / "reports" / "war-room" / "daily"),
             "promptPolicy": AUTOMATION_PROMPT_POLICY,
