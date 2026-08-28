@@ -14756,6 +14756,35 @@
     ],
     "why": "The issue clearly identifies a root cause: Server.call_tool() discards structured jsonschema.ValidationError fields, leaving only a free-text message. The suggested fix is concrete and actionable: forward e.validator, e.schema_path, and e.json_path into a structured data field in the error result. This is a local fix in the SDK's error handling, with a clear validation path via unit tests and a provided repro offer."
   },
+  "43b85cbfd8a56a96ce7346ad4db4256d41eb69ab954667b06ca89ec2462e020a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "lib/llm/src/protocols/openai/chat_completions/delta.rs",
+      "lib/llm/src/protocols/openai/common_ext.rs",
+      "dynamo-protocols response struct for prompt_logprobs field"
+    ],
+    "risks": [
+      "Protocol change may require a dynamo-protocols version bump and could affect existing clients.",
+      "Need to ensure nvext.prompt_logprobs remains backward compatible for RL clients."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sends top-level prompt_logprobs without nvext and asserts response-root prompt_logprobs is present and matches usage.prompt_tokens length.",
+      "Run existing Rust unit tests for chat completions and the targeted package."
+    ],
+    "unknowns": [
+      "Exact maintainer preference on whether to add field to NvCreateChatCompletionResponse or bump protocols."
+    ],
+    "why": "The issue provides a clear root cause: the Rust frontend gates prompt_logprobs behind nvext.extra_fields, while native vLLM returns it at the response root. Reproduction steps and expected/actual outputs are supplied, and the fix is localized to lib/llm with a concrete validation path."
+  },
   "43d647f60c1ef3bd1d6a5bc9e68863926ed661397aa99738e281999ad80aaf99": {
     "confidence": 0.85,
     "contradictions": [
@@ -16889,6 +16918,30 @@
       "Maintainer preference on the fix approach (e.g., whether to change cache validation or add a separate check)."
     ],
     "why": "The issue identifies a concrete bug in the cache-first fast path of maybe_download_model() in hf_diffusers_utils.py, with a clear root cause (metadata-only snapshot treated as complete) and a public reproduction. However, the deterministic gate requires HUMAN_REVIEW, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference is also unconfirmed."
+  },
+  "4cc3581898c2d8b3262a33c6a9e83f692ec8749cd44f5a84405ca30a2584ae8b": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "packages/nvidia_nat_core/src/nat/builder/function_info.py: add arg_count==0 branch to wrap zero-arg functions with an empty Pydantic model shim"
+    ],
+    "risks": [
+      "Potential impact on framework adapters that read the input schema; need to ensure empty schema is handled correctly on the wire."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that calls FunctionInfo.from_fn with a zero-argument async function and asserts it succeeds and produces an empty input schema; run the existing test suite for the nat.builder module."
+    ],
+    "unknowns": [
+      "Maintainer preference on the exact empty schema representation; no maintainer approval yet, but this is normal review uncertainty."
+    ],
+    "why": "The issue provides a clear root cause: FunctionInfo.create lacks an arg_count==0 branch, causing zero-argument functions to fail validation. A minimal reproducible example and traceback are supplied, and the suggested fix mirrors existing multi-argument handling. This is a concrete, actionable bug fix in an agent infrastructure repository."
   },
   "4ccce55994546c9358c82789043ac269082b418084867317e27167185f9da1c4": {
     "confidence": 0.7,
@@ -31398,6 +31451,31 @@
     ],
     "why": "Issue reports a high-impact performance bug with clear repro signals, but the deterministic gate is HUMAN_REVIEW and the open PR #21068 may partially address it. The root cause is not fully isolated, and maintainer confirmation is needed before starting work."
   },
+  "88b3dd6259fc9bdc82bbdca61c9a9715c7ae4cc5eee45676eb1db8bc71628660": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "auth_checks.py",
+      "key update logic in proxy"
+    ],
+    "risks": [
+      "Potential behavior change in budget enforcement; need to ensure backward compatibility with existing budget_limits semantics."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by creating key with budget, updating max_budget/budget_duration via /key/update, then verifying budget_limits is updated or cleared and no 429 occurs."
+    ],
+    "unknowns": [
+      "Exact maintainer preference on whether to update or clear budget_limits; but this is a design choice, not a blocker."
+    ],
+    "why": "Issue provides a clear root cause: updating max_budget/budget_duration does not propagate to existing budget_limits array, causing auth to enforce stale limits. Reproduction steps and expected behavior are concrete, and code anchors are identified."
+  },
   "88c096b7f8c22009704716bddb4b16dfff510e656b430d130d02d031e27179e7": {
     "confidence": 0.7,
     "contradictions": [
@@ -36422,6 +36500,34 @@
       "Maintainer preference on which alignment option to choose"
     ],
     "why": "Issue identifies a clear correctness bug from inconsistent inference_mode usage, with reproduction and maintainer discussion. However, open PR lookup timed out and related issue audit failed, so duplicate/competing work cannot be excluded. Maintainer comment asks for design alignment, indicating need for maintainer decision."
+  },
+  "9fef989f0b9fa443256d13371cd59e9c3bc9c431d9b6b1c8c1e6586b9ea35399": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Update dependency constraints in langgraph-api or langgraph-cli to require a jsonschema-rs version compatible with Python 3.14",
+      "Add regression test for Python 3.14 installation"
+    ],
+    "risks": [
+      "Potential dependency conflicts with other packages requiring older jsonschema-rs",
+      "Maintainer may prefer a different fix approach (e.g., patching PyO3 build) but that is normal implementation choice"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run `uv sync --upgrade` on Python 3.14 with the updated constraints to verify successful build",
+      "Add a CI job that installs the package on Python 3.14 and runs a minimal schema validation"
+    ],
+    "unknowns": [
+      "Exact maintainer preference for dependency pinning vs. patching",
+      "Whether the issue is already being addressed in a newer langgraph-api release"
+    ],
+    "why": "Issue provides a clear reproduction (uv sync --upgrade) and a precise root cause: jsonschema-rs 0.29.1 depends on PyO3 0.23.4 which does not support Python 3.14. The fix is to update the dependency constraint or pin a compatible version, with a regression test ensuring Python 3.14 compatibility."
   },
   "a08005de470f5ffd226c49d2956600f182b092332c0fd1db663a9b5cb057ae18": {
     "confidence": 0.7,
@@ -57511,6 +57617,41 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly describes a silent correctness bug in Valkey vector store reset, with root cause and reproduction. However, an existing PR #6996 directly addresses the same issue with a test and is technically complete, but is closed and requires human review to determine if it can be merged or if a new PR is needed."
+  },
+  "f70d31b8f5ca929f4561a68722e84a61d419520c3606e87f351768b7a301bf3a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue claims no duplicates, but related issue #54153 shares stack signatures; need to verify if it is a true duplicate."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "MoE backend selection logic",
+      "FlashInfer TRTLLM kernel integration",
+      "FP8 block-scale MoE handling"
+    ],
+    "risks": [
+      "Potential duplicate issue #54153 may cover similar root cause; need to confirm distinctness.",
+      "Fix may require specific hardware (GB200) and FlashInfer version, limiting testability.",
+      "Numerical differences may be due to floating-point variations; need tolerance thresholds."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl command with default backend and verify inflated logprobs; switch to deep_gemm and verify normal logprobs.",
+      "Compute perplexity on a fixed prefix with both backends and assert significant drop with deep_gemm.",
+      "Add a regression test that checks next-token probabilities for a known prompt to ensure no Swedish tokens dominate in English text."
+    ],
+    "unknowns": [
+      "Whether the issue is already fixed in a newer FlashInfer version (comment suggests investigating >=0.6.18).",
+      "Exact root cause in FlashInfer TRTLLM kernel vs. vLLM integration."
+    ],
+    "why": "The issue provides a concrete, reproducible bug in MoE backend selection causing incorrect output and inflated logprobs, with a clear comparison between FlashInfer TRTLLM and deep_gemm backends. It includes a curl command and expected outputs, establishing a root cause in the MoE kernel path and a validation path via perplexity or logprob comparison."
   },
   "f719b39818e0400ab763ab4736bc5722f8bc334c6e823723bdb1fbb7e74928bc": {
     "confidence": 0.85,
