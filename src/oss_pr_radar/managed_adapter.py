@@ -1293,11 +1293,28 @@ class ManagedAdapter:
 
     def record_followup(self, state: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
         ledger = self.ledger
+        connection = ledger._connection()
+        try:
+            managed_keys = {
+                str(row["pr_key"])
+                for row in connection.execute("SELECT pr_key FROM managed_prs").fetchall()
+            }
+        finally:
+            connection.close()
+
         recorded = 0
+        ignored: list[dict[str, str]] = []
         for item in state.get("items") or []:
             if not isinstance(item, dict) or not item.get("key"):
                 continue
             pr_key = str(item["key"])
+            if pr_key not in managed_keys:
+                # A follow-up snapshot is an observation channel, not an
+                # admission path.  New PRs must enter via an explicit existing
+                # PR import or a publication receipt before this path may
+                # project CI and maintainer evidence onto them.
+                ignored.append({"key": pr_key, "reason": "FOLLOWUP_KEY_NOT_MANAGED"})
+                continue
             owner_repo, number_text = pr_key.rsplit("#", 1)
             owner, repo = owner_repo.split("/", 1)
             head_sha = str(item.get("headSha") or "")
@@ -1397,7 +1414,19 @@ class ManagedAdapter:
                 payload={"actions": item.get("actions"), "taskActions": item.get("taskActions")},
             )
             recorded += 1
-        return {"ok": True, "recorded": recorded}
+        return {
+            "ok": True,
+            "recorded": recorded,
+            "added": [],
+            "ignored": ignored,
+            "delta": {
+                "managedPrsBefore": len(managed_keys),
+                "managedPrsAfter": len(managed_keys),
+                "added": 0,
+                "updated": recorded,
+                "ignored": len(ignored),
+            },
+        }
 
     def projection(self) -> dict[str, Any]:
         return export_projection(self.path)

@@ -35,7 +35,7 @@ from oss_pr_radar.dispatch import (
 from oss_pr_radar.independent_review import REVIEW_SCHEMA, _receipt_path, _source_digest
 from oss_pr_radar.ledger import LedgerError, RadarLedger
 from oss_pr_radar.local_publication import slow_advance_once
-from oss_pr_radar.managed_lifecycle import ManagedLedger
+from oss_pr_radar.managed_lifecycle import ManagedLedger, import_open_pr_observations
 from oss_pr_radar.metrics import QUALITY_FIELDS
 from oss_pr_radar.policy import SCANNER_DECISION_REVISION, decision_contract_digest
 from oss_pr_radar.util import iso_z, parse_time, sha256_json, sha256_text
@@ -3047,6 +3047,12 @@ def test_local_refresh_projects_newer_live_snapshot_into_managed_and_legacy_tabl
     monkeypatch, tmp_path
 ):
     store, _worktree, head_sha, pr_url = _published_followup_store(tmp_path)
+    # Follow-up observations may update only an explicitly admitted managed PR.
+    import_open_pr_observations(
+        store.path,
+        [{"url": pr_url, "headSha": head_sha, "state": "OPEN"}],
+        source="test-explicit-admission",
+    )
     publication_time = datetime.now(UTC)
     cloud_time = iso_z(publication_time - timedelta(hours=1))
     live_time = iso_z(publication_time + timedelta(minutes=1))

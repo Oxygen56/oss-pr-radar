@@ -2712,6 +2712,9 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
                     "generatedAt": generated_at,
                     "ageMinutes": age_minutes,
                     "managedRecorded": managed_followup.get("recorded", 0),
+                    "managedAdded": managed_followup.get("added", []),
+                    "managedIgnored": managed_followup.get("ignored", []),
+                    "managedDelta": managed_followup.get("delta", {}),
                 } | store.import_pr_followups(followup)
         else:
             followup_import = {"status": "awaiting_v3", "version": followup.get("version")}
@@ -16463,6 +16466,9 @@ def _refresh_followup_projections(
             "snapshotDigest": state.get("digest"),
             "covered": len(state.get("items") or []),
             "managedRecorded": managed.get("recorded", 0),
+            "managedAdded": managed.get("added", []),
+            "managedIgnored": managed.get("ignored", []),
+            "managedDelta": managed.get("delta", {}),
             "managedReconciled": reconciliation.get("total", 0),
             "managedExactReads": reconciliation.get("exactReads", 0),
             "legacyMatched": legacy.get("matched", 0),
