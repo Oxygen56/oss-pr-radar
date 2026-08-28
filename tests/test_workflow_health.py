@@ -157,6 +157,130 @@ def test_component_health_checks_each_required_job_below_green_run(monkeypatch):
     assert result["issues"] == []
 
 
+def test_component_health_ignores_newer_cancelled_run(monkeypatch):
+    workflow_runs = [
+        {
+            "id": 8,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "cancelled",
+            "created_at": "2026-08-04T01:40:00Z",
+            "updated_at": "2026-08-04T01:50:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/8",
+        },
+        {
+            "id": 7,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-08-04T01:20:00Z",
+            "updated_at": "2026-08-04T01:30:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/7",
+        },
+    ]
+    requested = []
+
+    def fake_json(path):
+        requested.append(path)
+        return {
+            "jobs": [
+                {"name": name, "conclusion": "success"}
+                for name in (
+                    "scan",
+                    "pr-followup",
+                    "build-state",
+                    "persist-pending",
+                    "notify",
+                    "persist-receipt",
+                )
+            ]
+        }
+
+    monkeypatch.setattr(MODULE, "github_json", fake_json)
+
+    result = MODULE.workflow_component_health("a/b", workflow_runs)
+
+    assert requested == ["repos/a/b/actions/runs/7/jobs?per_page=100"]
+    assert result["runId"] == 7
+    assert result["healthy"] is True
+
+
+def test_component_health_cancelled_run_does_not_hide_previous_failure(monkeypatch):
+    workflow_runs = [
+        {
+            "id": 9,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "cancelled",
+            "created_at": "2026-08-04T01:40:00Z",
+            "updated_at": "2026-08-04T01:50:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/9",
+        },
+        {
+            "id": 8,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "failure",
+            "created_at": "2026-08-04T01:20:00Z",
+            "updated_at": "2026-08-04T01:30:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/8",
+        },
+    ]
+    monkeypatch.setattr(
+        MODULE,
+        "github_json",
+        lambda path: {
+            "jobs": [
+                {"name": "scan", "conclusion": "failure"},
+                {"name": "pr-followup", "conclusion": "success"},
+                {"name": "build-state", "conclusion": "success"},
+                {"name": "persist-pending", "conclusion": "success"},
+                {"name": "notify", "conclusion": "success"},
+                {"name": "persist-receipt", "conclusion": "success"},
+            ]
+        }
+        if path == "repos/a/b/actions/runs/8/jobs?per_page=100"
+        else pytest.fail(path),
+    )
+
+    result = MODULE.workflow_component_health("a/b", workflow_runs)
+
+    assert result["runId"] == 8
+    assert result["healthy"] is False
+    assert result["issues"] == ["SCAN_JOB_DEGRADED"]
+
+
+def test_only_cancelled_run_provides_no_success_evidence():
+    workflow_runs = [
+        {
+            "id": 9,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "cancelled",
+            "created_at": "2026-08-04T01:40:00Z",
+            "updated_at": "2026-08-04T01:50:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/9",
+        }
+    ]
+
+    component = MODULE.workflow_component_health("a/b", workflow_runs)
+    freshness = MODULE.effective_scan_freshness(
+        workflow_runs,
+        now=NOW,
+        component_health=component,
+    )
+    schedule = MODULE.health(workflow_runs, now=NOW)
+
+    assert component == {
+        "assessed": False,
+        "healthy": True,
+        "issues": [],
+        "scanSucceeded": None,
+    }
+    assert freshness["fresh"] is False
+    assert schedule["healthy"] is False
+
+
 def test_component_health_exposes_followup_failure_without_discarding_fresh_scan(
     monkeypatch,
 ):

@@ -69,6 +69,36 @@ def _launch_status(label: str) -> dict[str, Any]:
     }
 
 
+def _settle_launch_status(
+    label: str,
+    initial: dict[str, Any],
+    *,
+    attempts: int = 12,
+    delay: float = 5.0,
+    status_reader: Any | None = None,
+    sleeper: Any | None = None,
+) -> dict[str, Any]:
+    """Wait for a replacement run before judging its predecessor's failed exit."""
+
+    reader = status_reader or _launch_status
+    wait = sleeper or time.sleep
+    observed = initial
+    for _ in range(max(0, attempts)):
+        if not (
+            observed.get("available")
+            and observed.get("state") == "running"
+            and observed.get("lastExitCode") != 0
+        ):
+            break
+        wait(max(0.0, delay))
+        observed = reader(label)
+    return observed
+
+
+def _launch_healthy(launch: dict[str, Any]) -> bool:
+    return bool(launch.get("available") and launch.get("lastExitCode") == 0)
+
+
 def _plist_health(path: Path, *, root: Path, namespace: str) -> dict[str, Any]:
     lane = LANES[namespace]
     result: dict[str, Any] = {
@@ -96,6 +126,7 @@ def _plist_health(path: Path, *, root: Path, namespace: str) -> dict[str, Any]:
     worker_path = code_root / "scripts" / str(lane["worker"])
     worker_argument = Path(arguments[1]).absolute() if len(arguments) > 1 else None
     release_id = str(manifest.get("releaseId") or "")
+    launch = _settle_launch_status(str(lane["label"]), _launch_status(str(lane["label"])))
     result.update(
         {
             "observedLabel": value.get("Label"),
@@ -109,7 +140,7 @@ def _plist_health(path: Path, *, root: Path, namespace: str) -> dict[str, Any]:
                 and worker_argument == worker_path
                 and runtime_argument == root
             ),
-            "launch": _launch_status(str(lane["label"])),
+            "launch": launch,
         }
     )
     return result
@@ -276,12 +307,11 @@ def audit(root: Path, *, home: Path | None = None, now: float | None = None) -> 
         lane_health[namespace] = {
             "healthy": bool(
                 plist.get("bindingOk")
-                and launch.get("available")
-                and launch.get("lastExitCode") == 0
+                and _launch_healthy(launch)
                 and database.get("healthy")
             ),
             "bindingOk": bool(plist.get("bindingOk")),
-            "launchHealthy": bool(launch.get("available") and launch.get("lastExitCode") == 0),
+            "launchHealthy": _launch_healthy(launch),
             "databaseHealthy": bool(database.get("healthy")),
             "releaseId": plist.get("releaseId"),
         }

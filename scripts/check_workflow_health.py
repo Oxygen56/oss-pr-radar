@@ -70,6 +70,7 @@ def workflow_component_health(repo: str, workflow_runs: list[dict]) -> dict:
         for item in workflow_runs
         if item.get("event") in _RELEVANT_EVENTS
         and item.get("status") == "completed"
+        and item.get("conclusion") != "cancelled"
         and item.get("id")
         and (item.get("updated_at") or item.get("created_at"))
     ]

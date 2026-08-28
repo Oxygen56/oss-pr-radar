@@ -125,3 +125,58 @@ def test_audit_allows_each_lane_to_use_its_own_verified_release(monkeypatch, tmp
     assert result["healthy"] is True
     assert result["lanes"]["agentscope"]["releaseId"] == "agentscope-release"
     assert result["lanes"]["nanobot"]["releaseId"] == "nanobot-release"
+
+
+def test_running_lane_waits_for_replacement_success():
+    statuses = [{"available": True, "state": "not running", "lastExitCode": 0}]
+    delays = []
+
+    result = MODULE._settle_launch_status(
+        "lane",
+        {"available": True, "state": "running", "lastExitCode": 1},
+        attempts=2,
+        delay=0.25,
+        status_reader=lambda _label: statuses.pop(0),
+        sleeper=delays.append,
+    )
+
+    assert MODULE._launch_healthy(result) is True
+    assert delays == [0.25]
+
+
+def test_running_lane_stays_unhealthy_when_replacement_does_not_settle():
+    running = {"available": True, "state": "running", "lastExitCode": 1}
+
+    result = MODULE._settle_launch_status(
+        "lane",
+        running,
+        attempts=2,
+        delay=0,
+        status_reader=lambda _label: running,
+        sleeper=lambda _delay: None,
+    )
+
+    assert MODULE._launch_healthy(result) is False
+
+
+def test_running_lane_keeps_replacement_failure_unhealthy():
+    result = MODULE._settle_launch_status(
+        "lane",
+        {"available": True, "state": "running", "lastExitCode": 1},
+        attempts=2,
+        delay=0,
+        status_reader=lambda _label: {
+            "available": True,
+            "state": "not running",
+            "lastExitCode": 1,
+        },
+        sleeper=lambda _delay: None,
+    )
+
+    assert MODULE._launch_healthy(result) is False
+
+
+def test_stopped_lane_keeps_previous_nonzero_exit_unhealthy():
+    assert MODULE._launch_healthy(
+        {"available": True, "state": "not running", "lastExitCode": 1}
+    ) is False
