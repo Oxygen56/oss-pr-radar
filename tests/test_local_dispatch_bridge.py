@@ -14592,6 +14592,7 @@ def test_controller_creates_two_parent_commit_for_conflicted_pr_followup(tmp_pat
                     "mergeConflict": True,
                     "baseRefName": "main",
                     "baseSha": base_sha,
+                    "mergeConflictFiles": ["runtime.py"],
                 },
             }
         },
@@ -14609,6 +14610,83 @@ def test_controller_creates_two_parent_commit_for_conflicted_pr_followup(tmp_pat
     ]
     assert source.read_text(encoding="utf-8") == "value = 'pull-request'\n"
     assert run_git(worktree, "status", "--porcelain") == ""
+
+    result_path.write_text(json.dumps(finalized), encoding="utf-8")
+    repeated, _raw = _finalize_controller_commit_for_test(
+        candidate={"worktreePath": str(worktree)},
+        context={
+            "prFollowup": {
+                "headSha": previous_head,
+                "evidence": {
+                    "mergeConflict": True,
+                    "baseSha": base_sha,
+                    "mergeConflictFiles": ["runtime.py"],
+                },
+            }
+        },
+        value=finalized,
+        result_path=result_path,
+    )
+    assert repeated == finalized
+
+    crash_envelope = value | {
+        "changedFiles": ["base.py"],
+        "controllerCommitChangedFiles": ["base.py"],
+        "mergeResolutionFiles": ["base.py"],
+    }
+    result_path.write_text(json.dumps(crash_envelope), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="signed conflict snapshot"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context={
+                "prFollowup": {
+                    "headSha": previous_head,
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseSha": base_sha,
+                        "mergeConflictFiles": ["runtime.py"],
+                    },
+                }
+            },
+            value=crash_envelope,
+            result_path=result_path,
+        )
+
+    forged_complete = finalized | {
+        "controllerCommitChangedFiles": ["base.py"],
+        "mergeResolutionFiles": ["base.py"],
+    }
+    result_path.write_text(json.dumps(forged_complete), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="signed conflict snapshot"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context={
+                "prFollowup": {
+                    "headSha": previous_head,
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseSha": base_sha,
+                        "mergeConflictFiles": ["runtime.py"],
+                    },
+                }
+            },
+            value=forged_complete,
+            result_path=result_path,
+        )
+
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="signed conflict file set"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context={
+                "prFollowup": {
+                    "headSha": previous_head,
+                    "evidence": {"mergeConflict": True, "baseSha": base_sha},
+                }
+            },
+            value=value,
+            result_path=result_path,
+        )
 
 
 def test_controller_merge_rejects_incomplete_conflict_file_set(tmp_path):
@@ -14646,13 +14724,17 @@ def test_controller_merge_rejects_incomplete_conflict_file_set(tmp_path):
     result_path = tmp_path / "result.json"
     result_path.write_text(json.dumps(value), encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="conflict set mismatch"):
+    with pytest.raises(RuntimeError, match="signed conflict snapshot"):
         _finalize_controller_commit_for_test(
             candidate={"worktreePath": str(worktree)},
             context={
                 "prFollowup": {
                     "headSha": previous_head,
-                    "evidence": {"mergeConflict": True, "baseSha": base_sha},
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseSha": base_sha,
+                        "mergeConflictFiles": ["one.py", "two.py"],
+                    },
                 }
             },
             value=value,
@@ -14701,7 +14783,11 @@ def test_controller_merge_preserves_child_prepared_resolution(tmp_path):
         context={
             "prFollowup": {
                 "headSha": previous_head,
-                "evidence": {"mergeConflict": True, "baseSha": base_sha},
+                "evidence": {
+                    "mergeConflict": True,
+                    "baseSha": base_sha,
+                    "mergeConflictFiles": ["runtime.py"],
+                },
             }
         },
         value=value,

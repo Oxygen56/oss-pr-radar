@@ -79,6 +79,60 @@ def _safe_changed_files(value: Any) -> list[str]:
     return sorted(normalized)
 
 
+def controller_merge_conflict_scope(
+    worktree: Path,
+    *,
+    context: dict[str, Any],
+    expected_head: str,
+    expected_base: str,
+) -> list[str]:
+    """Return the controller-bound conflict set for one prepared PR merge."""
+
+    followup = context.get("prFollowup")
+    evidence = followup.get("evidence") if isinstance(followup, dict) else None
+    if (
+        not isinstance(evidence, dict)
+        or evidence.get("mergeConflict") is not True
+        or str(followup.get("headSha") or "") != expected_head
+        or str(evidence.get("baseSha") or "") != expected_base
+    ):
+        raise RuntimeError("controller merge lacks a signed conflict snapshot")
+    try:
+        conflict_files = _safe_changed_files(evidence.get("mergeConflictFiles"))
+        _git(worktree, "cat-file", "-e", f"{expected_head}^{{commit}}")
+        _git(worktree, "cat-file", "-e", f"{expected_base}^{{commit}}")
+    except RuntimeError as exc:
+        raise RuntimeError("controller merge lacks a signed conflict file set") from exc
+    return conflict_files
+
+
+def _bound_merge_resolution_scope(worktree: Path, value: dict[str, Any]) -> list[str]:
+    context_path = worktree / TASK_PRIVATE_DIR / "task-context.json"
+    if context_path.is_symlink() or not context_path.is_file():
+        raise RuntimeError("independent review merge context is unavailable")
+    try:
+        context = json.loads(context_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("independent review merge context is invalid") from exc
+    if not isinstance(context, dict):
+        raise RuntimeError("independent review merge context is invalid")
+    previous_revision = str(value.get("previousCommitSha") or "")
+    secondary_revision = str(value.get("mergeBaseSha") or "")
+    signed_files = controller_merge_conflict_scope(
+        worktree,
+        context=context,
+        expected_head=previous_revision,
+        expected_base=secondary_revision,
+    )
+    resolution_files = _safe_changed_files(value.get("mergeResolutionFiles"))
+    controller_files = _safe_changed_files(value.get("controllerCommitChangedFiles"))
+    if resolution_files != signed_files or controller_files != signed_files:
+        raise RuntimeError(
+            "independent review merge files do not match the signed conflict snapshot"
+        )
+    return signed_files
+
+
 def _source_digest(value: dict[str, Any]) -> str:
     normalized = dict(value)
     normalized.pop("independentReview", None)
@@ -287,6 +341,8 @@ def _load_review_receipt(root: Path, value: dict[str, Any]) -> dict[str, Any] | 
             or _git(worktree, "rev-parse", "HEAD") != commit_sha
         ):
             return None
+        if value.get("handoffMode") == "controller_merge_complete":
+            _bound_merge_resolution_scope(worktree, value)
     except RuntimeError:
         return None
     return review
@@ -880,9 +936,7 @@ def _review_scope(worktree: Path, value: dict[str, Any]) -> tuple[str, str, str 
             secondary_revision,
         ]:
             raise RuntimeError("independent review merge parents do not match the result")
-        changed_files = _safe_changed_files(value.get("mergeResolutionFiles"))
-        if changed_files != _safe_changed_files(value.get("controllerCommitChangedFiles")):
-            raise RuntimeError("independent review merge resolution files do not match")
+        changed_files = _bound_merge_resolution_scope(worktree, value)
         visible: set[str] = set()
         for parent in (previous_revision, secondary_revision):
             visible.update(

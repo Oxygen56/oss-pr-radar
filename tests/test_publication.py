@@ -1131,6 +1131,7 @@ def test_merge_update_uses_live_repository_base_not_pr_snapshot(
     evidence.update(
         {
             "handoffMode": "controller_merge_complete",
+            "previousCommitSha": previous_head,
             "mergeBaseSha": base_sha,
             "mergeResolutionFiles": ["file.txt"],
             "controllerCommitChangedFiles": ["file.txt"],
@@ -1138,6 +1139,25 @@ def test_merge_update_uses_live_repository_base_not_pr_snapshot(
         }
     )
     evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+    exclude = worktree / ".git" / "info" / "exclude"
+    exclude.write_text(exclude.read_text(encoding="utf-8") + "\n.oss-pr-radar/\n", encoding="utf-8")
+    private = worktree / ".oss-pr-radar"
+    private.mkdir(exist_ok=True)
+    (private / "task-context.json").write_text(
+        json.dumps(
+            {
+                "prFollowup": {
+                    "headSha": previous_head,
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseSha": base_sha,
+                        "mergeConflictFiles": ["file.txt"],
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     write_explicit_review_receipt(evidence, tmp_path=tmp_path)
     update = request_publication(
         store,

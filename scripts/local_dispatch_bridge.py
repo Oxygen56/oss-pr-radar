@@ -49,6 +49,7 @@ from oss_pr_radar.github_client import (  # noqa: E402
     is_transient_github_error,
 )
 from oss_pr_radar.independent_review import (  # noqa: E402
+    controller_merge_conflict_scope,
     controller_review_result,
     review_once,
 )
@@ -10110,8 +10111,13 @@ def _finalize_controller_merge(
     result_access: _ValidationWorktreeDirectory,
 ) -> tuple[dict[str, Any], bytes]:
     worktree = result_access.worktree
-    changed_files = _validated_changed_files(value.get("changedFiles"))
-    _expand_sparse_checkout_paths(worktree, changed_files)
+    handoff_mode = str(value.get("handoffMode") or "")
+    if handoff_mode == "controller_merge_complete":
+        changed_files = _validated_changed_files(value.get("mergeResolutionFiles"))
+        if changed_files != _validated_changed_files(value.get("controllerCommitChangedFiles")):
+            raise RuntimeError("controller merge resolution receipts do not match")
+    else:
+        changed_files = _validated_changed_files(value.get("changedFiles"))
     branch = str(value.get("branch") or "").strip()
     commit_message = str(value.get("commitMessage") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{2,119}", branch):
@@ -10136,6 +10142,15 @@ def _finalize_controller_merge(
         raise RuntimeError("controller merge requires a signed PR conflict snapshot")
     if value.get("mergeBaseSha") != expected_base:
         raise RuntimeError("controller merge base does not match the signed snapshot")
+    signed_conflict_files = controller_merge_conflict_scope(
+        worktree,
+        context=context,
+        expected_head=expected_head,
+        expected_base=expected_base,
+    )
+    if changed_files != signed_conflict_files:
+        raise RuntimeError("controller merge files do not match the signed conflict snapshot")
+    _expand_sparse_checkout_paths(worktree, changed_files)
 
     actual = _local_changed_files(worktree)
     current_head = command(["git", "rev-parse", "HEAD"], cwd=worktree)
@@ -10424,7 +10439,10 @@ def _finalize_controller_commit(
     result_access: _ValidationWorktreeDirectory,
     write_if_unchanged: bool = True,
 ) -> tuple[dict[str, Any], bytes]:
-    if value.get("handoffMode") == "controller_merge_required":
+    if value.get("handoffMode") in {
+        "controller_merge_required",
+        "controller_merge_complete",
+    }:
         return _finalize_controller_merge(
             candidate=candidate,
             context=context,
