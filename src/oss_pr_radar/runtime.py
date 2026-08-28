@@ -12,6 +12,7 @@ import errno
 import fcntl
 import hashlib
 import json
+import math
 import os
 import shutil
 import sqlite3
@@ -22,7 +23,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from .release_binding import (
     _path_from_directory_fd,
@@ -37,6 +38,10 @@ OPERATIONS_DIR = "runtime-operations"
 RELEASE_POINTER = "current-release"
 RELEASE_MANIFEST = "release-manifest.json"
 RELEASE_ACTIVATION_JOURNAL = "release-activation.json"
+DISK_PRESSURE_GATE_STATE = "disk-pressure-gate.json"
+DISK_PRESSURE_GATE_LOCK = "disk-pressure-gate.lock"
+DISK_PRESSURE_GATE_SCHEMA = "disk_pressure_gate_v1"
+DISK_PRESSURE_RECHECK_SECONDS = 300
 RUNTIME_SCHEMA = "runtime_health_v1"
 GIB = 1024**3
 REQUIRED_WORKERS = ("fast", "slow", "queue-importer")
@@ -711,7 +716,406 @@ def disk_snapshot(path: Path, thresholds: DiskThresholds | None = None) -> dict[
         "level": level,
         "warningFreeBytes": thresholds.warning_free_bytes,
         "stopFreeBytes": thresholds.stop_free_bytes,
+        "stopUsedFraction": thresholds.stop_used_fraction,
     }
+
+
+def disk_pressure_gate_path(root: Path) -> Path:
+    """Return the private, shared capacity-gate state path for one runtime."""
+
+    _root, _releases, state = validate_runtime_layout(root, create_state=True)
+    return state / DISK_PRESSURE_GATE_STATE
+
+
+def disk_pressure_gate_lock_path(root: Path) -> Path:
+    """Return the lock used to serialize all worker capacity decisions."""
+
+    return disk_pressure_gate_path(root).with_name(DISK_PRESSURE_GATE_LOCK)
+
+
+def _disk_gate_timestamp(epoch: float | None) -> str | None:
+    if epoch is None:
+        return None
+    return datetime.fromtimestamp(epoch, UTC).isoformat().replace("+00:00", "Z")
+
+
+def _disk_stop_reached(snapshot: dict[str, Any], thresholds: DiskThresholds) -> bool:
+    """Evaluate the hard stop from raw values as well as the display level."""
+
+    level = snapshot.get("level")
+    if level == "stop":
+        return True
+    try:
+        free_bytes = snapshot.get("freeBytes")
+        used_fraction = snapshot.get("usedFraction")
+        stop_free = snapshot.get("stopFreeBytes", thresholds.stop_free_bytes)
+        stop_fraction = snapshot.get("stopUsedFraction", thresholds.stop_used_fraction)
+        if free_bytes is not None:
+            free_value = float(free_bytes)
+            if free_value <= float(stop_free):
+                return True
+        if used_fraction is not None:
+            used_value = float(used_fraction)
+            if used_value >= float(stop_fraction):
+                return True
+        if level in {"ok", "warning"}:
+            return False
+    except (TypeError, ValueError, OverflowError):
+        # An unreadable snapshot is handled by the caller as a fail-closed
+        # capacity decision rather than being treated as healthy.
+        return True
+    return False
+
+
+def _disk_snapshot_invalid(snapshot: dict[str, Any]) -> bool:
+    """Return whether any supplied numeric capacity value is unusable."""
+
+    try:
+        for key in ("freeBytes", "usedFraction", "stopFreeBytes", "stopUsedFraction"):
+            value = snapshot.get(key)
+            if isinstance(value, bool):
+                return True
+            if value is not None and not math.isfinite(float(value)):
+                return True
+    except (TypeError, ValueError, OverflowError):
+        return True
+    return False
+
+
+def _disk_thresholds_invalid(thresholds: DiskThresholds) -> bool:
+    try:
+        values = (
+            thresholds.warning_free_bytes,
+            thresholds.stop_free_bytes,
+            thresholds.warning_used_fraction,
+            thresholds.stop_used_fraction,
+        )
+        return any(isinstance(value, bool) or not math.isfinite(float(value)) for value in values)
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return True
+
+
+def _validate_disk_gate_state(
+    value: object,
+    *,
+    thresholds: DiskThresholds,
+) -> dict[str, Any]:
+    """Validate a persisted capacity gate before it can influence workers."""
+
+    if not isinstance(value, dict):
+        raise RuntimeError("disk pressure gate state is not an object")
+    if value.get("schemaVersion") != DISK_PRESSURE_GATE_SCHEMA:
+        raise RuntimeError("disk pressure gate schema is unsupported")
+    active = value.get("active")
+    if not isinstance(active, bool):
+        raise RuntimeError("disk pressure gate active flag is invalid")
+    if active:
+        next_check = value.get("nextCheckAtEpoch")
+        if isinstance(next_check, bool) or not isinstance(next_check, (int, float)):
+            raise RuntimeError("disk pressure gate next check is invalid")
+        if not math.isfinite(float(next_check)) or float(next_check) < 0:
+            raise RuntimeError("disk pressure gate next check is invalid")
+        snapshot = value.get("lastSnapshot")
+        if (
+            not isinstance(snapshot, dict)
+            or _disk_snapshot_invalid(snapshot)
+            or not _disk_stop_reached(snapshot, thresholds)
+        ):
+            raise RuntimeError("disk pressure gate active snapshot is invalid")
+    return dict(value)
+
+
+def _disk_gate_state_at(
+    path: Path,
+    directory_fd: int,
+    *,
+    thresholds: DiskThresholds,
+) -> dict[str, Any]:
+    """Read a gate state through the held state-directory descriptor."""
+
+    try:
+        os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return {}
+    return _validate_disk_gate_state(
+        _strict_runtime_state(path, directory_fd=directory_fd),
+        thresholds=thresholds,
+    )
+
+
+def _disk_gate_decision(
+    *,
+    allowed: bool,
+    reason: str | None,
+    snapshot: dict[str, Any] | None,
+    first_stop: bool = False,
+    recovered: bool = False,
+    deferred: bool = False,
+    next_check_at: float | None = None,
+    gate_active: bool = False,
+    error: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "allowed": allowed,
+        "blocked": not allowed,
+        "reason": reason,
+        "snapshot": snapshot,
+        "firstStop": first_stop,
+        "recordStop": first_stop,
+        "recovered": recovered,
+        "recordRecovery": recovered,
+        "deferred": deferred,
+        "gateActive": gate_active,
+        "nextCheckAtEpoch": next_check_at,
+        "nextCheckAt": _disk_gate_timestamp(next_check_at),
+        "error": error,
+    }
+
+
+def disk_pressure_gate(
+    root: Path,
+    *,
+    worker: str | None = None,
+    snapshot_fn: Callable[[Path], dict[str, Any]] | None = None,
+    thresholds: DiskThresholds | None = None,
+    recheck_seconds: int = DISK_PRESSURE_RECHECK_SECONDS,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Coordinate the hard disk stop across fast, slow, and queue workers.
+
+    The first hard-stop observation is durably recorded in one shared state
+    file. While its persisted next-check time has not arrived, callers only
+    read that state and return a fail-closed deferred decision; they do not
+    append per-worker failure records. A due recheck either advances the
+    shared timer or clears the gate exactly once when capacity is healthy.
+    """
+
+    thresholds = thresholds or DiskThresholds()
+    if _disk_thresholds_invalid(thresholds):
+        return _disk_gate_decision(
+            allowed=False,
+            reason="DISK_PRESSURE_GATE_UNAVAILABLE",
+            snapshot=None,
+            error="invalid disk thresholds",
+        )
+    try:
+        interval = max(1, int(recheck_seconds))
+    except (TypeError, ValueError, OverflowError):
+        interval = DISK_PRESSURE_RECHECK_SECONDS
+    try:
+        current = time.time() if now is None else float(now)
+    except (TypeError, ValueError, OverflowError):
+        return _disk_gate_decision(
+            allowed=False,
+            reason="DISK_PRESSURE_GATE_UNAVAILABLE",
+            snapshot=None,
+            error="invalid clock",
+        )
+    if not math.isfinite(current) or current < 0:
+        return _disk_gate_decision(
+            allowed=False,
+            reason="DISK_PRESSURE_GATE_UNAVAILABLE",
+            snapshot=None,
+            error="invalid clock",
+        )
+
+    try:
+        root = root.resolve()
+        path = disk_pressure_gate_path(root)
+        state_fd, _ = open_directory_handle(
+            path.parent, label="disk pressure gate state", required_mode=0o700
+        )
+        try:
+            with exclusive_lock(
+                path.parent / DISK_PRESSURE_GATE_LOCK,
+                blocking=True,
+                directory_fd=state_fd,
+            ):
+                state = _disk_gate_state_at(path, state_fd, thresholds=thresholds)
+                active = bool(state.get("active"))
+                next_check = float(state["nextCheckAtEpoch"]) if active else None
+                if active and next_check is not None and current < next_check:
+                    snapshot = state.get("lastSnapshot")
+                    return _disk_gate_decision(
+                        allowed=False,
+                        reason="DISK_STOP_THRESHOLD",
+                        snapshot=dict(snapshot) if isinstance(snapshot, dict) else None,
+                        deferred=True,
+                        next_check_at=next_check,
+                        gate_active=True,
+                    )
+
+                try:
+                    snapshot = (snapshot_fn or disk_snapshot)(root)
+                except Exception as exc:
+                    return _disk_gate_decision(
+                        allowed=False,
+                        reason="DISK_PRESSURE_GATE_UNAVAILABLE",
+                        snapshot=None,
+                        deferred=active,
+                        next_check_at=next_check,
+                        gate_active=active,
+                        error=f"{type(exc).__name__}:{str(exc)[:240]}",
+                    )
+                if not isinstance(snapshot, dict):
+                    return _disk_gate_decision(
+                        allowed=False,
+                        reason="DISK_PRESSURE_GATE_UNAVAILABLE",
+                        snapshot=None,
+                        deferred=active,
+                        next_check_at=next_check,
+                        gate_active=active,
+                        error="disk snapshot is not an object",
+                    )
+                if _disk_snapshot_invalid(snapshot):
+                    return _disk_gate_decision(
+                        allowed=False,
+                        reason="DISK_PRESSURE_GATE_UNAVAILABLE",
+                        snapshot=None,
+                        deferred=active,
+                        next_check_at=next_check,
+                        gate_active=active,
+                        error="disk snapshot contains a non-finite value",
+                    )
+                # A snapshot without a usable level and without raw
+                # measurements is not evidence of safety.
+                level = snapshot.get("level")
+                if level not in {"ok", "warning", "stop"} and not (
+                    snapshot.get("freeBytes") is not None
+                    or snapshot.get("usedFraction") is not None
+                ):
+                    return _disk_gate_decision(
+                        allowed=False,
+                        reason="DISK_PRESSURE_GATE_UNAVAILABLE",
+                        snapshot=None,
+                        deferred=active,
+                        next_check_at=next_check,
+                        gate_active=active,
+                        error="disk snapshot is incomplete",
+                    )
+                stop = _disk_stop_reached(snapshot, thresholds)
+                if stop:
+                    next_epoch = current + interval
+                    if not active:
+                        episode = int(state.get("episode") or 0) + 1
+                        updated = {
+                            "schemaVersion": DISK_PRESSURE_GATE_SCHEMA,
+                            "active": True,
+                            "episode": episode,
+                            "firstStoppedAt": _disk_gate_timestamp(current),
+                            "firstStoppedAtEpoch": current,
+                            "nextCheckAt": _disk_gate_timestamp(next_epoch),
+                            "nextCheckAtEpoch": next_epoch,
+                            "lastObservedAt": _disk_gate_timestamp(current),
+                            "lastObservedAtEpoch": current,
+                            "lastSnapshot": dict(snapshot),
+                            "stoppedBy": worker,
+                            "stopReason": "DISK_STOP_THRESHOLD",
+                            # Claim this transition before the worker writes
+                            # its one optional health record.
+                            "stopRecorded": True,
+                        }
+                        try:
+                            _atomic_write(path, updated, directory_fd=state_fd)
+                        except (OSError, RuntimeError) as exc:
+                            return _disk_gate_decision(
+                                allowed=False,
+                                reason="DISK_PRESSURE_GATE_UNAVAILABLE",
+                                snapshot=dict(snapshot),
+                                gate_active=True,
+                                next_check_at=next_epoch,
+                                error=f"persist:{type(exc).__name__}:{str(exc)[:200]}",
+                            )
+                        return _disk_gate_decision(
+                            allowed=False,
+                            reason="DISK_STOP_THRESHOLD",
+                            snapshot=dict(snapshot),
+                            first_stop=True,
+                            next_check_at=next_epoch,
+                            gate_active=True,
+                        )
+
+                    updated = dict(state)
+                    updated.update(
+                        {
+                            "active": True,
+                            "nextCheckAt": _disk_gate_timestamp(next_epoch),
+                            "nextCheckAtEpoch": next_epoch,
+                            "lastObservedAt": _disk_gate_timestamp(current),
+                            "lastObservedAtEpoch": current,
+                            "lastSnapshot": dict(snapshot),
+                        }
+                    )
+                    try:
+                        _atomic_write(path, updated, directory_fd=state_fd)
+                    except (OSError, RuntimeError) as exc:
+                        return _disk_gate_decision(
+                            allowed=False,
+                            reason="DISK_PRESSURE_GATE_UNAVAILABLE",
+                            snapshot=dict(snapshot),
+                            next_check_at=next_epoch,
+                            gate_active=True,
+                            error=f"persist:{type(exc).__name__}:{str(exc)[:200]}",
+                        )
+                    return _disk_gate_decision(
+                        allowed=False,
+                        reason="DISK_STOP_THRESHOLD",
+                        snapshot=dict(snapshot),
+                        next_check_at=next_epoch,
+                        gate_active=True,
+                    )
+
+                if active:
+                    updated = dict(state)
+                    updated.update(
+                        {
+                            "active": False,
+                            "clearedAt": _disk_gate_timestamp(current),
+                            "clearedAtEpoch": current,
+                            "nextCheckAt": None,
+                            "nextCheckAtEpoch": None,
+                            "lastObservedAt": _disk_gate_timestamp(current),
+                            "lastObservedAtEpoch": current,
+                            "lastSnapshot": dict(snapshot),
+                            "recoveryRecorded": True,
+                        }
+                    )
+                    try:
+                        _atomic_write(path, updated, directory_fd=state_fd)
+                    except (OSError, RuntimeError) as exc:
+                        return _disk_gate_decision(
+                            allowed=False,
+                            reason="DISK_PRESSURE_GATE_UNAVAILABLE",
+                            snapshot=dict(snapshot),
+                            next_check_at=next_check,
+                            gate_active=True,
+                            error=f"clear:{type(exc).__name__}:{str(exc)[:200]}",
+                        )
+                    return _disk_gate_decision(
+                        allowed=True,
+                        reason=None,
+                        snapshot=dict(snapshot),
+                        recovered=True,
+                        gate_active=False,
+                    )
+
+                return _disk_gate_decision(
+                    allowed=True,
+                    reason=None,
+                    snapshot=dict(snapshot),
+                    gate_active=False,
+                )
+        finally:
+            os.close(state_fd)
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        # Any inability to establish/read the shared gate is unsafe: workers
+        # must stop without attempting their normal failure writes.
+        return _disk_gate_decision(
+            allowed=False,
+            reason="DISK_PRESSURE_GATE_UNAVAILABLE",
+            snapshot=None,
+            error=f"{type(exc).__name__}:{str(exc)[:240]}",
+        )
 
 
 def pid_probe(pid: int | None, *, expected_fragment: str | None = None) -> dict[str, Any]:

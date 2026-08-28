@@ -963,8 +963,7 @@ def test_slow_worker_disk_stop_does_not_create_exponential_backoff(monkeypatch, 
     levels = iter(
         [
             {"level": "stop", "freeBytes": 1},
-            {"level": "stop", "freeBytes": 1},
-            {"level": "ok", "freeBytes": 100},
+            {"level": "ok", "freeBytes": 100 * 1024**3},
         ]
     )
     monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", lambda _root: next(levels))
@@ -985,9 +984,16 @@ def test_slow_worker_disk_stop_does_not_create_exponential_backoff(monkeypatch, 
 
     assert first["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
     assert second["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
+    assert second["deferred"] is True
     assert not (tmp_path / "state" / "slow-worker-backoff.json").exists()
     assert calls == []
 
+    gate_path = tmp_path / "state" / "disk-pressure-gate.json"
+    gate = json.loads(gate_path.read_text())
+    gate["nextCheckAtEpoch"] = time.time() - 1
+    gate["nextCheckAt"] = datetime.fromtimestamp(gate["nextCheckAtEpoch"], UTC).isoformat()
+    gate_path.write_text(json.dumps(gate) + "\n", encoding="utf-8")
+    gate_path.chmod(0o600)
     recovered = slow_advance_once(tmp_path, runner=runner)
 
     assert recovered["ok"] is True
@@ -1015,7 +1021,7 @@ def test_slow_worker_disk_stop_preserves_real_network_backoff(monkeypatch, tmp_p
     levels = iter(
         [
             {"level": "stop", "freeBytes": 1},
-            {"level": "warning", "freeBytes": 100},
+            {"level": "warning", "freeBytes": 100 * 1024**3},
         ]
     )
     monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", lambda _root: next(levels))
@@ -1028,6 +1034,12 @@ def test_slow_worker_disk_stop_preserves_real_network_backoff(monkeypatch, tmp_p
     assert result["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
     assert json.loads(backoff_path.read_text()) == original
 
+    gate_path = state_dir / "disk-pressure-gate.json"
+    gate = json.loads(gate_path.read_text())
+    gate["nextCheckAtEpoch"] = time.time() - 1
+    gate["nextCheckAt"] = datetime.fromtimestamp(gate["nextCheckAtEpoch"], UTC).isoformat()
+    gate_path.write_text(json.dumps(gate) + "\n", encoding="utf-8")
+    gate_path.chmod(0o600)
     deferred = slow_advance_once(tmp_path, runner=must_not_run)
 
     assert deferred["reason"] == "PERSISTED_BACKOFF"
@@ -1072,7 +1084,7 @@ def test_slow_worker_recovers_exact_legacy_disk_backoff(monkeypatch, tmp_path):
     (state_dir / "runtime-health.json").chmod(0o600)
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.disk_snapshot",
-        lambda _root: {"level": "warning", "freeBytes": 100},
+        lambda _root: {"level": "warning", "freeBytes": 100 * 1024**3},
     )
     calls = []
 
@@ -1143,7 +1155,7 @@ def test_slow_worker_does_not_clear_ambiguous_legacy_backoff(
     )
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.disk_snapshot",
-        lambda _root: {"level": "warning", "freeBytes": 100},
+        lambda _root: {"level": "warning", "freeBytes": 100 * 1024**3},
     )
 
     def must_not_run(_root: Path, _operation: str):

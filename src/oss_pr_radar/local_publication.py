@@ -19,6 +19,7 @@ from .release_binding import bind_runtime, runtime_ledger_path, runtime_python
 from .runtime import (
     RuntimeLockBusy,
     append_operation,
+    disk_pressure_gate,
     disk_snapshot,
     exclusive_lock,
     read_json,
@@ -59,6 +60,94 @@ SLOW_CLOUD_SYNC_INTERVAL_SECONDS = 300
 # enough time for that cold start.
 MAX_FAST_OPERATION_SECONDS = 60
 TERMINAL_FEEDBACK_STAGES = {"AUDIT_NO_GO", "MERGED", "CLOSED"}
+
+
+def _disk_gate(
+    root: Path,
+    *,
+    worker: str,
+) -> dict[str, Any]:
+    """Run the shared capacity gate through this module's snapshot seam."""
+
+    # Passing the local alias keeps existing tests and callers able to inject
+    # a deterministic snapshot without bypassing the shared gate.
+    return disk_pressure_gate(root, worker=worker, snapshot_fn=disk_snapshot)
+
+
+def _record_disk_gate_recovery(root: Path, *, worker: str) -> str | None:
+    """Append one best-effort recovery marker after a gate is cleared."""
+
+    try:
+        append_operation(
+            root,
+            {
+                "worker": worker,
+                "operation": "disk-pressure-recovery",
+                "status": "success",
+                "exitCode": 0,
+                "inFlight": False,
+            },
+        )
+    except Exception as exc:
+        return f"{type(exc).__name__}:{str(exc)[:240]}"
+    return None
+
+
+def _disk_gate_failure(
+    root: Path,
+    *,
+    worker: str,
+    started_at: float,
+    gate: dict[str, Any],
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a fail-closed worker result and claim the first stop record."""
+
+    reason = str(gate.get("reason") or "DISK_PRESSURE_GATE_UNAVAILABLE")
+    result: dict[str, Any] = {
+        "ok": False,
+        "activity": False,
+        "reason": reason,
+        "deferred": bool(gate.get("deferred")),
+        "errors": [{"error": reason}],
+        "diskPressureGate": {
+            "active": bool(gate.get("gateActive")),
+            "deferred": bool(gate.get("deferred")),
+            "firstStop": bool(gate.get("firstStop")),
+            "nextCheckAt": gate.get("nextCheckAt"),
+        },
+    }
+    if gate.get("error"):
+        result["diskPressureGate"]["error"] = str(gate["error"])[:240]
+    if gate.get("recordStop") is True:
+        try:
+            record_cycle(
+                root,
+                worker=worker,
+                ok=False,
+                exit_code=78,
+                started_at=started_at,
+                error_code=reason,
+                disk=gate.get("snapshot"),
+            )
+        except Exception as exc:
+            # The gate is already durable and claimed. Do not retry this
+            # health write on every worker interval if the host is still full.
+            result["diskPressureGate"]["recordError"] = f"{type(exc).__name__}:{str(exc)[:240]}"
+    if extra:
+        result.update(extra)
+    return result
+
+
+def _handle_disk_gate_recovery(
+    root: Path,
+    *,
+    worker: str,
+    gate: dict[str, Any],
+) -> str | None:
+    if gate.get("recordRecovery") is True:
+        return _record_disk_gate_recovery(root, worker=worker)
+    return None
 
 
 def _legacy_disk_backoff_recoverable(
@@ -468,23 +557,17 @@ def fast_advance_once(
     started = time.time()
     try:
         with exclusive_lock(root / "state" / FAST_WORK_LOCK):
-            disk = disk_snapshot(root)
-            if disk["level"] == "stop":
-                record_cycle(
+            gate = _disk_gate(root, worker="fast")
+            if gate.get("allowed") is not True:
+                return _disk_gate_failure(
                     root,
                     worker="fast",
-                    ok=False,
-                    exit_code=78,
                     started_at=started,
-                    error_code="DISK_STOP_THRESHOLD",
-                    disk=disk,
+                    gate=gate,
+                    extra={"slowWorkQueued": False},
                 )
-                return {
-                    "ok": False,
-                    "activity": False,
-                    "errors": [{"error": "DISK_STOP_THRESHOLD"}],
-                    "slowWorkQueued": False,
-                }
+            recovery_error = _handle_disk_gate_recovery(root, worker="fast", gate=gate)
+            disk = gate.get("snapshot")
             ingestion = runner(root, "local-receipt-enqueue")
             errors = list(ingestion.get("errors") or []) + list(ingestion.get("rejected") or [])
             _enqueue_slow_work(root, reason="local_ingest")
@@ -504,6 +587,9 @@ def fast_advance_once(
                 error_code="LOCAL_INGEST_FAILED" if result["ok"] is not True else None,
                 disk=disk,
             )
+            if recovery_error:
+                result.setdefault("errors", []).append({"error": recovery_error})
+                result["ok"] = False
             return result
     except RuntimeLockBusy:
         return {"ok": True, "busy": True, "activity": False, "errors": []}
@@ -535,11 +621,22 @@ def queue_import_once(
     started = time.time()
     try:
         with exclusive_lock(root / "state" / "queue-import.lock"):
-            disk = disk_snapshot(root)
-            if disk["level"] == "stop":
-                result = {"ok": False, "error": "DISK_STOP_THRESHOLD"}
-            else:
-                result = runner(root, "queue-import")
+            gate = _disk_gate(root, worker="queue-importer")
+            if gate.get("allowed") is not True:
+                return _disk_gate_failure(
+                    root,
+                    worker="queue-importer",
+                    started_at=started,
+                    gate=gate,
+                    extra={"error": str(gate.get("reason") or "DISK_PRESSURE_GATE_UNAVAILABLE")},
+                )
+            recovery_error = _handle_disk_gate_recovery(
+                root,
+                worker="queue-importer",
+                gate=gate,
+            )
+            disk = gate.get("snapshot")
+            result = runner(root, "queue-import")
             if result.get("ok") is True:
                 write_json(
                     root / "state" / "queue-import-state.json",
@@ -566,6 +663,10 @@ def queue_import_once(
                 failure_field="queueConsecutiveFailures",
                 disk=disk,
             )
+            if recovery_error:
+                result = dict(result)
+                result.setdefault("errors", []).append({"error": recovery_error})
+                result["ok"] = False
             return result
     except RuntimeLockBusy:
         return {"ok": True, "busy": True, "errors": []}
@@ -599,27 +700,18 @@ def slow_advance_once(
             now = time.time()
             backoff = read_json(backoff_path, {})
             backoff = backoff if isinstance(backoff, dict) else {}
-            disk = disk_snapshot(root)
-            if disk["level"] == "stop":
-                # Disk pressure is an external capacity gate, not a failed
-                # network/publication attempt.  Keep any genuine network
-                # backoff unchanged so the next launch can resume as soon as
-                # capacity is available instead of exponentially extending a
-                # wait that disk cleanup has already resolved.
-                _record_slow_cycle(
+            gate = _disk_gate(root, worker="slow")
+            if gate.get("allowed") is not True:
+                result = _disk_gate_failure(
                     root,
-                    ok=False,
-                    exit_code=78,
+                    worker="slow",
                     started_at=started,
-                    error_code="DISK_STOP_THRESHOLD",
-                    disk=disk,
+                    gate=gate,
+                    extra={"slowWorkerDiagnostic": _slow_worker_diagnostic(root)},
                 )
-                return {
-                    "ok": False,
-                    "activity": False,
-                    "errors": [{"error": "DISK_STOP_THRESHOLD"}],
-                    "slowWorkerDiagnostic": _slow_worker_diagnostic(root),
-                }
+                return result
+            disk = gate.get("snapshot")
+            recovery_error = _handle_disk_gate_recovery(root, worker="slow", gate=gate)
             recovered_legacy_disk_backoff = _legacy_disk_backoff_recoverable(
                 root,
                 backoff=backoff,
@@ -706,6 +798,9 @@ def slow_advance_once(
                 result["slowWorkerDiagnostic"] = _slow_worker_diagnostic(root, result, reproduction)
                 if recovered_legacy_disk_backoff:
                     result["legacyDiskBackoffRecovered"] = True
+                if recovery_error:
+                    result.setdefault("errors", []).append({"error": recovery_error})
+                    result["ok"] = False
                 if "slowWorkerDiagnostic" not in result:
                     result["slowWorkerDiagnostic"] = _slow_worker_diagnostic(root, result)
             except BaseException as exc:
