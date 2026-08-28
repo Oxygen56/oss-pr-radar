@@ -800,6 +800,51 @@ def test_controller_output_is_compact_and_full_evidence_stays_in_report(tmp_path
     assert len(str(compact)) < 1000
 
 
+def test_compact_controller_result_includes_worker_freshness_state():
+    result = {
+        "ok": False,
+        "checkedAt": "2026-08-29T00:00:00Z",
+        "summary": {"drainAction": "none", "localAgentHealthy": True},
+        "failures": [],
+        "finalBlockers": ["LOCAL_AGENT_UNHEALTHY"],
+        "stages": {
+            "finalLocalAgentStatus": {
+                "ok": False,
+                "workers": [
+                    {
+                        "label": "com.oss-pr-radar.local-publication-slow",
+                        "ok": False,
+                        "process": {"alive": False},
+                        "workerRuntimeHealth": {
+                            "healthy": False,
+                            "inFlight": True,
+                            "workerPidAlive": False,
+                            "lastSuccessAt": "2026-08-28T20:06:15Z",
+                            "lastExitCode": 0,
+                        },
+                    }
+                ],
+            }
+        },
+    }
+
+    compact = compact_controller_result(result)
+
+    assert compact["summary"]["localAgentHealthy"] is False
+    assert compact["summary"]["localWorkerStates"] == [
+        {
+            "label": "com.oss-pr-radar.local-publication-slow",
+            "ok": False,
+            "runtimeHealthy": False,
+            "inFlight": True,
+            "workerPidAlive": False,
+            "processAlive": False,
+            "lastSuccessAt": "2026-08-28T20:06:15Z",
+            "lastExitCode": 0,
+        }
+    ]
+
+
 def test_pending_title_update_and_quarantine_are_not_controller_blockers():
     from oss_pr_radar.controller import _final_blockers
 

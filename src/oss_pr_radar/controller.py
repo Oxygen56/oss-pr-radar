@@ -422,8 +422,10 @@ def _compact_summary(stages: dict[str, dict[str, Any]]) -> dict[str, Any]:
     decision_sessions = stages.get("codexDecisionSessions") or {}
     result_ingestion = stages.get("resultIngestion") or {}
     post_review_ingestion = stages.get("resultIngestionAfterReview") or {}
+    local_status = stages.get("finalLocalAgentStatus") or {}
     return {
         "localAgentHealthy": (stages.get("finalLocalAgentStatus") or {}).get("ok") is True,
+        "localWorkerStates": _compact_local_worker_states(local_status),
         "eventLanesHealthy": (stages.get("finalEventLaneHealth") or {}).get("healthy") is True,
         "operationalHealthy": health.get("operationalHealthy") is True,
         "githubNaturalScheduleHealthy": health.get("githubNaturalScheduleHealthy") is True,
@@ -438,6 +440,35 @@ def _compact_summary(stages: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "filterMissRate": quality.get("filterMissRate"),
         "hardGateEscapes": quality.get("hardGateEscapes"),
     }
+
+
+def _compact_local_worker_states(status: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expose final worker freshness evidence in the heartbeat JSON."""
+
+    states: list[dict[str, Any]] = []
+    for worker in status.get("workers") or []:
+        if not isinstance(worker, dict):
+            continue
+        runtime = worker.get("workerRuntimeHealth")
+        runtime = runtime if isinstance(runtime, dict) else {}
+        process = worker.get("process")
+        process = process if isinstance(process, dict) else {}
+        states.append(
+            {
+                "label": str(worker.get("label") or ""),
+                "ok": worker.get("ok") is True,
+                "runtimeHealthy": runtime.get("healthy") is True,
+                "inFlight": runtime.get("inFlight") is True,
+                "workerPidAlive": runtime.get("workerPidAlive"),
+                "processAlive": process.get("alive"),
+                "lastSuccessAt": runtime.get("lastSuccessAt")
+                or runtime.get("queueImportSuccessAt"),
+                "lastExitCode": runtime.get("lastExitCode")
+                if runtime.get("lastExitCode") is not None
+                else runtime.get("queueLastExitCode"),
+            }
+        )
+    return states
 
 
 def run_locked_controller_cycle(
@@ -760,10 +791,19 @@ def compact_controller_result(
     }
     local_disk_stop = _local_agent_disk_stop(local_status)
     desktop_handoff = _pending_desktop_handoff(stages)
+    summary = dict(result.get("summary") or {})
+    if "finalLocalAgentStatus" in stages:
+        # The final status stage is authoritative; do not preserve an optimistic
+        # caller-supplied summary when the worker snapshot says otherwise.
+        summary["localAgentHealthy"] = local_status.get("ok") is True
+        summary["localWorkerStates"] = _compact_local_worker_states(local_status)
+    else:
+        summary.setdefault("localAgentHealthy", local_status.get("ok") is True)
+        summary.setdefault("localWorkerStates", _compact_local_worker_states(local_status))
     compact = {
         "ok": result.get("ok"),
         "checkedAt": result.get("checkedAt"),
-        "summary": result.get("summary") or {},
+        "summary": summary,
         "failures": result.get("failures") or [],
         "finalBlockers": result.get("finalBlockers") or [],
         "warnings": {
