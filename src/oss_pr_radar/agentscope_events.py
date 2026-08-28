@@ -696,13 +696,17 @@ class GitHubIssuePoller:
         for key, url in requests:
             try:
                 status, _response_headers, body = self.details_transport(url, headers)
-            except (OSError, RuntimeError, urllib.error.URLError):
+            except Exception as exc:  # noqa: BLE001 - classify transport failures below
+                if not self._recoverable_poll_error(exc):
+                    raise
                 complete = False
                 continue
             if status == 200:
                 details[key] = body
-            else:
+            elif status == 0 or status in {408, 429} or status >= 500:
                 complete = False
+            else:
+                raise RuntimeError(f"GitHub PR detail failed: HTTP {status}")
         if isinstance(details.get("pull"), dict):
             for key in (
                 "mergeable_state",
@@ -719,12 +723,16 @@ class GitHubIssuePoller:
                     status, _response_headers, body = self.details_transport(
                         f"{base}/commits/{head_sha}/check-runs?per_page=100&page=1", headers
                     )
-                except (OSError, RuntimeError, urllib.error.URLError):
+                except Exception as exc:  # noqa: BLE001 - classify transport failures below
+                    if not self._recoverable_poll_error(exc):
+                        raise
                     status, body = 0, None
                 if status == 200:
                     details["checks"] = body
-                else:
+                elif status == 0 or status in {408, 429} or status >= 500:
                     complete = False
+                else:
+                    raise RuntimeError(f"GitHub check-runs failed: HTTP {status}")
             else:
                 complete = False
         else:
