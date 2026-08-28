@@ -72,6 +72,36 @@
     ],
     "why": "The issue describes a streaming truncation bug in the chat completion API when both content and tool_calls are present. It is a usage/API behavior issue, not an LLM algorithm mechanism. The suggested fix is to flush pending text tokens before switching to tool calls, which is a streaming logic fix, not a training objective, model mechanism, or numerical method. The track requires concrete algorithm validation, which is absent."
   },
+  "00c9397a1dee8e1b96a6c6b79f2e6fa2efbda282b40ad9f0b446776f367ea63e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "Fix adapter reference leak in scheduler under parallel sampling (n>1)",
+      "Ensure unload_lora_adapter does not deadlock after parallel-sampling traffic"
+    ],
+    "risks": [
+      "Root cause may be more complex than a simple reference leak; fix might require changes in scheduler internals",
+      "Potential interaction with other scheduler features (e.g., radix cache, attention backends) could introduce new issues"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script with n=16 and verify unload returns within timeout",
+      "Add regression test that loads adapter, sends parallel-sampling generate requests, then unloads and asserts success",
+      "Run existing LoRA and scheduler tests to ensure no regressions"
+    ],
+    "unknowns": [
+      "Exact code location where the reference leak occurs",
+      "Whether the fix requires changes in the scheduler, token pool, or LoRA manager"
+    ],
+    "why": "The issue provides a deterministic minimal reproduction with exact commands and environment details, identifies a specific trigger (parallel-sampling traffic with n>1) and a plausible root cause (per-request adapter reference leak). The track is llm_algorithm and the issue involves LoRA adapter lifecycle in the scheduler, which is a concrete model mechanism with a clear validation path via the provided reproduction script."
+  },
   "00f07f62f9a6b4fc2a54e30266a227f510f7f3afd14f40118c02b45a31130e0d": {
     "confidence": 0.7,
     "contradictions": [
@@ -5642,6 +5672,38 @@
     ],
     "why": "Issue provides detailed root cause and reproduction, but existing PR #1458 overlaps semantically and requires maintainer review to avoid duplicate work. Deterministic gate says HUMAN_REVIEW."
   },
+  "1bac287bba2a9ef4fd005c2383b6cc5d9df8ce741917130d815d02786f36a35e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue body states plugin fetch and tarball packaging succeed, but the failure occurs at conversation/plugin-load time; this is consistent with the root cause but may need verification in the actual code path."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "plugin-preset runner in OpenHands/automation",
+      "agent-server conversation/events error handling"
+    ],
+    "risks": [
+      "Potential overlap with OpenHands/automation#339 if merged; need to coordinate to avoid duplicate work",
+      "Changes to plugin-loading path may affect other automation types; need to ensure backward compatibility"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided curl commands for prompt and plugin presets on app.all-hands.dev and verify plugin preset completes with status COMPLETED",
+      "Add a regression test for plugin-preset automation with a minimal plugin (manifest + no-op skill) to ensure no 500 on /api/conversations/{id}/events"
+    ],
+    "unknowns": [
+      "Exact exception behind the 500 is not captured; pulling in-sandbox agent-server logs would confirm the root cause",
+      "Whether OpenHands/automation#339 will be merged and its timeline; if merged, the issue may be resolved without additional work"
+    ],
+    "why": "The issue provides a clear root cause: plugin-preset automations fail with a 500 on the agent-server conversation/events path, isolated to the plugin-loading path. It includes a minimal reproduction (prompt preset passes, plugin preset fails) and acceptance criteria. An open PR (OpenHands/automation#339) directly targets the root cause, but it is not merged and lacks maintainer review, so the issue remains actionable."
+  },
   "1bad7a71eb4924678f554201f3a956947e2d3a3a988deb582d07a86fc48508f5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -10481,6 +10543,35 @@
     ],
     "why": "The issue provides a clear frontend-only bug with a concrete root cause: the sidebar reads from the null 'metrics' field instead of the populated 'stats.usage_to_metrics' path. It includes a reproducible command, expected vs actual behavior, and acceptance criteria with a regression test requirement. No competing open PRs or duplicates were found."
   },
+  "31e15e13b7ae0390b8d665e843636dc02582aa77d572e79070361098b8292309": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "@ai-sdk/react useChat stream consumption",
+      "DefaultChatTransport or related stream handling"
+    ],
+    "risks": [
+      "Potential maintainer design preference for the fix approach",
+      "Risk of unintended API behavior changes if fix is too broad"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided Playwright test with --project=webkit to reproduce the stall",
+      "Add a regression test that runs two concurrent browser contexts and asserts all receive the full stream"
+    ],
+    "unknowns": [
+      "Exact root cause in SDK code not yet identified",
+      "Maintainer confirmation on desired fix approach"
+    ],
+    "why": "The issue provides a concrete, reproducible bug with a clear root cause hypothesis (SDK stream consumption stalls on Linux WebKit under concurrency) and a detailed validation path including a Playwright test and server-side confirmation. The evidence includes ordered reproduction steps and code anchors, making the contribution actionable."
+  },
   "32150a03a57d47438635e97b5147769aabe46dc5d47fe6392eea7a3ac2dab65e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -14558,6 +14649,38 @@
       "Whether PR #35936 already fully fixes the issue; requires manual comparison"
     ],
     "why": "Issue provides a clear root cause (regression from revert #34160), a concrete reproduction with commands, and a verified minimal fix. The proposed changes are actionable and align with the codebase. Existing PR #35936 overlaps semantically but is not directly linked; manual comparison is needed but does not block actionability."
+  },
+  "42f5e95cc7c0d3e96af01d1116e837abd0febba8f8b9cf1a4d51a34c751bb86e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "Add compute capability gating (>= 8.9) for FP8 MoE Triton dispatch in the model runner or eplb_utils",
+      "Possibly adjust kernel selection logic for pre-SM89 architectures"
+    ],
+    "risks": [
+      "The fix may affect performance on A100 by falling back to non-FP8 kernels, but this is acceptable for correctness",
+      "Potential interaction with other quantization paths or model architectures"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the error by running the provided vllm serve command with a qwen3.8-flash-next-fp8 model on A100 GPUs",
+      "After fix, run the same command and verify successful model loading and inference",
+      "Add a unit test that checks the dispatch logic for SM75/SM80/SM86 architectures to ensure FP8 MoE kernels are not selected"
+    ],
+    "unknowns": [
+      "Exact code location where the gating should be added is not specified, but the maintainer's comment indicates a clear direction"
+    ],
+    "why": "The issue reports a concrete fp8e4nv data type error on A100 during model profiling, with a full traceback and environment. A maintainer comment confirms the root cause: FP8 MoE Triton dispatch lacks compute capability gating for pre-SM89 architectures, and proposes a fix. This is a quantized kernel algorithm issue with a clear validation path on A100 hardware."
   },
   "430fec277a0cab6364eb3e5a69742145d3a244dd73d275611213b7ba4c0a4d58": {
     "confidence": 0.8,
@@ -39105,6 +39228,34 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a clear runtime failure (Forward context not set) in MiniMax H3 audio encoding, with detailed traceback and code anchors. However, an existing open PR #33863 has semantic overlap with the same code paths and scheduler context, and the issue does not reference it. The PR is large, has failed CI, and may already address the root cause. A new PR would risk duplication and conflict; maintainer review is needed to determine if the existing PR covers this issue or if a separate fix is warranted."
   },
+  "ad00224d003aa1dea6f5f31fd395253c251c12abcb6df64c65d1c3555aa8ddcc": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims to be a proposal but already has an implementation in PR #2676."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "No new code changes; the existing PR #2676 already addresses the missing annotations."
+    ],
+    "risks": [
+      "Potential duplicate work if the issue is acted upon separately from PR #2676."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No new tests required; the existing PR should be reviewed for correctness and CI."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether such annotations are desired, but this does not affect the low-value determination."
+    ],
+    "why": "The issue is a low-value code-quality request for adding return type annotations, which is already covered by an open PR (#2676) that modifies the same files. The issue itself is a duplicate of the PR's scope and lacks any algorithmic or runtime impact."
+  },
   "ad7f039d8739e08088a43eb8531db6d20f58955b20863c8bca14b55967697b33": {
     "confidence": 0.85,
     "contradictions": [
@@ -41993,6 +42144,36 @@
       "Whether maintainers have a preferred design for tool error handling"
     ],
     "why": "Issue reports multiple tool-calling problems (error messages, disabled tools leaking, argument types) but lacks a concrete reproduction or root cause. The candidate metadata lacks algorithm evidence and the track is agent_ai_infra, not llm_algorithm. The deterministic gate is ALLOW_TO_WORK, but the issue is a bug report with no clear code path or validation plan, and maintainer design confirmation is absent."
+  },
+  "b937ed46be818b0171d8d8596c98a0e822371b07f9e36bebb86dea86b224b4d2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "thunderagent_router capacity.py",
+      "thunderagent_router router.py",
+      "thunderagent_router program_state.py",
+      "thunderagent_router __main__.py"
+    ],
+    "risks": [
+      "Potential interaction with existing router behavior or performance; need to ensure no regression in non-DP scenarios."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with SGLang workers using --enable-dp-attention --dp-size 4 and send a request with agent_context.session_id; verify 500 error before fix and success after.",
+      "Add unit tests for capacity snapshot with DP range parsing and replica selection logic."
+    ],
+    "unknowns": [
+      "No maintainer approval yet; but that is not a blocker for actionability."
+    ],
+    "why": "Issue provides a clear root cause (routing identity mismatch between ThunderAgent and KV router under DP>1), a concrete reproduction path, and a detailed design with code-level changes. The proposed fix is technically actionable and addresses a real bug."
   },
   "b9bea567ff660854ce5fba7a19d344bc07ed2b50306eeef84de07e7e4aa91d88": {
     "confidence": 0.7,
@@ -50832,6 +51013,37 @@
     ],
     "why": "Issue reports a user-visible bug when switching moe-runner-backend to flashinfer_mxfp4, but root cause is unclear and may be related to tool-call parser rather than backend. Open PRs exist with potential fixes but are unmerged and unverified. Maintainer input needed to confirm scope and avoid duplicate work."
   },
+  "dd2b0fb456ed388ea75464f24aa96cd899df5ddb14f2660c0b935d074591105f": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Update .github/workflows/ci.yml to install nlp extra and download en_core_web_sm",
+      "Add a smoke test that exercises entity extraction and BM25 lemmatization in CI",
+      "Optionally make the skip fixture fail when MEM0_REQUIRE_NLP is set"
+    ],
+    "risks": [
+      "Adding the nlp extra increases CI install time and may require model download network access",
+      "Changing CI workflow may require maintainer approval per AGENTS.md",
+      "The smoke test could be flaky if the model download is not cached"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction commands to confirm the 19 tests skip without spaCy",
+      "After the fix, run tests/utils/test_entity_extraction.py and tests/utils/test_lemmatization.py to ensure they pass",
+      "Add a CI smoke test that calls extract_entities and lemmatize_for_bm25 and asserts non-empty results"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to add the nlp extra or make the skip a hard failure"
+    ],
+    "why": "The issue precisely identifies a CI configuration gap: the nlp extra is not installed, causing spaCy-dependent entity extraction and BM25 lemmatization to silently no-op and their tests to skip. The reporter provides a concrete reproduction, demonstrates that broken implementations pass CI, and proposes a minimal fix (add nlp extra and download model) plus a smoke test. This is a clear, actionable infrastructure bug with high impact on retrieval quality."
+  },
   "dd322b317c8dea587021ce9b1feb822c6b21a8927c7e4af3a78c6c7aa49563e6": {
     "confidence": 0.85,
     "contradictions": [],
@@ -52941,6 +53153,34 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "Issue provides a clear, reproducible Windows shell truncation bug with code anchor and expected behavior options, but submission policy requires assignment and no maintainer approval or design confirmation exists."
+  },
+  "e3ec7ececbb2933c6f11a355252649e72800a26efa894bf19cd48471895b8e49": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue title mentions v0.28.0 but comment clarifies it affects current main; no contradiction in evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/determinism.py",
+      "torch.compile integration for batch-invariant matmul"
+    ],
+    "risks": [
+      "Potential duplicate issue #54237 shares stack signatures but different symptoms; need to confirm no overlap. Maintainer design preference for fix approach (specializing by M bucket vs. tuning per shape) is unknown."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided minimal reproduction script on a supported GPU (e.g., Ada) to confirm the static tile collapse, then add a regression test that checks multiple M values produce distinct compiled kernels or that M-dependent configs are respected under torch.compile."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific fix direction; whether issue #54237 is truly unrelated despite shared stack signatures."
+    ],
+    "why": "The issue provides a concrete root cause: under torch.compile, the M-dependent lookup in _BATCH_INVARIANT_MATMUL_TUNED_CONFIGS is folded during tracing, baking a single static tile per (N,K) call site while M remains runtime. A minimal reproduction script and observed census output confirm the behavior. The expected behavior and possible fix directions are clearly stated, making the contribution actionable."
   },
   "e3fca3b648c0826e0dd2e12100be06d1ce9d7a250eb6230003589d6e19ec5612": {
     "confidence": 0.85,
