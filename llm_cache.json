@@ -24693,6 +24693,40 @@
     ],
     "why": "Issue clearly identifies a security-relevant bug in a shared download path, with a verified repro and suggested fix direction. However, the deterministic gate requires HUMAN_REVIEW, and the existing PR #7162 is closed with CI failures, so maintainer confirmation is needed before starting new work."
   },
+  "6b3bb9794dfe202f061c90a589c07c6159ab171efad48765f233f76902848c41": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #36549 overlaps in code path but does not reference the issue; duplicate issue #36830 shares cache behavior but may be distinct"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "kv_cache_configurator.py",
+      "memory_pool.py",
+      "mla_buffer.py"
+    ],
+    "risks": [
+      "Potential overlap with PR #36549 or duplicate issue #36830 may require coordination",
+      "Memory cost increase (~5GB/GPU) may require tuning mem-fraction-static"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided 3x300K-token concurrent /generate repro to verify crash fix",
+      "Run the three quality prompts with and without --dcp-size to compare reasoning length and answer fidelity"
+    ],
+    "unknowns": [
+      "Whether PR #36549 already fixes the root cause; whether issue #36830 is truly duplicate"
+    ],
+    "why": "Issue provides a concrete root cause (index-K cache sized per-rank but accessed with virtual locs under DCP), a validated diff, and a clear reproduction path with quality comparison. It targets a real LLM algorithm mechanism (distributed training, kernel algorithm) and is actionable despite potential overlap with PR #36549 and duplicate issue #36830, which require manual review but do not block actionability."
+  },
   "6b556e05eecc4d9a409dc17c3330b7b4ef6da56228ad59da3d54513b0a6a19ed": {
     "confidence": 0.9,
     "contradictions": [],
@@ -28352,6 +28386,32 @@
       "Exact test coverage in existing PR #38106"
     ],
     "why": "Issue clearly identifies a user-visible bug in streaming responses where GenericStreamingChunk-based providers generate a new id per chunk, breaking clients that merge by id. Root cause is precisely located in CustomStreamWrapper's handling of GenericStreamingChunk, with code anchors and a concrete repro. Existing PR #38106 attempts a fix but lacks root-cause coverage and has CI failures, leaving room for a more complete contribution."
+  },
+  "7a842f4c278846005e05cbc4485fc518ff15581f96ff6e26d9b7b3b25ca87cd2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "CodeMode transform logic to support direct tool passthrough",
+      "get_tool_catalog filtering to exclude direct tools"
+    ],
+    "risks": [
+      "Potential API behavior change if not carefully scoped",
+      "Maintainer may prefer a different design (e.g., configuration option)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a test that registers a tool with a 'direct' tag and verifies it appears in tools/list but not in execute/search/list_tools catalog",
+      "Run existing CodeMode tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Maintainer design preference for exposing this feature"
+    ],
+    "why": "The issue clearly identifies a missing feature in CodeMode: no built-in way to keep certain tools direct instead of folding them into execute. It provides a concrete workaround and explains the need for both transform_tools and get_tool_catalog overrides. The proposed change is actionable and testable."
   },
   "7a9412b41a1693a25de2369338088f632d589dc9fa97c3c6663ed09a431fe1b5": {
     "confidence": 0.85,
@@ -33650,6 +33710,35 @@
     ],
     "why": "The issue provides a clear root cause: the managed Zoom OAuth app lacks webinar write scopes, the toolkit lacks webinar creation tools, and search/workbench mislead users into an unfixable OAuth loop. The reproduction steps and minimal example are concrete, and the requested fixes are actionable code changes in the Composio platform."
   },
+  "921a6380afc3bae40c37140522884be5cb52b9d58878963f3495520793a7e38b": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Proxy model creation flow: ensure post-write verification reads from primary DB",
+      "Possibly add retry or async status handling for read replica visibility"
+    ],
+    "risks": [
+      "Potential performance impact if all reads go to primary",
+      "May require coordination with existing PR to avoid duplication"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Set up integration test with primary and read replica, configure DATABASE_URL_READ_REPLICA, create model via /model/new, assert no 500 and model is served",
+      "Run existing PR #38580 tests to verify they cover this scenario"
+    ],
+    "unknowns": [
+      "Exact code path where the post-write read occurs",
+      "Whether maintainers prefer a specific fix approach"
+    ],
+    "why": "Issue provides a clear root cause (read-after-write inconsistency with read replica), a concrete reproduction path, and a validation method (temporarily pointing reader to writer resolves the 500). The existing PR #38580 directly addresses this by pinning the read to the writer DB, but lacks root-cause coverage evidence; the issue's evidence strengthens the case for a targeted fix."
+  },
   "92796e4b67b22f85a0a2c6b2e876c0fc06f29c75524d782fde3faca6454e9fc8": {
     "confidence": 0.8,
     "contradictions": [],
@@ -37823,6 +37912,43 @@
       "The exact root cause of Defect 1 (enforcement gap) is not fully identified; it may be in the parser or the generation logic. The relationship to open PRs #51524 and #50502 needs manual comparison to ensure no duplicate fix."
     ],
     "why": "The issue identifies a concrete bug in the gemma4 tool parser: tool_choice='required' is not enforced, leading to prose-only responses with finish_reason='tool_calls' and empty tool_calls. The root cause is partially known (Defect 2 linked to #53255) and the issue provides a clear reproduction path (loop script, payload variations) and code anchors. The track is llm_algorithm because it involves the tool-calling mechanism and structured output enforcement, which is a core algorithm behavior. The evidence includes multiple open PRs with semantic overlap, but none fully cover the root cause, so the contribution is actionable."
+  },
+  "a6bf409a137cb880f848366e5f83914ee47698c43a84322787f82a0d14b6bb6d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #45829 is open and may already address the issue, but it does not reference this issue and has not been updated in 33 days."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "vllm/models/qwen3_8_flash_next/nvidia/model.py",
+      "vllm/v1/worker/gpu/model_runner.py",
+      "vllm/v1/worker/gpu/eplb_utils.py",
+      "Triton kernel dispatch logic for FP8 MoE on pre-SM89"
+    ],
+    "risks": [
+      "Potential overlap with PR #45829 which also touches FP8 on pre-SM89; need to compare implementations to avoid duplication.",
+      "Fix may require careful handling of compute capability gating to not break SM90+ performance."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided vllm serve command on A100 (SM80) with fp8e4nv model; verify no error and correct output.",
+      "Add a unit test that runs the FP8 MoE Triton kernel on SM80 and asserts it falls back to a compatible path or raises a clear error.",
+      "Run existing FP8 quantization tests on A100 and H100 to ensure no regression."
+    ],
+    "unknowns": [
+      "Whether PR #45829 fully resolves this issue or if a separate fix is needed.",
+      "Exact root cause in the Triton kernel dispatch (e.g., missing SM80 support) is not fully detailed in the issue body, but maintainer comment implies it."
+    ],
+    "why": "Issue provides a concrete reproduction command, full traceback, and environment on A100 with fp8e4nv, pointing to a quantization dispatch bug in the MoE Triton kernel path. A maintainer comment confirms the root cause and proposes a fix (compute capability gating for FP8 MoE Triton dispatch on pre-SM89). This is a well-scoped, actionable LLM algorithm bug with a clear validation path."
   },
   "a6ff5f2141ad8ab6215ace197e615b6110ec510ed6080dd2c44cb9ec99fb83e0": {
     "confidence": 0.7,
@@ -53186,6 +53312,33 @@
       "Maintainer preference on whether to fix in get_model_config_by_id or task_handler"
     ],
     "why": "Issue clearly identifies a stale tenant_embd_id causing empty api_key in queued tasks, with a concrete code path and suggested fix. However, open PR lookup failed due to rate limit, and existing merged PRs (#17176, #14923) partially address related tenant_embd_id resolution but not execution-time fallback. Need to confirm no competing implementation and maintainer design preference before starting work."
+  },
+  "e5a20736d1d556e0f7e86faf9189f83cf7e2ebc03882573e71427d42d496bd8e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "thunderagent_router cost model and admission logic",
+      "program_state.py",
+      "capacity.py",
+      "router.py"
+    ],
+    "risks": [
+      "Potential interaction with existing scheduler behavior; need to ensure no regression in non-DP scenarios."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with SGLang workers using --enable-dp-attention --dp-size 4 and send a request with agent_context.session_id; verify no 500 error and correct replica selection."
+    ],
+    "unknowns": [
+      "No maintainer approval or design confirmation, but not blocking."
+    ],
+    "why": "Issue provides a clear root cause (routing identity mismatch) and a concrete design to make ThunderAgent's cost model DP-rank aware, with specific code anchors and a reproduction path."
   },
   "e5b2c8237a4562570895e8916ae275d0bce165272753ac42dee890871a221028": {
     "confidence": 0.7,
