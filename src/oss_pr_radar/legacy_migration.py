@@ -11,16 +11,51 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from .managed_lifecycle import ManagedLedger, migrate_schema, parse_issue_reference
+from .managed_lifecycle import MANAGED_TABLES, ManagedLedger, migrate_schema, parse_issue_reference
+from .managed_security import stable_fingerprint
 from .util import canonical_json
 
 _SENSITIVE_KEY = re.compile(r"(?:secret|token|password|api[_-]?key|private[_-]?key|hmac)", re.I)
 _LOCAL_PATH_KEY = re.compile(r"(?:worktree|checkout|absolute[_-]?path|local[_-]?path)", re.I)
+
+_MANAGED_STORAGE_TABLES = frozenset(
+    {*(table.casefold() for table in MANAGED_TABLES), "task_quarantines"}
+)
+_UNPREFIXED_MANAGED_STORAGE_TABLES = tuple(
+    sorted(table for table in _MANAGED_STORAGE_TABLES if not table.startswith("managed_"))
+)
+_UNPREFIXED_MANAGED_STORAGE_SQL = ",".join(
+    f"'{table}'" for table in _UNPREFIXED_MANAGED_STORAGE_TABLES
+)
+
+
+def _is_managed_storage_table(table: str) -> bool:
+    normalized = table.casefold()
+    return normalized.startswith("managed_") or normalized in _MANAGED_STORAGE_TABLES
+
+
+def _managed_table_sql(json_column: str) -> str:
+    value = (
+        f"CASE WHEN json_valid({json_column}) "
+        f"THEN lower(COALESCE(json_extract({json_column}, '$.table'), '')) ELSE '' END"
+    )
+    return (
+        f"({value} LIKE 'managed\\_%' ESCAPE '\\' "
+        f"OR {value} IN ({_UNPREFIXED_MANAGED_STORAGE_SQL}))"
+    )
+
+
+_RECURSIVE_MANAGED_HISTORY_PREDICATE = (
+    "event_type='LEGACY_RECORD_IMPORTED' AND ("
+    f"{_managed_table_sql('provenance_json')} OR {_managed_table_sql('payload_json')})"
+)
 
 
 def _safe_value(value: Any, *, key: str = "") -> Any:
@@ -61,12 +96,150 @@ def _row_key(table: str, row: sqlite3.Row, index: int) -> str:
 
 
 def _tables(connection: sqlite3.Connection) -> list[str]:
-    return [
+    tables = [
         str(row[0])
         for row in connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
         ).fetchall()
     ]
+    # A later rehearsal may use an already-managed Ledger as its production
+    # source.  Those rows are already present in the copied target and must not
+    # be wrapped again as LEGACY_RECORD_IMPORTED history.
+    return [table for table in tables if not _is_managed_storage_table(table)]
+
+
+def compact_recursive_managed_history_copy(
+    target: Path,
+    *,
+    source: Path,
+    observed_at: str | None = None,
+) -> dict[str, Any]:
+    """Remove recursively wrapped managed rows from one disposable migration copy.
+
+    The active source is never modified.  The exact removed identities are
+    summarized by a digest and one append-only repair event in the target.
+    """
+
+    target = target.resolve()
+    source = source.resolve()
+    if target == source or (target.exists() and source.exists() and os.path.samefile(target, source)):
+        raise ValueError("managed history compaction target must be a copy")
+    if not target.is_file() or not source.is_file():
+        raise FileNotFoundError("managed history compaction requires source and target files")
+    migrate_schema(target)
+    bytes_before = target.stat().st_size
+    connection = sqlite3.connect(target, timeout=30, isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    try:
+        stable_counts_before = {
+            table: int(connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+            for table in _MANAGED_STORAGE_TABLES
+            if table != "managed_lifecycle_events"
+        }
+        rows = connection.execute(
+            f"""SELECT event_id,idempotency_fingerprint,
+                       CASE WHEN json_valid(provenance_json)
+                            THEN json_extract(provenance_json, '$.table') END AS provenance_table,
+                       CASE WHEN json_valid(payload_json)
+                            THEN json_extract(payload_json, '$.table') END AS payload_table,
+                       length(payload_json) AS payload_bytes
+                FROM managed_lifecycle_events
+                WHERE {_RECURSIVE_MANAGED_HISTORY_PREDICATE}
+                ORDER BY event_id"""
+        ).fetchall()
+        if not rows:
+            return {
+                "removedEvents": 0,
+                "removedPayloadBytes": 0,
+                "removedIdentityDigest": None,
+                "tables": {},
+                "auditEventCreated": False,
+                "fileBytesBefore": bytes_before,
+                "fileBytesAfter": bytes_before,
+            }
+        identities = []
+        tables: dict[str, int] = {}
+        payload_bytes = 0
+        for row in rows:
+            table = str(row["provenance_table"] or row["payload_table"] or "").casefold()
+            identities.append(
+                {
+                    "eventId": int(row["event_id"]),
+                    "idempotencyFingerprint": str(row["idempotency_fingerprint"]),
+                    "table": table,
+                }
+            )
+            tables[table] = tables.get(table, 0) + 1
+            payload_bytes += int(row["payload_bytes"] or 0)
+        identity_digest = hashlib.sha256(
+            canonical_json(identities).encode("utf-8")
+        ).hexdigest()
+        idempotency_key = f"managed-history-compaction:{identity_digest}"
+        timestamp = observed_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        payload = {
+            "repair": "recursive-managed-history-v1",
+            "removedEvents": len(rows),
+            "removedPayloadBytes": payload_bytes,
+            "removedIdentityDigest": identity_digest,
+            "tables": dict(sorted(tables.items())),
+        }
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("DROP TRIGGER IF EXISTS managed_events_no_delete")
+        deleted = connection.execute(
+            f"DELETE FROM managed_lifecycle_events WHERE {_RECURSIVE_MANAGED_HISTORY_PREDICATE}"
+        ).rowcount
+        if deleted != len(rows):
+            raise RuntimeError("recursive managed history changed during compaction")
+        connection.execute(
+            """CREATE TRIGGER managed_events_no_delete
+               BEFORE DELETE ON managed_lifecycle_events
+               BEGIN SELECT RAISE(ABORT, 'managed lifecycle events are append-only'); END"""
+        )
+        connection.execute(
+            """INSERT INTO managed_lifecycle_events
+               (opportunity_key,task_id,pr_key,event_type,state,idempotency_key,
+                idempotency_fingerprint,source,provenance_json,observed_at,payload_json)
+               VALUES (NULL,NULL,NULL,?,?,?,?,?,?,?,?)""",
+            (
+                "MANAGED_HISTORY_COMPACTED",
+                "DATA_REPAIRED",
+                idempotency_key,
+                stable_fingerprint(idempotency_key),
+                "stage6-migration",
+                canonical_json(
+                    {
+                        "originKind": "DATA_REPAIR",
+                        "repair": "recursive-managed-history-v1",
+                    }
+                ),
+                timestamp,
+                canonical_json(payload),
+            ),
+        )
+        stable_counts_after = {
+            table: int(connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+            for table in _MANAGED_STORAGE_TABLES
+            if table != "managed_lifecycle_events"
+        }
+        if stable_counts_after != stable_counts_before:
+            raise RuntimeError("managed history compaction changed authoritative projections")
+        connection.execute("COMMIT")
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        connection.execute("VACUUM")
+        if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise RuntimeError("managed history compaction integrity check failed")
+    except Exception:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        raise
+    finally:
+        connection.close()
+    return {
+        **payload,
+        "auditEventCreated": True,
+        "fileBytesBefore": bytes_before,
+        "fileBytesAfter": target.stat().st_size,
+    }
 
 
 def _iter_rows(path: Path, table: str) -> Iterable[tuple[int, sqlite3.Row]]:

@@ -15,7 +15,6 @@ from oss_pr_radar.controller import (  # noqa: E402
     DEFAULT_PROJECT_ID,
     compact_controller_result,
     run_locked_controller_cycle,
-    write_controller_report,
 )
 
 
@@ -32,20 +31,15 @@ def main() -> int:
     parser.add_argument("--no-notify", action="store_true")
     parser.add_argument("--full", action="store_true")
     args = parser.parse_args()
-    try:
-        result = run_locked_controller_cycle(
-            args.root,
-            code_root=args.code_root,
-            notify=not args.no_notify,
-            project_id=args.project_id,
-        )
-    except RuntimeError as exc:
-        result = {
-            "ok": False,
-            "blocked": "operational authorization required",
-            "error": str(exc)[:400],
-        }
-    report_path = write_controller_report(args.root, result)
+    result = run_locked_controller_cycle(
+        args.root,
+        code_root=args.code_root,
+        notify=not args.no_notify,
+        project_id=args.project_id,
+        wait_existing=True,
+        report_on_complete=True,
+    )
+    report_path = args.root.resolve() / "reports" / "latest_controller_cycle.json"
     output = result if args.full else compact_controller_result(result, report_path=report_path)
     print(json.dumps(output, ensure_ascii=False))
     return 0 if result.get("ok") else 1

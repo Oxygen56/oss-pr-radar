@@ -1600,6 +1600,8 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     assert "已开始或继续处理；你无需操作。" in heartbeat_prompt
     assert "never show JSON, paths, logs, prompts, or internal fields" in heartbeat_prompt
     assert "even when command exit is nonzero or final JSON ok=false" in heartbeat_prompt
+    assert "execute the identical release-command once more" in heartbeat_prompt
+    assert "safely joins the already-running controller" in heartbeat_prompt
     assert heartbeat_prompt.index("if it contains desktopHandoff") < heartbeat_prompt.index(
         "if the command fails or final JSON ok=false"
     )

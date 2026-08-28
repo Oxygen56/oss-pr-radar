@@ -53,6 +53,11 @@ The command uses controller and drain locks. `controller_already_running` and
 `drain_already_running` are healthy overlap suppression, not failures. Do not
 repeat individual lifecycle operations after the command returns.
 
+If the Codex turn is compacted or loses the tool result after this command has
+started, do not infer a result. Run the identical command once more. The second
+invocation joins the in-progress locked cycle and returns that cycle's durable
+final result without starting duplicate work.
+
 ## Result contract
 
 Use only the final JSON as the run result:

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
+import json
+import threading
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from oss_pr_radar.controller import (
+    CONTROLLER_LOCK_MARKER_SCHEMA,
+    _controller_command_digest,
     _managed_runtime_has_local_state,
     compact_controller_result,
     controller_cycle,
@@ -118,6 +125,41 @@ def test_controller_reingests_an_independently_reviewed_result(tmp_path):
     assert result["ok"] is True
     assert calls.index("independentReview") < calls.index("resultIngestionAfterReview")
     assert calls.index("resultIngestionAfterReview") < calls.index("publication")
+
+
+def test_controller_stops_immediately_when_disk_guard_is_active(tmp_path):
+    calls: list[str] = []
+
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        calls.append(stage)
+        if stage == "localAgentStatus":
+            return {
+                "ok": False,
+                "workers": [
+                    {
+                        "ok": False,
+                        "runtimeHealth": {"disk": {"level": "stop"}},
+                    }
+                ],
+            }
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+
+    assert result["ok"] is False
+    assert calls == ["localAgentEnsure", "localAgentStatus"]
+    assert result["finalBlockers"] == [
+        {"stage": "finalLocalAgentStatus", "queue": "disk_stop", "count": 1}
+    ]
+    compact = compact_controller_result(result)
+    assert compact["warnings"]["diskThresholdStop"] == 1
+    assert compact["finalBlockers"] == result["finalBlockers"]
 
 
 def test_controller_finishes_terminal_publication_lifecycle_in_same_cycle(tmp_path):
@@ -349,6 +391,322 @@ def test_controller_cycle_lock_suppresses_overlap(tmp_path):
     assert result["summary"]["action"] == "controller_already_running"
 
 
+def test_controller_cycle_can_join_existing_run_after_tool_context_loss(tmp_path):
+    acquired = threading.Event()
+    completed: list[dict] = []
+
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        if not acquired.is_set():
+            acquired.set()
+            time.sleep(0.2)
+        return healthy_response(stage)
+
+    def existing_run():
+        completed.append(
+            run_locked_controller_cycle(
+                tmp_path,
+                code_root=DEV_CODE_ROOT,
+                allow_unreleased_code=True,
+                runner=runner,
+                notify=False,
+                report_on_complete=True,
+            )
+        )
+
+    thread = threading.Thread(target=existing_run)
+    thread.start()
+    assert acquired.wait(timeout=1)
+    joined: list[dict] = []
+
+    def join_existing():
+        joined.append(
+            run_locked_controller_cycle(
+                tmp_path,
+                code_root=DEV_CODE_ROOT,
+                allow_unreleased_code=True,
+                notify=False,
+                wait_existing=True,
+                report_on_complete=True,
+                busy_timeout_seconds=1,
+                runner=lambda *_args: (_ for _ in ()).throw(
+                    AssertionError("a joiner must not start a duplicate controller cycle")
+                ),
+            )
+        )
+
+    second_joiner = threading.Thread(target=join_existing)
+    second_joiner.start()
+    join_existing()
+    thread.join(timeout=1)
+    second_joiner.join(timeout=1)
+
+    assert not thread.is_alive()
+    assert not second_joiner.is_alive()
+    assert joined == [completed[0], completed[0]]
+
+    replay = run_locked_controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        notify=False,
+        wait_existing=True,
+        report_on_complete=True,
+        runner=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("a lost completed result must not start a duplicate controller cycle")
+        ),
+    )
+    assert replay == completed[0]
+
+
+def test_controller_cycle_recovers_report_written_before_completion_marker(tmp_path):
+    command_digest = _controller_command_digest(
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        notify=False,
+        project_id="github",
+    )
+    now = datetime.now(UTC)
+    started_at = (now - timedelta(seconds=2)).isoformat().replace("+00:00", "Z")
+    checked_at = (now - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    run_id = "recovered-run"
+    result = {
+        "ok": True,
+        "checkedAt": checked_at,
+        "controllerRunId": run_id,
+        "summary": {"action": "completed-before-marker"},
+        "failures": [],
+        "finalBlockers": [],
+    }
+    write_controller_report(tmp_path, result)
+    lock_path = tmp_path / "state" / "controller-cycle.lock"
+    lock_path.parent.mkdir(exist_ok=True)
+    lock_path.write_text(
+        json.dumps(
+            {
+                "schema": CONTROLLER_LOCK_MARKER_SCHEMA,
+                "state": "RUNNING",
+                "runId": run_id,
+                "commandDigest": command_digest,
+                "startedAt": started_at,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    recovered = run_locked_controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        notify=False,
+        project_id="github",
+        wait_existing=True,
+        report_on_complete=True,
+        runner=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("a fully written result must not start a replacement cycle")
+        ),
+    )
+
+    assert recovered == result
+    marker = json.loads(lock_path.read_text(encoding="utf-8"))
+    assert marker["state"] == "COMPLETED"
+    assert marker["runId"] == run_id
+
+
+def test_controller_cycle_does_not_reuse_an_ancient_running_marker(tmp_path):
+    command_digest = _controller_command_digest(
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        notify=False,
+        project_id="github",
+    )
+    old_run_id = "ancient-run"
+    write_controller_report(
+        tmp_path,
+        {
+            "ok": True,
+            "checkedAt": "2020-01-01T00:00:01Z",
+            "controllerRunId": old_run_id,
+            "summary": {"action": "ancient"},
+        },
+    )
+    lock_path = tmp_path / "state" / "controller-cycle.lock"
+    lock_path.parent.mkdir(exist_ok=True)
+    lock_path.write_text(
+        json.dumps(
+            {
+                "schema": CONTROLLER_LOCK_MARKER_SCHEMA,
+                "state": "RUNNING",
+                "runId": old_run_id,
+                "commandDigest": command_digest,
+                "startedAt": "2020-01-01T00:00:00Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fresh = run_locked_controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=lambda _root, stage, _argv, _allowed, _timeout: healthy_response(stage),
+        notify=False,
+        project_id="github",
+        wait_existing=True,
+        report_on_complete=True,
+    )
+
+    assert fresh["controllerRunId"] != old_run_id
+    assert fresh["summary"].get("action") != "ancient"
+
+
+def test_controller_cycle_join_gets_current_runtime_failure_not_old_report(
+    tmp_path, monkeypatch
+):
+    write_controller_report(
+        tmp_path,
+        {
+            "ok": True,
+            "checkedAt": "2026-08-27T00:00:00Z",
+            "summary": {"action": "stale"},
+        },
+    )
+    acquired = threading.Event()
+    completed: list[dict] = []
+
+    def failing_cycle(*_args, **_kwargs):
+        acquired.set()
+        time.sleep(0.05)
+        raise RuntimeError("operational authorization expired")
+
+    monkeypatch.setattr("oss_pr_radar.controller.controller_cycle", failing_cycle)
+
+    def existing_run():
+        completed.append(
+            run_locked_controller_cycle(
+                tmp_path,
+                code_root=DEV_CODE_ROOT,
+                allow_unreleased_code=True,
+                notify=False,
+                report_on_complete=True,
+            )
+        )
+
+    thread = threading.Thread(target=existing_run)
+    thread.start()
+    assert acquired.wait(timeout=1)
+    joined = run_locked_controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        notify=False,
+        wait_existing=True,
+        report_on_complete=True,
+        busy_timeout_seconds=1,
+        runner=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("a joiner must not execute a replacement cycle")
+        ),
+    )
+    thread.join(timeout=1)
+
+    assert joined == completed[0]
+    assert joined["ok"] is False
+    assert "expired" in joined["error"]
+    assert joined.get("summary") != {"action": "stale"}
+
+
+def test_controller_cycle_join_ignores_expired_completed_marker_during_new_run(
+    tmp_path, monkeypatch
+):
+    command_digest = _controller_command_digest(
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        notify=False,
+        project_id="github",
+    )
+    old_run_id = "expired-completed-run"
+    old_checked_at = (datetime.now(UTC) - timedelta(minutes=11)).isoformat().replace(
+        "+00:00", "Z"
+    )
+    old_result = {
+        "ok": True,
+        "checkedAt": old_checked_at,
+        "controllerRunId": old_run_id,
+        "summary": {"action": "expired"},
+        "failures": [],
+        "finalBlockers": [],
+    }
+    report_path = write_controller_report(tmp_path, old_result)
+    lock_path = tmp_path / "state" / "controller-cycle.lock"
+    lock_path.parent.mkdir(exist_ok=True)
+    lock_path.write_text(
+        json.dumps(
+            {
+                "schema": CONTROLLER_LOCK_MARKER_SCHEMA,
+                "state": "COMPLETED",
+                "runId": old_run_id,
+                "commandDigest": command_digest,
+                "startedAt": old_checked_at,
+                "completedAt": old_checked_at,
+                "reportCheckedAt": old_checked_at,
+                "reportSha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    producer_paused = threading.Event()
+    release_producer = threading.Event()
+    from oss_pr_radar.controller import _completed_controller_result
+
+    original_completed = _completed_controller_result
+    paused_once = False
+
+    def pause_expired_reuse_check(*args, **kwargs):
+        nonlocal paused_once
+        if threading.current_thread().name == "producer" and not paused_once:
+            paused_once = True
+            producer_paused.set()
+            assert release_producer.wait(timeout=2)
+        return original_completed(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "oss_pr_radar.controller._completed_controller_result", pause_expired_reuse_check
+    )
+    results: list[dict] = []
+
+    def run_cycle():
+        results.append(
+            run_locked_controller_cycle(
+                tmp_path,
+                code_root=DEV_CODE_ROOT,
+                allow_unreleased_code=True,
+                runner=lambda _root, stage, _argv, _allowed, _timeout: healthy_response(stage),
+                notify=False,
+                project_id="github",
+                wait_existing=True,
+                report_on_complete=True,
+                busy_timeout_seconds=2,
+            )
+        )
+
+    producer = threading.Thread(target=run_cycle, name="producer")
+    producer.start()
+    assert producer_paused.wait(timeout=1)
+    joiner = threading.Thread(target=run_cycle, name="joiner")
+    joiner.start()
+    time.sleep(0.05)
+    release_producer.set()
+    producer.join(timeout=3)
+    joiner.join(timeout=3)
+
+    assert not producer.is_alive()
+    assert not joiner.is_alive()
+    assert len(results) == 2
+    assert results[0]["controllerRunId"] == results[1]["controllerRunId"]
+    assert results[0]["controllerRunId"] != old_run_id
+    assert results[0]["summary"].get("action") != "expired"
+
+
 def test_controller_output_is_compact_and_full_evidence_stays_in_report(tmp_path):
     result = {
         "ok": True,
@@ -388,6 +746,7 @@ def test_controller_output_is_compact_and_full_evidence_stays_in_report(tmp_path
     assert compact["warnings"]["titleUpdatesPending"] == 1
     assert compact["warnings"]["parkedRecovery"] == 1
     assert compact["warnings"]["diskThresholdWarning"] == 1
+    assert compact["warnings"]["diskThresholdStop"] == 0
     assert "stages" not in compact
     assert "startupBlocker" not in compact
     assert len(str(compact)) < 1000

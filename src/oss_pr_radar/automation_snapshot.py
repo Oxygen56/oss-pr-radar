@@ -110,7 +110,8 @@ def canonical_prompt(role: str, runtime_root: Path, release_command: list[str]) 
     command_text = shlex.join(release_command)
     if role == "heartbeat":
         action = (
-            "execute only the release-command; inspect its final JSON; "
+            "execute only the release-command; it may take several minutes; inspect its final JSON; "
+            "if context compaction or a missing tool result happens after the command starts, never reply from uncertainty and execute the identical release-command once more, which safely joins the already-running controller, then inspect that final JSON; "
             "if it contains desktopHandoff, send desktopHandoff.prompt unchanged exactly once to desktopHandoff.threadId even when command exit is nonzero or final JSON ok=false, because this handoff is the prescribed recovery action; "
             "only after that message-tool send succeeds reply '已开始或继续处理；你无需操作。'; "
             "when there is no desktopHandoff, if the command fails or final JSON ok=false, reply with one plain-Chinese sentence naming only the real user-visible blocker; "

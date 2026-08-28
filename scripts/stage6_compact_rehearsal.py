@@ -17,7 +17,10 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from oss_pr_radar.legacy_migration import import_legacy_history  # noqa: E402
+from oss_pr_radar.legacy_migration import (  # noqa: E402
+    compact_recursive_managed_history_copy,
+    import_legacy_history,
+)
 from oss_pr_radar.live_pr_snapshot import (  # noqa: E402
     prepare_managed_ledger,
     validate_snapshot_binding,
@@ -96,6 +99,11 @@ def _run_attempt(
         quiesce_token="stage6-compact-copy",
         max_attempts=source_copy_attempts,
     )
+    history_compaction = compact_recursive_managed_history_copy(
+        migrated,
+        source=source_backup,
+        observed_at=observed_at,
+    )
     prepared = prepare_managed_ledger(
         migrated,
         production_ledger=source_backup,
@@ -131,6 +139,7 @@ def _run_attempt(
     replay_restore_projection = build_projection(restore)
     public_snapshot.unlink(missing_ok=True)
     return {
+        "historyCompaction": history_compaction,
         "legacy": prepared["legacy"],
         "preMigration": prepared,
         "reconciliation": reconcile,

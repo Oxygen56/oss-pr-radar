@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 
 import pytest
 
 from oss_pr_radar.ledger import RadarLedger
-from oss_pr_radar.legacy_migration import import_legacy_history
+from oss_pr_radar.legacy_migration import (
+    compact_recursive_managed_history_copy,
+    import_legacy_history,
+)
 from oss_pr_radar.managed_lifecycle import (
     ManagedLedger,
     import_open_pr_observations,
@@ -124,6 +128,127 @@ def test_legacy_history_is_sanitized_and_idempotent(tmp_path, monkeypatch):
         build_projection(restored, source_commit="stage6-test")["artifactDigest"]
         == projection["artifactDigest"]
     )
+
+
+def test_managed_tables_are_not_reimported_as_legacy_history(tmp_path):
+    source = tmp_path / "managed-source.sqlite3"
+    _db(
+        source,
+        [
+            "CREATE TABLE legacy_rows (id TEXT PRIMARY KEY, payload TEXT)",
+            "CREATE TABLE managed_lifecycle_events (event_id INTEGER PRIMARY KEY, payload_json TEXT)",
+            "CREATE TABLE managed_future_table (id TEXT PRIMARY KEY, payload TEXT)",
+            "CREATE TABLE task_quarantines (id TEXT PRIMARY KEY, payload TEXT)",
+            "CREATE TABLE attestation_nonce_consumptions (id TEXT PRIMARY KEY, payload TEXT)",
+        ],
+        {
+            "legacy_rows": [{"id": "legacy-1", "payload": "legacy"}],
+            "managed_lifecycle_events": [{"event_id": 1, "payload_json": "{}"}],
+            "managed_future_table": [{"id": "managed-1", "payload": "managed"}],
+            "task_quarantines": [{"id": "quarantine-1", "payload": "managed"}],
+            "attestation_nonce_consumptions": [{"id": "nonce-1", "payload": "managed"}],
+        },
+    )
+    target = tmp_path / "target.sqlite3"
+
+    first = import_legacy_history(target, production_ledger=source)
+    second = import_legacy_history(target, production_ledger=source)
+
+    assert set(first["sources"]["production"]) == {"legacy_rows"}
+    assert set(second["sources"]["production"]) == {"legacy_rows"}
+    with ManagedLedger(target)._connection() as connection:
+        rows = connection.execute(
+            "SELECT event_type,provenance_json FROM managed_lifecycle_events ORDER BY event_id"
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["event_type"] == "LEGACY_RECORD_IMPORTED"
+    assert json.loads(rows[0]["provenance_json"])["table"] == "legacy_rows"
+
+
+def test_recursive_managed_history_is_compacted_only_on_a_copy(tmp_path):
+    source = tmp_path / "source.sqlite3"
+    target = tmp_path / "migrated.sqlite3"
+    source.touch()
+    ledger = ManagedLedger(target, ensure_schema=True)
+    ledger.record_event(
+        event_type="REAL_EVENT",
+        idempotency_key="real-event",
+        payload={"kept": True},
+    )
+    ledger.record_event(
+        event_type="LEGACY_RECORD_IMPORTED",
+        idempotency_key="true-legacy-event",
+        provenance={"table": "events"},
+        payload={"table": "events", "record": {"id": 1}},
+    )
+    ledger.record_event(
+        event_type="LEGACY_RECORD_IMPORTED",
+        idempotency_key="recursive-managed-event",
+        provenance={"table": "managed_lifecycle_events"},
+        payload={"table": "managed_lifecycle_events", "record": {"event_id": 1}},
+    )
+    ledger.record_event(
+        event_type="LEGACY_RECORD_IMPORTED",
+        idempotency_key="recursive-quarantine",
+        provenance={"table": "task_quarantines"},
+        payload={"table": "task_quarantines", "record": {"quarantine_id": 1}},
+    )
+    ledger.record_event(
+        event_type="LEGACY_RECORD_IMPORTED",
+        idempotency_key="recursive-nonce",
+        provenance={"table": "attestation_nonce_consumptions"},
+        payload={"table": "attestation_nonce_consumptions", "record": {"consumption_id": 1}},
+    )
+    with ledger._connection() as connection:
+        connection.execute(
+            """INSERT INTO task_quarantines
+               (opportunity_key,reason,dedupe_key,payload_json,status,created_at)
+               VALUES ('a/b#1','TEST','test-dedupe','{}','ACTIVE','2026-08-28T00:00:00Z')"""
+        )
+
+    result = compact_recursive_managed_history_copy(
+        target,
+        source=source,
+        observed_at="2026-08-28T00:00:00Z",
+    )
+
+    assert result["removedEvents"] == 3
+    assert result["tables"] == {
+        "attestation_nonce_consumptions": 1,
+        "managed_lifecycle_events": 1,
+        "task_quarantines": 1,
+    }
+    assert result["auditEventCreated"] is True
+    with ledger._connection() as connection:
+        events = connection.execute(
+            "SELECT event_type,idempotency_key FROM managed_lifecycle_events ORDER BY event_id"
+        ).fetchall()
+        assert [row["event_type"] for row in events] == [
+            "REAL_EVENT",
+            "LEGACY_RECORD_IMPORTED",
+            "MANAGED_HISTORY_COMPACTED",
+        ]
+        quarantine = connection.execute(
+            "SELECT opportunity_key,reason,dedupe_key,status FROM task_quarantines"
+        ).fetchone()
+        assert tuple(quarantine) == ("a/b#1", "TEST", "test-dedupe", "ACTIVE")
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            connection.execute(
+                "DELETE FROM managed_lifecycle_events WHERE idempotency_key='real-event'"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            connection.execute(
+                "UPDATE managed_lifecycle_events SET state='changed' "
+                "WHERE idempotency_key='real-event'"
+            )
+    replay = compact_recursive_managed_history_copy(target, source=source)
+    assert replay["removedEvents"] == 0
+    with pytest.raises(ValueError, match="must be a copy"):
+        compact_recursive_managed_history_copy(target, source=target)
+    hard_link = tmp_path / "hard-link.sqlite3"
+    os.link(target, hard_link)
+    with pytest.raises(ValueError, match="must be a copy"):
+        compact_recursive_managed_history_copy(target, source=hard_link)
 
 
 def test_repeated_open_pr_observation_without_timestamp_is_stable(tmp_path):

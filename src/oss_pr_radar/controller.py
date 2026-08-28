@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
+import secrets
 import sqlite3
 import subprocess
+import time
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +22,9 @@ from .release_binding import bind_runtime, runtime_ledger_path, runtime_python
 
 DEFAULT_PROJECT_ID = "5e41d21c-cba3-4be0-9a02-7eef35b67625"
 CONTROLLER_REPAIR_AGE_MINUTES = 90
+CONTROLLER_LOCK_MARKER_SCHEMA = "oss-pr-radar.controller-lock.v1"
+CONTROLLER_COMPLETED_REUSE_SECONDS = 300
+CONTROLLER_ABANDONED_RECOVERY_SECONDS = 900
 Runner = Callable[[Path, str, Sequence[str], set[int], int], dict[str, Any]]
 
 
@@ -159,6 +165,17 @@ def controller_cycle(
         allowed_codes={0, 1},
         require_ok=False,
     )
+    if _local_agent_disk_stop(stages["localAgentStatus"]):
+        stages["finalLocalAgentStatus"] = stages["localAgentStatus"]
+        final_blockers = _final_blockers(stages)
+        return {
+            "ok": False,
+            "checkedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "stages": stages,
+            "failures": [],
+            "finalBlockers": final_blockers,
+            "summary": _compact_summary(stages),
+        }
     health = run_stage(
         "workflowHealth",
         [
@@ -326,6 +343,16 @@ def controller_cycle(
     }
 
 
+def _local_agent_disk_stop(status: dict[str, Any]) -> bool:
+    for worker in status.get("workers") or []:
+        if not isinstance(worker, dict):
+            continue
+        health = worker.get("runtimeHealth")
+        if isinstance(health, dict) and (health.get("disk") or {}).get("level") == "stop":
+            return True
+    return False
+
+
 def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
     checks = {
@@ -357,7 +384,9 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         blockers.append(
             {
                 "stage": "finalLocalAgentStatus",
-                "queue": "unhealthy",
+                "queue": (
+                    "disk_stop" if _local_agent_disk_stop(local_status) else "unhealthy"
+                ),
                 "count": max(1, len(unhealthy)),
             }
         )
@@ -421,22 +450,278 @@ def run_locked_controller_cycle(
     runner: Runner = run_json_command,
     notify: bool = True,
     project_id: str = DEFAULT_PROJECT_ID,
+    wait_existing: bool = False,
+    busy_timeout_seconds: float | None = None,
+    report_on_complete: bool = False,
 ) -> dict[str, Any]:
+    if wait_existing and not report_on_complete:
+        raise ValueError("joining a controller cycle requires durable reporting")
+    command_digest = _controller_command_digest(
+        code_root=code_root,
+        allow_unreleased_code=allow_unreleased_code,
+        notify=notify,
+        project_id=project_id,
+    )
     lock_path = root.resolve() / "state" / "controller-cycle.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as lock:
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            return {"ok": True, "busy": True, "summary": {"action": "controller_already_running"}}
-        return controller_cycle(
-            root,
-            code_root=code_root,
-            allow_unreleased_code=allow_unreleased_code,
-            runner=runner,
-            notify=notify,
-            project_id=project_id,
-        )
+            if not wait_existing:
+                return {
+                    "ok": True,
+                    "busy": True,
+                    "summary": {"action": "controller_already_running"},
+                }
+            deadline = (
+                None
+                if busy_timeout_seconds is None
+                else time.monotonic() + busy_timeout_seconds
+            )
+            while True:
+                try:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if deadline is not None and time.monotonic() >= deadline:
+                        return {
+                            "ok": False,
+                            "summary": {"action": "controller_existing_run_timeout"},
+                            "failures": [
+                                {
+                                    "stage": "controllerLock",
+                                    "error": "existing controller run did not finish",
+                                }
+                            ],
+                            "finalBlockers": [
+                                {"stage": "controllerLock", "queue": "timeout", "count": 1}
+                            ],
+                        }
+                    time.sleep(0.25)
+            completed_marker = _read_controller_lock_marker(lock)
+            existing = _completed_controller_result(
+                root,
+                completed_marker,
+                command_digest=command_digest,
+                max_age_seconds=None,
+            )
+            if existing is None:
+                recovered = _recover_finished_running_marker(
+                    root,
+                    completed_marker,
+                    command_digest=command_digest,
+                )
+                if recovered is not None:
+                    existing, repaired_marker = recovered
+                    _write_controller_lock_marker(lock, repaired_marker)
+            if existing is None:
+                return {
+                    "ok": False,
+                    "summary": {"action": "controller_existing_result_missing"},
+                    "failures": [
+                        {"stage": "controllerLock", "error": "existing controller result missing"}
+                    ],
+                    "finalBlockers": [
+                        {"stage": "controllerLock", "queue": "result_missing", "count": 1}
+                    ],
+                }
+            return existing
+        if wait_existing:
+            previous_marker = _read_controller_lock_marker(lock)
+            previous = _completed_controller_result(
+                root,
+                previous_marker,
+                command_digest=command_digest,
+                max_age_seconds=CONTROLLER_COMPLETED_REUSE_SECONDS,
+            )
+            if previous is not None:
+                return previous
+            recovered = _recover_finished_running_marker(
+                root,
+                previous_marker,
+                command_digest=command_digest,
+            )
+            if recovered is not None:
+                result, completed_marker = recovered
+                _write_controller_lock_marker(lock, completed_marker)
+                return result
+        started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        run_id = secrets.token_hex(16)
+        if report_on_complete:
+            _write_controller_lock_marker(
+                lock,
+                {
+                    "schema": CONTROLLER_LOCK_MARKER_SCHEMA,
+                    "state": "RUNNING",
+                    "runId": run_id,
+                    "commandDigest": command_digest,
+                    "startedAt": started_at,
+                },
+            )
+        try:
+            result = controller_cycle(
+                root,
+                code_root=code_root,
+                allow_unreleased_code=allow_unreleased_code,
+                runner=runner,
+                notify=notify,
+                project_id=project_id,
+            )
+        except RuntimeError as exc:
+            if not report_on_complete:
+                raise
+            result = {
+                "ok": False,
+                "checkedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                "blocked": "operational authorization required",
+                "error": str(exc)[:400],
+            }
+        if report_on_complete:
+            result = {**result, "controllerRunId": run_id}
+            report_path = write_controller_report(root, result)
+            completed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            _write_controller_lock_marker(
+                lock,
+                {
+                    "schema": CONTROLLER_LOCK_MARKER_SCHEMA,
+                    "state": "COMPLETED",
+                    "runId": run_id,
+                    "commandDigest": command_digest,
+                    "startedAt": started_at,
+                    "completedAt": completed_at,
+                    "reportCheckedAt": result.get("checkedAt"),
+                    "reportSha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+                },
+            )
+        return result
+
+
+def _controller_command_digest(
+    *,
+    code_root: Path | None,
+    allow_unreleased_code: bool,
+    notify: bool,
+    project_id: str,
+) -> str:
+    payload = {
+        "codeRoot": str(code_root.resolve()) if code_root is not None else None,
+        "allowUnreleasedCode": allow_unreleased_code,
+        "notify": notify,
+        "projectId": project_id,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _read_controller_lock_marker(lock) -> dict[str, Any] | None:
+    lock.seek(0)
+    try:
+        value = json.loads(lock.read())
+    except (json.JSONDecodeError, OSError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _write_controller_lock_marker(lock, marker: dict[str, Any]) -> None:
+    lock.seek(0)
+    lock.truncate()
+    lock.write(json.dumps(marker, sort_keys=True, separators=(",", ":")))
+    lock.flush()
+    os.fsync(lock.fileno())
+
+
+def _completed_controller_result(
+    root: Path,
+    marker: object,
+    *,
+    command_digest: str,
+    max_age_seconds: float | None,
+) -> dict[str, Any] | None:
+    if (
+        not isinstance(marker, dict)
+        or marker.get("schema") != CONTROLLER_LOCK_MARKER_SCHEMA
+        or marker.get("state") != "COMPLETED"
+        or marker.get("commandDigest") != command_digest
+        or not isinstance(marker.get("runId"), str)
+    ):
+        return None
+    try:
+        started_at = _controller_timestamp(marker["startedAt"])
+        completed_at = _controller_timestamp(marker["completedAt"])
+        if completed_at < started_at:
+            return None
+        if max_age_seconds is not None:
+            age = (datetime.now(UTC) - completed_at).total_seconds()
+            if age < 0 or age > max_age_seconds:
+                return None
+        report_path = root.resolve() / "reports" / "latest_controller_cycle.json"
+        raw = report_path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != marker.get("reportSha256"):
+            return None
+        result = json.loads(raw)
+        checked_at = _controller_timestamp(result["checkedAt"])
+        if (
+            result.get("controllerRunId") != marker.get("runId")
+            or result.get("checkedAt") != marker.get("reportCheckedAt")
+            or checked_at < started_at
+            or checked_at > completed_at
+        ):
+            return None
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return result if isinstance(result, dict) else None
+
+
+def _recover_finished_running_marker(
+    root: Path,
+    marker: object,
+    *,
+    command_digest: str,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    if (
+        not isinstance(marker, dict)
+        or marker.get("schema") != CONTROLLER_LOCK_MARKER_SCHEMA
+        or marker.get("state") != "RUNNING"
+        or marker.get("commandDigest") != command_digest
+        or not isinstance(marker.get("runId"), str)
+    ):
+        return None
+    try:
+        started_at = _controller_timestamp(marker["startedAt"])
+        report_path = root.resolve() / "reports" / "latest_controller_cycle.json"
+        raw = report_path.read_bytes()
+        result = json.loads(raw)
+        checked_at = _controller_timestamp(result["checkedAt"])
+        age = (datetime.now(UTC) - checked_at).total_seconds()
+        if (
+            result.get("controllerRunId") != marker.get("runId")
+            or checked_at < started_at
+            or age < 0
+            or age > CONTROLLER_ABANDONED_RECOVERY_SECONDS
+        ):
+            return None
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    completed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    completed_marker = {
+        **marker,
+        "state": "COMPLETED",
+        "completedAt": completed_at,
+        "reportCheckedAt": result["checkedAt"],
+        "reportSha256": hashlib.sha256(raw).hexdigest(),
+    }
+    return result, completed_marker
+
+
+def _controller_timestamp(value: object) -> datetime:
+    if not isinstance(value, str) or not value:
+        raise ValueError("controller timestamp is missing")
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("controller timestamp has no timezone")
+    return parsed.astimezone(UTC)
 
 
 def write_controller_report(root: Path, result: dict[str, Any]) -> Path:
@@ -477,6 +762,7 @@ def compact_controller_result(
             else []
         )
     }
+    local_disk_stop = _local_agent_disk_stop(local_status)
     desktop_handoff = _pending_desktop_handoff(stages)
     compact = {
         "ok": result.get("ok"),
@@ -494,6 +780,7 @@ def compact_controller_result(
             "terminalFeedbackDeferred": len(feedback.get("deferred") or []),
             "parkedRecovery": len(final_recovery.get("parkedRecovery") or []),
             "diskThresholdWarning": int("DISK_WARNING_THRESHOLD" in local_warning_codes),
+            "diskThresholdStop": int(local_disk_stop),
         },
     }
     if desktop_handoff is not None:
