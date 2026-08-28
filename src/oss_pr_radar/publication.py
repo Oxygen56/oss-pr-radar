@@ -452,12 +452,15 @@ def _changed_files_for_pr_update(
         return _changed_files_since(worktree, previous_commit)
     merge_base = str(evidence_file.get("mergeBaseSha") or "")
     resolution_files = evidence_file.get("mergeResolutionFiles")
-    changed_files = evidence_file.get("changedFiles")
+    controller_changed_files = evidence_file.get("controllerCommitChangedFiles")
+    if controller_changed_files is None:
+        # Legacy merge receipts used changedFiles for the resolution scope.
+        controller_changed_files = evidence_file.get("changedFiles")
     if (
         not re.fullmatch(r"[0-9a-f]{40}", merge_base)
         or not isinstance(resolution_files, list)
         or not resolution_files
-        or resolution_files != changed_files
+        or resolution_files != controller_changed_files
         or any(not isinstance(path, str) or not path for path in resolution_files)
     ):
         raise PublicationError("merge publication evidence is incomplete")
@@ -791,11 +794,7 @@ def audit_publication_request(
             update_changed_files = _changed_files_for_pr_update(
                 worktree, str(request["previousCommitSha"]), evidence_file
             )
-            changed_files = (
-                update_changed_files
-                if evidence_file.get("handoffMode") == "controller_merge_complete"
-                else _changed_files(worktree, repo, base_branch)
-            )
+            changed_files = _changed_files(worktree, repo, base_branch)
         else:
             changed_files = _changed_files(worktree, repo, base_branch)
     except PublicationError as exc:

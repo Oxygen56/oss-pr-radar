@@ -10373,7 +10373,11 @@ def _published_followup_store(
                     "taskActionDigest": "task-action",
                     "taskFollowupRequired": True,
                     "taskActions": ["当前分支检查失败"],
-                    "evidence": {"actionableCheckNames": ["Ruff"]},
+                    "evidence": {
+                        "actionableCheckNames": ["Ruff"],
+                        "baseRefName": "main",
+                        "baseSha": head_sha,
+                    },
                     "checkedAt": now,
                 }
             ],
@@ -11527,12 +11531,38 @@ def test_followup_commit_preserves_prepared_base_integration_diff(tmp_path):
     )
 
     assert finalized["controllerCommitChangedFiles"] == ["runtime.py"]
-    assert finalized["changedFiles"] == ["base.py", "runtime.py"]
+    assert finalized["changedFiles"] == ["feature.py", "runtime.py"]
+    assert run_git(worktree, "diff", "--name-only", f"{previous_head}..HEAD").splitlines() == [
+        "base.py",
+        "runtime.py",
+    ]
     assert finalized["previousCommitSha"] == prepared_head
     assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
         prepared_head
     ]
     assert run_git(worktree, "merge-base", baseline, "HEAD") == baseline
+
+    tampered = finalized | {"changedFiles": ["base.py"]}
+    result_path.write_text(json.dumps(tampered), encoding="utf-8")
+    with pytest.raises(
+        RuntimeError, match="controller commit receipt does not match validation files"
+    ):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context={
+                "stage": "PR_OPEN",
+                "prFollowup": {
+                    "headSha": previous_head,
+                    "preparedHeadSha": prepared_head,
+                    "evidence": {
+                        "baseIntegrationRequired": True,
+                        "baseSha": base_sha,
+                    },
+                },
+            },
+            value=tampered,
+            result_path=result_path,
+        )
 
 
 def _controller_commit_result(
@@ -11939,7 +11969,11 @@ def _bind_published_pr_authority_fixture(
                         "taskActionDigest": "published-authority-task-action",
                         "taskFollowupRequired": True,
                         "taskActions": ["修复当前 PR 上的真实回归"],
-                        "evidence": {"actionableCheckNames": ["Regression"]},
+                        "evidence": {
+                            "actionableCheckNames": ["Regression"],
+                            "baseRefName": "main",
+                            "baseSha": str(value["selectedBaseSha"]),
+                        },
                         "checkedAt": now,
                     }
                 ],

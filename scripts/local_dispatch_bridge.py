@@ -10210,11 +10210,15 @@ def _finalize_controller_merge(
     finalized["commitSha"] = command(["git", "rev-parse", "HEAD"], cwd=worktree)
     finalized["branch"] = command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
     finalized["controllerCommitChangedFiles"] = changed_files
-    finalized["changedFiles"] = changed_files
     finalized["mergeResolutionFiles"] = changed_files
     finalized["previousCommitSha"] = expected_head
     finalized["mergeBaseSha"] = expected_base
     finalized["handoffMode"] = "controller_merge_complete"
+    finalized["changedFiles"] = _validation_publication_changed_files(
+        worktree=worktree,
+        context=context,
+        commit_changed_files=changed_files,
+    )
     base_branch = _prepared_base_branch(worktree, context)
     publication = finalized.get("publication")
     if base_branch and isinstance(publication, dict):
@@ -10294,14 +10298,20 @@ def _validation_publication_changed_files(
 ) -> list[str]:
     followup = context.get("prFollowup")
     if isinstance(followup, dict):
-        previous_head = str(followup.get("headSha") or "")
-        if not re.fullmatch(r"[0-9a-f]{40}", previous_head):
-            raise RuntimeError("PR follow-up lacks the signed previous head")
+        evidence = followup.get("evidence")
+        publication_base = str(evidence.get("baseSha") or "") if isinstance(evidence, dict) else ""
+        if not re.fullmatch(r"[0-9a-f]{40}", publication_base):
+            raise RuntimeError("PR follow-up lacks the signed publication base")
+        command(["git", "cat-file", "-e", f"{publication_base}^{{commit}}"], cwd=worktree)
+        command(
+            ["git", "merge-base", "--is-ancestor", publication_base, "HEAD"],
+            cwd=worktree,
+        )
         cumulative = _validated_changed_files(
             [
                 line
                 for line in command(
-                    ["git", "diff", "--name-only", f"{previous_head}..HEAD"], cwd=worktree
+                    ["git", "diff", "--name-only", f"{publication_base}..HEAD"], cwd=worktree
                 ).splitlines()
                 if line
             ]
@@ -10351,9 +10361,12 @@ def _prospective_validation_changed_files(*, worktree: Path, context: dict[str, 
 
     followup = context.get("prFollowup")
     if isinstance(followup, dict):
-        base = str(followup.get("headSha") or "")
+        evidence = followup.get("evidence")
+        base = str(evidence.get("baseSha") or "") if isinstance(evidence, dict) else ""
         if not re.fullmatch(r"[0-9a-f]{40}", base):
-            raise RuntimeError("PR follow-up lacks the signed previous head")
+            raise RuntimeError("PR follow-up lacks the signed publication base")
+        command(["git", "cat-file", "-e", f"{base}^{{commit}}"], cwd=worktree)
+        command(["git", "merge-base", "--is-ancestor", base, "HEAD"], cwd=worktree)
     else:
         if context.get("stage") != "VALIDATION_PENDING":
             raise RuntimeError("prospective validation diff requires a validation continuation")

@@ -1076,6 +1076,7 @@ def test_merge_update_files_are_bound_to_exact_two_parent_commit(tmp_path):
         "handoffMode": "controller_merge_complete",
         "mergeBaseSha": base_sha,
         "mergeResolutionFiles": ["runtime.py"],
+        "controllerCommitChangedFiles": ["runtime.py"],
         "changedFiles": ["runtime.py"],
     }
 
@@ -1088,10 +1089,18 @@ def test_merge_update_files_are_bound_to_exact_two_parent_commit(tmp_path):
             previous_head,
             evidence | {"mergeBaseSha": "a" * 40},
         )
+    with pytest.raises(publication.PublicationError, match="evidence is incomplete"):
+        publication._changed_files_for_pr_update(
+            worktree,
+            previous_head,
+            evidence | {"mergeResolutionFiles": ["forged.py"]},
+        )
 
 
 @pytest.mark.parametrize("live_branch_matches", [True, False])
-def test_merge_update_uses_live_repository_base_not_pr_snapshot(tmp_path, live_branch_matches):
+def test_merge_update_uses_live_repository_base_not_pr_snapshot(
+    tmp_path, live_branch_matches, monkeypatch
+):
     store, request, evidence_path = prepared_request(tmp_path)
     first = store.publication_request(request["request_id"])
     permit = store.grant_publication_request(
@@ -1124,6 +1133,8 @@ def test_merge_update_uses_live_repository_base_not_pr_snapshot(tmp_path, live_b
             "handoffMode": "controller_merge_complete",
             "mergeBaseSha": base_sha,
             "mergeResolutionFiles": ["file.txt"],
+            "controllerCommitChangedFiles": ["file.txt"],
+            "changedFiles": ["feature.py", "file.txt"],
         }
     )
     evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
@@ -1170,11 +1181,14 @@ def test_merge_update_uses_live_repository_base_not_pr_snapshot(tmp_path, live_b
         def check_runs(self, repo, ref):
             return []
 
+    monkeypatch.setattr(publication, "_changed_files", lambda *args: ["feature.py", "file.txt"])
     result = broker_publication_request(store, update["request_id"], client=AdvancedBaseClient())
 
     assert result["granted"] is live_branch_matches
     if live_branch_matches:
         assert result["audit"]["reason"] == "LIVE_PUBLICATION_GATES_PASSED"
+        assert result["audit"]["evidence"]["changedFiles"] == ["feature.py", "file.txt"]
+        assert result["audit"]["evidence"]["updateChangedFiles"] == ["file.txt"]
     else:
         assert result["audit"]["reason"] == "EXISTING_PR_BASE_DRIFT"
 
