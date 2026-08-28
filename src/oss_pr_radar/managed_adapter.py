@@ -1303,6 +1303,9 @@ class ManagedAdapter:
             head_sha = str(item.get("headSha") or "")
             if not head_sha:
                 continue
+            pr_state = str(item.get("prState") or "OPEN").upper()
+            if pr_state not in {"OPEN", "CLOSED", "MERGED"}:
+                raise ValueError(f"follow-up PR state is invalid: {pr_key}")
             ledger.upsert_pr(
                 pr_key=pr_key,
                 owner=owner,
@@ -1312,7 +1315,7 @@ class ManagedAdapter:
                 pr_url=str(
                     item.get("url") or f"https://github.com/{owner_repo}/pull/{number_text}"
                 ),
-                state="OPEN",
+                state=pr_state,
                 auto_created=False,
                 source_kind="FOLLOWUP_OBSERVATION",
                 source="github-followup",

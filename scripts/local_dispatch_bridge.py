@@ -42,7 +42,12 @@ from oss_pr_radar.dispatch import (  # noqa: E402
     verify_queue,
 )
 from oss_pr_radar.evidence import collect_evidence  # noqa: E402
-from oss_pr_radar.github_client import GitHubClient, is_transient_github_error  # noqa: E402
+from oss_pr_radar.followup import collect_followup  # noqa: E402
+from oss_pr_radar.github_client import (  # noqa: E402
+    GitHubClient,
+    GitHubError,
+    is_transient_github_error,
+)
 from oss_pr_radar.independent_review import (  # noqa: E402
     controller_review_result,
     review_once,
@@ -57,7 +62,10 @@ from oss_pr_radar.managed_adapter import (  # noqa: E402
     GitHubAbsenceQueries,
     ManagedAdapter,
 )
-from oss_pr_radar.managed_lifecycle import ManagedLedger  # noqa: E402
+from oss_pr_radar.managed_lifecycle import (  # noqa: E402
+    ManagedLedger,
+    reconcile_managed_pr_states,
+)
 from oss_pr_radar.metrics import assess_submit_ready, rolling_quality  # noqa: E402
 from oss_pr_radar.notifier import FeishuClient, NotificationError, candidate_card  # noqa: E402
 from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
@@ -15880,10 +15888,146 @@ def should_apply_pr_lifecycle_stage(current: str, remote: str, *, is_draft: bool
     return PR_STAGE_PRIORITY[remote] > PR_STAGE_PRIORITY.get(current, -1)
 
 
+def _managed_pr_state_from_pull(value: dict[str, Any]) -> str:
+    state = str(value.get("state") or "").upper()
+    if value.get("merged_at") or value.get("mergedAt") or state == "MERGED":
+        return "MERGED"
+    if state == "CLOSED":
+        return "CLOSED"
+    if state == "OPEN":
+        return "OPEN"
+    raise RuntimeError("managed PR exact state is unavailable")
+
+
+def _reconcile_managed_pr_snapshot(
+    path: Path,
+    state: dict[str, Any],
+    client: GitHubClient,
+) -> dict[str, Any]:
+    """Reconcile the complete managed PR set from this live observation cycle."""
+
+    managed = ManagedLedger(path, ensure_schema=False)
+    with managed._connection() as connection:
+        rows = connection.execute(
+            "SELECT pr_key,owner,repo,number,pr_url FROM managed_prs ORDER BY pr_key"
+        ).fetchall()
+    open_items = {
+        str(item.get("key")): item
+        for item in (state.get("items") or [])
+        if isinstance(item, dict) and item.get("key")
+    }
+    observations: list[dict[str, Any]] = []
+    exact_reads = 0
+    for row in rows:
+        key = str(row["pr_key"])
+        repo = f"{row['owner']}/{row['repo']}"
+        number = int(row["number"])
+        item = open_items.get(key)
+        if item and item.get("url") and item.get("headSha") and item.get("checkedAt"):
+            pr_url = str(item["url"])
+            head_sha = str(item["headSha"])
+            pr_state = _managed_pr_state_from_pull({"state": item.get("prState") or "OPEN"})
+            fetched_at = str(item["checkedAt"])
+            evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+            response_digest = str(evidence.get("pullResponseDigest") or "") or sha256_json(
+                {"prKey": key, "url": pr_url, "headSha": head_sha, "state": pr_state}
+            )
+        else:
+            value = client.pull_request(repo, number)
+            exact_reads += 1
+            pr_url = str(value.get("html_url") or row["pr_url"] or "")
+            head_sha = str((value.get("head") or {}).get("sha") or "")
+            pr_state = _managed_pr_state_from_pull(value)
+            fetched_at = iso_z(datetime.now(UTC))
+            response_digest = sha256_json(value)
+            if not pr_url or not head_sha:
+                raise RuntimeError(f"managed PR exact identity is incomplete: {key}")
+        observations.append(
+            {
+                "prKey": key,
+                "url": pr_url,
+                "headSha": head_sha,
+                "state": pr_state,
+                "apiEvidence": {
+                    "authoritativeReadOnly": True,
+                    "endpoint": f"repos/{repo}/pulls/{number}",
+                    "responseDigest": response_digest,
+                    "fetchedAt": fetched_at,
+                    "state": pr_state,
+                    "url": pr_url,
+                    "headSha": head_sha,
+                },
+            }
+        )
+    result = reconcile_managed_pr_states(path, observations, require_all_managed=True)
+    return result | {"exactReads": exact_reads}
+
+
+def _refresh_followup_projections(
+    store: RadarLedger,
+    *,
+    path: Path,
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """Collect one live snapshot and project it into both lifecycle schemas."""
+
+    existing = None
+    cloud_snapshot_error = None
+    try:
+        existing = fetch_cloud_pr_followup()
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        cloud_snapshot_error = f"{type(exc).__name__}:{str(exc)[:200]}"
+
+    client = GitHubClient(retry_delays=(1.0, 3.0, 8.0))
+    state, report = collect_followup(
+        client,
+        author=os.environ.get("RADAR_GITHUB_ACTOR", "Oxygen56"),
+        existing=existing,
+        workers=4,
+    )
+    errors = [
+        {"key": "pr-followup", "error": str(error)[:200]} for error in (report.get("errors") or [])
+    ]
+    managed: dict[str, Any] = {}
+    reconciliation: dict[str, Any] = {}
+    legacy: dict[str, Any] = {}
+    try:
+        managed = ManagedAdapter(ROOT, path).record_followup(state, report)
+    except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+        errors.append(
+            {"key": "managed-followup", "error": f"{type(exc).__name__}:{str(exc)[:180]}"}
+        )
+    try:
+        reconciliation = _reconcile_managed_pr_snapshot(path, state, client)
+    except (GitHubError, OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+        errors.append(
+            {
+                "key": "managed-pr-state",
+                "error": f"{type(exc).__name__}:{str(exc)[:180]}",
+            }
+        )
+    try:
+        legacy = store.import_pr_followups(state)
+    except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+        errors.append({"key": "legacy-followup", "error": f"{type(exc).__name__}:{str(exc)[:180]}"})
+    return (
+        {
+            "generatedAt": state.get("generatedAt"),
+            "snapshotDigest": state.get("digest"),
+            "covered": len(state.get("items") or []),
+            "managedRecorded": managed.get("recorded", 0),
+            "managedReconciled": reconciliation.get("total", 0),
+            "managedExactReads": reconciliation.get("exactReads", 0),
+            "legacyMatched": legacy.get("matched", 0),
+            "cloudSnapshotError": cloud_snapshot_error,
+        },
+        errors,
+    )
+
+
 def refresh_pull_requests(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     updates = []
-    errors = []
+    followup, errors = _refresh_followup_projections(store, path=Path(args.ledger))
     for item in store.tracked_pull_requests():
         try:
             value = json.loads(
@@ -15913,7 +16057,7 @@ def refresh_pull_requests(args: argparse.Namespace) -> dict[str, Any]:
                 dedupe_key=f"{stage}:{item['pr_url']}",
             )
             updates.append({"key": item["key"], "stage": stage, "prUrl": item["pr_url"]})
-    return {"ok": not errors, "updates": updates, "errors": errors}
+    return {"ok": not errors, "updates": updates, "errors": errors, "followup": followup}
 
 
 def recovery_list(args: argparse.Namespace) -> dict[str, Any]:

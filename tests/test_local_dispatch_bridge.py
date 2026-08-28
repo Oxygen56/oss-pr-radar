@@ -2979,13 +2979,23 @@ def test_refresh_pull_requests_preserves_local_validation_stage(monkeypatch, tmp
     monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
     monkeypatch.setattr(
         MODULE,
+        "_refresh_followup_projections",
+        lambda *_args, **_kwargs: ({"covered": 0}, []),
+    )
+    monkeypatch.setattr(
+        MODULE,
         "command",
         lambda *_args, **_kwargs: json.dumps({"state": "OPEN", "statusCheckRollup": []}),
     )
 
     result = MODULE.refresh_pull_requests(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
-    assert result == {"ok": True, "updates": [], "errors": []}
+    assert result == {
+        "ok": True,
+        "updates": [],
+        "errors": [],
+        "followup": {"covered": 0},
+    }
     assert recorded == []
 
 
@@ -3008,6 +3018,11 @@ def test_refresh_pull_requests_downgrades_green_pr_that_became_draft(monkeypatch
     monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
     monkeypatch.setattr(
         MODULE,
+        "_refresh_followup_projections",
+        lambda *_args, **_kwargs: ({"covered": 0}, []),
+    )
+    monkeypatch.setattr(
+        MODULE,
         "command",
         lambda *_args, **_kwargs: json.dumps(
             {
@@ -3026,6 +3041,144 @@ def test_refresh_pull_requests_downgrades_green_pr_that_became_draft(monkeypatch
     ]
     assert recorded[0][0][:2] == ("a/b#1", "PR_OPEN")
     assert recorded[0][1]["evidence"]["remote"]["isDraft"] is True
+
+
+def test_local_refresh_projects_newer_live_snapshot_into_managed_and_legacy_tables(
+    monkeypatch, tmp_path
+):
+    store, _worktree, head_sha, pr_url = _published_followup_store(tmp_path)
+    publication_time = datetime.now(UTC)
+    cloud_time = iso_z(publication_time - timedelta(hours=1))
+    live_time = iso_z(publication_time + timedelta(minutes=1))
+    cloud = {
+        "version": "pr_followup_v3",
+        "generatedAt": cloud_time,
+        "items": [],
+    }
+    cloud["digest"] = sha256_json(cloud)
+    live = {
+        "version": "pr_followup_v3",
+        "generatedAt": live_time,
+        "items": [
+            {
+                "key": "a/b#9",
+                "repo": "a/b",
+                "number": 9,
+                "url": pr_url,
+                "title": "Fix runtime",
+                "headSha": head_sha,
+                "actionDigest": "live-action",
+                "actions": [],
+                "taskActions": [],
+                "taskActionDigest": "live-task-action",
+                "taskFollowupRequired": False,
+                "ciStatus": "PASSED",
+                "checkedAt": live_time,
+                "evidence": {"failingChecks": [], "requestedChanges": []},
+            }
+        ],
+    }
+    live["digest"] = sha256_json(live)
+    report = {
+        "scan_ok": True,
+        "run_id": "local-followup-live",
+        "updates": [],
+        "errors": [],
+    }
+    seen_existing = []
+
+    def collect(_client, **kwargs):
+        seen_existing.append(kwargs.get("existing"))
+        return live, report
+
+    with store.connect() as connection:
+        connection.execute("DELETE FROM pr_followups")
+    monkeypatch.setattr(MODULE, "fetch_cloud_pr_followup", lambda: cloud)
+    monkeypatch.setattr(MODULE, "collect_followup", collect)
+    monkeypatch.setattr(
+        MODULE,
+        "command",
+        lambda *_args, **_kwargs: json.dumps(
+            {"state": "OPEN", "isDraft": False, "statusCheckRollup": []}
+        ),
+    )
+
+    result = MODULE.refresh_pull_requests(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True
+    assert result["followup"]["managedRecorded"] == 1
+    assert result["followup"]["legacyMatched"] == 1
+    assert seen_existing == [cloud]
+    with store.connect() as connection:
+        managed = connection.execute(
+            "SELECT pr_key,head_sha,observed_at FROM managed_ci_runs WHERE ci_key LIKE 'followup:%'"
+        ).fetchone()
+        legacy = connection.execute(
+            "SELECT opportunity_key,head_sha,checked_at FROM pr_followups"
+        ).fetchone()
+    assert dict(managed) == {
+        "pr_key": "a/b#9",
+        "head_sha": head_sha,
+        "observed_at": live_time,
+    }
+    assert dict(legacy) == {
+        "opportunity_key": "a/b#1",
+        "head_sha": head_sha,
+        "checked_at": live_time,
+    }
+
+
+def test_managed_reconciliation_terminalizes_pr_missing_from_open_snapshot(tmp_path):
+    path = tmp_path / "ledger.sqlite3"
+    managed = ManagedLedger(path, ensure_schema=True)
+    for number in (1, 2):
+        managed.upsert_pr(
+            pr_key=f"a/b#{number}",
+            owner="a",
+            repo="b",
+            number=number,
+            head_sha=f"{number:040x}",
+            pr_url=f"https://github.com/a/b/pull/{number}",
+            state="OPEN",
+            auto_created=False,
+            observed_at="2026-08-28T14:00:00Z",
+        )
+    state = {
+        "version": "pr_followup_v3",
+        "generatedAt": "2026-08-28T15:00:00Z",
+        "items": [
+            {
+                "key": "a/b#1",
+                "url": "https://github.com/a/b/pull/1",
+                "headSha": f"{1:040x}",
+                "prState": "OPEN",
+                "checkedAt": "2026-08-28T15:00:00Z",
+                "evidence": {"pullResponseDigest": "open-response"},
+            }
+        ],
+    }
+
+    class Client:
+        def pull_request(self, repo, number):
+            assert (repo, number) == ("a/b", 2)
+            return {
+                "state": "closed",
+                "merged_at": "2026-08-28T14:30:00Z",
+                "html_url": "https://github.com/a/b/pull/2",
+                "head": {"sha": f"{2:040x}"},
+            }
+
+    result = MODULE._reconcile_managed_pr_snapshot(path, state, Client())
+
+    assert result["allManagedKeysObserved"] is True
+    assert result["exactReads"] == 1
+    assert result["liveOpenKeys"] == ["a/b#1"]
+    with managed._connection() as connection:
+        rows = connection.execute("SELECT pr_key,state FROM managed_prs ORDER BY pr_key").fetchall()
+    assert [dict(row) for row in rows] == [
+        {"pr_key": "a/b#1", "state": "OPEN"},
+        {"pr_key": "a/b#2", "state": "MERGED"},
+    ]
 
 
 def test_task_context_waits_for_live_handoff_receipt(monkeypatch, tmp_path):

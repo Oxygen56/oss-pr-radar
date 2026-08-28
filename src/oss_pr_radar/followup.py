@@ -261,7 +261,7 @@ def collect_followup(
     *,
     author: str,
     existing: dict[str, Any] | None = None,
-    limit: int = 40,
+    limit: int | None = None,
     now: datetime | None = None,
     workers: int = 4,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -364,7 +364,9 @@ def collect_followup(
             return repo, number, {}, [], [], [], [], [], str(exc)[:160], None, None
 
     try:
-        hits = client.open_pull_requests_by_author(author)[:limit]
+        hits = client.open_pull_requests_by_author(author)
+        if limit is not None:
+            hits = hits[: max(0, int(limit))]
     except GitHubError as exc:
         state = {
             "version": FOLLOWUP_VERSION,
@@ -608,6 +610,14 @@ def collect_followup(
             key=lambda item: (str(item["name"] or ""), str(item["url"] or "")),
         )
         evidence = {
+            "prState": (
+                "MERGED"
+                if pull.get("merged_at")
+                else "CLOSED"
+                if str(pull.get("state") or "").casefold() == "closed"
+                else "OPEN"
+            ),
+            "pullResponseDigest": sha256_json(pull),
             "headSha": head,
             "baseRefName": base_ref_name,
             "baseSha": base_sha,
@@ -679,6 +689,7 @@ def collect_followup(
             "mergeConflict": merge_conflict,
             "draft": draft,
             "ciStatus": ci_status,
+            "prState": evidence["prState"],
             "checkedAt": iso_z(current),
         }
         state_items.append(state_item)

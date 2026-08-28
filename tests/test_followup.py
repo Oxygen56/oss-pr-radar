@@ -69,6 +69,71 @@ def test_formal_maintainer_request_is_notified_once():
     assert repeated["candidate_details"] == []
 
 
+def test_default_followup_covers_all_67_open_prs_without_legacy_limit():
+    class ManyOpenPrsClient(Client):
+        def open_pull_requests_by_author(self, author):
+            return [
+                {
+                    "number": number,
+                    "repository_url": "https://api.github.com/repos/a/b",
+                }
+                for number in range(1, 68)
+            ]
+
+        def pull_request(self, repo, number):
+            value = super().pull_request(repo, number)
+            return value | {
+                "number": number,
+                "html_url": f"https://github.com/a/b/pull/{number}",
+                "head": {"sha": f"head-{number}"},
+            }
+
+        def pull_reviews(self, repo, number):
+            return []
+
+    state, report = collect_followup(
+        ManyOpenPrsClient(),
+        author="Oxygen56",
+        now=datetime(2026, 8, 4, tzinfo=UTC),
+    )
+
+    assert len(state["items"]) == 67
+    assert {item["number"] for item in state["items"]} == set(range(1, 68))
+    assert report["scan_ok"] is True
+
+
+def test_explicit_followup_limit_remains_available_for_non_formal_callers():
+    class ManyOpenPrsClient(Client):
+        def open_pull_requests_by_author(self, author):
+            return [
+                {
+                    "number": number,
+                    "repository_url": "https://api.github.com/repos/a/b",
+                }
+                for number in range(1, 68)
+            ]
+
+        def pull_request(self, repo, number):
+            value = super().pull_request(repo, number)
+            return value | {
+                "number": number,
+                "html_url": f"https://github.com/a/b/pull/{number}",
+                "head": {"sha": f"head-{number}"},
+            }
+
+        def pull_reviews(self, repo, number):
+            return []
+
+    state, _report = collect_followup(
+        ManyOpenPrsClient(),
+        author="Oxygen56",
+        limit=40,
+        now=datetime(2026, 8, 4, tzinfo=UTC),
+    )
+
+    assert len(state["items"]) == 40
+
+
 def test_draft_pr_wakes_original_task_once():
     class DraftClient(Client):
         def pull_request(self, repo, number):

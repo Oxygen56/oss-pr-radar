@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -26,6 +27,7 @@ _OUTBOUND_LOCK_FD: int | None = None
 
 _RELEVANT_EVENTS = {"schedule", "workflow_dispatch"}
 _STATE_JOBS = {"build-state", "persist-pending", "persist-receipt"}
+_MANAGED_FOLLOWUP_MAX_AGE = timedelta(minutes=150)
 
 
 def github_json(path: str) -> object:
@@ -272,6 +274,127 @@ def health(
     }
 
 
+def managed_followup_coverage(
+    path: Path,
+    *,
+    now: datetime | None = None,
+    max_age: timedelta = _MANAGED_FOLLOWUP_MAX_AGE,
+) -> dict:
+    """Require a current follow-up observation for every managed open PR head."""
+
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    if not path.is_file():
+        return {
+            "assessed": False,
+            "healthy": False,
+            "issues": ["MANAGED_PR_FOLLOWUP_COVERAGE_UNAVAILABLE"],
+            "reason": "managed_ledger_unavailable",
+            "openCount": 0,
+            "coveredCount": 0,
+        }
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    try:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if not {"managed_prs", "managed_ci_runs", "managed_lifecycle_events"} <= tables:
+            return {
+                "assessed": False,
+                "healthy": False,
+                "issues": ["MANAGED_PR_FOLLOWUP_COVERAGE_UNAVAILABLE"],
+                "reason": "managed_schema_unavailable",
+                "openCount": 0,
+                "coveredCount": 0,
+            }
+        rows = connection.execute(
+            """SELECT p.pr_key,p.pr_url,p.head_sha,p.observed_at AS pr_observed_at,
+                      p.latest_source,
+                      c.head_sha AS snapshot_head_sha,c.observed_at AS snapshot_observed_at,
+                      (SELECT MAX(e.observed_at) FROM managed_lifecycle_events e
+                       WHERE e.pr_key=p.pr_key
+                         AND e.event_type='PUBLICATION_RECEIPT_OBSERVED')
+                        AS publication_observed_at
+               FROM managed_prs p
+               LEFT JOIN managed_ci_runs c ON c.rowid=(
+                   SELECT c2.rowid FROM managed_ci_runs c2
+                   WHERE c2.pr_key=p.pr_key AND c2.ci_key LIKE 'followup:%'
+                   ORDER BY c2.observed_at DESC,c2.rowid DESC LIMIT 1
+               )
+               WHERE p.state='OPEN' ORDER BY p.pr_key"""
+        ).fetchall()
+    finally:
+        connection.close()
+
+    missing: list[str] = []
+    head_mismatches: list[str] = []
+    predates_publication: list[str] = []
+    stale: list[str] = []
+    covered = 0
+    cutoff = current - max_age
+    for row in rows:
+        key = str(row["pr_key"])
+        snapshot_at = str(row["snapshot_observed_at"] or "")
+        if not snapshot_at:
+            missing.append(key)
+            continue
+        if str(row["snapshot_head_sha"] or "") != str(row["head_sha"] or ""):
+            head_mismatches.append(key)
+            continue
+        try:
+            snapshot_time = parse_time(snapshot_at)
+        except (TypeError, ValueError):
+            predates_publication.append(key)
+            continue
+        publication_at = str(row["publication_observed_at"] or "")
+        if not publication_at and str(row["latest_source"] or "") == "publication":
+            publication_at = str(row["pr_observed_at"] or "")
+        if publication_at:
+            try:
+                if snapshot_time < parse_time(publication_at):
+                    predates_publication.append(key)
+                    continue
+            except (TypeError, ValueError):
+                predates_publication.append(key)
+                continue
+        if snapshot_time < cutoff:
+            stale.append(key)
+            continue
+        covered += 1
+
+    issues: list[str] = []
+    if missing:
+        issues.append("MANAGED_PR_FOLLOWUP_MISSING")
+    if head_mismatches:
+        issues.append("MANAGED_PR_FOLLOWUP_HEAD_STALE")
+    if predates_publication:
+        issues.append("MANAGED_PR_FOLLOWUP_PREDATES_PUBLICATION")
+    if stale:
+        issues.append("MANAGED_PR_FOLLOWUP_STALE")
+    return {
+        "assessed": True,
+        "healthy": not issues,
+        "issues": issues,
+        "openCount": len(rows),
+        "coveredCount": covered,
+        "missingKeys": missing,
+        "headMismatchKeys": head_mismatches,
+        "predatesPublicationKeys": predates_publication,
+        "staleKeys": stale,
+        "maxAgeMinutes": int(max_age.total_seconds() // 60),
+        "checkedAt": current.isoformat().replace("+00:00", "Z"),
+    }
+
+
+def runtime_managed_followup_coverage(runtime_root: Path) -> dict:
+    """Resolve the immutable current ledger before checking local coverage."""
+
+    return managed_followup_coverage(runtime_ledger_path(runtime_root))
+
+
 def effective_scan_freshness(
     workflow_runs: list[dict],
     *,
@@ -437,6 +560,19 @@ def main() -> int:
         result["naturalScheduleHealthy"] = False
         result["naturalScheduleIssues"] = result["issues"]
     result["githubActionsExternalBlocker"] = external_blocker
+    managed_coverage = (
+        runtime_managed_followup_coverage(args.runtime_root)
+        if args.runtime_root is not None
+        else {
+            "assessed": False,
+            "healthy": True,
+            "issues": [],
+            "reason": "runtime_root_not_provided",
+            "openCount": 0,
+            "coveredCount": 0,
+        }
+    )
+    result["managedFollowupCoverage"] = managed_coverage
     effective = effective_scan_freshness(
         workflow_runs,
         max_age=timedelta(minutes=max(15, args.max_effective_age_minutes)),
@@ -476,15 +612,23 @@ def main() -> int:
     result["operationalHealthy"] = bool(
         (effective["fresh"] or repair_triggered or repair_reconciled)
         and component_health.get("healthy") is True
+        and managed_coverage.get("healthy") is True
     )
     result["operationalIssues"] = list(
         dict.fromkeys(
-            [*result["issues"], *(component_health.get("issues") or [])]
+            [
+                *result["issues"],
+                *(component_health.get("issues") or []),
+                *(managed_coverage.get("issues") or []),
+            ]
             + ([f"REPAIR_FAILED:{repair_error}"] if repair_error else [])
         )
     )
     if args.notify and (
-        repair_would_trigger or repair_error or component_health.get("healthy") is not True
+        repair_would_trigger
+        or repair_error
+        or component_health.get("healthy") is not True
+        or managed_coverage.get("healthy") is not True
     ):
         app_id = os.environ.get("FEISHU_APP_ID")
         app_secret = os.environ.get("FEISHU_APP_SECRET")

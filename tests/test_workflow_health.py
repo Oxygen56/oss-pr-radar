@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from oss_pr_radar.managed_lifecycle import ManagedLedger
+
 SCRIPT = Path(__file__).parents[1] / "scripts" / "check_workflow_health.py"
 SPEC = importlib.util.spec_from_file_location("check_workflow_health", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
@@ -17,6 +19,16 @@ SPEC.loader.exec_module(MODULE)
 
 
 NOW = datetime(2026, 8, 4, 2, tzinfo=UTC)
+
+
+def _healthy_managed_followup(_path):
+    return {
+        "assessed": True,
+        "healthy": True,
+        "issues": [],
+        "openCount": 0,
+        "coveredCount": 0,
+    }
 
 
 def test_missing_natural_schedule_is_unhealthy():
@@ -91,6 +103,218 @@ def test_sparse_natural_schedule_coverage_is_reported_without_hiding_freshness()
             "NATURAL_SCHEDULE_GAP_EXCESSIVE",
         ],
     }
+
+
+def _managed_followup_ledger(
+    tmp_path,
+    *,
+    open_count: int,
+    covered_count: int,
+    pr_observed_at: str = "2026-08-04T01:00:00Z",
+    followup_observed_at: str = "2026-08-04T01:30:00Z",
+) -> Path:
+    path = tmp_path / "state" / "radar_ledger.sqlite3"
+    ledger = ManagedLedger(path, ensure_schema=True)
+    for number in range(1, open_count + 1):
+        head_sha = f"{number:040x}"
+        key = f"owner/repo#{number}"
+        ledger.upsert_pr(
+            pr_key=key,
+            owner="owner",
+            repo="repo",
+            number=number,
+            head_sha=head_sha,
+            pr_url=f"https://github.com/owner/repo/pull/{number}",
+            state="OPEN",
+            auto_created=False,
+            source_kind="FOLLOWUP_OBSERVATION",
+            source="github-followup",
+            observed_at=pr_observed_at,
+        )
+        if number <= covered_count:
+            ledger.record_ci_run(
+                ci_key=f"followup:{key}:{head_sha}",
+                pr_key=key,
+                head_sha=head_sha,
+                status="PASSED",
+                checks={"source": "followup"},
+                observed_at=followup_observed_at,
+            )
+    return path
+
+
+def test_managed_followup_coverage_fails_when_legacy_40_of_67_are_present(tmp_path):
+    path = _managed_followup_ledger(tmp_path, open_count=67, covered_count=40)
+
+    result = MODULE.managed_followup_coverage(path, now=NOW)
+
+    assert result["healthy"] is False
+    assert result["openCount"] == 67
+    assert result["coveredCount"] == 40
+    assert len(result["missingKeys"]) == 27
+    assert result["issues"] == ["MANAGED_PR_FOLLOWUP_MISSING"]
+
+
+def test_managed_followup_coverage_fails_closed_when_ledger_is_unavailable(tmp_path):
+    result = MODULE.managed_followup_coverage(tmp_path / "missing.sqlite3", now=NOW)
+
+    assert result["assessed"] is False
+    assert result["healthy"] is False
+    assert result["issues"] == ["MANAGED_PR_FOLLOWUP_COVERAGE_UNAVAILABLE"]
+
+
+def test_managed_followup_coverage_accepts_all_67_current_heads(tmp_path):
+    path = _managed_followup_ledger(tmp_path, open_count=67, covered_count=67)
+
+    result = MODULE.managed_followup_coverage(path, now=NOW)
+
+    assert result["healthy"] is True
+    assert result["openCount"] == result["coveredCount"] == 67
+    assert result["issues"] == []
+
+
+def test_managed_followup_coverage_excludes_terminal_pr_without_snapshot(tmp_path):
+    path = _managed_followup_ledger(tmp_path, open_count=2, covered_count=1)
+    ManagedLedger(path).upsert_pr(
+        pr_key="owner/repo#2",
+        owner="owner",
+        repo="repo",
+        number=2,
+        head_sha=f"{2:040x}",
+        pr_url="https://github.com/owner/repo/pull/2",
+        state="MERGED",
+        auto_created=False,
+        source_kind="FOLLOWUP_OBSERVATION",
+        source="github-authoritative-reconciliation",
+        observed_at="2026-08-04T01:40:00Z",
+    )
+
+    result = MODULE.managed_followup_coverage(path, now=NOW)
+
+    assert result["healthy"] is True
+    assert result["openCount"] == result["coveredCount"] == 1
+    assert result["missingKeys"] == []
+
+
+def test_managed_followup_coverage_rejects_snapshot_before_latest_head(tmp_path):
+    path = _managed_followup_ledger(tmp_path, open_count=1, covered_count=1)
+    ManagedLedger(path).upsert_pr(
+        pr_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        number=1,
+        head_sha="f" * 40,
+        pr_url="https://github.com/owner/repo/pull/1",
+        state="OPEN",
+        auto_created=False,
+        source_kind="FOLLOWUP_OBSERVATION",
+        source="publication",
+        observed_at="2026-08-04T01:40:00Z",
+    )
+
+    result = MODULE.managed_followup_coverage(path, now=NOW)
+
+    assert result["healthy"] is False
+    assert result["headMismatchKeys"] == ["owner/repo#1"]
+    assert result["issues"] == ["MANAGED_PR_FOLLOWUP_HEAD_STALE"]
+
+
+def test_managed_followup_coverage_rejects_snapshot_before_latest_publication(tmp_path):
+    path = _managed_followup_ledger(tmp_path, open_count=1, covered_count=1)
+    ManagedLedger(path).upsert_pr(
+        pr_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        number=1,
+        head_sha=f"{1:040x}",
+        pr_url="https://github.com/owner/repo/pull/1",
+        state="OPEN",
+        auto_created=False,
+        source_kind="FOLLOWUP_OBSERVATION",
+        source="publication",
+        observed_at="2026-08-04T01:40:00Z",
+    )
+
+    result = MODULE.managed_followup_coverage(path, now=NOW)
+
+    assert result["healthy"] is False
+    assert result["predatesPublicationKeys"] == ["owner/repo#1"]
+    assert result["issues"] == ["MANAGED_PR_FOLLOWUP_PREDATES_PUBLICATION"]
+
+
+def test_managed_followup_coverage_does_not_require_refresh_after_same_head_reconciliation(
+    tmp_path,
+):
+    path = _managed_followup_ledger(tmp_path, open_count=1, covered_count=1)
+    ManagedLedger(path).upsert_pr(
+        pr_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        number=1,
+        head_sha=f"{1:040x}",
+        pr_url="https://github.com/owner/repo/pull/1",
+        state="OPEN",
+        auto_created=False,
+        source_kind="FOLLOWUP_OBSERVATION",
+        source="github-authoritative-reconciliation",
+        observed_at="2026-08-04T01:40:00Z",
+    )
+
+    result = MODULE.managed_followup_coverage(path, now=NOW)
+
+    assert result["healthy"] is True
+    assert result["coveredCount"] == 1
+
+
+def test_main_fails_operational_health_for_40_of_67_managed_coverage(monkeypatch, capsys, tmp_path):
+    current = datetime.now(UTC)
+    _managed_followup_ledger(
+        tmp_path,
+        open_count=67,
+        covered_count=40,
+        pr_observed_at=(current - timedelta(minutes=40)).isoformat(),
+        followup_observed_at=(current - timedelta(minutes=30)).isoformat(),
+    )
+    recent = {
+        "id": 7,
+        "event": "schedule",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": (datetime.now(UTC) - timedelta(minutes=30)).isoformat(),
+        "updated_at": (datetime.now(UTC) - timedelta(minutes=20)).isoformat(),
+        "html_url": "https://github.com/a/b/actions/runs/7",
+    }
+    monkeypatch.setattr(MODULE, "runs", lambda _repo: [recent])
+    monkeypatch.setattr(
+        MODULE,
+        "workflow_component_health",
+        lambda *_args: {
+            "assessed": True,
+            "healthy": True,
+            "issues": [],
+            "scanSucceeded": True,
+            "runUpdatedAt": recent["updated_at"],
+            "runUrl": recent["html_url"],
+        },
+    )
+    monkeypatch.setattr(MODULE, "github_actions_external_blocker", lambda *_args: None)
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        MODULE,
+        "runtime_managed_followup_coverage",
+        lambda _root: MODULE.managed_followup_coverage(tmp_path / "state" / "radar_ledger.sqlite3"),
+    )
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["check_workflow_health.py", "--runtime-root", str(tmp_path)],
+    )
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["operationalHealthy"] is False
+    assert result["managedFollowupCoverage"]["coveredCount"] == 40
+    assert "MANAGED_PR_FOLLOWUP_MISSING" in result["operationalIssues"]
 
 
 def test_runs_retries_transient_github_api_failure(monkeypatch):
@@ -509,6 +733,7 @@ def test_main_dispatches_one_fallback_for_stale_effective_scan(monkeypatch):
         lambda repo, ref, **_kwargs: dispatched.append((repo, ref)),
     )
     monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(MODULE, "runtime_managed_followup_coverage", _healthy_managed_followup)
     monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
     monkeypatch.setattr(
         MODULE.sys,
@@ -533,6 +758,7 @@ def test_main_suppresses_fallback_when_outbound_pause_wins_the_race(monkeypatch,
     ]
     monkeypatch.setattr(MODULE, "runs", lambda _repo: stale_runs)
     monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(MODULE, "runtime_managed_followup_coverage", _healthy_managed_followup)
     monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
     monkeypatch.setattr(
         MODULE,
@@ -591,6 +817,7 @@ def test_main_suppresses_futile_repair_when_actions_billing_is_blocked(monkeypat
         lambda repo, ref, **_kwargs: dispatched.append((repo, ref)),
     )
     monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(MODULE, "runtime_managed_followup_coverage", _healthy_managed_followup)
     monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
     monkeypatch.setattr(
         MODULE.sys,
@@ -636,6 +863,7 @@ def test_component_degradation_is_unhealthy_without_repeating_a_successful_scan(
         lambda repo, ref, **_kwargs: dispatched.append((repo, ref)),
     )
     monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(MODULE, "runtime_managed_followup_coverage", _healthy_managed_followup)
     monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
     monkeypatch.setattr(
         MODULE.sys,
@@ -700,6 +928,68 @@ def test_health_rejects_wrong_runtime_binding_before_github_or_feishu(monkeypatc
     result = json.loads(capsys.readouterr().out)
     assert result["ok"] is False
     assert "runtime binding" in result["error"]
+
+
+def test_notify_includes_managed_followup_coverage_failure(monkeypatch, capsys):
+    recent = {
+        "id": 7,
+        "event": "schedule",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": (datetime.now(UTC) - timedelta(minutes=30)).isoformat(),
+        "updated_at": (datetime.now(UTC) - timedelta(minutes=20)).isoformat(),
+        "html_url": "https://github.com/a/b/actions/runs/7",
+    }
+    sent = []
+
+    class Client:
+        def __init__(self, *_args):
+            pass
+
+        def send_card(self, card, *, idempotency_key):
+            sent.append((card, idempotency_key))
+
+    monkeypatch.setattr(MODULE, "runs", lambda _repo: [recent])
+    monkeypatch.setattr(
+        MODULE,
+        "workflow_component_health",
+        lambda *_args: {
+            "assessed": True,
+            "healthy": True,
+            "issues": [],
+            "scanSucceeded": True,
+            "runUpdatedAt": recent["updated_at"],
+            "runUrl": recent["html_url"],
+        },
+    )
+    monkeypatch.setattr(MODULE, "github_actions_external_blocker", lambda *_args: None)
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
+    monkeypatch.setattr(
+        MODULE,
+        "runtime_managed_followup_coverage",
+        lambda _root: {
+            "assessed": True,
+            "healthy": False,
+            "issues": ["MANAGED_PR_FOLLOWUP_MISSING"],
+            "openCount": 67,
+            "coveredCount": 40,
+        },
+    )
+    monkeypatch.setattr(MODULE, "FeishuClient", Client)
+    for name in ("FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_CHAT_ID"):
+        monkeypatch.setenv(name, name.casefold())
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", "--notify"],
+    )
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["managedFollowupCoverage"]["healthy"] is False
+    assert len(sent) == 1
+    assert "MANAGED_PR_FOLLOWUP_MISSING" in json.dumps(sent[0][0])
 
 
 def test_health_help_has_no_auth_bypass_option():
