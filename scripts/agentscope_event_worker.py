@@ -48,6 +48,46 @@ CENTRAL_CWD = Path("/Users/oxygen/Documents/github/agentscope")
 RECOVERY_EVENT_NAMESPACE = "agentscope"
 EVENT_RECEIPT_DIR = "agentscope_event_receipts"
 EVENT_OUTCOME_DIR = "agentscope_event_outcomes"
+_OPERATIONAL_AUTHORIZATION_GAP_ERRORS = frozenset(
+    {
+        f"operational authorization required: {reason}"
+        for reason in (
+            "operational authorization is missing or not a regular file",
+            "operational authorization has not been activated",
+            "operational authorization release binding mismatch",
+            "operational authorization ledger pointer is invalid",
+            "operational authorization ledger binding mismatch",
+            "operational authorization is not yet valid",
+        )
+    }
+)
+
+
+def _is_operational_authorization_gap(value: object) -> bool:
+    """Recognize only the exact pre-turn envelope for this bridge operation."""
+    if isinstance(value, dict):
+        return (
+            set(value) == {"ok", "error", "turnStarted"}
+            and value.get("ok") is False
+            and value.get("turnStarted") is False
+            and value.get("error") in _OPERATIONAL_AUTHORIZATION_GAP_ERRORS
+        )
+    if not isinstance(value, RuntimeError):
+        return False
+    prefix = "agentscope-event-create: "
+    text = str(value)
+    if not text.startswith(prefix):
+        return False
+    try:
+        envelope = json.loads(text[len(prefix) :].strip())
+    except json.JSONDecodeError:
+        return False
+    return (
+        isinstance(envelope, dict)
+        and set(envelope) == {"ok", "error"}
+        and envelope.get("ok") is False
+        and envelope.get("error") in _OPERATIONAL_AUTHORIZATION_GAP_ERRORS
+    )
 
 
 def _outcome_recovery_event_id(root_event_id: str) -> str:
@@ -564,6 +604,12 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
             ],
         )
     except Exception as exc:
+        if _is_operational_authorization_gap(exc):
+            lane.defer_prestart_authorization_gap(
+                event_id,
+                lease_token=str(event.get("leaseToken") or ""),
+            )
+            raise
         lane.release_handler_reservation(
             event_id,
             {"error": f"{type(exc).__name__}:{str(exc)[:300]}"},
@@ -582,15 +628,32 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
         )
         _quarantine_event(root, lane, event, reason="central_task_thread_receipt_mismatch")
         return
-    if result.get("pending") and result.get("turnId"):
-        pending_thread = str(result.get("threadId") or (binding or {}).get("thread_id") or "")
+    if result.get("turnId"):
+        received_thread = str(result.get("threadId") or central_thread or "")
         lane.bind_handler_turn(
-            key, event_id, pending_thread, str(result["turnId"]), result, status="started"
+            key,
+            event_id,
+            received_thread,
+            str(result["turnId"]),
+            result,
+            status="started",
         )
         if result.get("designWait") or result.get("status") == "watch_only":
             lane.mark_design_wait(event_id)
         return
     if not result.get("ok") or not result.get("turnId"):
+        if (
+            not result.get("turnId")
+            and result.get("turnStarted") is False
+            and _is_operational_authorization_gap(result)
+        ):
+            lane.defer_prestart_authorization_gap(
+                event_id,
+                lease_token=str(event.get("leaseToken") or ""),
+            )
+            raise RuntimeError(
+                f"AgentScope event authorization deferred before turn creation: {result}"
+            )
         lane.release_handler_reservation(
             event_id,
             result,
@@ -608,16 +671,6 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
             with handoff.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps({"event": event, "result": result}, sort_keys=True) + "\n")
         raise RuntimeError(f"AgentScope event worker receipt unavailable: {result}")
-    lane.bind_handler_turn(
-        key,
-        event_id,
-        str(result["threadId"]),
-        str(result["turnId"]),
-        result,
-        status="started",
-    )
-    if result.get("designWait") or result.get("status") == "watch_only":
-        lane.mark_design_wait(event_id)
 
 
 def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:

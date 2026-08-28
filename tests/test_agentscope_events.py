@@ -52,6 +52,15 @@ def _event_worker_module():
     return module
 
 
+def _authorization_bridge_error(operation: str, reason: str, **extra) -> RuntimeError:
+    envelope = {
+        "ok": False,
+        "error": f"operational authorization required: {reason}",
+    }
+    envelope.update(extra)
+    return RuntimeError(f"{operation}: {json.dumps(envelope, sort_keys=True)}")
+
+
 def test_event_worker_starts_from_an_unrelated_working_directory(tmp_path):
     script = Path(__file__).parents[1] / "scripts" / "agentscope_event_worker.py"
     result = subprocess.run(
@@ -63,6 +72,70 @@ def test_event_worker_starts_from_an_unrelated_working_directory(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "--root" in result.stdout
+
+
+def test_operational_authorization_gap_classifier_is_cutover_only():
+    worker = _event_worker_module()
+    planned = (
+        "operational authorization is missing or not a regular file",
+        "operational authorization has not been activated",
+        "operational authorization release binding mismatch",
+        "operational authorization ledger pointer is invalid",
+        "operational authorization ledger binding mismatch",
+        "operational authorization is not yet valid",
+    )
+    permanent = (
+        "operational authorization schema is invalid",
+        "operational authorization permissions are unsafe",
+        "operational authorization authentication failed",
+    )
+    for reason in planned:
+        assert worker._is_operational_authorization_gap(
+            _authorization_bridge_error("agentscope-event-create", reason)
+        )
+    for reason in permanent:
+        assert not worker._is_operational_authorization_gap(
+            _authorization_bridge_error("agentscope-event-create", reason)
+        )
+    allowed_error = f"operational authorization required: {planned[0]}"
+    assert worker._is_operational_authorization_gap(
+        {"ok": False, "error": allowed_error, "turnStarted": False}
+    )
+    assert not worker._is_operational_authorization_gap(
+        {"ok": False, "error": allowed_error}
+    )
+    assert not worker._is_operational_authorization_gap(
+        {"ok": False, "error": allowed_error, "turnStarted": True}
+    )
+    assert not worker._is_operational_authorization_gap(
+        {
+            "ok": False,
+            "error": allowed_error,
+            "turnStarted": False,
+            "turnId": "remote-turn",
+        }
+    )
+    assert not worker._is_operational_authorization_gap(
+        {
+            "ok": False,
+            "error": allowed_error,
+            "turnStarted": False,
+            "threadId": "remote-thread",
+        }
+    )
+    assert not worker._is_operational_authorization_gap(
+        _authorization_bridge_error("nanobot-event-create", planned[0])
+    )
+    assert not worker._is_operational_authorization_gap(
+        _authorization_bridge_error(
+            "agentscope-event-create", planned[0], turnStarted=False
+        )
+    )
+    assert not worker._is_operational_authorization_gap(
+        RuntimeError(
+            f"agentscope-event-create: operational authorization required: {planned[0]}"
+        )
+    )
 
 
 def _issue(number: int, updated: str, *, pr: bool = False) -> dict:
@@ -152,6 +225,73 @@ def test_lease_owner_and_token_condition_ack(tmp_path):
     assert lane.pending() == 1
     assert lane.ack("e1", lease_token=claimed[0]["leaseToken"], owner="worker-a") is True
     assert lane.pending() == 0
+
+
+def test_prestart_authorization_gap_refund_is_token_bound(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    lane.append({"eventId": "auth-gap", "eventKey": "agentscope-ai/agentscope#1"})
+    claimed = lane.claim(owner="worker-a")[0]
+    lane.reserve_handler_turn(
+        "agentscope-ai/agentscope#1", "auth-gap", "client:auth-gap"
+    )
+
+    assert lane.defer_prestart_authorization_gap(
+        "auth-gap", lease_token="wrong-token", owner="worker-a"
+    ) is False
+    assert lane.defer_prestart_authorization_gap(
+        "auth-gap", lease_token=claimed["leaseToken"], owner="worker-a"
+    ) is True
+
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts,lease_token FROM event_lane_events "
+            "WHERE event_id='auth-gap'"
+        ).fetchone()
+    assert dict(row) == {"status": "pending", "attempts": 0, "lease_token": None}
+    assert lane.handler_turn("auth-gap") is None
+
+    lane.append({"eventId": "zero-attempt", "eventKey": "agentscope-ai/agentscope#2"})
+    lane.reserve_handler_turn(
+        "agentscope-ai/agentscope#2", "zero-attempt", "client:zero-attempt"
+    )
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET status='leased',lease_owner='worker-a',"
+            "lease_token='zero-token' WHERE event_id='zero-attempt'"
+        )
+    assert lane.defer_prestart_authorization_gap(
+        "zero-attempt", lease_token="zero-token", owner="worker-a"
+    ) is False
+    with lane.connect() as db:
+        zero = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id='zero-attempt'"
+        ).fetchone()
+    assert dict(zero) == {"status": "leased", "attempts": 0}
+    assert lane.handler_turn("zero-attempt")["status"] == "reserved"
+
+    lane.append({"eventId": "started-turn", "eventKey": "agentscope-ai/agentscope#3"})
+    started = next(
+        item for item in lane.claim(owner="worker-a") if item["eventId"] == "started-turn"
+    )
+    lane.reserve_handler_turn(
+        "agentscope-ai/agentscope#3", "started-turn", "client:started-turn"
+    )
+    lane.bind_handler_turn(
+        "agentscope-ai/agentscope#3",
+        "started-turn",
+        "thread-started",
+        "turn-started",
+        {"turnStarted": True},
+    )
+    assert lane.defer_prestart_authorization_gap(
+        "started-turn", lease_token=started["leaseToken"], owner="worker-a"
+    ) is False
+    with lane.connect() as db:
+        started_row = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id='started-turn'"
+        ).fetchone()
+    assert dict(started_row) == {"status": "leased", "attempts": 1}
+    assert lane.handler_turn("started-turn")["status"] == "started"
 
 
 def test_github_identity_ignores_metadata_drift_and_tracks_material_revisions(tmp_path):
@@ -556,12 +696,23 @@ def test_unmapped_event_uses_explicit_independent_release_bridge(tmp_path, monke
     assert all(operation != "drain-once" for _, operation, _ in calls)
 
 
-def test_central_thread_receipt_mismatch_is_quarantined_without_success(tmp_path, monkeypatch):
+def test_remote_turn_id_is_bound_and_acked_without_duplicate_retry(tmp_path, monkeypatch):
     worker = _event_worker_module()
     _configure_manifest(worker, tmp_path, monkeypatch)
-    monkeypatch.setattr(worker, "run_bridge", lambda *_args, **_kwargs: {
-        "ok": True, "threadId": "issue-specific-thread", "turnId": "turn-1"
-    })
+    monkeypatch.setattr(
+        worker,
+        "run_bridge",
+        lambda *_args, **_kwargs: {
+            "ok": False,
+            "error": (
+                "operational authorization required: "
+                "operational authorization release binding mismatch"
+            ),
+            "turnStarted": False,
+            "threadId": CENTRAL_THREAD,
+            "turnId": "turn-1",
+        },
+    )
     lane = EventLane(tmp_path / "events.db")
     event = {
         "eventId": "central-mismatch",
@@ -570,13 +721,72 @@ def test_central_thread_receipt_mismatch_is_quarantined_without_success(tmp_path
         "issue": {"state": "open", "html_url": "https://github.com/agentscope-ai/agentscope/issues/11"},
     }
     lane.append(event)
-    lane.claim(now=0)
-    worker.issue_handler_delivery(tmp_path, lane, event)
+    result = dispatch_once(
+        lane,
+        lambda item: worker.issue_handler_delivery(tmp_path, lane, item),
+        limit=1,
+    )
+    assert result == {"claimed": 1, "delivered": 1, "pending": 0}
     with lane.connect() as db:
-        row = db.execute("SELECT status,payload_json FROM event_lane_events WHERE event_id=?", ("central-mismatch",)).fetchone()
+        row = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id=?",
+            ("central-mismatch",),
+        ).fetchone()
+    assert dict(row) == {"status": "delivered", "attempts": 1}
+    turn = lane.handler_turn("central-mismatch")
+    assert turn["status"] == "started"
+    assert turn["thread_id"] == CENTRAL_THREAD
+    assert turn["turn_id"] == "turn-1"
+
+
+def test_wrong_central_thread_with_turn_id_remains_quarantined(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    _configure_manifest(worker, tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        worker,
+        "run_bridge",
+        lambda *_args, **_kwargs: {
+            "ok": False,
+            "error": (
+                "operational authorization required: "
+                "operational authorization release binding mismatch"
+            ),
+            "turnStarted": False,
+            "threadId": "wrong-central-thread",
+            "turnId": "wrong-thread-turn",
+        },
+    )
+    lane = EventLane(tmp_path / "events.db")
+    event = {
+        "eventId": "central-mismatch-with-turn",
+        "repo": "agentscope-ai/agentscope",
+        "number": 12,
+        "issue": {
+            "state": "open",
+            "html_url": "https://github.com/agentscope-ai/agentscope/issues/12",
+        },
+    }
+    lane.append(event)
+
+    result = dispatch_once(
+        lane,
+        lambda item: worker.issue_handler_delivery(tmp_path, lane, item),
+        limit=1,
+    )
+
+    assert result == {"claimed": 1, "delivered": 0, "pending": 0}
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts,payload_json FROM event_lane_events WHERE event_id=?",
+            (event["eventId"],),
+        ).fetchone()
     assert row["status"] == "needs_reconcile"
+    assert row["attempts"] == 1
     assert "central_task_thread_receipt_mismatch" in row["payload_json"]
-    assert lane.handler_thread("agentscope-ai/agentscope#11") is None
+    turn = lane.handler_turn(event["eventId"])
+    assert turn["status"] == "needs_reconcile"
+    assert turn["turn_id"] is None
+    assert lane.handler_thread("agentscope-ai/agentscope#12") is None
 
 
 def test_stale_handler_turn_is_terminalized_and_releases_central_slot(tmp_path):
@@ -762,6 +972,11 @@ def test_retryable_start_failure_releases_reservation_and_retries(
     assert first["delivered"] == 0
     assert first["pending"] == 1
     assert lane.handler_turn(event["eventId"])["status"] == "needs_reconcile"
+    with lane.connect() as db:
+        assert db.execute(
+            "SELECT attempts FROM event_lane_events WHERE event_id=?",
+            (event["eventId"],),
+        ).fetchone()[0] == 1
 
     second = dispatch_once(
         lane,
@@ -772,6 +987,149 @@ def test_retryable_start_failure_releases_reservation_and_retries(
     turn = lane.handler_turn(event["eventId"])
     assert turn["status"] == "started"
     assert turn["thread_id"] == CENTRAL_THREAD
+
+
+def test_operational_authorization_gap_refunds_attempt_without_reconcile(
+    tmp_path, monkeypatch
+):
+    worker = _event_worker_module()
+    _configure_manifest(worker, tmp_path, monkeypatch)
+    event = {
+        "eventId": "authorization-gap",
+        "repo": "agentscope-ai/agentscope",
+        "number": 6,
+        "issue": {
+            "state": "open",
+            "html_url": "https://github.com/agentscope-ai/agentscope/issues/6",
+        },
+    }
+    lane = EventLane(tmp_path / "events.db")
+    lane.append(event)
+    monkeypatch.setattr(
+        worker,
+        "run_bridge",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            _authorization_bridge_error(
+                "agentscope-event-create",
+                "operational authorization has not been activated",
+            )
+        ),
+    )
+
+    for _cycle in range(4):
+        result = dispatch_once(
+            lane,
+            lambda item: worker.issue_handler_delivery(tmp_path, lane, item),
+            limit=1,
+        )
+        assert result == {"claimed": 1, "delivered": 0, "pending": 1}
+        with lane.connect() as db:
+            row = db.execute(
+                "SELECT status,attempts FROM event_lane_events WHERE event_id=?",
+                (event["eventId"],),
+            ).fetchone()
+        assert dict(row) == {"status": "pending", "attempts": 0}
+        assert lane.handler_turn(event["eventId"]) is None
+
+    assert lane.expire_claims() == 0
+    recovery = worker._enqueue_unresolved_outcome_recoveries(lane)
+    assert recovery["inserted"] == 0
+    with lane.connect() as db:
+        assert db.execute(
+            "SELECT count(*) FROM event_lane_events "
+            "WHERE event_id LIKE 'outcome-reconcile:%'"
+        ).fetchone()[0] == 0
+
+
+def test_authorization_gap_refund_rejection_preserves_lease_and_reservation(
+    tmp_path, monkeypatch
+):
+    worker = _event_worker_module()
+    _configure_manifest(worker, tmp_path, monkeypatch)
+    event = {
+        "eventId": "authorization-gap-stale-token",
+        "repo": "agentscope-ai/agentscope",
+        "number": 8,
+        "issue": {
+            "state": "open",
+            "html_url": "https://github.com/agentscope-ai/agentscope/issues/8",
+        },
+    }
+    lane = EventLane(tmp_path / "events.db")
+    lane.append(event)
+    claimed = lane.claim(limit=1)[0]
+
+    def stale_lease_then_fail(*_args, **_kwargs):
+        with lane.writer() as db:
+            db.execute(
+                "UPDATE event_lane_events SET lease_token='replacement-token' "
+                "WHERE event_id=?",
+                (event["eventId"],),
+            )
+        raise _authorization_bridge_error(
+            "agentscope-event-create",
+            "operational authorization release binding mismatch",
+        )
+
+    monkeypatch.setattr(worker, "run_bridge", stale_lease_then_fail)
+
+    with pytest.raises(RuntimeError, match="agentscope-event-create"):
+        worker.issue_handler_delivery(tmp_path, lane, claimed)
+
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts,lease_token FROM event_lane_events WHERE event_id=?",
+            (event["eventId"],),
+        ).fetchone()
+    assert dict(row) == {
+        "status": "leased",
+        "attempts": 1,
+        "lease_token": "replacement-token",
+    }
+    assert lane.handler_turn(event["eventId"])["status"] == "reserved"
+
+
+def test_permanent_authorization_failure_keeps_retry_budget_semantics(
+    tmp_path, monkeypatch
+):
+    worker = _event_worker_module()
+    _configure_manifest(worker, tmp_path, monkeypatch)
+    event = {
+        "eventId": "authorization-invalid",
+        "repo": "agentscope-ai/agentscope",
+        "number": 7,
+        "issue": {
+            "state": "open",
+            "html_url": "https://github.com/agentscope-ai/agentscope/issues/7",
+        },
+    }
+    lane = EventLane(tmp_path / "events.db")
+    lane.append(event)
+    monkeypatch.setattr(
+        worker,
+        "run_bridge",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            _authorization_bridge_error(
+                "agentscope-event-create",
+                "operational authorization authentication failed",
+            )
+        ),
+    )
+
+    result = dispatch_once(
+        lane,
+        lambda item: worker.issue_handler_delivery(tmp_path, lane, item),
+        limit=1,
+    )
+
+    assert result == {"claimed": 1, "delivered": 0, "pending": 1}
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id=?",
+            (event["eventId"],),
+        ).fetchone()
+    assert dict(row) == {"status": "pending", "attempts": 1}
+    assert lane.handler_turn(event["eventId"])["status"] == "needs_reconcile"
 
 
 def test_runtime_root_manifest_and_foreign_event_fail_closed(tmp_path, monkeypatch):

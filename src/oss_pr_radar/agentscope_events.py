@@ -767,6 +767,48 @@ class EventLane:
                 params.extend([str(owner), str(lease_token)])
             return db.execute(query, params).rowcount == 1
 
+    def defer_prestart_authorization_gap(
+        self,
+        event_id: str,
+        *,
+        lease_token: str,
+        owner: str = "event-lane",
+    ) -> bool:
+        """Refund a leased attempt stopped by the authorization gate.
+
+        This is intentionally narrower than ``defer_event``: the caller must
+        still own the exact lease and the handler may only have an empty local
+        reservation.  Removing that reservation and refunding the attempt in
+        one transaction prevents a pre-turn infrastructure gap from becoming
+        either a duplicate Codex turn or a manufactured reconciliation item.
+        """
+        token = str(lease_token or "")
+        if not token:
+            return False
+        with self.writer() as db:
+            result = db.execute(
+                "UPDATE event_lane_events SET status='pending',"
+                "attempts=attempts-1,"
+                "delivered_at=NULL,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+                "WHERE event_id=? AND status='leased' AND attempts>0 "
+                "AND lease_owner=? AND lease_token=? "
+                "AND EXISTS (SELECT 1 FROM event_lane_turns WHERE "
+                "event_lane_turns.event_id=event_lane_events.event_id "
+                "AND status='reserved' AND thread_id='' "
+                "AND (turn_id IS NULL OR turn_id=''))",
+                (str(event_id), str(owner), token),
+            )
+            if result.rowcount != 1:
+                return False
+            removed = db.execute(
+                "DELETE FROM event_lane_turns WHERE event_id=? AND status='reserved' "
+                "AND thread_id='' AND (turn_id IS NULL OR turn_id='')",
+                (str(event_id),),
+            )
+            if removed.rowcount != 1:
+                raise RuntimeError("prestart authorization reservation changed")
+            return True
+
     def pending(self) -> int:
         with self.connect() as db:
             return int(db.execute("SELECT count(*) FROM event_lane_events WHERE status IN ('pending','leased')").fetchone()[0])
