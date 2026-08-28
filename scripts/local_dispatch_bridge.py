@@ -3496,13 +3496,16 @@ def suppress_dispatch_notifications(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _candidate(intent: dict[str, Any]) -> dict[str, Any]:
+    category = intent.get("category")
+    if not isinstance(category, str) or not category.strip():
+        raise ValueError("intent category is missing")
     return {
         "repo": intent["repo"],
         "num": intent["issueNumber"],
         "url": intent["issueUrl"],
         "title": intent["title"],
         "track": intent.get("track"),
-        "category": intent["category"],
+        "category": category,
         "gate_decision": intent.get("scanGate"),
         "auto_spawn": intent.get("autoSpawn") is True,
         "submission_policy": intent.get("submissionPolicy") or "normal",

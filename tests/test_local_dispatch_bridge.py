@@ -10744,6 +10744,31 @@ def test_context_sync_keeps_missing_worktree_when_live_revalidation_fails(monkey
     ]
 
 
+def test_context_sync_isolates_recovered_task_with_missing_category(tmp_path):
+    store, worktree = registered_store(tmp_path)
+    with store.transaction() as connection:
+        row = connection.execute(
+            "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+        payload.pop("category", None)
+        payload["recoveredFromTaskContext"] = True
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
+            (json.dumps(payload),),
+        )
+    shutil.rmtree(worktree)
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert synced["ok"] is True
+    assert synced["errors"] == []
+    assert synced["unavailable"][0]["reason"] == "TASK_WORKTREE_UNAVAILABLE"
+    assert synced["revalidationErrors"] == [
+        {"key": "a/b#1", "error": "ValueError:intent category is missing"}
+    ]
+
+
 def test_ingest_skips_consumed_result_after_followup_context_refresh(tmp_path):
     store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
     original_path = MODULE.write_task_context(

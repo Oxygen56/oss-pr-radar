@@ -216,6 +216,7 @@ def published_task_context(**updates):
         "worktreePath": "/tmp/recovered-worktree",
         "intentStatus": "COMPLETED",
         "track": "agent_ai_infra",
+        "category": "NEW_CLEAN_CANDIDATE",
         "algorithmEvidence": None,
         "autoSubmitAuthorized": True,
         "publicSubmissionAllowed": True,
@@ -426,6 +427,7 @@ def test_verified_task_context_rebuilds_publication_and_suppresses_duplicate(tmp
     )
     assert context is not None
     assert context["stage"] == "PR_OPEN"
+    assert context["category"] == "NEW_CLEAN_CANDIDATE"
     assert context["publicationReceipt"]["prUrl"] == "https://github.com/a/b/pull/9"
     assert store.enqueue(intent(intentId="new-intent", decisionDigest="new")) is False
     assert store.pending() == []
