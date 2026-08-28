@@ -15561,6 +15561,146 @@ def test_validation_worker_projects_snapshot_and_sends_exact_local_input_prompt(
     assert store.unresolved_validation_followups() == []
 
 
+def test_task_turn_worker_writes_terminal_failure_when_app_server_exits(
+    monkeypatch, tmp_path
+):
+    store, _candidate, _worktree, _result_path, _original, _binding, args = (
+        _bound_validation_worker_fixture(monkeypatch, tmp_path)
+    )
+    process = _FakeTaskTurnProcess()
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": args.thread_id}}}
+        return buffer, {"result": {"turn": {"id": "turn-exited"}}}
+
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+    monkeypatch.setattr(MODULE, "_wait_for_app_server_terminal_turn", lambda *_a, **_k: None)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    result = MODULE._app_server_task_turn_worker(args)
+
+    assert result["ok"] is True
+    assert result["turnStatus"] == "failed"
+    assert result["turnError"]["message"] == "app-server exited before terminal turn status"
+    persisted = json.loads(Path(args.receipt).read_text(encoding="utf-8"))
+    assert persisted["turnStatus"] == "failed"
+    assert persisted["turnError"] == result["turnError"]
+    assert store.unresolved_validation_followups() == []
+
+
+def test_app_server_cleanup_terminates_its_process_group(monkeypatch):
+    class Process:
+        pid = 123
+
+        def __init__(self):
+            self.calls: list[str] = []
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout):
+            self.calls.append(f"wait:{timeout}")
+            if timeout == 10:
+                raise subprocess.TimeoutExpired("codex", timeout)
+            return 0
+
+    process = Process()
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(MODULE.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(MODULE.os, "killpg", lambda pgid, signum: signals.append((pgid, signum)))
+
+    MODULE._terminate_app_server_process(process)
+
+    assert signals == [(123, MODULE.signal.SIGTERM), (123, MODULE.signal.SIGKILL)]
+    assert process.calls == ["wait:10", "wait:5"]
+
+
+def test_app_server_cleanup_reaps_group_after_parent_exit(monkeypatch):
+    class Process:
+        pid = 456
+
+        @staticmethod
+        def poll():
+            return 0
+
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(MODULE.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(MODULE.os, "killpg", lambda pgid, signum: signals.append((pgid, signum)))
+
+    MODULE._terminate_app_server_process(Process())
+
+    assert signals == [(456, MODULE.signal.SIGTERM), (456, MODULE.signal.SIGKILL)]
+
+
+def test_root_task_terminal_receipt_preserves_creation_binding(tmp_path):
+    receipt = tmp_path / "root-task.json"
+    initial = {
+        "ok": True,
+        "intentId": "intent-1",
+        "threadId": "thread-1",
+        "turnId": "turn-1",
+        "projectId": "project-1",
+    }
+
+    terminal = MODULE._write_terminal_turn_receipt(
+        receipt,
+        initial,
+        status="interrupted",
+        error={"message": "turn interrupted"},
+    )
+
+    assert terminal["turnStatus"] == "interrupted"
+    assert terminal["turnError"] == {"message": "turn interrupted"}
+    persisted = json.loads(receipt.read_text(encoding="utf-8"))
+    assert persisted == terminal
+    assert persisted["intentId"] == "intent-1"
+    assert persisted["threadId"] == "thread-1"
+
+
+def test_task_turn_worker_replaces_optimistic_receipt_on_watchdog_error(
+    monkeypatch, tmp_path
+):
+    _store, _candidate, _worktree, _result_path, _original, _binding, args = (
+        _bound_validation_worker_fixture(monkeypatch, tmp_path)
+    )
+    process = _FakeTaskTurnProcess()
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": args.thread_id}}}
+        return buffer, {"result": {"turn": {"id": "turn-error"}}}
+
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+
+    def fail_watchdog(*_args, **_kwargs):
+        raise RuntimeError("watchdog read failed")
+
+    monkeypatch.setattr(MODULE, "_wait_for_app_server_terminal_turn", fail_watchdog)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    with pytest.raises(RuntimeError, match="watchdog read failed"):
+        MODULE._app_server_task_turn_worker(args)
+
+    persisted = json.loads(Path(args.receipt).read_text(encoding="utf-8"))
+    assert persisted["ok"] is True
+    assert persisted["turnId"] == "turn-error"
+    assert persisted["turnStatus"] == "failed"
+    assert persisted["turnError"]["message"] == "RuntimeError:watchdog read failed"
+
+
 @pytest.mark.parametrize("mutation", ["missing", "tampered", "symlink"])
 def test_validation_worker_rejects_projection_changed_before_turn_start(
     monkeypatch, tmp_path, mutation

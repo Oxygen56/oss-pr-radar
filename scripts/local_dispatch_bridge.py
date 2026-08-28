@@ -13,6 +13,7 @@ import os
 import re
 import selectors
 import shutil
+import signal
 import sqlite3
 import stat
 import subprocess
@@ -5464,6 +5465,71 @@ def _wait_for_app_server_terminal_turn(
     return None
 
 
+def _terminate_app_server_process(process: subprocess.Popen[Any]) -> None:
+    """Stop the app-server and any children without killing this worker."""
+
+    exited = process.poll() is not None
+    process_group = None
+    try:
+        process_group = os.getpgid(process.pid)
+    except (AttributeError, OSError, ProcessLookupError, ValueError):
+        process_group = None
+    # The app-server is launched in its own session.  Keep the fallback
+    # conservative for test doubles and older callers that did not do so.
+    own_group = process_group == process.pid if process_group is not None else False
+    try:
+        if own_group:
+            os.killpg(process_group, signal.SIGTERM)
+        else:
+            if exited:
+                return
+            process.terminate()
+    except ProcessLookupError:
+        return
+    if exited:
+        try:
+            os.killpg(process_group, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        return
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        try:
+            if own_group:
+                os.killpg(process_group, signal.SIGKILL)
+            else:
+                process.kill()
+        except ProcessLookupError:
+            return
+        process.wait(timeout=5)
+    else:
+        # The leader may have exited while descendants remain in its session.
+        if own_group:
+            try:
+                os.killpg(process_group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def _write_terminal_turn_receipt(
+    path: Path,
+    base: dict[str, Any],
+    *,
+    status: str,
+    error: object | None = None,
+) -> dict[str, Any]:
+    """Persist a terminal state without dropping the optimistic identity."""
+
+    value = dict(base)
+    value["ok"] = True
+    value["turnStatus"] = status
+    if error is not None:
+        value["turnError"] = error
+    _atomic_json(path, value)
+    return value
+
+
 def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
     """Create a project-root task without the delegated subagent API."""
 
@@ -5503,6 +5569,7 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=0,
+            start_new_session=True,
         ) as started_process:
             process = started_process
             if process.stdin is None or process.stdout is None:
@@ -5613,17 +5680,48 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
             thread_id=thread_id,
             turn_id=turn_id,
         )
+        if terminal is None:
+            terminal = {
+                "turnId": turn_id,
+                "status": "failed",
+                "error": {"message": "app-server exited before terminal turn status"},
+            }
         if terminal:
+            terminal_receipt = _write_terminal_turn_receipt(
+                Path(args.receipt),
+                {"ok": True, "turnId": turn_id} | receipt,
+                status=terminal["status"],
+                error=terminal.get("error"),
+            )
             return {
                 "ok": True,
                 "threadId": thread_id,
                 "turnId": turn_id,
                 "turnStatus": terminal["status"],
+                **(
+                    {"turnError": terminal_receipt["turnError"]}
+                    if "turnError" in terminal_receipt
+                    else {}
+                ),
             }
         return {"ok": True, "threadId": thread_id, "turnId": turn_id}
     except Exception as exc:
         receipt_path = Path(args.receipt)
-        if not receipt_path.exists():
+        if turn_id:
+            existing = read_json(receipt_path, missing={})
+            if not (
+                isinstance(existing, dict)
+                and existing.get("turnStatus") in {"completed", "interrupted", "failed"}
+            ):
+                _write_terminal_turn_receipt(
+                    receipt_path,
+                    existing
+                    if isinstance(existing, dict) and existing
+                    else {"ok": True, "threadId": thread_id, "turnId": turn_id},
+                    status="failed",
+                    error={"message": f"{type(exc).__name__}:{str(exc)[:300]}"},
+                )
+        elif not receipt_path.exists():
             _atomic_json(
                 receipt_path,
                 {"ok": False, "error": f"{type(exc).__name__}:{str(exc)[:300]}"},
@@ -5631,13 +5729,8 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
         raise
     finally:
         selector.close()
-        if process is not None and process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
+        if process is not None:
+            _terminate_app_server_process(process)
 
 
 def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
@@ -5949,6 +6042,7 @@ def _codex_decision_worker(args: argparse.Namespace) -> dict[str, Any]:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=0,
+            start_new_session=True,
         ) as started_process:
             process = started_process
             if process.stdin is None or process.stdout is None:
@@ -6046,10 +6140,36 @@ def _codex_decision_worker(args: argparse.Namespace) -> dict[str, Any]:
             thread_id=thread_id,
             turn_id=turn_id,
         )
-        return {"ok": True} | binding | ({"turnStatus": terminal["status"]} if terminal else {})
+        if terminal is None:
+            terminal = {
+                "turnId": turn_id,
+                "status": "failed",
+                "error": {"message": "app-server exited before terminal turn status"},
+            }
+        terminal_receipt = _write_terminal_turn_receipt(
+            Path(args.receipt),
+            {"ok": True} | binding,
+            status=terminal["status"],
+            error=terminal.get("error"),
+        )
+        return terminal_receipt
     except Exception as exc:
         receipt_path = Path(args.receipt)
-        if not receipt_path.exists():
+        if turn_id:
+            existing = read_json(receipt_path, missing={})
+            if not (
+                isinstance(existing, dict)
+                and existing.get("turnStatus") in {"completed", "interrupted", "failed"}
+            ):
+                _write_terminal_turn_receipt(
+                    receipt_path,
+                    existing
+                    if isinstance(existing, dict) and existing
+                    else {"ok": True, "turnId": turn_id, "threadId": thread_id},
+                    status="failed",
+                    error={"message": f"{type(exc).__name__}:{str(exc)[:300]}"},
+                )
+        elif not receipt_path.exists():
             _atomic_json(
                 receipt_path,
                 {"ok": False, "error": f"{type(exc).__name__}:{str(exc)[:300]}"},
@@ -6057,13 +6177,8 @@ def _codex_decision_worker(args: argparse.Namespace) -> dict[str, Any]:
         raise
     finally:
         selector.close()
-        if process is not None and process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
+        if process is not None:
+            _terminate_app_server_process(process)
 
 
 def _active_codex_decision_worker(event_id: str) -> dict[str, Any] | None:
@@ -6961,6 +7076,7 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=0,
+            start_new_session=True,
         ) as started_process:
             process = started_process
             if process.stdin is None or process.stdout is None:
@@ -7067,6 +7183,12 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
             thread_id=args.thread_id,
             turn_id=turn_id,
         )
+        if terminal is None:
+            terminal = {
+                "turnId": turn_id,
+                "status": "failed",
+                "error": {"message": "app-server exited before terminal turn status"},
+            }
         if args.delivery_kind == "publication-feedback":
             visible = False
             if terminal and terminal["status"] == "completed":
@@ -7107,13 +7229,36 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
             _atomic_json(Path(args.receipt), retry_receipt)
             return retry_receipt
         if terminal:
-            terminal_receipt = receipt | {"turnStatus": terminal["status"]}
-            _atomic_json(Path(args.receipt), terminal_receipt)
+            terminal_receipt = _write_terminal_turn_receipt(
+                Path(args.receipt),
+                receipt,
+                status=terminal["status"],
+                error=terminal.get("error"),
+            )
             return terminal_receipt
         return receipt
     except Exception as exc:
         receipt_path = Path(args.receipt)
-        if not receipt_path.exists():
+        if turn_id:
+            existing = read_json(receipt_path, missing={})
+            if not (
+                isinstance(existing, dict)
+                and existing.get("turnStatus") in {"completed", "interrupted", "failed"}
+            ):
+                _write_terminal_turn_receipt(
+                    receipt_path,
+                    existing
+                    if isinstance(existing, dict) and existing
+                    else {
+                        "threadId": args.thread_id,
+                        "turnId": turn_id,
+                        "deliveryKind": args.delivery_kind,
+                        "deliveryToken": args.delivery_token,
+                    },
+                    status="failed",
+                    error={"message": f"{type(exc).__name__}:{str(exc)[:300]}"},
+                )
+        elif not receipt_path.exists():
             _atomic_json(
                 receipt_path,
                 {
