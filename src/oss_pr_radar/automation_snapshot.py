@@ -13,11 +13,8 @@ from typing import Any
 
 from .automation_contracts import (
     AUTOMATION_PROMPT_POLICY,
-    DAILY_AUTOMATION_CWD,
-    DAILY_PROJECT_ID,
     DAILY_WAR_ROOM_NAME,
     HEARTBEAT_NAME,
-    HEARTBEAT_TARGET_THREAD_ID,
     build_contracts,
 )
 from .local_publication import worker_specs
@@ -25,9 +22,9 @@ from .managed_security import sign_current
 from .release_binding import bind_runtime, runtime_root_digest
 from .util import iso_z, utc_now
 
-AUTOMATION_SNAPSHOT_SCHEMA = "oss-pr-radar.stage7-automation-snapshot.v2"
+AUTOMATION_SNAPSHOT_SCHEMA = "oss-pr-radar.stage7-automation-snapshot.v3"
 AUTOMATION_SNAPSHOT_CONTEXT = "stage7-automation-snapshot-v1"
-AUTOMATION_SNAPSHOT_GENERATOR = "stage7-automation-toml-v2"
+AUTOMATION_SNAPSHOT_GENERATOR = "stage7-automation-toml-v3"
 AUTOMATION_PROMPT_TEMPLATE = "oss-pr-radar.prompt-template.v1"
 _SECRET_LIKE = re.compile(r"(?:sk-|secret|token|hmac)[A-Za-z0-9_:=/.-]{12,}", re.IGNORECASE)
 
@@ -127,7 +124,8 @@ def canonical_prompt(role: str, runtime_root: Path, release_command: list[str]) 
     else:
         action = (
             "execute only the release-command; the command must include --send and is the only daily action; "
-            "first check command exit and final JSON ok; if the command fails or final JSON ok=false, reply with one plain-Chinese sentence naming only the real user-visible blocker; "
+            "if context compaction or a missing tool result happens after the command starts, never reply from uncertainty and execute the identical release-command once more, which safely replays the daily cycle through its durable delivery deduplication, then inspect that final JSON; "
+            "check command exit and final JSON ok; if the command fails or final JSON ok=false, reply with one plain-Chinese sentence naming only the real user-visible blocker; "
             "only when it succeeds, reply exactly '检查已完成；当前没有需要你处理的事情。'; "
             f"{final_reply_contract}"
             "never show JSON, paths, logs, prompts, or internal fields."
@@ -182,24 +180,9 @@ def _automation_entry(
         "updated_at",
         "prompt",
     }
-    if role == "heartbeat":
-        allowed.add("target_thread_id")
-        if section.get("target_thread_id") != HEARTBEAT_TARGET_THREAD_ID:
-            raise ValueError("heartbeat target thread does not match the contract")
-    else:
-        allowed.update({"cwds", "target", "model", "reasoning_effort", "execution_environment"})
-        if (
-            section.get("model") != "gpt-5.5"
-            or section.get("reasoning_effort") != "medium"
-            or section.get("execution_environment") != "local"
-        ):
-            raise ValueError(
-                "daily War Room model or execution environment does not match the contract"
-            )
-        if section.get("cwds") != [DAILY_AUTOMATION_CWD]:
-            raise ValueError("daily War Room cwd list does not match the contract")
-        if section.get("target") != {"type": "project", "project_id": DAILY_PROJECT_ID}:
-            raise ValueError("daily War Room target does not match the github project")
+    allowed.add("target_thread_id")
+    if section.get("target_thread_id") != expected.get("targetThreadId"):
+        raise ValueError(f"{role} target thread does not match the contract")
     if set(section) != allowed:
         raise ValueError(f"{role} TOML has unsupported or missing fields")
     release_command = list(expected["releaseCommand"])
@@ -218,17 +201,7 @@ def _automation_entry(
         "name": required["name"],
         "createdAt": section["created_at"],
         "updatedAt": section["updated_at"],
-        **(
-            {"targetThreadId": HEARTBEAT_TARGET_THREAD_ID}
-            if role == "heartbeat"
-            else {
-                "cwds": [DAILY_AUTOMATION_CWD],
-                "target": {"type": "project", "projectId": DAILY_PROJECT_ID},
-                "model": "gpt-5.5",
-                "reasoningEffort": "medium",
-                "executionEnvironment": "local",
-            }
-        ),
+        "targetThreadId": str(expected["targetThreadId"]),
         "releaseCommand": release_command,
         "runtimeRoot": str(runtime_root.resolve()),
         "promptTemplate": AUTOMATION_PROMPT_TEMPLATE,

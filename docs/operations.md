@@ -453,8 +453,8 @@ python current-release/scripts/stage6_compact_rehearsal.py \
 
 The Codex automation files use their actual application format. Generate the
 signed snapshot only from the two current TOML files; it validates the exact
-heartbeat thread target, the daily `github` project target, timestamps, prompt
-template, active-release command and worker plists:
+shared durable thread target for both heartbeats, the daily 09:00 schedule,
+timestamps, prompt template, active-release command and worker plists:
 
 ```bash
 python current-release/scripts/stage7_evidence.py automation-snapshot \

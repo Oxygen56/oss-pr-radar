@@ -149,6 +149,17 @@ def test_canonical_prompt_forbids_extra_final_output(tmp_path, role, command):
     assert "headers, Markdown, labels, or wrappers" in prompt
 
 
+def test_daily_prompt_replays_same_idempotent_command_after_lost_result(tmp_path):
+    prompt = canonical_prompt(
+        "dailyWarRoom", tmp_path / "runtime", ["python", "daily_war_room_cycle.py", "--send"]
+    )
+
+    assert "context compaction or a missing tool result" in prompt
+    assert "never reply from uncertainty" in prompt
+    assert "execute the identical release-command once more" in prompt
+    assert "durable delivery deduplication" in prompt
+
+
 def test_staged_receipt_rejects_observations_older_than_freshness_window():
     observed_at = iso_z(utc_now() - timedelta(minutes=11))
     digest = "a" * 64
@@ -1071,18 +1082,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
             f"created_at = {timestamp}",
             f"updated_at = {timestamp}",
         ]
-        if role == "heartbeat":
-            lines.append(f"target_thread_id = {json.dumps(spec['targetThreadId'])}")
-        else:
-            lines.extend(
-                [
-                    f"cwds = {json.dumps(spec['cwds'])}",
-                    f'target = {{ type = "project", project_id = {json.dumps(spec["target"]["projectId"])} }}',
-                    f"model = {json.dumps(spec['model'])}",
-                    f"reasoning_effort = {json.dumps(spec['reasoningEffort'])}",
-                    f"execution_environment = {json.dumps(spec['executionEnvironment'])}",
-                ]
-            )
+        lines.append(f"target_thread_id = {json.dumps(spec['targetThreadId'])}")
         lines.append(
             f"prompt = {json.dumps(canonical_prompt(role, runtime, spec['releaseCommand']))}"
         )
@@ -1134,6 +1134,17 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
         home=home,
         observed_at=now,
     )
+    assert automation["schema"] == "oss-pr-radar.stage7-automation-snapshot.v3"
+    assert automation["generator"] == "stage7-automation-toml-v3"
+    assert automation["dailyWarRoom"]["kind"] == "heartbeat"
+    assert automation["dailyWarRoom"]["targetThreadId"] == "019f71c3-4f26-7030-b126-25f8cfbac4c4"
+    assert {
+        "model",
+        "reasoningEffort",
+        "executionEnvironment",
+        "cwds",
+        "target",
+    }.isdisjoint(automation["dailyWarRoom"])
     automation_unsigned = {
         key: value for key, value in automation.items() if key not in {"keyId", "signature"}
     }
@@ -1311,6 +1322,26 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
         build_automation_snapshot(runtime, heartbeat_toml, daily_toml, home=home, observed_at=now)
     heartbeat_toml.write_text(heartbeat_text, encoding="utf-8")
     daily_text = daily_toml.read_text(encoding="utf-8")
+    daily_toml.write_text(
+        daily_text.replace('kind = "heartbeat"', 'kind = "cron"'), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="dailyWarRoom automation kind"):
+        build_automation_snapshot(runtime, heartbeat_toml, daily_toml, home=home, observed_at=now)
+    daily_toml.write_text(daily_text, encoding="utf-8")
+    daily_toml.write_text(
+        daily_text.replace(
+            'target_thread_id = "019f71c3-4f26-7030-b126-25f8cfbac4c4"',
+            'target_thread_id = "wrong-thread"',
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="dailyWarRoom target thread"):
+        build_automation_snapshot(runtime, heartbeat_toml, daily_toml, home=home, observed_at=now)
+    daily_toml.write_text(daily_text, encoding="utf-8")
+    daily_toml.write_text(daily_text + 'model = "gpt-5.5"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="unsupported or missing fields"):
+        build_automation_snapshot(runtime, heartbeat_toml, daily_toml, home=home, observed_at=now)
+    daily_toml.write_text(daily_text, encoding="utf-8")
     daily_prompt = canonical_prompt(
         "dailyWarRoom", runtime, contracts["dailyWarRoom"]["releaseCommand"]
     )
@@ -1553,6 +1584,7 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     assert acceptance["ok"] is True
     assert acceptance["release"]["releaseId"] == "stage7-test"
     contracts = build_contracts(runtime)
+    assert contracts["schema"] == "oss-pr-radar.automation-command-contracts.v2"
     assert contracts["release"]["releaseId"] == "stage7-test"
     order = contracts["cutoverOrder"]
     assert len(order) == len(set(order))
@@ -1602,6 +1634,21 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     activate_command = contracts["stage7"]["activateWorkers"]["command"]
     assert activate_command[-3:] == ["--runtime-root", str(runtime.resolve()), "--activate"]
     assert contracts["heartbeat"]["releaseCommand"][1].endswith("/scripts/controller_cycle.py")
+    assert contracts["heartbeat"]["kind"] == "heartbeat"
+    assert contracts["dailyWarRoom"]["kind"] == "heartbeat"
+    assert (
+        contracts["dailyWarRoom"]["targetThreadId"]
+        == contracts["heartbeat"]["targetThreadId"]
+        == "019f71c3-4f26-7030-b126-25f8cfbac4c4"
+    )
+    assert contracts["dailyWarRoom"]["rrule"] == ("FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0")
+    assert {
+        "model",
+        "reasoningEffort",
+        "executionEnvironment",
+        "cwds",
+        "target",
+    }.isdisjoint(contracts["dailyWarRoom"])
     assert contracts["dailyWarRoom"]["releaseCommand"][1].endswith(
         "/scripts/daily_war_room_cycle.py"
     )
@@ -1718,6 +1765,14 @@ def test_daily_cycle_does_not_resend_unchanged_actionable_item(tmp_path, monkeyp
     assert first["newActionableCount"] == 1
     sent = run_daily_cycle(runtime, send=True, sender=lambda _event: "message-1")
     assert sent["sent"] == 1
+
+    def duplicate_sender(_event):
+        raise AssertionError("an identical replay must not resend a delivered event")
+
+    replayed = run_daily_cycle(runtime, send=True, sender=duplicate_sender)
+    assert replayed["newActionableCount"] == 0
+    assert replayed["sent"] == 0
+    assert replayed["failed"] == 0
     ledger.upsert_opportunity(
         opportunity_key="owner/repo#2",
         owner="owner",

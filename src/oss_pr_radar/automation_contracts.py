@@ -11,15 +11,13 @@ from .release_binding import bind_runtime, runtime_python
 HEARTBEAT_AUTOMATION_ID = "oss-pr-radar"
 DAILY_WAR_ROOM_AUTOMATION_ID = "daily-github-open-pr-status-review"
 HEARTBEAT_KIND = "heartbeat"
-DAILY_WAR_ROOM_KIND = "cron"
+DAILY_WAR_ROOM_KIND = "heartbeat"
 AUTOMATION_STATUS = "ACTIVE"
 HEARTBEAT_RRULE = "FREQ=HOURLY;BYMINUTE=30"
 DAILY_WAR_ROOM_RRULE = "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0"
 HEARTBEAT_TARGET_THREAD_ID = "019f71c3-4f26-7030-b126-25f8cfbac4c4"
 HEARTBEAT_NAME = "OSS PR Radar 控制器（单会话）"
 DAILY_WAR_ROOM_NAME = "Daily GitHub open PR status review"
-DAILY_AUTOMATION_CWD = "/Users/oxygen/Documents/github"
-DAILY_PROJECT_ID = "5e41d21c-cba3-4be0-9a02-7eef35b67625"
 AUTOMATION_PROMPT_POLICY = "oss-pr-radar.prompt-bound.v1"
 CUTOVER_ORDER = (
     "deploy",
@@ -63,7 +61,7 @@ def build_contracts(runtime_root: Path, *, home: Path | None = None) -> dict[str
     rehearsal = code + "/scripts/stage6_compact_rehearsal.py"
     worker_install = code + "/scripts/install_local_publication_workers.py"
     contracts = {
-        "schema": "oss-pr-radar.automation-command-contracts.v1",
+        "schema": "oss-pr-radar.automation-command-contracts.v2",
         "release": {
             "runtimeRoot": str(root),
             "codeRoot": code,
@@ -99,15 +97,11 @@ def build_contracts(runtime_root: Path, *, home: Path | None = None) -> dict[str
         "dailyWarRoom": {
             "version": 1,
             "name": DAILY_WAR_ROOM_NAME,
-            "model": "gpt-5.5",
-            "reasoningEffort": "medium",
-            "executionEnvironment": "local",
             "id": DAILY_WAR_ROOM_AUTOMATION_ID,
             "kind": DAILY_WAR_ROOM_KIND,
             "status": AUTOMATION_STATUS,
             "rrule": DAILY_WAR_ROOM_RRULE,
-            "cwds": [DAILY_AUTOMATION_CWD],
-            "target": {"type": "project", "projectId": DAILY_PROJECT_ID},
+            "targetThreadId": HEARTBEAT_TARGET_THREAD_ID,
             "releaseCommand": [
                 python,
                 code + "/scripts/daily_war_room_cycle.py",
