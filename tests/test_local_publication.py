@@ -4,6 +4,7 @@ import signal
 import subprocess
 import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -956,6 +957,201 @@ def test_slow_worker_persists_backoff_after_network_failure(monkeypatch, tmp_pat
     assert slow["lastExitCode"] == 1
     assert slow["consecutiveFailures"] == 1
     assert slow["consecutiveSuccesses"] == 0
+
+
+def test_slow_worker_disk_stop_does_not_create_exponential_backoff(monkeypatch, tmp_path):
+    levels = iter(
+        [
+            {"level": "stop", "freeBytes": 1},
+            {"level": "stop", "freeBytes": 1},
+            {"level": "ok", "freeBytes": 100},
+        ]
+    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", lambda _root: next(levels))
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        assert operation == "reproduction-probe"
+        return {"ok": True, "errors": []}
+
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.advance_once",
+        lambda *_args, **_kwargs: {"ok": True, "errors": []},
+    )
+
+    first = slow_advance_once(tmp_path, runner=runner)
+    second = slow_advance_once(tmp_path, runner=runner)
+
+    assert first["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
+    assert second["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
+    assert not (tmp_path / "state" / "slow-worker-backoff.json").exists()
+    assert calls == []
+
+    recovered = slow_advance_once(tmp_path, runner=runner)
+
+    assert recovered["ok"] is True
+    assert calls == ["reproduction-probe"]
+    backoff = json.loads((tmp_path / "state" / "slow-worker-backoff.json").read_text())
+    assert backoff["failureCount"] == 0
+    health = json.loads((tmp_path / "state" / "runtime-health.json").read_text())
+    assert health["workers"]["slow"]["lastExitCode"] == 0
+
+
+def test_slow_worker_disk_stop_preserves_real_network_backoff(monkeypatch, tmp_path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    backoff_path = state_dir / "slow-worker-backoff.json"
+    original = {
+        "schemaVersion": "slow_backoff_v1",
+        "failureCount": 2,
+        "backoffSeconds": 120,
+        "nextAttemptAt": time.time() + 120,
+        "retryAfter": time.time() + 120,
+        "lastAttemptAt": "2026-08-28T13:00:00Z",
+        "inFlight": False,
+    }
+    backoff_path.write_text(json.dumps(original, sort_keys=True) + "\n", encoding="utf-8")
+    levels = iter(
+        [
+            {"level": "stop", "freeBytes": 1},
+            {"level": "warning", "freeBytes": 100},
+        ]
+    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", lambda _root: next(levels))
+
+    def must_not_run(_root: Path, _operation: str):
+        raise AssertionError("disk or backoff must not run slow work")
+
+    result = slow_advance_once(tmp_path, runner=must_not_run)
+
+    assert result["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
+    assert json.loads(backoff_path.read_text()) == original
+
+    deferred = slow_advance_once(tmp_path, runner=must_not_run)
+
+    assert deferred["reason"] == "PERSISTED_BACKOFF"
+    assert json.loads(backoff_path.read_text()) == original
+
+
+def test_slow_worker_recovers_exact_legacy_disk_backoff(monkeypatch, tmp_path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    finished = "2026-08-28T13:34:06.474333Z"
+    (state_dir / "slow-worker-backoff.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": "slow_backoff_v1",
+                "failureCount": 6,
+                "backoffSeconds": 1920,
+                "nextAttemptAt": time.time() + 1200,
+                "retryAfter": time.time() + 1200,
+                "lastAttemptAt": finished,
+                "inFlight": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (state_dir / "runtime-health.json").write_text(
+        json.dumps(
+            {
+                "workers": {
+                    "slow": {
+                        "lastExitCode": 1,
+                        "lastErrorCode": "SLOW_WORKER_FAILED",
+                        "lastFinishedAt": "2026-08-28T13:34:06.474883Z",
+                        "disk": {"level": "stop", "freeBytes": 1},
+                    }
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (state_dir / "runtime-health.json").chmod(0o600)
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot",
+        lambda _root: {"level": "warning", "freeBytes": 100},
+    )
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        return {"ok": True, "errors": []}
+
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.advance_once",
+        lambda *_args, **_kwargs: {"ok": True, "errors": []},
+    )
+
+    result = slow_advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert result["legacyDiskBackoffRecovered"] is True
+    assert calls == ["reproduction-probe"]
+    recovered = json.loads((state_dir / "slow-worker-backoff.json").read_text())
+    assert recovered["failureCount"] == 0
+
+
+@pytest.mark.parametrize(
+    ("in_flight", "previous_level", "finished_offset"),
+    [
+        (True, "stop", 0),
+        (False, "warning", 0),
+        (False, "stop", 30),
+    ],
+)
+def test_slow_worker_does_not_clear_ambiguous_legacy_backoff(
+    monkeypatch, tmp_path, in_flight, previous_level, finished_offset
+):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    attempt_epoch = datetime(2026, 8, 28, 13, 34, 6, tzinfo=UTC).timestamp()
+    attempt = datetime.fromtimestamp(attempt_epoch, tz=UTC).isoformat()
+    finished = datetime.fromtimestamp(attempt_epoch + finished_offset, tz=UTC).isoformat()
+    (state_dir / "slow-worker-backoff.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": "slow_backoff_v1",
+                "failureCount": 6,
+                "backoffSeconds": 1920,
+                "nextAttemptAt": time.time() + 1200,
+                "retryAfter": time.time() + 1200,
+                "lastAttemptAt": attempt,
+                "inFlight": in_flight,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (state_dir / "runtime-health.json").write_text(
+        json.dumps(
+            {
+                "workers": {
+                    "slow": {
+                        "lastExitCode": 1,
+                        "lastErrorCode": "SLOW_WORKER_FAILED",
+                        "lastFinishedAt": finished,
+                        "disk": {"level": previous_level},
+                    }
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot",
+        lambda _root: {"level": "warning", "freeBytes": 100},
+    )
+
+    def must_not_run(_root: Path, _operation: str):
+        raise AssertionError("ambiguous backoff must remain deferred")
+
+    result = slow_advance_once(tmp_path, runner=must_not_run)
+
+    assert result["deferred"] is True
 
 
 @pytest.mark.parametrize(

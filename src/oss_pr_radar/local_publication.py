@@ -10,6 +10,7 @@ import plistlib
 import signal
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -58,6 +59,47 @@ SLOW_CLOUD_SYNC_INTERVAL_SECONDS = 300
 # enough time for that cold start.
 MAX_FAST_OPERATION_SECONDS = 60
 TERMINAL_FEEDBACK_STAGES = {"AUDIT_NO_GO", "MERGED", "CLOSED"}
+
+
+def _legacy_disk_backoff_recoverable(
+    root: Path,
+    *,
+    backoff: dict[str, Any],
+    disk: dict[str, Any],
+    now: float,
+) -> bool:
+    """Recognize only a future backoff produced by the former disk-stop bug."""
+
+    if (
+        disk.get("level") == "stop"
+        or backoff.get("schemaVersion") != "slow_backoff_v1"
+        or backoff.get("inFlight") is not False
+        or int(backoff.get("failureCount") or 0) <= 0
+        or float(backoff.get("nextAttemptAt") or 0) <= now
+        or backoff.get("lastError")
+    ):
+        return False
+    health = read_json(root / "state" / "runtime-health.json", {})
+    workers = health.get("workers") if isinstance(health, dict) else None
+    slow = workers.get("slow") if isinstance(workers, dict) else None
+    previous_disk = slow.get("disk") if isinstance(slow, dict) else None
+    if (
+        not isinstance(previous_disk, dict)
+        or previous_disk.get("level") != "stop"
+        or slow.get("lastErrorCode") != "SLOW_WORKER_FAILED"
+        or slow.get("lastExitCode") != 1
+    ):
+        return False
+    try:
+        backoff_finished = datetime.fromisoformat(
+            str(backoff["lastAttemptAt"]).replace("Z", "+00:00")
+        ).timestamp()
+        health_finished = datetime.fromisoformat(
+            str(slow["lastFinishedAt"]).replace("Z", "+00:00")
+        ).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return False
+    return abs(backoff_finished - health_finished) <= 2
 
 
 def _slow_worker_diagnostic(
@@ -557,6 +599,50 @@ def slow_advance_once(
             now = time.time()
             backoff = read_json(backoff_path, {})
             backoff = backoff if isinstance(backoff, dict) else {}
+            disk = disk_snapshot(root)
+            if disk["level"] == "stop":
+                # Disk pressure is an external capacity gate, not a failed
+                # network/publication attempt.  Keep any genuine network
+                # backoff unchanged so the next launch can resume as soon as
+                # capacity is available instead of exponentially extending a
+                # wait that disk cleanup has already resolved.
+                _record_slow_cycle(
+                    root,
+                    ok=False,
+                    exit_code=78,
+                    started_at=started,
+                    error_code="DISK_STOP_THRESHOLD",
+                    disk=disk,
+                )
+                return {
+                    "ok": False,
+                    "activity": False,
+                    "errors": [{"error": "DISK_STOP_THRESHOLD"}],
+                    "slowWorkerDiagnostic": _slow_worker_diagnostic(root),
+                }
+            recovered_legacy_disk_backoff = _legacy_disk_backoff_recoverable(
+                root,
+                backoff=backoff,
+                disk=disk,
+                now=now,
+            )
+            if recovered_legacy_disk_backoff:
+                backoff = backoff | {
+                    "failureCount": 0,
+                    "backoffSeconds": 0,
+                    "nextAttemptAt": now,
+                    "retryAfter": now,
+                }
+                append_operation(
+                    root,
+                    {
+                        "worker": "slow",
+                        "operation": "slow-backoff-recovery",
+                        "status": "success",
+                        "reason": "LEGACY_DISK_STOP_BACKOFF",
+                        "inFlight": False,
+                    },
+                )
             retry_at = float(backoff.get("retryAfter") or backoff.get("nextAttemptAt") or 0)
             if backoff.get("inFlight") and now < retry_at:
                 return {
@@ -572,7 +658,6 @@ def slow_advance_once(
                     "reason": "PERSISTED_BACKOFF",
                     "retryAt": float(backoff["nextAttemptAt"]),
                 }
-            disk = disk_snapshot(root)
             failures = int(backoff.get("failureCount") or 0)
             delay = min(3600, 60 * (2 ** min(failures, 5)))
             retry_after = now + delay
@@ -611,19 +696,16 @@ def slow_advance_once(
                 workerPidAlive=True,
             )
             try:
-                if disk["level"] == "stop":
-                    result = {"ok": False, "errors": [{"error": "DISK_STOP_THRESHOLD"}]}
-                else:
-                    reproduction = runner(root, "reproduction-probe")
-                    result = advance_once(
-                        root,
-                        runner=runner,
-                        queue_sync_interval_seconds=SLOW_CLOUD_SYNC_INTERVAL_SECONDS,
-                    )
-                    result["reproductionProbe"] = reproduction
-                    result["slowWorkerDiagnostic"] = _slow_worker_diagnostic(
-                        root, result, reproduction
-                    )
+                reproduction = runner(root, "reproduction-probe")
+                result = advance_once(
+                    root,
+                    runner=runner,
+                    queue_sync_interval_seconds=SLOW_CLOUD_SYNC_INTERVAL_SECONDS,
+                )
+                result["reproductionProbe"] = reproduction
+                result["slowWorkerDiagnostic"] = _slow_worker_diagnostic(root, result, reproduction)
+                if recovered_legacy_disk_backoff:
+                    result["legacyDiskBackoffRecovered"] = True
                 if "slowWorkerDiagnostic" not in result:
                     result["slowWorkerDiagnostic"] = _slow_worker_diagnostic(root, result)
             except BaseException as exc:
