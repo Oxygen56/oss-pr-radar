@@ -971,9 +971,13 @@ def run_once(
         except ValueError:
             last_full_dt = None
     full_result = None
-    if poll_status != "degraded" and had_poll_state and (
-        last_full_dt is None
-        or current - last_full_dt >= timedelta(seconds=max(1, reconcile_interval_seconds))
+    if (
+        poll_status != "degraded"
+        and had_poll_state
+        and (
+            last_full_dt is None
+            or current - last_full_dt >= timedelta(seconds=max(1, reconcile_interval_seconds))
+        )
     ):
         try:
             full_result = poll.full_reconcile(now=current)

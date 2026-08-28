@@ -81,7 +81,10 @@ def test_poll_health_persists_failures_without_advancing_watermark(tmp_path):
     assert state["pollHealthStatus"] == "recovering"
     assert state["failureWindowFailures"] == 1
     for second_offset in (2, 3):
-        assert poller.poll(now=datetime(2026, 8, 22, 0, 0, second_offset, tzinfo=UTC)).status == "degraded"
+        assert (
+            poller.poll(now=datetime(2026, 8, 22, 0, 0, second_offset, tzinfo=UTC)).status
+            == "degraded"
+        )
     state = json.loads(state_path.read_text())
     assert state["consecutiveFailures"] == 3
     assert state["pollHealthStatus"] == "degraded"

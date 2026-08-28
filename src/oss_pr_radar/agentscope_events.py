@@ -405,14 +405,10 @@ class GitHubIssuePoller:
         except (TypeError, ValueError):
             prior_consecutive = 0
         consecutive = 0 if success else prior_consecutive + 1
-        degraded = (
-            not success
-            and (
-                consecutive >= POLL_DEGRADED_CONSECUTIVE_FAILURES
-                or (
-                    attempts >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS
-                    and rate >= POLL_DEGRADED_FAILURE_RATE
-                )
+        degraded = not success and (
+            consecutive >= POLL_DEGRADED_CONSECUTIVE_FAILURES
+            or (
+                attempts >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS and rate >= POLL_DEGRADED_FAILURE_RATE
             )
         )
         stamp = self._stamp(current)
