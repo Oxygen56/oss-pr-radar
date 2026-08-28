@@ -74,13 +74,11 @@ def _event_bridge_process_alive(value: object) -> bool:
     return "local_dispatch_bridge.py" in command and "-event-worker" in command
 
 
-def _stable_records(value: Any, keys: tuple[str, ...], sort_keys: tuple[str, ...]) -> list[dict[str, Any]]:
+def _stable_records(
+    value: Any, keys: tuple[str, ...], sort_keys: tuple[str, ...]
+) -> list[dict[str, Any]]:
     rows = value if isinstance(value, list) else []
-    projected = [
-        {key: row.get(key) for key in keys}
-        for row in rows
-        if isinstance(row, dict)
-    ]
+    projected = [{key: row.get(key) for key in keys} for row in rows if isinstance(row, dict)]
     return sorted(projected, key=lambda row: tuple(str(row.get(key) or "") for key in sort_keys))
 
 
@@ -89,21 +87,42 @@ def _github_material_projection(event: dict[str, Any]) -> dict[str, Any]:
     details = event.get("prDetails") if isinstance(event.get("prDetails"), dict) else {}
     if not details:
         issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
-        details = issue.get("agentscopeDetails") if isinstance(issue.get("agentscopeDetails"), dict) else {}
+        details = (
+            issue.get("agentscopeDetails")
+            if isinstance(issue.get("agentscopeDetails"), dict)
+            else {}
+        )
     if not details:
         return {}
     pull = details.get("pull") if isinstance(details.get("pull"), dict) else {}
+    # GitHub computes mergeability asynchronously, so unknown/clean and the
+    # companion booleans can flap without any actionable PR change.  Keep the
+    # full values in the payload, but project only an explicit conflict into
+    # wake identity.
     pull_keys = (
-        "state", "draft", "updated_at", "mergeable_state", "mergeable", "rebaseable",
-        "comments", "review_comments",
+        "state",
+        "draft",
+        "updated_at",
+        "comments",
+        "review_comments",
     )
     pull_projection = {key: pull.get(key) for key in pull_keys} if pull else {}
     if pull:
+        pull_projection["merge_conflict"] = (
+            str(pull.get("mergeable_state") or "").casefold() == "dirty"
+        )
         head = pull.get("head") if isinstance(pull.get("head"), dict) else {}
         pull_projection["head"] = {
             "sha": head.get("sha"),
             "ref": head.get("ref"),
-            "user": {"login": str(((head.get("user") if isinstance(head.get("user"), dict) else {}) or {}).get("login") or "")},
+            "user": {
+                "login": str(
+                    ((head.get("user") if isinstance(head.get("user"), dict) else {}) or {}).get(
+                        "login"
+                    )
+                    or ""
+                )
+            },
         }
     reviews = _stable_records(
         details.get("reviews"),
@@ -118,7 +137,14 @@ def _github_material_projection(event: dict[str, Any]) -> dict[str, Any]:
     comments = [
         {
             **{key: value for key, value in row.items() if key != "user"},
-            "user": {"login": str(((row.get("user") if isinstance(row.get("user"), dict) else {}) or {}).get("login") or "")},
+            "user": {
+                "login": str(
+                    ((row.get("user") if isinstance(row.get("user"), dict) else {}) or {}).get(
+                        "login"
+                    )
+                    or ""
+                )
+            },
         }
         for row in comments
     ]
@@ -131,16 +157,85 @@ def _github_material_projection(event: dict[str, Any]) -> dict[str, Any]:
     check_runs = [
         {
             **{key: value for key, value in row.items() if key != "app"},
-            "app": {"slug": str(((row.get("app") if isinstance(row.get("app"), dict) else {}) or {}).get("slug") or "")},
+            "app": {
+                "slug": str(
+                    ((row.get("app") if isinstance(row.get("app"), dict) else {}) or {}).get("slug")
+                    or ""
+                )
+            },
         }
         for row in check_runs
     ]
-    material = {"pull": pull_projection, "reviews": reviews, "comments": comments, "checks": check_runs}
+    material = {
+        "pull": pull_projection,
+        "reviews": reviews,
+        "comments": comments,
+        "checks": check_runs,
+    }
     return material if any(material.values()) else {}
 
 
 def _github_material_digest(event: dict[str, Any]) -> str:
     material = _github_material_projection(event)
+    return _digest(material) if material else ""
+
+
+PASSING_CHECK_CONCLUSIONS = {"success", "neutral", "skipped"}
+ISSUE_STARVATION_SECONDS = 5 * 60
+AGED_ISSUE_PRIORITY = 210
+RECOVERY_PRIORITY = 300
+
+
+def _github_check_wake_projection(check_runs: Any) -> dict[str, Any]:
+    """Collapse noisy CI progress into actionable wake phases."""
+
+    rows = [
+        row for row in (check_runs if isinstance(check_runs, list) else []) if isinstance(row, dict)
+    ]
+    if not rows:
+        return {"phase": "no_checks"}
+    failures = [
+        {
+            "id": row.get("id"),
+            "name": row.get("name"),
+            "head_sha": row.get("head_sha"),
+            "conclusion": row.get("conclusion"),
+        }
+        for row in rows
+        if row.get("conclusion")
+        and str(row.get("conclusion") or "").casefold() not in PASSING_CHECK_CONCLUSIONS
+    ]
+    if failures:
+        return {
+            "phase": "failure",
+            "failures": sorted(
+                failures,
+                key=lambda row: (str(row.get("id") or ""), str(row.get("name") or "")),
+            ),
+        }
+    if all(
+        str(row.get("status") or "").casefold() == "completed"
+        and str(row.get("conclusion") or "").casefold() in PASSING_CHECK_CONCLUSIONS
+        for row in rows
+    ):
+        return {"phase": "success"}
+    return {"phase": "active"}
+
+
+def _github_wake_projection(event: dict[str, Any]) -> dict[str, Any]:
+    """Keep full payload evidence while reducing only the dispatch identity."""
+
+    material = _github_material_projection(event)
+    if not material or str(event.get("kind") or "") != "pr_update":
+        return material
+    return {
+        **material,
+        "checks": _github_check_wake_projection(material.get("checks")),
+    }
+
+
+def _github_wake_digest(event: dict[str, Any]) -> str:
+    material = _github_wake_projection(event)
     return _digest(material) if material else ""
 
 
@@ -164,8 +259,8 @@ def github_event_effective_time(event: dict[str, Any]) -> datetime | None:
 
 def _github_event_id(event: dict[str, Any]) -> str:
     base = f"github:{event.get('repo')}:{event.get('number')}:{event.get('kind')}:{event.get('updatedAt')}"
-    material_digest = _github_material_digest(event)
-    return f"{base}:{material_digest}" if material_digest else base
+    wake_digest = _github_wake_digest(event)
+    return f"{base}:{wake_digest}" if wake_digest else base
 
 
 def _github_event_identity(event: dict[str, Any]) -> tuple[str, str, str, str, str] | None:
@@ -179,7 +274,7 @@ def _github_event_identity(event: dict[str, Any]) -> tuple[str, str, str, str, s
     updated = str(event.get("updatedAt") or issue.get("updated_at") or "")
     if not repo or not number or not kind or not updated:
         return None
-    return repo, number, kind, updated, _github_material_digest(event)
+    return repo, number, kind, updated, _github_wake_digest(event)
 
 
 @dataclass(frozen=True)
@@ -201,7 +296,8 @@ class GitHubIssuePoller:
         *,
         repo: str = REPO,
         transport: Callable[[str, dict[str, str]], tuple[int, dict[str, str], Any]] | None = None,
-        details_transport: Callable[[str, dict[str, str]], tuple[int, dict[str, str], Any]] | None = None,
+        details_transport: Callable[[str, dict[str, str]], tuple[int, dict[str, str], Any]]
+        | None = None,
         overlap_seconds: int = 120,
         per_page: int = 100,
     ) -> None:
@@ -249,7 +345,14 @@ class GitHubIssuePoller:
             )
             if status != 200 or not isinstance(payload, list):
                 raise RuntimeError(f"GitHub issues baseline failed: HTTP {status}")
-            latest = max((_parse_time(str(item.get("updated_at") or "")) for item in payload if isinstance(item, dict)), default=None)
+            latest = max(
+                (
+                    _parse_time(str(item.get("updated_at") or ""))
+                    for item in payload
+                    if isinstance(item, dict)
+                ),
+                default=None,
+            )
             active_prs = [
                 dict(item)
                 for item in payload
@@ -259,20 +362,32 @@ class GitHubIssuePoller:
                 and str(item.get("state") or "open").casefold() == "open"
             ]
             watermark = (latest or current).isoformat().replace("+00:00", "Z")
-            self._save({"schemaVersion": "agentscope_poll_v1", "watermark": watermark,
-                        "gateEtag": response_headers.get("ETag"),
-                        "gateLastModified": response_headers.get("Last-Modified"),
-                        "activePullRequests": active_prs,
-                        "updatedAt": current.isoformat().replace("+00:00", "Z")})
-            return PollResult("baseline", pages=1, next_since=watermark,
-                              etag=response_headers.get("ETag"), last_modified=response_headers.get("Last-Modified"))
+            self._save(
+                {
+                    "schemaVersion": "agentscope_poll_v1",
+                    "watermark": watermark,
+                    "gateEtag": response_headers.get("ETag"),
+                    "gateLastModified": response_headers.get("Last-Modified"),
+                    "activePullRequests": active_prs,
+                    "updatedAt": current.isoformat().replace("+00:00", "Z"),
+                }
+            )
+            return PollResult(
+                "baseline",
+                pages=1,
+                next_since=watermark,
+                etag=response_headers.get("ETag"),
+                last_modified=response_headers.get("Last-Modified"),
+            )
         since = previous - timedelta(seconds=self.overlap_seconds) if previous else None
         gate_status, gate_headers, _gate_payload = self.transport(
             f"https://api.github.com/repos/{self.repo}/issues?state=all&sort=updated&direction=desc&per_page={self.per_page}&page=1",
             self._headers(state, conditional=True, require_auth=self.auth_required),
         )
         if gate_status == 304:
-            cached = [item for item in state.get("activePullRequests") or [] if isinstance(item, dict)]
+            cached = [
+                item for item in state.get("activePullRequests") or [] if isinstance(item, dict)
+            ]
             events = self._active_pull_events(cached, state)
             self._save(state)
             return PollResult(
@@ -292,13 +407,17 @@ class GitHubIssuePoller:
         }
         page = 1
         max_updated = previous
-        final_headers: dict[str, str] = {"ETag": gate_headers.get("ETag", ""), "Last-Modified": gate_headers.get("Last-Modified", "")}
+        final_headers: dict[str, str] = {
+            "ETag": gate_headers.get("ETag", ""),
+            "Last-Modified": gate_headers.get("Last-Modified", ""),
+        }
         while True:
             query = f"?state=all&sort=updated&direction=asc&per_page={self.per_page}&page={page}"
             if since:
                 query += "&since=" + since.isoformat().replace("+00:00", "Z")
             status, response_headers, payload = self.transport(
-                f"https://api.github.com/repos/{self.repo}/issues{query}", self._headers(state, conditional=False, require_auth=self.auth_required)
+                f"https://api.github.com/repos/{self.repo}/issues{query}",
+                self._headers(state, conditional=False, require_auth=self.auth_required),
             )
             if status == 304:
                 return PollResult("not_modified", pages=page - 1, etag=state.get("etag"))
@@ -339,18 +458,26 @@ class GitHubIssuePoller:
                 break
             page += 1
         watermark = (max_updated or current).isoformat().replace("+00:00", "Z")
-        state.update({
-            "schemaVersion": "agentscope_poll_v1",
-            "watermark": watermark,
-            "gateEtag": final_headers.get("ETag") or state.get("gateEtag"),
-            "gateLastModified": final_headers.get("Last-Modified") or state.get("gateLastModified"),
-            "updatedAt": current.isoformat().replace("+00:00", "Z"),
-            "activePullRequests": list(active_cache.values()),
-        })
+        state.update(
+            {
+                "schemaVersion": "agentscope_poll_v1",
+                "watermark": watermark,
+                "gateEtag": final_headers.get("ETag") or state.get("gateEtag"),
+                "gateLastModified": final_headers.get("Last-Modified")
+                or state.get("gateLastModified"),
+                "updatedAt": current.isoformat().replace("+00:00", "Z"),
+                "activePullRequests": list(active_cache.values()),
+            }
+        )
         self._save(state)
-        return PollResult("ok", tuple(events), page, watermark,
-                          final_headers.get("ETag") or state.get("gateEtag"),
-                          final_headers.get("Last-Modified") or state.get("gateLastModified"))
+        return PollResult(
+            "ok",
+            tuple(events),
+            page,
+            watermark,
+            final_headers.get("ETag") or state.get("gateEtag"),
+            final_headers.get("Last-Modified") or state.get("gateLastModified"),
+        )
 
     def _active_pull_events(
         self, cached: list[dict[str, Any]], state: dict[str, Any]
@@ -374,15 +501,22 @@ class GitHubIssuePoller:
                     "updatedAt": item.get("updated_at"),
                     "issue": item,
                     "prDetails": details,
-                    "eventId": _github_event_id({
-                        "repo": self.repo, "number": number, "kind": kind,
-                        "updatedAt": item.get("updated_at"), "prDetails": details,
-                    }),
+                    "eventId": _github_event_id(
+                        {
+                            "repo": self.repo,
+                            "number": number,
+                            "kind": kind,
+                            "updatedAt": item.get("updated_at"),
+                            "prDetails": details,
+                        }
+                    ),
                 }
             )
         return events
 
-    def _enrich_pull_request(self, item: dict[str, Any], state: dict[str, Any]) -> dict[str, Any] | None:
+    def _enrich_pull_request(
+        self, item: dict[str, Any], state: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Fetch review/comment/check state for active Oxygen56 PRs incrementally."""
         if not item.get("pull_request"):
             return item
@@ -414,7 +548,13 @@ class GitHubIssuePoller:
             else:
                 complete = False
         if isinstance(details.get("pull"), dict):
-            for key in ("mergeable_state", "mergeable", "rebaseable", "comments", "review_comments"):
+            for key in (
+                "mergeable_state",
+                "mergeable",
+                "rebaseable",
+                "comments",
+                "review_comments",
+            ):
                 if key in details["pull"]:
                     item[key] = details["pull"][key]
             head_sha = str((details["pull"].get("head") or {}).get("sha") or "")
@@ -433,7 +573,9 @@ class GitHubIssuePoller:
                 complete = False
         else:
             complete = False
-        if not complete or not all(key in details for key in ("pull", "reviews", "comments", "checks")):
+        if not complete or not all(
+            key in details for key in ("pull", "reviews", "comments", "checks")
+        ):
             return dict(previous) if isinstance(previous, dict) else None
         item["agentscopeDetails"] = details
         state.setdefault("completePrSnapshots", {})[snapshot_key] = dict(item)
@@ -445,7 +587,9 @@ class GitHubIssuePoller:
         current = (now or datetime.now(UTC)).astimezone(UTC)
         events: list[dict[str, Any]] = []
         active_prs: list[dict[str, Any]] = []
-        fingerprints = state.get("fullFingerprints") if isinstance(state.get("fullFingerprints"), dict) else {}
+        fingerprints = (
+            state.get("fullFingerprints") if isinstance(state.get("fullFingerprints"), dict) else {}
+        )
         next_fingerprints: dict[str, str] = {}
         page = 1
         max_updated = _parse_time(str(state.get("watermark") or ""))
@@ -462,7 +606,8 @@ class GitHubIssuePoller:
                     continue
                 if (
                     original.get("pull_request")
-                    and str((original.get("user") or {}).get("login") or "").casefold() == "oxygen56"
+                    and str((original.get("user") or {}).get("login") or "").casefold()
+                    == "oxygen56"
                     and str(original.get("state") or "open").casefold() == "open"
                 ):
                     active_prs.append(dict(original))
@@ -475,22 +620,35 @@ class GitHubIssuePoller:
                 details = item.get("agentscopeDetails") or {}
                 kind = "pr_update" if item.get("pull_request") else "issue_update"
                 item_key = f"{self.repo}#{item.get('number')}"
-                fingerprint = _digest({
-                    "updatedAt": item.get("updated_at"), "state": item.get("state"),
-                    "title": item.get("title"), "body": item.get("body"),
-                    "material": _github_material_projection({
-                        "repo": self.repo, "number": item.get("number"), "kind": kind,
-                        "updatedAt": item.get("updated_at"), "prDetails": details,
-                    }),
-                })
+                fingerprint = _digest(
+                    {
+                        "updatedAt": item.get("updated_at"),
+                        "state": item.get("state"),
+                        "title": item.get("title"),
+                        "body": item.get("body"),
+                        "material": _github_material_projection(
+                            {
+                                "repo": self.repo,
+                                "number": item.get("number"),
+                                "kind": kind,
+                                "updatedAt": item.get("updated_at"),
+                                "prDetails": details,
+                            }
+                        ),
+                    }
+                )
                 next_fingerprints[item_key] = fingerprint
                 if not fingerprints:
                     continue
                 if fingerprints.get(item_key) == fingerprint:
                     continue
                 event = {
-                    "version": EVENT_VERSION, "repo": self.repo, "number": item.get("number"),
-                    "kind": kind, "updatedAt": item.get("updated_at"), "issue": item,
+                    "version": EVENT_VERSION,
+                    "repo": self.repo,
+                    "number": item.get("number"),
+                    "kind": kind,
+                    "updatedAt": item.get("updated_at"),
+                    "issue": item,
                     "prDetails": details,
                 }
                 event["eventId"] = _github_event_id(event)
@@ -499,15 +657,24 @@ class GitHubIssuePoller:
                 break
             page += 1
         watermark = (max_updated or current).isoformat().replace("+00:00", "Z")
-        state.update({
-            "schemaVersion": "agentscope_poll_v1", "watermark": watermark,
-            "updatedAt": current.isoformat().replace("+00:00", "Z"),
-            "activePullRequests": active_prs,
-            "fullFingerprints": next_fingerprints,
-        })
+        state.update(
+            {
+                "schemaVersion": "agentscope_poll_v1",
+                "watermark": watermark,
+                "updatedAt": current.isoformat().replace("+00:00", "Z"),
+                "activePullRequests": active_prs,
+                "fullFingerprints": next_fingerprints,
+            }
+        )
         self._save(state)
-        return PollResult("full_reconcile", tuple(events), page, watermark,
-                          state.get("gateEtag"), state.get("gateLastModified"))
+        return PollResult(
+            "full_reconcile",
+            tuple(events),
+            page,
+            watermark,
+            state.get("gateEtag"),
+            state.get("gateLastModified"),
+        )
 
     @staticmethod
     def _headers(state: dict[str, Any], *, conditional: bool, require_auth: bool) -> dict[str, str]:
@@ -515,12 +682,20 @@ class GitHubIssuePoller:
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         if not token:
             try:
-                token = subprocess.run(["gh", "auth", "token"], check=True, capture_output=True, text=True, timeout=3).stdout.strip()
+                token = subprocess.run(
+                    ["gh", "auth", "token"], check=True, capture_output=True, text=True, timeout=3
+                ).stdout.strip()
             except (OSError, subprocess.SubprocessError):
                 token = ""
         if not token and require_auth:
             try:
-                stored = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", "gh:github.com", "-w"], check=True, capture_output=True, text=True, timeout=3).stdout.strip()
+                stored = subprocess.run(
+                    ["/usr/bin/security", "find-generic-password", "-s", "gh:github.com", "-w"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                ).stdout.strip()
                 if stored.startswith("go-keyring-base64:"):
                     token = base64.b64decode(stored.split(":", 1)[1]).decode("utf-8")
             except (OSError, ValueError, base64.binascii.Error, subprocess.SubprocessError):
@@ -539,17 +714,27 @@ class GitHubIssuePoller:
     def _is_relevant(item: dict[str, Any]) -> bool:
         title = str(item.get("title") or "").lower()
         body = str(item.get("body") or "").lower()
-        labels = {str(label.get("name") or "").lower() for label in item.get("labels") or [] if isinstance(label, dict)}
+        labels = {
+            str(label.get("name") or "").lower()
+            for label in item.get("labels") or []
+            if isinstance(label, dict)
+        }
         if item.get("pull_request"):
             author = str((item.get("user") or {}).get("login") or "").lower()
             # Only Oxygen56's own PRs are event sources.  Other authors' PRs
             # may be inspected during eligibility checks, but never wake the
             # event lane merely because they have comments or conflicts.
             return author == "oxygen56"
-        if any(token in title or token in body for token in ("documentation", "docs:", "dependency", "bump ")):
+        if any(
+            token in title or token in body
+            for token in ("documentation", "docs:", "dependency", "bump ")
+        ):
             return False
-        return bool({"bug", "feature", "enhancement", "help wanted", "good first issue", "code"} & labels) or any(
-            token in title or token in body for token in ("bug", "error", "crash", "exception", "regression", "implement")
+        return bool(
+            {"bug", "feature", "enhancement", "help wanted", "good first issue", "code"} & labels
+        ) or any(
+            token in title or token in body
+            for token in ("bug", "error", "crash", "exception", "regression", "implement")
         )
 
 
@@ -631,6 +816,68 @@ class EventLane:
         finally:
             db.close()
 
+    def _coalesce_pending_pr_updates(
+        self,
+        db: sqlite3.Connection,
+        *,
+        current: float,
+        event_key: str | None = None,
+        keep_event_id: str | None = None,
+    ) -> int:
+        query = (
+            "SELECT e.rowid AS queue_rowid,e.event_id,e.payload_json,e.created_at "
+            "FROM event_lane_events e "
+            "WHERE json_extract(e.payload_json,'$.kind')='pr_update'"
+        )
+        params: list[object] = []
+        if event_key:
+            query += " AND json_extract(e.payload_json,'$.eventKey')=?"
+            params.append(str(event_key))
+        rows = db.execute(query, params).fetchall()
+        groups: dict[str, list[sqlite3.Row]] = {}
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            key = str(payload.get("eventKey") or "")
+            if key:
+                groups.setdefault(key, []).append(row)
+        coalesced = 0
+        for key_rows in groups.values():
+            if len(key_rows) <= 1:
+                continue
+            keep = next(
+                (row for row in key_rows if str(row["event_id"]) == str(keep_event_id or "")),
+                max(key_rows, key=lambda row: int(row["queue_rowid"])),
+            )
+            for row in key_rows:
+                if row["event_id"] == keep["event_id"]:
+                    continue
+                payload = json.loads(row["payload_json"])
+                payload["terminalReason"] = "superseded_by_newer_pr_snapshot"
+                payload["supersededByEventId"] = str(keep["event_id"])
+                result = db.execute(
+                    "UPDATE event_lane_events SET status='coalesced',payload_json=?,"
+                    "delivered_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+                    "WHERE event_id=? AND status='pending' AND NOT EXISTS "
+                    "(SELECT 1 FROM event_lane_turns t WHERE t.event_id=event_lane_events.event_id)",
+                    (
+                        json.dumps(payload, sort_keys=True),
+                        current,
+                        str(row["event_id"]),
+                    ),
+                )
+                coalesced += result.rowcount
+        return coalesced
+
+    def coalesce_pending_pr_updates(self, *, now: float | None = None) -> int:
+        """Keep only the newest unstarted snapshot for each pull request."""
+
+        current = time.time() if now is None else now
+        with self.writer() as db:
+            return self._coalesce_pending_pr_updates(db, current=current)
+
     def append(self, event: dict[str, Any], *, priority: int = 0, now: float | None = None) -> bool:
         event_id = str(event.get("eventId") or _digest(event))
         payload = dict(event)
@@ -642,21 +889,101 @@ class EventLane:
             if target:
                 payload["eventKey"] = str(target)
         identity = _github_event_identity(payload)
+        current = time.time() if now is None else now
         with self.writer() as db:
-            if identity is not None:
+            if (
+                identity is not None
+                and payload.get("kind") == "pr_update"
+                and payload.get("eventKey")
+            ):
+                latest = db.execute(
+                    "SELECT rowid AS queue_rowid,event_id,payload_json,status "
+                    "FROM event_lane_events "
+                    "WHERE json_extract(payload_json,'$.kind')='pr_update' "
+                    "AND json_extract(payload_json,'$.eventKey')=? "
+                    "ORDER BY rowid DESC LIMIT 1",
+                    (str(payload["eventKey"]),),
+                ).fetchone()
+                generation = 1
+                if latest is not None:
+                    try:
+                        existing = json.loads(latest["payload_json"])
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        existing = {}
+                    try:
+                        latest_generation = max(0, int(existing.get("wakeGeneration") or 0))
+                    except (TypeError, ValueError):
+                        latest_generation = 0
+                    if _github_event_identity(existing) == identity:
+                        payload["eventId"] = str(latest["event_id"])
+                        if latest_generation:
+                            payload["wakeGeneration"] = latest_generation
+                        if latest["status"] == "pending":
+                            updated = db.execute(
+                                "UPDATE event_lane_events SET payload_json=?,priority=? "
+                                "WHERE event_id=? AND status='pending' AND NOT EXISTS "
+                                "(SELECT 1 FROM event_lane_turns t "
+                                "WHERE t.event_id=event_lane_events.event_id)",
+                                (
+                                    json.dumps(payload, sort_keys=True),
+                                    int(priority),
+                                    str(latest["event_id"]),
+                                ),
+                            )
+                            if updated.rowcount:
+                                self._coalesce_pending_pr_updates(
+                                    db,
+                                    current=current,
+                                    event_key=str(payload["eventKey"]),
+                                    keep_event_id=str(latest["event_id"]),
+                                )
+                        return False
+                    generation = latest_generation + 1
+                event_id = f"{event_id}:g{generation}"
+                payload["eventId"] = event_id
+                payload["wakeGeneration"] = generation
+            elif identity is not None:
                 for row in db.execute(
-                    "SELECT event_id,payload_json FROM event_lane_events WHERE event_id LIKE 'github:%'"
+                    "SELECT event_id,payload_json,status FROM event_lane_events "
+                    "WHERE event_id LIKE 'github:%'"
                 ):
                     try:
                         existing = json.loads(row["payload_json"])
                     except (TypeError, ValueError, json.JSONDecodeError):
                         continue
                     if _github_event_identity(existing) == identity:
+                        if row["status"] == "pending":
+                            payload["eventId"] = str(row["event_id"])
+                            updated = db.execute(
+                                "UPDATE event_lane_events SET payload_json=?,priority=? "
+                                "WHERE event_id=? AND status='pending' AND NOT EXISTS "
+                                "(SELECT 1 FROM event_lane_turns t "
+                                "WHERE t.event_id=event_lane_events.event_id)",
+                                (
+                                    json.dumps(payload, sort_keys=True),
+                                    int(priority),
+                                    str(row["event_id"]),
+                                ),
+                            )
+                            if updated.rowcount and payload.get("kind") == "pr_update":
+                                self._coalesce_pending_pr_updates(
+                                    db,
+                                    current=current,
+                                    event_key=str(payload.get("eventKey") or ""),
+                                    keep_event_id=str(row["event_id"]),
+                                )
                         return False
             result = db.execute(
                 "INSERT OR IGNORE INTO event_lane_events(event_id,payload_json,priority,created_at) VALUES(?,?,?,?)",
-                (event_id, json.dumps(payload, sort_keys=True), int(priority), time.time() if now is None else now),
+                (event_id, json.dumps(payload, sort_keys=True), int(priority), current),
             )
+            if result.rowcount == 1 and payload.get("kind") == "pr_update":
+                self._coalesce_pending_pr_updates(
+                    db,
+                    current=current,
+                    event_key=str(payload.get("eventKey") or ""),
+                    keep_event_id=event_id,
+                )
             return result.rowcount == 1
 
     def append_many(self, events: Iterable[dict[str, Any]], *, priority: int = 0) -> int:
@@ -706,7 +1033,13 @@ class EventLane:
                     priority = int(value.get("priority") or 0)
                     self.append(event, priority=priority)
                     imported += 1
-                except (KeyError, TypeError, ValueError, json.JSONDecodeError, sqlite3.OperationalError):
+                except (
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                    json.JSONDecodeError,
+                    sqlite3.OperationalError,
+                ):
                     remaining.append(line)
             if remaining:
                 temporary = handoff_path.with_suffix(handoff_path.suffix + ".tmp")
@@ -726,7 +1059,19 @@ class EventLane:
             rows = db.execute(
                 "SELECT * FROM event_lane_events WHERE attempts<? AND "
                 "(status='pending' OR (status='leased' AND lease_until<=?)) "
-                "ORDER BY priority DESC, created_at ASC LIMIT ?", (self.max_attempts, current, limit)
+                "ORDER BY CASE "
+                "WHEN json_extract(payload_json,'$.kind')='outcome_reconcile' THEN ? "
+                "WHEN priority<=10 AND ?-created_at>=? THEN ? "
+                "ELSE priority END DESC, created_at ASC LIMIT ?",
+                (
+                    self.max_attempts,
+                    current,
+                    RECOVERY_PRIORITY,
+                    current,
+                    ISSUE_STARVATION_SECONDS,
+                    AGED_ISSUE_PRIORITY,
+                    limit,
+                ),
             ).fetchall()
             result = []
             until = current + self.lease_seconds
@@ -754,7 +1099,9 @@ class EventLane:
             )
             return result.rowcount == 1
 
-    def defer_event(self, event_id: str, *, lease_token: str | None = None, owner: str = "event-lane") -> bool:
+    def defer_event(
+        self, event_id: str, *, lease_token: str | None = None, owner: str = "event-lane"
+    ) -> bool:
         """Return a leased event to pending when its sole executor is busy."""
         with self.writer() as db:
             query = (
@@ -904,9 +1251,15 @@ class EventLane:
 
     def pending(self) -> int:
         with self.connect() as db:
-            return int(db.execute("SELECT count(*) FROM event_lane_events WHERE status IN ('pending','leased')").fetchone()[0])
+            return int(
+                db.execute(
+                    "SELECT count(*) FROM event_lane_events WHERE status IN ('pending','leased')"
+                ).fetchone()[0]
+            )
 
-    def expire_handler_turns(self, *, now: float | None = None, timeout_seconds: int | None = None) -> int:
+    def expire_handler_turns(
+        self, *, now: float | None = None, timeout_seconds: int | None = None
+    ) -> int:
         """Terminalize stale bridge turns so they cannot hold the lane forever."""
         current = time.time() if now is None else now
         timeout = self.turn_timeout_seconds if timeout_seconds is None else max(1, timeout_seconds)
@@ -932,8 +1285,7 @@ class EventLane:
                     continue
                 expired += 1
                 retry_reservation = (
-                    str(row["status"]) == "reserved"
-                    and receipt.get("turnStarted") is not True
+                    str(row["status"]) == "reserved" and receipt.get("turnStarted") is not True
                 )
                 receipt["terminalReason"] = (
                     "handler_reservation_timeout_retry"
@@ -1008,10 +1360,14 @@ class EventLane:
                     "lease_until=NULL,lease_owner=NULL,lease_token=NULL WHERE event_id=?",
                     (current, row["event_id"]),
                 )
-                terminalized.append({"eventId": event_id, "updatedAt": updated.isoformat().replace("+00:00", "Z")})
+                terminalized.append(
+                    {"eventId": event_id, "updatedAt": updated.isoformat().replace("+00:00", "Z")}
+                )
         return terminalized
 
-    def record_baseline_event(self, event: dict[str, Any], *, now: float | None = None) -> dict[str, str]:
+    def record_baseline_event(
+        self, event: dict[str, Any], *, now: float | None = None
+    ) -> dict[str, str]:
         """Persist a fetched pre-bootstrap GitHub event as terminal baseline."""
         event_id = str(event.get("eventId") or _digest(event))
         payload = dict(event)
@@ -1053,7 +1409,9 @@ class EventLane:
 
     def handler_thread(self, event_key: str) -> dict[str, Any] | None:
         with self.connect() as db:
-            row = db.execute("SELECT * FROM event_lane_threads WHERE event_key=?", (event_key,)).fetchone()
+            row = db.execute(
+                "SELECT * FROM event_lane_threads WHERE event_key=?", (event_key,)
+            ).fetchone()
         return dict(row) if row else None
 
     def handler_turn(self, event_id: str) -> dict[str, Any] | None:
@@ -1139,7 +1497,9 @@ class EventLane:
             ).fetchone()
         return dict(row) if row else None
 
-    def terminalize_event(self, event_id: str, *, status: str = "needs_reconcile", reason: str = "") -> bool:
+    def terminalize_event(
+        self, event_id: str, *, status: str = "needs_reconcile", reason: str = ""
+    ) -> bool:
         """Stop a deterministic failure without manufacturing a success receipt."""
         if status not in {"needs_reconcile", "coalesced", "watch_only", "baseline"}:
             raise ValueError("invalid event terminal status")
@@ -1198,11 +1558,24 @@ class EventLane:
                 ),
             )
 
-    def bind_handler_thread(self, event_key: str, thread_id: str, turn_id: str, receipt: dict[str, Any], *, status: str = "started") -> None:
+    def bind_handler_thread(
+        self,
+        event_key: str,
+        thread_id: str,
+        turn_id: str,
+        receipt: dict[str, Any],
+        *,
+        status: str = "started",
+    ) -> None:
         with self.writer() as db:
-            db.execute("INSERT INTO event_lane_threads(event_key,thread_id,turn_id,status,receipt_json) VALUES(?,?,?,?,?) ON CONFLICT(event_key) DO UPDATE SET thread_id=excluded.thread_id,turn_id=excluded.turn_id,status=excluded.status,receipt_json=excluded.receipt_json", (event_key, thread_id, turn_id, status, json.dumps(receipt, sort_keys=True)))
+            db.execute(
+                "INSERT INTO event_lane_threads(event_key,thread_id,turn_id,status,receipt_json) VALUES(?,?,?,?,?) ON CONFLICT(event_key) DO UPDATE SET thread_id=excluded.thread_id,turn_id=excluded.turn_id,status=excluded.status,receipt_json=excluded.receipt_json",
+                (event_key, thread_id, turn_id, status, json.dumps(receipt, sort_keys=True)),
+            )
 
-    def import_queue(self, queue: dict[str, Any], *, wake: Callable[[dict[str, Any]], Any] | None = None) -> dict[str, int]:
+    def import_queue(
+        self, queue: dict[str, Any], *, wake: Callable[[dict[str, Any]], Any] | None = None
+    ) -> dict[str, int]:
         """Import intents and PR follow-up records, then wake each unique task once."""
         imported = 0
         task_ids: set[str] = set()
@@ -1233,11 +1606,27 @@ class EventLane:
                             continue
                     except (AttributeError, TypeError, ValueError):
                         continue
-                task_id = str(value.get("taskId") or value.get("intentId") or value.get("threadId") or _digest(value))
-                target_key = str(value.get("key") or value.get("opportunityKey") or value.get("opportunity_key") or "")
-                event = {"version": EVENT_VERSION, "kind": key, "taskId": task_id,
-                         "targetKey": target_key, "repo": value.get("repo"), "payload": value,
-                         "eventId": f"queue:{_digest({'kind': key, 'taskId': task_id})}"}
+                task_id = str(
+                    value.get("taskId")
+                    or value.get("intentId")
+                    or value.get("threadId")
+                    or _digest(value)
+                )
+                target_key = str(
+                    value.get("key")
+                    or value.get("opportunityKey")
+                    or value.get("opportunity_key")
+                    or ""
+                )
+                event = {
+                    "version": EVENT_VERSION,
+                    "kind": key,
+                    "taskId": task_id,
+                    "targetKey": target_key,
+                    "repo": value.get("repo"),
+                    "payload": value,
+                    "eventId": f"queue:{_digest({'kind': key, 'taskId': task_id})}",
+                }
                 if value.get("designWait") or value.get("design_wait"):
                     event["designWait"] = True
                 if value.get("priority") is not None:
@@ -1265,7 +1654,10 @@ class EventLane:
                 except (TypeError, ValueError, json.JSONDecodeError):
                     continue
                 if payload.get("kind") not in {
-                    "intents", "prFollowups", "followups", "slowWorkRequests"
+                    "intents",
+                    "prFollowups",
+                    "followups",
+                    "slowWorkRequests",
                 }:
                     continue
                 payload["terminalReason"] = "retired_shared_queue_mirror"
@@ -1288,7 +1680,10 @@ class EventLane:
                 (current - self.ttl_seconds, current),
             ).fetchall()
             for row in rows:
-                db.execute("UPDATE event_lane_events SET status='watch_only' WHERE event_id=?", (row["event_id"],))
+                db.execute(
+                    "UPDATE event_lane_events SET status='watch_only' WHERE event_id=?",
+                    (row["event_id"],),
+                )
                 payload = json.loads(row["payload_json"])
                 event_key = str(payload.get("eventKey") or payload.get("targetKey") or "")
                 if not event_key and payload.get("repo") and payload.get("number") is not None:
@@ -1336,10 +1731,14 @@ class EventLane:
                 outcome = payload.get("outcome") if isinstance(payload.get("outcome"), dict) else {}
                 wait_until = outcome.get("waitUntil")
             try:
-                watch_until = datetime.fromisoformat(str(wait_until).replace("Z", "+00:00")).timestamp()
+                watch_until = datetime.fromisoformat(
+                    str(wait_until).replace("Z", "+00:00")
+                ).timestamp()
             except (TypeError, ValueError):
                 watch_until = time.time() + self.ttl_seconds
-            payload["designWaitUntil"] = datetime.fromtimestamp(watch_until, UTC).isoformat().replace("+00:00", "Z")
+            payload["designWaitUntil"] = (
+                datetime.fromtimestamp(watch_until, UTC).isoformat().replace("+00:00", "Z")
+            )
             db.execute(
                 "UPDATE event_lane_events SET payload_json=? WHERE event_id=?",
                 (json.dumps(payload, sort_keys=True), str(event_id)),
@@ -1371,7 +1770,8 @@ class EventLane:
             ).fetchall()
             public = db.execute(
                 "SELECT event_key FROM event_lane_public_work WHERE status IN ('active','design_wait') "
-                "AND (status='active' OR (watch_until IS NOT NULL AND watch_until>?))", (current,)
+                "AND (status='active' OR (watch_until IS NOT NULL AND watch_until>?))",
+                (current,),
             ).fetchall()
         return {str(row["event_key"]) for row in rows + public if row["event_key"]}
 
@@ -1382,7 +1782,14 @@ class EventLane:
             ).fetchone()
         return str(row["status"]) if row else None
 
-    def register_public_work(self, event_key: str, *, status: str = "active", watch_until: float | None = None, source: str = "event-lane") -> None:
+    def register_public_work(
+        self,
+        event_key: str,
+        *,
+        status: str = "active",
+        watch_until: float | None = None,
+        source: str = "event-lane",
+    ) -> None:
         if status == "design_wait" and watch_until is None:
             watch_until = time.time() + self.ttl_seconds
         if status == "design_wait" and watch_until is not None and watch_until <= time.time():
@@ -1401,7 +1808,9 @@ class EventLane:
 
     def state_value(self, key: str) -> Any:
         with self.connect() as db:
-            row = db.execute("SELECT value_json FROM event_lane_state WHERE key=?", (str(key),)).fetchone()
+            row = db.execute(
+                "SELECT value_json FROM event_lane_state WHERE key=?", (str(key),)
+            ).fetchone()
         if row is None:
             return None
         try:

@@ -103,9 +103,7 @@ def test_operational_authorization_gap_classifier_is_cutover_only():
     assert worker._is_operational_authorization_gap(
         {"ok": False, "error": allowed_error, "turnStarted": False}
     )
-    assert not worker._is_operational_authorization_gap(
-        {"ok": False, "error": allowed_error}
-    )
+    assert not worker._is_operational_authorization_gap({"ok": False, "error": allowed_error})
     assert not worker._is_operational_authorization_gap(
         {"ok": False, "error": allowed_error, "turnStarted": True}
     )
@@ -129,19 +127,20 @@ def test_operational_authorization_gap_classifier_is_cutover_only():
         _authorization_bridge_error("nanobot-event-create", planned[0])
     )
     assert not worker._is_operational_authorization_gap(
-        _authorization_bridge_error(
-            "agentscope-event-create", planned[0], turnStarted=False
-        )
+        _authorization_bridge_error("agentscope-event-create", planned[0], turnStarted=False)
     )
     assert not worker._is_operational_authorization_gap(
-        RuntimeError(
-            f"agentscope-event-create: operational authorization required: {planned[0]}"
-        )
+        RuntimeError(f"agentscope-event-create: operational authorization required: {planned[0]}")
     )
 
 
 def _issue(number: int, updated: str, *, pr: bool = False) -> dict:
-    value = {"number": number, "updated_at": updated, "title": f"item {number}", "labels": [{"name": "bug"}]}
+    value = {
+        "number": number,
+        "updated_at": updated,
+        "title": f"item {number}",
+        "labels": [{"name": "bug"}],
+    }
     if pr:
         value["pull_request"] = {"url": "https://example.test/pr"}
     return value
@@ -172,7 +171,15 @@ def test_poller_paginates_with_overlap_and_dedupes_at_lane(tmp_path):
         if "direction=desc" in url:
             return 200, {"ETag": "gate"}, [_issue(3, "2026-08-22T00:02:00Z")]
         if "page=1" in url:
-            return 200, {}, [_issue(1, "2026-08-22T00:00:00Z"), _issue(2, "2026-08-22T00:01:00Z"), _issue(3, "2026-08-22T00:02:00Z")]
+            return (
+                200,
+                {},
+                [
+                    _issue(1, "2026-08-22T00:00:00Z"),
+                    _issue(2, "2026-08-22T00:01:00Z"),
+                    _issue(3, "2026-08-22T00:02:00Z"),
+                ],
+            )
         return 200, {}, [_issue(3, "2026-08-22T00:02:00Z")]
 
     poller = GitHubIssuePoller(tmp_path / "poll.json", transport=transport, per_page=3)
@@ -189,10 +196,12 @@ def test_crash_retry_and_priority(tmp_path):
     lane.append({"eventId": "low", "kind": "issue"}, priority=1, now=0)
     lane.append({"eventId": "high", "kind": "review"}, priority=100, now=0)
     seen = []
+
     def deliver(event):
         seen.append(event["eventId"])
         if event["eventId"] == "high" and seen.count("high") == 1:
             raise RuntimeError("crash")
+
     assert dispatch_once(lane, deliver, limit=2, now=0)["delivered"] == 1
     assert dispatch_once(lane, deliver, limit=2, now=6)["delivered"] == 1
     assert seen[:2] == ["high", "low"]
@@ -202,11 +211,14 @@ def test_crash_retry_and_priority(tmp_path):
 def test_queue_import_includes_followups_and_wakes_once(tmp_path):
     lane = EventLane(tmp_path / "events.db")
     wakes = []
-    result = lane.import_queue({
-        "intents": [{"intentId": "i1", "threadId": "t1"}],
-        "prFollowups": [{"taskId": "i1", "kind": "review"}],
-        "slowWorkRequests": [{"taskId": "i2"}],
-    }, wake=wakes.append)
+    result = lane.import_queue(
+        {
+            "intents": [{"intentId": "i1", "threadId": "t1"}],
+            "prFollowups": [{"taskId": "i1", "kind": "review"}],
+            "slowWorkRequests": [{"taskId": "i2"}],
+        },
+        wake=wakes.append,
+    )
     assert result == {"imported": 3, "woken": 2}
     assert {item["taskId"] for item in wakes} == {"i1", "i2"}
 
@@ -233,37 +245,41 @@ def test_prestart_authorization_gap_refund_is_token_bound(tmp_path):
     lane = EventLane(tmp_path / "events.db")
     lane.append({"eventId": "auth-gap", "eventKey": "agentscope-ai/agentscope#1"})
     claimed = lane.claim(owner="worker-a")[0]
-    lane.reserve_handler_turn(
-        "agentscope-ai/agentscope#1", "auth-gap", "client:auth-gap"
-    )
+    lane.reserve_handler_turn("agentscope-ai/agentscope#1", "auth-gap", "client:auth-gap")
 
-    assert lane.defer_prestart_authorization_gap(
-        "auth-gap", lease_token="wrong-token", owner="worker-a"
-    ) is False
-    assert lane.defer_prestart_authorization_gap(
-        "auth-gap", lease_token=claimed["leaseToken"], owner="worker-a"
-    ) is True
+    assert (
+        lane.defer_prestart_authorization_gap(
+            "auth-gap", lease_token="wrong-token", owner="worker-a"
+        )
+        is False
+    )
+    assert (
+        lane.defer_prestart_authorization_gap(
+            "auth-gap", lease_token=claimed["leaseToken"], owner="worker-a"
+        )
+        is True
+    )
 
     with lane.connect() as db:
         row = db.execute(
-            "SELECT status,attempts,lease_token FROM event_lane_events "
-            "WHERE event_id='auth-gap'"
+            "SELECT status,attempts,lease_token FROM event_lane_events WHERE event_id='auth-gap'"
         ).fetchone()
     assert dict(row) == {"status": "pending", "attempts": 0, "lease_token": None}
     assert lane.handler_turn("auth-gap") is None
 
     lane.append({"eventId": "zero-attempt", "eventKey": "agentscope-ai/agentscope#2"})
-    lane.reserve_handler_turn(
-        "agentscope-ai/agentscope#2", "zero-attempt", "client:zero-attempt"
-    )
+    lane.reserve_handler_turn("agentscope-ai/agentscope#2", "zero-attempt", "client:zero-attempt")
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='leased',lease_owner='worker-a',"
             "lease_token='zero-token' WHERE event_id='zero-attempt'"
         )
-    assert lane.defer_prestart_authorization_gap(
-        "zero-attempt", lease_token="zero-token", owner="worker-a"
-    ) is False
+    assert (
+        lane.defer_prestart_authorization_gap(
+            "zero-attempt", lease_token="zero-token", owner="worker-a"
+        )
+        is False
+    )
     with lane.connect() as db:
         zero = db.execute(
             "SELECT status,attempts FROM event_lane_events WHERE event_id='zero-attempt'"
@@ -275,9 +291,7 @@ def test_prestart_authorization_gap_refund_is_token_bound(tmp_path):
     started = next(
         item for item in lane.claim(owner="worker-a") if item["eventId"] == "started-turn"
     )
-    lane.reserve_handler_turn(
-        "agentscope-ai/agentscope#3", "started-turn", "client:started-turn"
-    )
+    lane.reserve_handler_turn("agentscope-ai/agentscope#3", "started-turn", "client:started-turn")
     lane.bind_handler_turn(
         "agentscope-ai/agentscope#3",
         "started-turn",
@@ -285,9 +299,12 @@ def test_prestart_authorization_gap_refund_is_token_bound(tmp_path):
         "turn-started",
         {"turnStarted": True},
     )
-    assert lane.defer_prestart_authorization_gap(
-        "started-turn", lease_token=started["leaseToken"], owner="worker-a"
-    ) is False
+    assert (
+        lane.defer_prestart_authorization_gap(
+            "started-turn", lease_token=started["leaseToken"], owner="worker-a"
+        )
+        is False
+    )
     with lane.connect() as db:
         started_row = db.execute(
             "SELECT status,attempts FROM event_lane_events WHERE event_id='started-turn'"
@@ -336,8 +353,7 @@ def test_atomic_handler_gate_serializes_two_claimed_events(tmp_path):
             ).fetchall()
         }
         turns = db.execute(
-            "SELECT event_id,status FROM event_lane_turns "
-            "WHERE status IN ('reserved','started')"
+            "SELECT event_id,status FROM event_lane_turns WHERE status IN ('reserved','started')"
         ).fetchall()
         reconcile_count = db.execute(
             "SELECT count(*) FROM event_lane_turns WHERE status='needs_reconcile'"
@@ -353,9 +369,7 @@ def test_atomic_handler_gate_serializes_two_claimed_events(tmp_path):
         "lease_owner": None,
         "lease_token": None,
     }
-    assert [dict(turn) for turn in turns] == [
-        {"event_id": reserved_event, "status": "reserved"}
-    ]
+    assert [dict(turn) for turn in turns] == [{"event_id": reserved_event, "status": "reserved"}]
     assert reconcile_count == 0
 
 
@@ -368,12 +382,8 @@ def test_atomic_handler_gate_resets_empty_reconcile_and_rejects_bad_lease(tmp_pa
         }
     )
     reset_claim = lane.claim(limit=1, owner="worker-a")[0]
-    lane.reserve_handler_turn(
-        "agentscope-ai/agentscope#1", "resettable", "client:old"
-    )
-    assert lane.release_handler_reservation(
-        "resettable", {"error": "pre-turn"}, reason="pre-turn"
-    )
+    lane.reserve_handler_turn("agentscope-ai/agentscope#1", "resettable", "client:old")
+    assert lane.release_handler_reservation("resettable", {"error": "pre-turn"}, reason="pre-turn")
 
     reset = lane.try_reserve_handler_turn_if_idle(
         "agentscope-ai/agentscope#1",
@@ -431,9 +441,7 @@ def test_atomic_handler_gate_preserves_reconcile_receipts_on_busy_or_conflict(
     tmp_path,
 ):
     lane = EventLane(tmp_path / "events.db")
-    lane.reserve_handler_turn(
-        "agentscope-ai/agentscope#99", "active", "client:active"
-    )
+    lane.reserve_handler_turn("agentscope-ai/agentscope#99", "active", "client:active")
     lane.bind_handler_turn(
         "agentscope-ai/agentscope#99",
         "active",
@@ -449,9 +457,7 @@ def test_atomic_handler_gate_preserves_reconcile_receipts_on_busy_or_conflict(
         }
     )
     empty_claim = lane.claim(limit=1, owner="worker-a")[0]
-    lane.reserve_handler_turn(
-        "agentscope-ai/agentscope#1", "empty-reconcile", "client:old"
-    )
+    lane.reserve_handler_turn("agentscope-ai/agentscope#1", "empty-reconcile", "client:old")
     assert lane.release_handler_reservation(
         "empty-reconcile", {"marker": "keep"}, reason="pre-turn"
     )
@@ -487,9 +493,7 @@ def test_atomic_handler_gate_preserves_reconcile_receipts_on_busy_or_conflict(
         priority=100,
     )
     remote_claim = lane.claim(limit=1, owner="worker-a")[0]
-    lane.reserve_handler_turn(
-        "agentscope-ai/agentscope#2", "remote-reconcile", "client:remote"
-    )
+    lane.reserve_handler_turn("agentscope-ai/agentscope#2", "remote-reconcile", "client:remote")
     lane.bind_handler_turn(
         "agentscope-ai/agentscope#2",
         "remote-reconcile",
@@ -526,10 +530,45 @@ def test_atomic_handler_gate_preserves_reconcile_receipts_on_busy_or_conflict(
 def test_github_identity_ignores_metadata_drift_and_tracks_material_revisions(tmp_path):
     lane = EventLane(tmp_path / "events.db")
     details = {
-        "pull": {"head": {"sha": "sha-1"}, "state": "open", "draft": False, "updated_at": "2026-08-24T00:00:00Z", "mergeable_state": "clean"},
-        "reviews": [{"id": 1, "state": "COMMENTED", "submitted_at": "2026-08-24T00:00:00Z", "commit_id": "sha-1", "body": "review"}],
-        "comments": [{"id": 2, "created_at": "2026-08-24T00:00:00Z", "updated_at": "2026-08-24T00:00:00Z", "body": "comment", "user": {"login": "reviewer"}}],
-        "checks": {"check_runs": [{"id": 3, "name": "ci", "head_sha": "sha-1", "status": "queued", "conclusion": None, "started_at": "2026-08-24T00:00:00Z", "completed_at": None, "app": {"slug": "github-actions", "owner": {"followers": 1}}}]},
+        "pull": {
+            "head": {"sha": "sha-1"},
+            "state": "open",
+            "draft": False,
+            "updated_at": "2026-08-24T00:00:00Z",
+            "mergeable_state": "clean",
+        },
+        "reviews": [
+            {
+                "id": 1,
+                "state": "COMMENTED",
+                "submitted_at": "2026-08-24T00:00:00Z",
+                "commit_id": "sha-1",
+                "body": "review",
+            }
+        ],
+        "comments": [
+            {
+                "id": 2,
+                "created_at": "2026-08-24T00:00:00Z",
+                "updated_at": "2026-08-24T00:00:00Z",
+                "body": "comment",
+                "user": {"login": "reviewer"},
+            }
+        ],
+        "checks": {
+            "check_runs": [
+                {
+                    "id": 3,
+                    "name": "ci",
+                    "head_sha": "sha-1",
+                    "status": "queued",
+                    "conclusion": None,
+                    "started_at": "2026-08-24T00:00:00Z",
+                    "completed_at": None,
+                    "app": {"slug": "github-actions", "owner": {"followers": 1}},
+                }
+            ]
+        },
     }
     first = _github_event(2397, "2026-08-24T00:00:00Z") | {
         "eventId": "github:agentscope-ai/agentscope:2397:pr_update:legacy-a",
@@ -537,11 +576,36 @@ def test_github_identity_ignores_metadata_drift_and_tracks_material_revisions(tm
     }
     metadata_drift = first | {
         "eventId": "github:agentscope-ai/agentscope:2397:pr_update:legacy-b",
-        "prDetails": {**details, "checks": {"check_runs": [{**details["checks"]["check_runs"][0], "app": {"slug": "github-actions", "owner": {"followers": 999}, "permissions": {"checks": "write"}}}]}},
+        "prDetails": {
+            **details,
+            "checks": {
+                "check_runs": [
+                    {
+                        **details["checks"]["check_runs"][0],
+                        "app": {
+                            "slug": "github-actions",
+                            "owner": {"followers": 999},
+                            "permissions": {"checks": "write"},
+                        },
+                    }
+                ]
+            },
+        },
     }
     material_change = first | {
         "eventId": "github:agentscope-ai/agentscope:2397:pr_update:legacy-c",
-        "prDetails": {**details, "checks": {"check_runs": [{**details["checks"]["check_runs"][0], "status": "completed", "conclusion": "success"}]}},
+        "prDetails": {
+            **details,
+            "checks": {
+                "check_runs": [
+                    {
+                        **details["checks"]["check_runs"][0],
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                ]
+            },
+        },
     }
     changed = _github_event(2397, "2026-08-24T00:01:00Z")
     changed["prDetails"] = details
@@ -551,34 +615,99 @@ def test_github_identity_ignores_metadata_drift_and_tracks_material_revisions(tm
     assert lane.append(changed) is True
     seen = []
     assert dispatch_once(lane, seen.append, limit=3)["delivered"] == 3
-    assert [event["eventId"] for event in seen] == [first["eventId"], material_change["eventId"], changed["eventId"]]
+    assert [event["eventId"] for event in seen] == [
+        first["eventId"],
+        material_change["eventId"],
+        changed["eventId"],
+    ]
 
 
 def test_plain_issue_has_no_material_suffix_and_stable_legacy_identity():
     event = _github_event(2398, "2026-08-24T00:00:00Z")
     event["eventId"] = _github_event_id(event)
-    assert event["eventId"] == "github:agentscope-ai/agentscope:2398:issue_update:2026-08-24T00:00:00Z"
+    assert (
+        event["eventId"] == "github:agentscope-ai/agentscope:2398:issue_update:2026-08-24T00:00:00Z"
+    )
     assert _github_event_identity(event) == (
-        "agentscope-ai/agentscope", "2398", "issue_update", "2026-08-24T00:00:00Z", ""
+        "agentscope-ai/agentscope",
+        "2398",
+        "issue_update",
+        "2026-08-24T00:00:00Z",
+        "",
     )
 
 
 def test_active_pull_events_use_canonical_material_projection(tmp_path):
-    poller = GitHubIssuePoller(tmp_path / "poll.json", transport=lambda _url, _headers: (200, {}, []))
+    poller = GitHubIssuePoller(
+        tmp_path / "poll.json", transport=lambda _url, _headers: (200, {}, [])
+    )
     details = {
-        "pull": {"head": {"sha": "sha-1", "ref": "feature", "user": {"login": "Oxygen56", "repo": {"stargazers_count": 1}}}, "state": "open", "draft": False, "updated_at": "2026-08-24T00:00:00Z", "mergeable_state": "clean"},
-        "reviews": [{"id": 1, "state": "COMMENTED", "submitted_at": "2026-08-24T00:00:00Z", "commit_id": "sha-1", "body": "review"}],
-        "comments": [{"id": 2, "created_at": "2026-08-24T00:00:00Z", "updated_at": "2026-08-24T00:00:00Z", "body": "comment", "user": {"login": "reviewer"}}],
-        "checks": {"check_runs": [{"id": 3, "name": "ci", "head_sha": "sha-1", "status": "queued", "conclusion": None, "started_at": "2026-08-24T00:00:00Z", "completed_at": None, "app": {"slug": "github-actions", "owner": {"permissions": {"checks": "write"}, "stargazers_count": 1}}}]},
+        "pull": {
+            "head": {
+                "sha": "sha-1",
+                "ref": "feature",
+                "user": {"login": "Oxygen56", "repo": {"stargazers_count": 1}},
+            },
+            "state": "open",
+            "draft": False,
+            "updated_at": "2026-08-24T00:00:00Z",
+            "mergeable_state": "clean",
+        },
+        "reviews": [
+            {
+                "id": 1,
+                "state": "COMMENTED",
+                "submitted_at": "2026-08-24T00:00:00Z",
+                "commit_id": "sha-1",
+                "body": "review",
+            }
+        ],
+        "comments": [
+            {
+                "id": 2,
+                "created_at": "2026-08-24T00:00:00Z",
+                "updated_at": "2026-08-24T00:00:00Z",
+                "body": "comment",
+                "user": {"login": "reviewer"},
+            }
+        ],
+        "checks": {
+            "check_runs": [
+                {
+                    "id": 3,
+                    "name": "ci",
+                    "head_sha": "sha-1",
+                    "status": "queued",
+                    "conclusion": None,
+                    "started_at": "2026-08-24T00:00:00Z",
+                    "completed_at": None,
+                    "app": {
+                        "slug": "github-actions",
+                        "owner": {"permissions": {"checks": "write"}, "stargazers_count": 1},
+                    },
+                }
+            ]
+        },
     }
     poller._enrich_pull_request = lambda item, _state: item
 
     def item(value, updated="2026-08-24T00:00:00Z"):
-        return {"number": 2397, "updated_at": updated, "title": "implementation", "state": "open", "user": {"login": "Oxygen56"}, "pull_request": {"url": "https://example.test/pr"}, "agentscopeDetails": value}
+        return {
+            "number": 2397,
+            "updated_at": updated,
+            "title": "implementation",
+            "state": "open",
+            "user": {"login": "Oxygen56"},
+            "pull_request": {"url": "https://example.test/pr"},
+            "agentscopeDetails": value,
+        }
 
     baseline = poller._active_pull_events([item(details)], {})[0]["eventId"]
     metadata = copy.deepcopy(details)
-    metadata["pull"]["head"]["repo"] = {"stargazers_count": 999, "owner": {"permissions": {"admin": True}}}
+    metadata["pull"]["head"]["repo"] = {
+        "stargazers_count": 999,
+        "owner": {"permissions": {"admin": True}},
+    }
     metadata["checks"]["check_runs"][0]["app"]["owner"]["stargazers_count"] = 999
     assert poller._active_pull_events([item(metadata)], {})[0]["eventId"] == baseline
     for key in ("reviews", "comments", "checks"):
@@ -589,7 +718,10 @@ def test_active_pull_events_use_canonical_material_projection(tmp_path):
             changed[key][0]["body"] = "changed"
         assert poller._active_pull_events([item(changed)], {})[0]["eventId"] != baseline
     assert poller._active_pull_events([item(details)], {})[0]["eventId"] == baseline
-    assert poller._active_pull_events([item(details, "2026-08-24T00:01:00Z")], {})[0]["eventId"] != baseline
+    assert (
+        poller._active_pull_events([item(details, "2026-08-24T00:01:00Z")], {})[0]["eventId"]
+        != baseline
+    )
 
 
 def test_same_event_is_idempotent_but_new_event_resumes_same_thread(tmp_path):
@@ -654,9 +786,13 @@ def test_active_oxygen_pr_details_are_polled_even_when_issue_gate_is_304(tmp_pat
 
 def test_production_queue_snapshot_imports_pr_followup_once(tmp_path, monkeypatch):
     worker = _event_worker_module()
-    monkeypatch.setattr(worker, "production_queue_snapshot", lambda _root: {
-        "prFollowups": [{"taskId": "task-1", "key": "agentscope-ai/agentscope#9"}],
-    })
+    monkeypatch.setattr(
+        worker,
+        "production_queue_snapshot",
+        lambda _root: {
+            "prFollowups": [{"taskId": "task-1", "key": "agentscope-ai/agentscope#9"}],
+        },
+    )
     monkeypatch.setattr(
         worker.GitHubIssuePoller,
         "poll",
@@ -674,33 +810,58 @@ def test_production_queue_snapshot_imports_pr_followup_once(tmp_path, monkeypatc
 
 def test_queue_identity_is_stable_and_legacy_rows_retire_once(tmp_path):
     lane = EventLane(tmp_path / "events.db")
-    first = {"intents": [{"intentId": "intent-2413", "key": "agentscope-ai/agentscope#2413", "title": "old"}]}
-    changed = {"intents": [{"intentId": "intent-2413", "key": "agentscope-ai/agentscope#2413", "title": "new", "status": "CREATING"}]}
+    first = {
+        "intents": [
+            {"intentId": "intent-2413", "key": "agentscope-ai/agentscope#2413", "title": "old"}
+        ]
+    }
+    changed = {
+        "intents": [
+            {
+                "intentId": "intent-2413",
+                "key": "agentscope-ai/agentscope#2413",
+                "title": "new",
+                "status": "CREATING",
+            }
+        ]
+    }
     assert lane.import_queue(first)["imported"] == 1
     assert lane.import_queue(changed)["imported"] == 0
-    lane.append({
-        "eventId": "queue:legacy-payload-digest",
-        "kind": "intents",
-        "taskId": "legacy",
-        "payload": {"intentId": "legacy", "title": "mutable"},
-    })
+    lane.append(
+        {
+            "eventId": "queue:legacy-payload-digest",
+            "kind": "intents",
+            "taskId": "legacy",
+            "payload": {"intentId": "legacy", "title": "mutable"},
+        }
+    )
     assert lane.retire_queue_events(now=10) == 2
     assert lane.retire_queue_events(now=11) == 0
     with lane.connect() as db:
         rows = list(db.execute("SELECT status,payload_json FROM event_lane_events"))
     assert {row["status"] for row in rows} == {"coalesced"}
-    assert all(json.loads(row["payload_json"])["terminalReason"] == "retired_shared_queue_mirror" for row in rows)
+    assert all(
+        json.loads(row["payload_json"])["terminalReason"] == "retired_shared_queue_mirror"
+        for row in rows
+    )
 
 
 def test_concurrent_legacy_queue_event_is_coalesced_before_dispatch_ack(tmp_path):
     worker = _event_worker_module()
     lane = EventLane(tmp_path / "events.db")
-    event = {"eventId": "queue:late", "kind": "prFollowups", "taskId": "late", "payload": {"status": "CREATING"}}
+    event = {
+        "eventId": "queue:late",
+        "kind": "prFollowups",
+        "taskId": "late",
+        "payload": {"status": "CREATING"},
+    }
     lane.append(event)
     result = dispatch_once(lane, lambda item: worker.bridge_delivery(tmp_path, lane, item), limit=1)
     assert result["delivered"] == 0
     with lane.connect() as db:
-        row = db.execute("SELECT status,payload_json FROM event_lane_events WHERE event_id='queue:late'").fetchone()
+        row = db.execute(
+            "SELECT status,payload_json FROM event_lane_events WHERE event_id='queue:late'"
+        ).fetchone()
     assert row["status"] == "coalesced"
     assert json.loads(row["payload_json"])["terminalReason"] == "retired_shared_queue_mirror"
 
@@ -720,8 +881,306 @@ def _github_event(number: int, updated: str) -> dict:
         "number": number,
         "kind": "issue_update",
         "updatedAt": updated,
-        "issue": {"number": number, "updated_at": updated, "state": "open", "labels": [{"name": "bug"}]},
+        "issue": {
+            "number": number,
+            "updated_at": updated,
+            "state": "open",
+            "labels": [{"name": "bug"}],
+        },
     }
+
+
+def _pr_event(number: int, updated: str, check_runs: list[dict]) -> dict:
+    event = _github_event(number, updated)
+    event.update(
+        {
+            "kind": "pr_update",
+            "eventKey": f"agentscope-ai/agentscope#{number}",
+            "prDetails": {
+                "pull": {
+                    "head": {"sha": "head-1", "ref": "fix", "user": {"login": "Oxygen56"}},
+                    "state": "open",
+                    "draft": False,
+                    "updated_at": updated,
+                    "comments": 0,
+                    "review_comments": 0,
+                },
+                "reviews": [],
+                "comments": [],
+                "checks": {"check_runs": check_runs},
+            },
+        }
+    )
+    event["issue"]["pull_request"] = {
+        "html_url": f"https://github.com/agentscope-ai/agentscope/pull/{number}"
+    }
+    event["eventId"] = _github_event_id(event)
+    return event
+
+
+def test_pr_ci_progress_uses_phases_and_keeps_only_latest_unstarted_snapshot(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    queued = [
+        {"id": 1, "name": "unit", "head_sha": "head-1", "status": "queued", "conclusion": None},
+        {"id": 2, "name": "lint", "head_sha": "head-1", "status": "queued", "conclusion": None},
+    ]
+    progress = [
+        {
+            "id": 1,
+            "name": "unit",
+            "head_sha": "head-1",
+            "status": "completed",
+            "conclusion": "success",
+        },
+        {
+            "id": 2,
+            "name": "lint",
+            "head_sha": "head-1",
+            "status": "in_progress",
+            "conclusion": None,
+        },
+    ]
+    success = [
+        {
+            "id": 1,
+            "name": "unit",
+            "head_sha": "head-1",
+            "status": "completed",
+            "conclusion": "success",
+        },
+        {
+            "id": 2,
+            "name": "lint",
+            "head_sha": "head-1",
+            "status": "completed",
+            "conclusion": "success",
+        },
+    ]
+    first = _pr_event(2500, "2026-08-28T13:50:56Z", queued)
+    active_progress = _pr_event(2500, "2026-08-28T13:50:56Z", progress)
+    final = _pr_event(2500, "2026-08-28T13:50:56Z", success)
+
+    assert first["eventId"] == active_progress["eventId"]
+    assert final["eventId"] != first["eventId"]
+    assert lane.append(first, priority=200, now=1) is True
+    assert lane.append(active_progress, priority=200, now=2) is False
+    assert lane.append(final, priority=200, now=3) is True
+
+    with lane.connect() as db:
+        rows = db.execute(
+            "SELECT status,payload_json FROM event_lane_events ORDER BY created_at"
+        ).fetchall()
+    assert [row["status"] for row in rows] == ["coalesced", "pending"]
+    pending_payload = json.loads(rows[-1]["payload_json"])
+    assert pending_payload["prDetails"]["checks"]["check_runs"] == success
+    assert pending_payload["wakeGeneration"] == 2
+    assert json.loads(rows[0]["payload_json"])["supersededByEventId"] == pending_payload["eventId"]
+
+
+def test_pr_wake_generation_preserves_phase_reentry(tmp_path):
+    active = [{"id": 1, "name": "unit", "status": "in_progress", "conclusion": None}]
+    failure = [{"id": 1, "name": "unit", "status": "completed", "conclusion": "failure"}]
+    success = [{"id": 1, "name": "unit", "status": "completed", "conclusion": "success"}]
+    for name, phases in (
+        ("active-failure-active", (active, failure, active)),
+        ("success-active-success", (success, active, success)),
+    ):
+        lane = EventLane(tmp_path / f"{name}.db")
+        events = [_pr_event(2500, "2026-08-28T13:50:56Z", checks) for checks in phases]
+        assert events[0]["eventId"] == events[2]["eventId"]
+        assert [
+            lane.append(event, priority=200, now=index) for index, event in enumerate(events, 1)
+        ] == [True, True, True]
+        with lane.connect() as db:
+            rows = db.execute(
+                "SELECT status,payload_json FROM event_lane_events ORDER BY rowid"
+            ).fetchall()
+        payloads = [json.loads(row["payload_json"]) for row in rows]
+        assert [row["status"] for row in rows] == ["coalesced", "coalesced", "pending"]
+        assert [payload["wakeGeneration"] for payload in payloads] == [1, 2, 3]
+        assert payloads[-1]["prDetails"]["checks"]["check_runs"] == phases[-1]
+
+
+def test_pr_wake_ignores_mergeability_flap_but_keeps_explicit_conflict(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    checks = [{"id": 1, "name": "unit", "status": "in_progress", "conclusion": None}]
+    unknown = _pr_event(2500, "2026-08-28T13:50:56Z", checks)
+    unknown["prDetails"]["pull"].update(
+        {"mergeable_state": "unknown", "mergeable": None, "rebaseable": None}
+    )
+    unknown["eventId"] = _github_event_id(unknown)
+    clean = copy.deepcopy(unknown)
+    clean["prDetails"]["pull"].update(
+        {"mergeable_state": "clean", "mergeable": True, "rebaseable": True}
+    )
+    clean["eventId"] = _github_event_id(clean)
+    conflict = copy.deepcopy(clean)
+    conflict["prDetails"]["pull"]["mergeable_state"] = "dirty"
+    conflict["eventId"] = _github_event_id(conflict)
+
+    assert unknown["eventId"] == clean["eventId"]
+    assert conflict["eventId"] != clean["eventId"]
+    assert lane.append(unknown, priority=200, now=1)
+    assert lane.append(clean, priority=200, now=2) is False
+    assert lane.append(conflict, priority=200, now=3)
+
+
+def test_pr_snapshot_coalescing_never_touches_started_turn_or_other_pr(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    active = _pr_event(
+        2500,
+        "2026-08-28T13:50:56Z",
+        [{"id": 1, "name": "unit", "status": "in_progress", "conclusion": None}],
+    )
+    final = _pr_event(
+        2500,
+        "2026-08-28T13:50:56Z",
+        [{"id": 1, "name": "unit", "status": "completed", "conclusion": "success"}],
+    )
+    other = _pr_event(
+        2501,
+        "2026-08-28T13:50:56Z",
+        [{"id": 3, "name": "unit", "status": "completed", "conclusion": "success"}],
+    )
+    assert lane.append(active, priority=200, now=1)
+    claimed = lane.claim(limit=1, owner="event-lane", now=1)[0]
+    lane.reserve_handler_turn(active["eventKey"], claimed["eventId"], "client:active")
+    lane.bind_handler_turn(
+        active["eventKey"],
+        claimed["eventId"],
+        "thread-active",
+        "turn-active",
+        {"ok": True},
+        status="started",
+    )
+    assert lane.append(final, priority=200, now=2)
+    assert lane.append(other, priority=200, now=3)
+    assert lane.coalesce_pending_pr_updates(now=4) == 0
+
+    with lane.connect() as db:
+        rows = db.execute(
+            "SELECT event_id,status FROM event_lane_events ORDER BY created_at"
+        ).fetchall()
+    assert [(row["event_id"], row["status"]) for row in rows] == [
+        (claimed["eventId"], "leased"),
+        (f"{final['eventId']}:g2", "pending"),
+        (f"{other['eventId']}:g1", "pending"),
+    ]
+
+
+def test_pr_snapshot_sweep_coalesces_preexisting_legacy_backlog(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    older = _pr_event(
+        2500,
+        "2026-08-28T13:50:56Z",
+        [{"id": 1, "name": "unit", "status": "in_progress", "conclusion": None}],
+    )
+    newer = _pr_event(
+        2500,
+        "2026-08-28T13:50:56Z",
+        [{"id": 1, "name": "unit", "status": "completed", "conclusion": "success"}],
+    )
+    older["eventId"] = "github:legacy:older"
+    newer["eventId"] = "github:legacy:newer"
+    with lane.writer() as db:
+        db.execute(
+            "INSERT INTO event_lane_events(event_id,payload_json,priority,created_at) VALUES(?,?,200,?)",
+            (older["eventId"], json.dumps(older, sort_keys=True), 1),
+        )
+        db.execute(
+            "INSERT INTO event_lane_events(event_id,payload_json,priority,created_at) VALUES(?,?,200,?)",
+            (newer["eventId"], json.dumps(newer, sort_keys=True), 1),
+        )
+
+    assert lane.coalesce_pending_pr_updates(now=2) == 1
+    with lane.connect() as db:
+        rows = db.execute(
+            "SELECT status,payload_json FROM event_lane_events ORDER BY rowid"
+        ).fetchall()
+    assert [row["status"] for row in rows] == ["coalesced", "pending"]
+    assert json.loads(rows[0]["payload_json"])["supersededByEventId"] == newer["eventId"]
+
+
+def test_pr_snapshot_sweep_uses_newer_started_turn_as_authority(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    older = _pr_event(
+        2500,
+        "2026-08-28T13:50:56Z",
+        [{"id": 1, "name": "unit", "status": "in_progress", "conclusion": None}],
+    )
+    newer = _pr_event(
+        2500,
+        "2026-08-28T13:50:56Z",
+        [{"id": 1, "name": "unit", "status": "completed", "conclusion": "success"}],
+    )
+    older["eventId"] = "github:legacy:older"
+    newer["eventId"] = "github:legacy:newer"
+    with lane.writer() as db:
+        db.execute(
+            "INSERT INTO event_lane_events(event_id,payload_json,priority,created_at) VALUES(?,?,100,?)",
+            (older["eventId"], json.dumps(older, sort_keys=True), 1),
+        )
+        db.execute(
+            "INSERT INTO event_lane_events(event_id,payload_json,priority,created_at) VALUES(?,?,200,?)",
+            (newer["eventId"], json.dumps(newer, sort_keys=True), 2),
+        )
+    claimed = lane.claim(limit=1, owner="event-lane", now=2)[0]
+    assert claimed["eventId"] == newer["eventId"]
+    lane.reserve_handler_turn(newer["eventKey"], newer["eventId"], "client:newer")
+    lane.bind_handler_turn(
+        newer["eventKey"],
+        newer["eventId"],
+        "thread-newer",
+        "turn-newer",
+        {"ok": True},
+        status="started",
+    )
+
+    assert lane.coalesce_pending_pr_updates(now=3) == 1
+    with lane.connect() as db:
+        rows = db.execute("SELECT event_id,status FROM event_lane_events ORDER BY rowid").fetchall()
+    assert [(row["event_id"], row["status"]) for row in rows] == [
+        (older["eventId"], "coalesced"),
+        (newer["eventId"], "leased"),
+    ]
+
+
+def test_aged_issue_outranks_pr_but_not_recovery(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    issue = _github_event(2502, "2026-08-28T13:00:00Z")
+    pr = _pr_event(
+        2500,
+        "2026-08-28T13:05:00Z",
+        [{"id": 1, "name": "unit", "status": "in_progress", "conclusion": None}],
+    )
+    recovery = {"eventId": "outcome-reconcile:root", "kind": "outcome_reconcile"}
+    assert lane.append(issue, priority=10, now=0)
+    assert lane.append(pr, priority=200, now=100)
+    assert lane.append(recovery, priority=250, now=200)
+
+    first = lane.claim(limit=1, owner="event-lane", now=301)[0]
+    assert first["eventId"] == recovery["eventId"]
+    assert lane.ack(
+        first["eventId"],
+        owner="event-lane",
+        lease_token=first["leaseToken"],
+    )
+    second = lane.claim(limit=1, owner="event-lane", now=301)[0]
+    assert second["eventId"] == issue["eventId"]
+
+
+def test_recovery_strictly_outranks_watch_reply_at_same_priority(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    watch = {"eventId": "watch", "kind": "watch_reply", "eventKey": "repo#1"}
+    recovery = {
+        "eventId": "outcome-reconcile:root",
+        "kind": "outcome_reconcile",
+        "eventKey": "repo#2",
+    }
+    assert lane.append(watch, priority=250, now=0)
+    assert lane.append(recovery, priority=250, now=1)
+    claimed = lane.claim(limit=1, owner="event-lane", now=1)[0]
+    assert claimed["eventId"] == recovery["eventId"]
 
 
 def test_bootstrap_suppresses_stale_catchup_without_wake_or_pending(tmp_path, monkeypatch):
@@ -729,9 +1188,11 @@ def test_bootstrap_suppresses_stale_catchup_without_wake_or_pending(tmp_path, mo
     boundary = "2026-08-23T12:49:07Z"
     _write_bootstrap_seed(tmp_path, boundary)
     stale = _github_event(2364, "2026-08-22T17:08:35Z")
-    monkeypatch.setattr(worker.GitHubIssuePoller, "poll", lambda _self: type("Poll", (), {
-        "events": (stale,), "status": "ok"
-    })())
+    monkeypatch.setattr(
+        worker.GitHubIssuePoller,
+        "poll",
+        lambda _self: type("Poll", (), {"events": (stale,), "status": "ok"})(),
+    )
     delivered = []
     result = worker.run_once(tmp_path, deliver=delivered.append)
     assert result["eventsInserted"] == 0
@@ -740,7 +1201,12 @@ def test_bootstrap_suppresses_stale_catchup_without_wake_or_pending(tmp_path, mo
     assert delivered == []
     lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
     with lane.connect() as db:
-        assert db.execute("SELECT status FROM event_lane_events WHERE event_id=?", (stale["eventId"],)).fetchone()[0] == "baseline"
+        assert (
+            db.execute(
+                "SELECT status FROM event_lane_events WHERE event_id=?", (stale["eventId"],)
+            ).fetchone()[0]
+            == "baseline"
+        )
 
 
 def test_bootstrap_terminalizes_existing_leased_stale_event(tmp_path, monkeypatch):
@@ -751,15 +1217,25 @@ def test_bootstrap_terminalizes_existing_leased_stale_event(tmp_path, monkeypatc
     stale = _github_event(2364, "2026-08-22T17:08:35Z")
     lane.append(stale, now=1)
     assert lane.claim(owner="old-listener", now=1)
-    monkeypatch.setattr(worker.GitHubIssuePoller, "poll", lambda _self: type("Poll", (), {
-        "events": (), "status": "not_modified"
-    })())
-    result = worker.run_once(tmp_path, deliver=lambda _event: (_ for _ in ()).throw(AssertionError("stale event delivered")))
+    monkeypatch.setattr(
+        worker.GitHubIssuePoller,
+        "poll",
+        lambda _self: type("Poll", (), {"events": (), "status": "not_modified"})(),
+    )
+    result = worker.run_once(
+        tmp_path,
+        deliver=lambda _event: (_ for _ in ()).throw(AssertionError("stale event delivered")),
+    )
     assert result["bootstrapApplied"] is True
     assert result["bootstrapTerminalized"] == 1
     assert result["drain"]["pending"] == 0
     with lane.connect() as db:
-        assert db.execute("SELECT status FROM event_lane_events WHERE event_id=?", (stale["eventId"],)).fetchone()[0] == "baseline"
+        assert (
+            db.execute(
+                "SELECT status FROM event_lane_events WHERE event_id=?", (stale["eventId"],)
+            ).fetchone()[0]
+            == "baseline"
+        )
 
 
 def test_post_bootstrap_event_dispatches_once(tmp_path, monkeypatch):
@@ -767,8 +1243,12 @@ def test_post_bootstrap_event_dispatches_once(tmp_path, monkeypatch):
     boundary = "2026-08-23T12:49:07Z"
     _write_bootstrap_seed(tmp_path, boundary)
     fresh = _github_event(2400, "2026-08-23T12:49:08Z")
-    polls = iter([type("Poll", (), {"events": (fresh,), "status": "ok"})(),
-                  type("Poll", (), {"events": (), "status": "not_modified"})()])
+    polls = iter(
+        [
+            type("Poll", (), {"events": (fresh,), "status": "ok"})(),
+            type("Poll", (), {"events": (), "status": "not_modified"})(),
+        ]
+    )
     monkeypatch.setattr(worker.GitHubIssuePoller, "poll", lambda _self: next(polls))
     delivered = []
     first = worker.run_once(tmp_path, deliver=delivered.append)
@@ -778,7 +1258,9 @@ def test_post_bootstrap_event_dispatches_once(tmp_path, monkeypatch):
     assert [event["eventId"] for event in delivered] == [fresh["eventId"]]
 
 
-def test_material_time_after_boundary_is_dispatchable_even_with_old_issue_updated_at(tmp_path, monkeypatch):
+def test_material_time_after_boundary_is_dispatchable_even_with_old_issue_updated_at(
+    tmp_path, monkeypatch
+):
     worker = _event_worker_module()
     boundary = "2026-08-23T12:00:00Z"
     _write_bootstrap_seed(tmp_path, boundary)
@@ -786,14 +1268,29 @@ def test_material_time_after_boundary_is_dispatchable_even_with_old_issue_update
     for number, details in (
         (2501, {"reviews": [{"id": 1, "submitted_at": "2026-08-23T12:01:00Z"}]}),
         (2502, {"comments": [{"id": 2, "updated_at": "2026-08-23T12:02:00Z"}]}),
-        (2503, {"checks": {"check_runs": [{"id": 3, "started_at": "2026-08-23T12:03:00Z", "completed_at": "2026-08-23T12:04:00Z"}]}}),
+        (
+            2503,
+            {
+                "checks": {
+                    "check_runs": [
+                        {
+                            "id": 3,
+                            "started_at": "2026-08-23T12:03:00Z",
+                            "completed_at": "2026-08-23T12:04:00Z",
+                        }
+                    ]
+                }
+            },
+        ),
     ):
         event = _github_event(number, "2026-08-23T11:00:00Z")
         event["prDetails"] = details
         events.append(event)
-    monkeypatch.setattr(worker.GitHubIssuePoller, "poll", lambda _self: type("Poll", (), {
-        "events": tuple(events), "status": "ok"
-    })())
+    monkeypatch.setattr(
+        worker.GitHubIssuePoller,
+        "poll",
+        lambda _self: type("Poll", (), {"events": tuple(events), "status": "ok"})(),
+    )
     delivered = []
     result = worker.run_once(tmp_path, deliver=delivered.append)
     assert result["eventsInserted"] == 3
@@ -804,13 +1301,12 @@ def test_material_time_after_boundary_is_dispatchable_even_with_old_issue_update
 
 def test_production_worker_claims_only_one_central_turn_per_cycle(tmp_path, monkeypatch):
     worker = _event_worker_module()
-    events = tuple(
-        _github_event(number, f"2026-08-23T12:0{number}:00Z")
-        for number in (1, 2, 3)
+    events = tuple(_github_event(number, f"2026-08-23T12:0{number}:00Z") for number in (1, 2, 3))
+    monkeypatch.setattr(
+        worker.GitHubIssuePoller,
+        "poll",
+        lambda _self: type("Poll", (), {"events": events, "status": "ok"})(),
     )
-    monkeypatch.setattr(worker.GitHubIssuePoller, "poll", lambda _self: type(
-        "Poll", (), {"events": events, "status": "ok"}
-    )())
     delivered = []
     monkeypatch.setattr(
         worker,
@@ -825,22 +1321,22 @@ def test_production_worker_claims_only_one_central_turn_per_cycle(tmp_path, monk
     assert delivered == [events[0]["eventId"]]
 
 
-def test_busy_central_task_does_not_spend_pending_attempts_across_cycles(
-    tmp_path, monkeypatch
-):
+def test_busy_central_task_does_not_spend_pending_attempts_across_cycles(tmp_path, monkeypatch):
     worker = _event_worker_module()
-    monkeypatch.setattr(worker.GitHubIssuePoller, "poll", lambda _self: type(
-        "Poll", (), {"events": (), "status": "not_modified"}
-    )())
-    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
-    lane.append({
-        "eventId": "active-event",
-        "eventKey": "agentscope-ai/agentscope#1",
-        "kind": "issue_update",
-    })
-    lane.reserve_handler_turn(
-        "agentscope-ai/agentscope#1", "active-event", "client:active"
+    monkeypatch.setattr(
+        worker.GitHubIssuePoller,
+        "poll",
+        lambda _self: type("Poll", (), {"events": (), "status": "not_modified"})(),
     )
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    lane.append(
+        {
+            "eventId": "active-event",
+            "eventKey": "agentscope-ai/agentscope#1",
+            "kind": "issue_update",
+        }
+    )
+    lane.reserve_handler_turn("agentscope-ai/agentscope#1", "active-event", "client:active")
     lane.bind_handler_turn(
         "agentscope-ai/agentscope#1",
         "active-event",
@@ -850,14 +1346,14 @@ def test_busy_central_task_does_not_spend_pending_attempts_across_cycles(
         status="started",
     )
     with lane.writer() as db:
-        db.execute(
-            "UPDATE event_lane_events SET status='delivered' WHERE event_id='active-event'"
-        )
-    lane.append({
-        "eventId": "waiting-event",
-        "eventKey": "agentscope-ai/agentscope#2",
-        "kind": "issue_update",
-    })
+        db.execute("UPDATE event_lane_events SET status='delivered' WHERE event_id='active-event'")
+    lane.append(
+        {
+            "eventId": "waiting-event",
+            "eventKey": "agentscope-ai/agentscope#2",
+            "kind": "issue_update",
+        }
+    )
     monkeypatch.setattr(
         worker,
         "bridge_delivery",
@@ -884,10 +1380,22 @@ def test_material_times_at_or_before_boundary_are_baseline(tmp_path, monkeypatch
     boundary = "2026-08-23T12:00:00Z"
     _write_bootstrap_seed(tmp_path, boundary)
     stale = _github_event(2504, "2026-08-23T11:00:00Z")
-    stale["prDetails"] = {"checks": {"check_runs": [{"id": 4, "started_at": "2026-08-23T11:30:00Z", "completed_at": "2026-08-23T11:59:59Z"}]}}
-    monkeypatch.setattr(worker.GitHubIssuePoller, "poll", lambda _self: type("Poll", (), {
-        "events": (stale,), "status": "ok"
-    })())
+    stale["prDetails"] = {
+        "checks": {
+            "check_runs": [
+                {
+                    "id": 4,
+                    "started_at": "2026-08-23T11:30:00Z",
+                    "completed_at": "2026-08-23T11:59:59Z",
+                }
+            ]
+        }
+    }
+    monkeypatch.setattr(
+        worker.GitHubIssuePoller,
+        "poll",
+        lambda _self: type("Poll", (), {"events": (stale,), "status": "ok"})(),
+    )
     delivered = []
     result = worker.run_once(tmp_path, deliver=delivered.append)
     assert result["eventsInserted"] == 0
@@ -901,11 +1409,11 @@ def test_unmapped_event_uses_explicit_independent_release_bridge(tmp_path, monke
     calls = []
 
     def fake_bridge(root, operation, **kwargs):
-            calls.append((root, operation, kwargs))
-            return {
-                "ok": True,
-                "threadId": CENTRAL_THREAD,
-                "turnId": "turn-new",
+        calls.append((root, operation, kwargs))
+        return {
+            "ok": True,
+            "threadId": CENTRAL_THREAD,
+            "turnId": "turn-new",
             "turnStarted": True,
         }
 
@@ -952,7 +1460,10 @@ def test_remote_turn_id_is_bound_and_acked_without_duplicate_retry(tmp_path, mon
         "eventId": "central-mismatch",
         "repo": "agentscope-ai/agentscope",
         "number": 11,
-        "issue": {"state": "open", "html_url": "https://github.com/agentscope-ai/agentscope/issues/11"},
+        "issue": {
+            "state": "open",
+            "html_url": "https://github.com/agentscope-ai/agentscope/issues/11",
+        },
     }
     lane.append(event)
     result = dispatch_once(
@@ -1027,13 +1538,17 @@ def test_stale_handler_turn_is_terminalized_and_releases_central_slot(tmp_path):
     central = CENTRAL_THREAD
     lane = EventLane(tmp_path / "events.db", turn_timeout_seconds=10)
     lane.reserve_handler_turn("agentscope-ai/agentscope#1", "stale-event", "client:stale")
-    lane.bind_handler_turn("agentscope-ai/agentscope#1", "stale-event", central, "turn-stale", {}, status="started")
+    lane.bind_handler_turn(
+        "agentscope-ai/agentscope#1", "stale-event", central, "turn-stale", {}, status="started"
+    )
     with lane.writer() as db:
         db.execute("UPDATE event_lane_turns SET created_at=0 WHERE event_id='stale-event'")
     assert lane.expire_handler_turns(now=11) == 1
     assert lane.active_handler_thread(central) is None
     with lane.connect() as db:
-        row = db.execute("SELECT status,receipt_json FROM event_lane_turns WHERE event_id='stale-event'").fetchone()
+        row = db.execute(
+            "SELECT status,receipt_json FROM event_lane_turns WHERE event_id='stale-event'"
+        ).fetchone()
     assert row["status"] == "needs_reconcile"
     assert json.loads(row["receipt_json"])["terminalReason"] == "handler_turn_timeout"
 
@@ -1053,18 +1568,14 @@ def test_stale_prestart_reservation_returns_event_to_pending(tmp_path):
         "client:reserved",
     )
     with lane.writer() as db:
-        db.execute(
-            "UPDATE event_lane_turns SET created_at=0 WHERE event_id='reserved-event'"
-        )
+        db.execute("UPDATE event_lane_turns SET created_at=0 WHERE event_id='reserved-event'")
     assert lane.expire_handler_turns(now=11) == 1
     with lane.connect() as db:
         event_row = db.execute(
-            "SELECT status,payload_json FROM event_lane_events "
-            "WHERE event_id='reserved-event'"
+            "SELECT status,payload_json FROM event_lane_events WHERE event_id='reserved-event'"
         ).fetchone()
         turn_row = db.execute(
-            "SELECT status,receipt_json FROM event_lane_turns "
-            "WHERE event_id='reserved-event'"
+            "SELECT status,receipt_json FROM event_lane_turns WHERE event_id='reserved-event'"
         ).fetchone()
     assert event_row["status"] == "pending"
     assert turn_row["status"] == "needs_reconcile"
@@ -1082,8 +1593,12 @@ def test_active_long_bridge_turn_is_not_reclaimed(tmp_path, monkeypatch):
     lane = EventLane(tmp_path / "events.db", turn_timeout_seconds=10)
     lane.reserve_handler_turn("agentscope-ai/agentscope#2", "long-event", "client:long")
     lane.bind_handler_turn(
-        "agentscope-ai/agentscope#2", "long-event", CENTRAL_THREAD, "turn-long",
-        {"turnStarted": True, "workerPid": os.getpid()}, status="started"
+        "agentscope-ai/agentscope#2",
+        "long-event",
+        CENTRAL_THREAD,
+        "turn-long",
+        {"turnStarted": True, "workerPid": os.getpid()},
+        status="started",
     )
     with lane.writer() as db:
         db.execute("UPDATE event_lane_turns SET created_at=0 WHERE event_id='long-event'")
@@ -1144,10 +1659,22 @@ def test_busy_central_wakeup_remains_pending_until_turn_is_free(tmp_path, monkey
     _configure_manifest(worker, tmp_path, monkeypatch)
     lane = EventLane(tmp_path / "events.db")
     lane.reserve_handler_turn("agentscope-ai/agentscope#1", "active-event", "client:active")
-    lane.bind_handler_turn("agentscope-ai/agentscope#1", "active-event", CENTRAL_THREAD, "turn-active", {}, status="started")
+    lane.bind_handler_turn(
+        "agentscope-ai/agentscope#1",
+        "active-event",
+        CENTRAL_THREAD,
+        "turn-active",
+        {},
+        status="started",
+    )
     event = {
-        "eventId": "queued-behind-central", "repo": "agentscope-ai/agentscope", "number": 2,
-        "issue": {"state": "open", "html_url": "https://github.com/agentscope-ai/agentscope/issues/2"},
+        "eventId": "queued-behind-central",
+        "repo": "agentscope-ai/agentscope",
+        "number": 2,
+        "issue": {
+            "state": "open",
+            "html_url": "https://github.com/agentscope-ai/agentscope/issues/2",
+        },
     }
     lane.append(event)
     for _cycle in range(4):
@@ -1165,11 +1692,22 @@ def test_busy_central_wakeup_remains_pending_until_turn_is_free(tmp_path, monkey
         assert dict(row) == {"status": "pending", "attempts": 0}
         assert lane.handler_turn(event["eventId"]) is None
         assert lane.expire_claims() == 0
-    lane.bind_handler_turn("agentscope-ai/agentscope#1", "active-event", CENTRAL_THREAD, "turn-active", {}, status="needs_reconcile")
-    monkeypatch.setattr(worker, "run_bridge", lambda *_args, **_kwargs: {
-        "ok": True, "threadId": CENTRAL_THREAD, "turnId": "turn-next"
-    })
-    result = dispatch_once(lane, lambda item: worker.issue_handler_delivery(tmp_path, lane, item), limit=1)
+    lane.bind_handler_turn(
+        "agentscope-ai/agentscope#1",
+        "active-event",
+        CENTRAL_THREAD,
+        "turn-active",
+        {},
+        status="needs_reconcile",
+    )
+    monkeypatch.setattr(
+        worker,
+        "run_bridge",
+        lambda *_args, **_kwargs: {"ok": True, "threadId": CENTRAL_THREAD, "turnId": "turn-next"},
+    )
+    result = dispatch_once(
+        lane, lambda item: worker.issue_handler_delivery(tmp_path, lane, item), limit=1
+    )
     assert result["delivered"] == 1
 
 
@@ -1255,9 +1793,7 @@ def test_busy_refund_wrong_token_fails_closed(tmp_path, monkeypatch):
     assert lane.handler_turn(event["eventId"]) is None
 
 
-def test_retryable_start_failure_releases_reservation_and_retries(
-    tmp_path, monkeypatch
-):
+def test_retryable_start_failure_releases_reservation_and_retries(tmp_path, monkeypatch):
     worker = _event_worker_module()
     _configure_manifest(worker, tmp_path, monkeypatch)
     event = {
@@ -1289,10 +1825,13 @@ def test_retryable_start_failure_releases_reservation_and_retries(
     assert first["pending"] == 1
     assert lane.handler_turn(event["eventId"])["status"] == "needs_reconcile"
     with lane.connect() as db:
-        assert db.execute(
-            "SELECT attempts FROM event_lane_events WHERE event_id=?",
-            (event["eventId"],),
-        ).fetchone()[0] == 1
+        assert (
+            db.execute(
+                "SELECT attempts FROM event_lane_events WHERE event_id=?",
+                (event["eventId"],),
+            ).fetchone()[0]
+            == 1
+        )
 
     second = dispatch_once(
         lane,
@@ -1305,9 +1844,7 @@ def test_retryable_start_failure_releases_reservation_and_retries(
     assert turn["thread_id"] == CENTRAL_THREAD
 
 
-def test_operational_authorization_gap_refunds_attempt_without_reconcile(
-    tmp_path, monkeypatch
-):
+def test_operational_authorization_gap_refunds_attempt_without_reconcile(tmp_path, monkeypatch):
     worker = _event_worker_module()
     _configure_manifest(worker, tmp_path, monkeypatch)
     event = {
@@ -1351,15 +1888,15 @@ def test_operational_authorization_gap_refunds_attempt_without_reconcile(
     recovery = worker._enqueue_unresolved_outcome_recoveries(lane)
     assert recovery["inserted"] == 0
     with lane.connect() as db:
-        assert db.execute(
-            "SELECT count(*) FROM event_lane_events "
-            "WHERE event_id LIKE 'outcome-reconcile:%'"
-        ).fetchone()[0] == 0
+        assert (
+            db.execute(
+                "SELECT count(*) FROM event_lane_events WHERE event_id LIKE 'outcome-reconcile:%'"
+            ).fetchone()[0]
+            == 0
+        )
 
 
-def test_authorization_gap_refund_rejection_preserves_lease_and_reservation(
-    tmp_path, monkeypatch
-):
+def test_authorization_gap_refund_rejection_preserves_lease_and_reservation(tmp_path, monkeypatch):
     worker = _event_worker_module()
     _configure_manifest(worker, tmp_path, monkeypatch)
     event = {
@@ -1378,8 +1915,7 @@ def test_authorization_gap_refund_rejection_preserves_lease_and_reservation(
     def stale_lease_then_fail(*_args, **_kwargs):
         with lane.writer() as db:
             db.execute(
-                "UPDATE event_lane_events SET lease_token='replacement-token' "
-                "WHERE event_id=?",
+                "UPDATE event_lane_events SET lease_token='replacement-token' WHERE event_id=?",
                 (event["eventId"],),
             )
         raise _authorization_bridge_error(
@@ -1405,9 +1941,7 @@ def test_authorization_gap_refund_rejection_preserves_lease_and_reservation(
     assert lane.handler_turn(event["eventId"])["status"] == "reserved"
 
 
-def test_permanent_authorization_failure_keeps_retry_budget_semantics(
-    tmp_path, monkeypatch
-):
+def test_permanent_authorization_failure_keeps_retry_budget_semantics(tmp_path, monkeypatch):
     worker = _event_worker_module()
     _configure_manifest(worker, tmp_path, monkeypatch)
     event = {
@@ -1455,26 +1989,41 @@ def test_runtime_root_manifest_and_foreign_event_fail_closed(tmp_path, monkeypat
     _configure_manifest(worker, release_root, monkeypatch)
     runtime_root = tmp_path / "runtime"
     runtime_root.mkdir()
-    (runtime_root / worker.EVENT_LANE_MANIFEST).write_text(json.dumps({"repositories": {}}), encoding="utf-8")
+    (runtime_root / worker.EVENT_LANE_MANIFEST).write_text(
+        json.dumps({"repositories": {}}), encoding="utf-8"
+    )
     lane = EventLane(runtime_root / "events.db")
     calls = []
-    monkeypatch.setattr(worker, "run_bridge", lambda _root, _operation, **kwargs: (
-        calls.append(kwargs) or {"ok": True, "threadId": CENTRAL_THREAD, "turnId": "turn-safe"}
-    ))
+    monkeypatch.setattr(
+        worker,
+        "run_bridge",
+        lambda _root, _operation, **kwargs: (
+            calls.append(kwargs) or {"ok": True, "threadId": CENTRAL_THREAD, "turnId": "turn-safe"}
+        ),
+    )
     foreign = {
-        "eventId": "foreign-event", "repo": "other/project", "number": 1,
+        "eventId": "foreign-event",
+        "repo": "other/project",
+        "number": 1,
         "issue": {"state": "open", "html_url": "https://github.com/other/project/issues/1"},
     }
     lane.append(foreign)
     worker.issue_handler_delivery(runtime_root, lane, foreign)
     assert calls == []
     with lane.connect() as db:
-        row = db.execute("SELECT status,payload_json FROM event_lane_events WHERE event_id='foreign-event'").fetchone()
+        row = db.execute(
+            "SELECT status,payload_json FROM event_lane_events WHERE event_id='foreign-event'"
+        ).fetchone()
     assert row["status"] == "needs_reconcile"
     assert json.loads(row["payload_json"])["terminalReason"] == "foreign_repository_event"
     normal = {
-        "eventId": "runtime-root-event", "repo": "agentscope-ai/agentscope", "number": 2,
-        "issue": {"state": "open", "html_url": "https://github.com/agentscope-ai/agentscope/issues/2"},
+        "eventId": "runtime-root-event",
+        "repo": "agentscope-ai/agentscope",
+        "number": 2,
+        "issue": {
+            "state": "open",
+            "html_url": "https://github.com/agentscope-ai/agentscope/issues/2",
+        },
     }
     lane.append(normal)
     claimed = lane.claim(limit=1)[0]
@@ -1483,8 +2032,13 @@ def test_runtime_root_manifest_and_foreign_event_fail_closed(tmp_path, monkeypat
     assert extra[extra.index("--cwd") + 1] == "/Users/oxygen/Documents/github/agentscope"
     (release_root / worker.EVENT_LANE_MANIFEST).write_text("{}", encoding="utf-8")
     mutated = {
-        "eventId": "mutated-release-manifest", "repo": "agentscope-ai/agentscope", "number": 3,
-        "issue": {"state": "open", "html_url": "https://github.com/agentscope-ai/agentscope/issues/3"},
+        "eventId": "mutated-release-manifest",
+        "repo": "agentscope-ai/agentscope",
+        "number": 3,
+        "issue": {
+            "state": "open",
+            "html_url": "https://github.com/agentscope-ai/agentscope/issues/3",
+        },
     }
     lane.append(mutated)
     worker.issue_handler_delivery(runtime_root, lane, mutated)
@@ -1493,13 +2047,18 @@ def test_runtime_root_manifest_and_foreign_event_fail_closed(tmp_path, monkeypat
             "SELECT status,payload_json FROM event_lane_events WHERE event_id='mutated-release-manifest'"
         ).fetchone()
     assert row["status"] == "needs_reconcile"
-    assert json.loads(row["payload_json"])["terminalReason"] == "event-lane manifest digest mismatch"
+    assert (
+        json.loads(row["payload_json"])["terminalReason"] == "event-lane manifest digest mismatch"
+    )
 
 
 def test_pr_detail_failure_does_not_emit_shrunken_snapshot(tmp_path):
     item = {
-        "number": 12, "updated_at": "2026-08-22T00:00:00Z", "title": "implementation",
-        "state": "open", "user": {"login": "Oxygen56"},
+        "number": 12,
+        "updated_at": "2026-08-22T00:00:00Z",
+        "title": "implementation",
+        "state": "open",
+        "user": {"login": "Oxygen56"},
         "pull_request": {"url": "https://api.github.com/repos/agentscope-ai/agentscope/pulls/12"},
         "labels": [],
     }
@@ -1551,13 +2110,24 @@ def test_pr_event_ignores_old_shared_followup_binding(tmp_path, monkeypatch):
     worker = _event_worker_module()
     old_context = tmp_path / "old-task" / ".oss-pr-radar" / "task-context.json"
     old_context.parent.mkdir(parents=True)
-    old_context.write_text(json.dumps({
-        "threadId": "thread-2385", "key": "agentscope-ai/agentscope#2385",
-        "prFollowup": {"prUrl": "https://github.com/agentscope-ai/agentscope/pull/2397"},
-    }), encoding="utf-8")
+    old_context.write_text(
+        json.dumps(
+            {
+                "threadId": "thread-2385",
+                "key": "agentscope-ai/agentscope#2385",
+                "prFollowup": {"prUrl": "https://github.com/agentscope-ai/agentscope/pull/2397"},
+            }
+        ),
+        encoding="utf-8",
+    )
     event = {
-        "repo": "agentscope-ai/agentscope", "number": 2397, "kind": "pr_update",
-        "issue": {"number": 2397, "pull_request": {"html_url": "https://github.com/agentscope-ai/agentscope/pull/2397"}},
+        "repo": "agentscope-ai/agentscope",
+        "number": 2397,
+        "kind": "pr_update",
+        "issue": {
+            "number": 2397,
+            "pull_request": {"html_url": "https://github.com/agentscope-ai/agentscope/pull/2397"},
+        },
     }
     assert not hasattr(worker, "RadarLedger")
     target = worker._resolve_event_target(tmp_path, event)
@@ -1571,15 +2141,24 @@ def test_pr_event_wakes_central_thread_despite_old_binding(tmp_path, monkeypatch
     central = CENTRAL_THREAD
     _configure_manifest(worker, tmp_path, monkeypatch)
     calls = []
-    monkeypatch.setattr(worker, "run_bridge", lambda root, operation, **kwargs: (
-        calls.append((root, operation, kwargs)) or {"ok": True, "threadId": central, "turnId": "turn-central"}
-    ))
+    monkeypatch.setattr(
+        worker,
+        "run_bridge",
+        lambda root, operation, **kwargs: (
+            calls.append((root, operation, kwargs))
+            or {"ok": True, "threadId": central, "turnId": "turn-central"}
+        ),
+    )
     lane = EventLane(tmp_path / "events.db")
     event = {
-        "eventId": "pr-central-wake", "repo": "agentscope-ai/agentscope", "number": 2397,
-        "kind": "pr_update", "issue": {"state": "open", "pull_request": {
-            "html_url": "https://github.com/agentscope-ai/agentscope/pull/2397"
-        }},
+        "eventId": "pr-central-wake",
+        "repo": "agentscope-ai/agentscope",
+        "number": 2397,
+        "kind": "pr_update",
+        "issue": {
+            "state": "open",
+            "pull_request": {"html_url": "https://github.com/agentscope-ai/agentscope/pull/2397"},
+        },
     }
     lane.append(event)
     claimed = lane.claim(limit=1)[0]
@@ -1598,11 +2177,25 @@ def test_public_work_seed_is_imported_once_and_outcome_can_replace_it(tmp_path):
     worker = _event_worker_module()
     seed = tmp_path / "state" / "agentscope-public-work.json"
     seed.parent.mkdir()
-    seed.write_text(json.dumps({"items": [{"key": "agentscope-ai/agentscope#2364", "status": "design_wait", "designWaitUntil": "2099-01-01T00:00:00Z"}]}))
+    seed.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "key": "agentscope-ai/agentscope#2364",
+                        "status": "design_wait",
+                        "designWaitUntil": "2099-01-01T00:00:00Z",
+                    }
+                ]
+            }
+        )
+    )
     lane = EventLane(tmp_path / "state" / "events.db")
     assert worker._sync_public_work_seed(tmp_path, lane) == 1
     assert lane.public_status("agentscope-ai/agentscope#2364") == "design_wait"
-    seed.write_text(json.dumps({"items": [{"key": "agentscope-ai/agentscope#2364", "status": "active"}]}))
+    seed.write_text(
+        json.dumps({"items": [{"key": "agentscope-ai/agentscope#2364", "status": "active"}]})
+    )
     assert worker._sync_public_work_seed(tmp_path, lane) == 0
     lane.register_public_work("agentscope-ai/agentscope#2364", status="watch_only")
     assert lane.public_status("agentscope-ai/agentscope#2364") == "watch_only"
@@ -1613,17 +2206,39 @@ def test_invalid_outcome_creates_durable_recovery_event(tmp_path, monkeypatch):
     central = CENTRAL_THREAD
     _configure_manifest(worker, tmp_path, monkeypatch)
     calls = []
-    monkeypatch.setattr(worker, "run_bridge", lambda root, operation, **kwargs: (
-        calls.append((root, operation, kwargs)) or {"ok": True, "threadId": central, "turnId": "turn-recovery"}
-    ))
+    monkeypatch.setattr(
+        worker,
+        "run_bridge",
+        lambda root, operation, **kwargs: (
+            calls.append((root, operation, kwargs))
+            or {"ok": True, "threadId": central, "turnId": "turn-recovery"}
+        ),
+    )
     lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
     event_id = "event-invalid"
     lane.append({"eventId": event_id, "repo": "agentscope-ai/agentscope", "number": 1})
     lane.reserve_handler_turn("agentscope-ai/agentscope#1", event_id, "client:event-invalid")
-    lane.bind_handler_turn("agentscope-ai/agentscope#1", event_id, "thread-1", "turn-1", {}, status="started")
-    receipt = tmp_path / "state" / "agentscope_event_receipts" / (hashlib.sha256(event_id.encode()).hexdigest() + ".json")
+    lane.bind_handler_turn(
+        "agentscope-ai/agentscope#1", event_id, "thread-1", "turn-1", {}, status="started"
+    )
+    receipt = (
+        tmp_path
+        / "state"
+        / "agentscope_event_receipts"
+        / (hashlib.sha256(event_id.encode()).hexdigest() + ".json")
+    )
     receipt.parent.mkdir(parents=True)
-    receipt.write_text(json.dumps({"ok": True, "turnStatus": "completed", "threadId": "thread-1", "turnId": "turn-1", "outcome": {"error": "OUTCOME_MISSING_OR_INVALID"}}))
+    receipt.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "turnStatus": "completed",
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "outcome": {"error": "OUTCOME_MISSING_OR_INVALID"},
+            }
+        )
+    )
     assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
     with lane.connect() as db:
         row = db.execute(
@@ -1659,27 +2274,30 @@ def test_unresolved_root_gets_one_stable_read_only_recovery_event(tmp_path):
     lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
     root_event_id = "github:agentscope-ai/agentscope:2448:issue_update:failed"
     event_key = "agentscope-ai/agentscope#2448"
-    lane.append({
-        "eventId": root_event_id,
-        "eventKey": event_key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 2448,
-        "kind": "issue_update",
-        "terminalReason": "handler_start_exception",
-    })
+    lane.append(
+        {
+            "eventId": root_event_id,
+            "eventKey": event_key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 2448,
+            "kind": "issue_update",
+            "terminalReason": "handler_start_exception",
+        }
+    )
     with lane.writer() as db:
         db.execute(
-            "UPDATE event_lane_events SET status='needs_reconcile',attempts=3 "
-            "WHERE event_id=?",
+            "UPDATE event_lane_events SET status='needs_reconcile',attempts=3 WHERE event_id=?",
             (root_event_id,),
         )
     for status in ("baseline", "watch_only", "coalesced", "pending", "leased"):
         ignored_id = f"ignored-{status}"
-        lane.append({
-            "eventId": ignored_id,
-            "eventKey": f"agentscope-ai/agentscope#{len(status)}",
-            "kind": "issue_update",
-        })
+        lane.append(
+            {
+                "eventId": ignored_id,
+                "eventKey": f"agentscope-ai/agentscope#{len(status)}",
+                "kind": "issue_update",
+            }
+        )
         lane.reserve_handler_turn(
             f"agentscope-ai/agentscope#{len(status)}",
             ignored_id,
@@ -1725,20 +2343,24 @@ def test_existing_unresolved_legacy_recovery_blocks_a_duplicate_stable_recovery(
     root_event_id = "github:agentscope-ai/agentscope:1:issue_update:legacy"
     event_key = "agentscope-ai/agentscope#1"
     legacy_id = "outcome-reconcile:agentscope:legacy-pending"
-    assert lane.append({
-        "eventId": root_event_id,
-        "eventKey": event_key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 1,
-        "kind": "issue_update",
-    })
-    assert lane.append({
-        "eventId": legacy_id,
-        "eventKey": event_key,
-        "kind": "outcome_reconcile",
-        "eventIdSource": root_event_id,
-        "payload": {"eventId": root_event_id, "publicKey": event_key},
-    })
+    assert lane.append(
+        {
+            "eventId": root_event_id,
+            "eventKey": event_key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 1,
+            "kind": "issue_update",
+        }
+    )
+    assert lane.append(
+        {
+            "eventId": legacy_id,
+            "eventKey": event_key,
+            "kind": "outcome_reconcile",
+            "eventIdSource": root_event_id,
+            "payload": {"eventId": root_event_id, "publicKey": event_key},
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
@@ -1757,9 +2379,7 @@ def test_existing_unresolved_legacy_recovery_blocks_a_duplicate_stable_recovery(
             "SELECT event_id,attempts FROM event_lane_events "
             "WHERE event_id LIKE 'outcome-reconcile:%'"
         ).fetchall()
-    assert [(row["event_id"], row["attempts"]) for row in rows] == [
-        (legacy_id, 2)
-    ]
+    assert [(row["event_id"], row["attempts"]) for row in rows] == [(legacy_id, 2)]
 
 
 @pytest.mark.parametrize(
@@ -1778,24 +2398,27 @@ def test_malformed_recovery_like_sibling_blocks_duplicate_enqueue(
     lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
     root = "github:agentscope-ai/agentscope:1:issue_update:root"
     key = "agentscope-ai/agentscope#1"
-    assert lane.append({
-        "eventId": root,
-        "eventKey": key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 1,
-        "kind": "issue_update",
-    })
-    assert lane.append({
-        "eventId": recovery_id,
-        "eventKey": key,
-        "kind": kind,
-        "eventIdSource": root,
-        "payload": {"eventId": root, "publicKey": key},
-    })
+    assert lane.append(
+        {
+            "eventId": root,
+            "eventKey": key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 1,
+            "kind": "issue_update",
+        }
+    )
+    assert lane.append(
+        {
+            "eventId": recovery_id,
+            "eventKey": key,
+            "kind": kind,
+            "eventIdSource": root,
+            "payload": {"eventId": root, "publicKey": key},
+        }
+    )
     with lane.writer() as db:
         db.execute(
-            "UPDATE event_lane_events SET status='needs_reconcile' "
-            "WHERE event_id IN (?,?)",
+            "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id IN (?,?)",
             (root, recovery_id),
         )
 
@@ -1803,10 +2426,13 @@ def test_malformed_recovery_like_sibling_blocks_duplicate_enqueue(
 
     assert result == {"candidates": 1, "inserted": 0, "existing": 1, "skipped": 0}
     with lane.connect() as db:
-        assert db.execute(
-            "SELECT count(*) FROM event_lane_events WHERE event_id=?",
-            (worker._outcome_recovery_event_id(root),),
-        ).fetchone()[0] == 0
+        assert (
+            db.execute(
+                "SELECT count(*) FROM event_lane_events WHERE event_id=?",
+                (worker._outcome_recovery_event_id(root),),
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_structurally_invalid_terminal_outcome_retries_recovery(tmp_path):
@@ -1815,19 +2441,20 @@ def test_structurally_invalid_terminal_outcome_retries_recovery(tmp_path):
     event_key = "agentscope-ai/agentscope#1"
     root_event_id = "root-invalid-schema"
     recovery_id = worker._outcome_recovery_event_id(root_event_id)
-    lane.append({
-        "eventId": recovery_id,
-        "kind": "outcome_reconcile",
-        "eventKey": event_key,
-        "rootEventId": root_event_id,
-        "eventIdSource": root_event_id,
-        "payload": {"eventId": root_event_id, "publicKey": event_key},
-    }, priority=250)
+    lane.append(
+        {
+            "eventId": recovery_id,
+            "kind": "outcome_reconcile",
+            "eventKey": event_key,
+            "rootEventId": root_event_id,
+            "eventIdSource": root_event_id,
+            "payload": {"eventId": root_event_id, "publicKey": event_key},
+        },
+        priority=250,
+    )
     claimed = lane.claim(limit=1)[0]
     lane.reserve_handler_turn(event_key, recovery_id, "client:recovery")
-    lane.bind_handler_turn(
-        event_key, recovery_id, "thread-1", "turn-1", {}, status="started"
-    )
+    lane.bind_handler_turn(event_key, recovery_id, "thread-1", "turn-1", {}, status="started")
     lane.ack(recovery_id, lease_token=claimed["leaseToken"])
     receipt = worker._event_artifact_path(
         tmp_path,
@@ -1837,14 +2464,18 @@ def test_structurally_invalid_terminal_outcome_retries_recovery(tmp_path):
         is_recovery=True,
     )
     receipt.parent.mkdir(parents=True)
-    receipt.write_text(json.dumps({
-        "turnStatus": "completed",
-        "outcome": {
-            "eventId": recovery_id,
-            "publicKey": event_key,
-            "state": "no_action",
-        },
-    }))
+    receipt.write_text(
+        json.dumps(
+            {
+                "turnStatus": "completed",
+                "outcome": {
+                    "eventId": recovery_id,
+                    "publicKey": event_key,
+                    "state": "no_action",
+                },
+            }
+        )
+    )
 
     assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
     with lane.connect() as db:
@@ -1865,38 +2496,47 @@ def test_legacy_recovery_retry_preserves_legacy_identity_and_can_migrate(
     root_event_id = "legacy-root"
     event_key = "agentscope-ai/agentscope#1"
     legacy_recovery_id = "outcome-reconcile:agentscope:legacy-retry"
-    assert lane.append({
-        "eventId": root_event_id,
-        "eventKey": event_key,
-        "kind": "issue_update",
-    })
-    assert lane.append({
-        "eventId": legacy_recovery_id,
-        "eventKey": event_key,
-        "kind": "outcome_reconcile",
-        "eventIdSource": root_event_id,
-        "payload": {
+    assert lane.append(
+        {
             "eventId": root_event_id,
-            "publicKey": event_key,
-        },
-    })
+            "eventKey": event_key,
+            "kind": "issue_update",
+        }
+    )
+    assert lane.append(
+        {
+            "eventId": legacy_recovery_id,
+            "eventKey": event_key,
+            "kind": "outcome_reconcile",
+            "eventIdSource": root_event_id,
+            "payload": {
+                "eventId": root_event_id,
+                "publicKey": event_key,
+            },
+        }
+    )
     with lane.writer() as db:
         db.execute(
             "UPDATE event_lane_events SET status='needs_reconcile' WHERE event_id=?",
             (root_event_id,),
         )
 
-    assert worker._retry_or_exhaust_outcome_recovery(
-        lane,
-        event_id=legacy_recovery_id,
-        root_event_id=root_event_id,
-        outcome={"error": "invalid"},
-    ) == "retry"
+    assert (
+        worker._retry_or_exhaust_outcome_recovery(
+            lane,
+            event_id=legacy_recovery_id,
+            root_event_id=root_event_id,
+            outcome={"error": "invalid"},
+        )
+        == "retry"
+    )
     with lane.connect() as db:
-        payload = json.loads(db.execute(
-            "SELECT payload_json FROM event_lane_events WHERE event_id=?",
-            (legacy_recovery_id,),
-        ).fetchone()[0])
+        payload = json.loads(
+            db.execute(
+                "SELECT payload_json FROM event_lane_events WHERE event_id=?",
+                (legacy_recovery_id,),
+            ).fetchone()[0]
+        )
     assert payload["eventIdSource"] == root_event_id
     assert payload["payload"]["eventId"] == root_event_id
     assert "rootEventId" not in payload
@@ -1926,54 +2566,53 @@ def test_legacy_recovery_retry_preserves_legacy_identity_and_can_migrate(
             "UPDATE event_lane_events SET status='delivered' WHERE event_id=?",
             (legacy_recovery_id,),
         )
-    preview = recovery_migration.migrate_recovery_chains(
-        database, namespace="agentscope"
-    )
+    preview = recovery_migration.migrate_recovery_chains(database, namespace="agentscope")
     assert preview["rootEventsToCoalesce"] == 1
     assert preview["eventsToCoalesce"] == 1
 
 
 @pytest.mark.parametrize("terminal", ["failed", "interrupted"])
-def test_noncompleted_turn_cannot_publish_a_structurally_valid_outcome(
-    tmp_path, terminal
-):
+def test_noncompleted_turn_cannot_publish_a_structurally_valid_outcome(tmp_path, terminal):
     worker = _event_worker_module()
     lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
     event_id = f"root-{terminal}"
     event_key = "agentscope-ai/agentscope#1"
-    lane.append({
-        "eventId": event_id,
-        "eventKey": event_key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 1,
-        "kind": "issue_update",
-    })
+    lane.append(
+        {
+            "eventId": event_id,
+            "eventKey": event_key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 1,
+            "kind": "issue_update",
+        }
+    )
     claimed = lane.claim(limit=1)[0]
     lane.reserve_handler_turn(event_key, event_id, f"client:{terminal}")
     lane.bind_handler_turn(
         event_key, event_id, "thread-1", f"turn-{terminal}", {}, status="started"
     )
     lane.ack(event_id, lease_token=claimed["leaseToken"])
-    receipt = worker._event_artifact_path(
-        tmp_path, worker.EVENT_RECEIPT_DIR, event_id
-    )
+    receipt = worker._event_artifact_path(tmp_path, worker.EVENT_RECEIPT_DIR, event_id)
     receipt.parent.mkdir(parents=True)
-    receipt.write_text(json.dumps({
-        "turnStatus": terminal,
-        "outcome": {
-            "schemaVersion": "agentscope_event_outcome_v1",
-            "eventId": event_id,
-            "publicKey": event_key,
-            "state": "no_action",
-        },
-    }))
+    receipt.write_text(
+        json.dumps(
+            {
+                "turnStatus": terminal,
+                "outcome": {
+                    "schemaVersion": "agentscope_event_outcome_v1",
+                    "eventId": event_id,
+                    "publicKey": event_key,
+                    "state": "no_action",
+                },
+            }
+        )
+    )
 
     assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
     assert lane.handler_turn(event_id)["status"] == "needs_reconcile"
     with lane.connect() as db:
         recovery_count = db.execute(
-            "SELECT count(*) FROM event_lane_events "
-            "WHERE event_id=?",
+            "SELECT count(*) FROM event_lane_events WHERE event_id=?",
             (worker._outcome_recovery_event_id(event_id),),
         ).fetchone()[0]
     assert recovery_count == 1
@@ -1987,17 +2626,17 @@ def test_invalid_recovery_reuses_one_event_and_exhausts_existing_attempt_budget(
     )
     event_key = "agentscope-ai/agentscope#1"
     root_event_id = "event-invalid-" + ("x" * 2048)
-    lane.append({
-        "eventId": root_event_id,
-        "eventKey": event_key,
-        "repo": "agentscope-ai/agentscope",
-        "number": 1,
-    })
+    lane.append(
+        {
+            "eventId": root_event_id,
+            "eventKey": event_key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 1,
+        }
+    )
     claimed = lane.claim(owner="event-lane")[0]
     lane.reserve_handler_turn(event_key, root_event_id, "client:root")
-    lane.bind_handler_turn(
-        event_key, root_event_id, "thread-1", "turn-root", {}, status="started"
-    )
+    lane.bind_handler_turn(event_key, root_event_id, "thread-1", "turn-root", {}, status="started")
     assert lane.ack(
         root_event_id,
         lease_token=str(claimed["leaseToken"]),
@@ -2006,16 +2645,18 @@ def test_invalid_recovery_reuses_one_event_and_exhausts_existing_attempt_budget(
     receipt_dir = tmp_path / "state" / "agentscope_event_receipts"
     receipt_dir.mkdir(parents=True)
     invalid_outcome = {"error": "OUTCOME_MISSING_OR_INVALID"}
-    root_receipt = receipt_dir / (
-        hashlib.sha256(root_event_id.encode()).hexdigest() + ".json"
+    root_receipt = receipt_dir / (hashlib.sha256(root_event_id.encode()).hexdigest() + ".json")
+    root_receipt.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "turnStatus": "completed",
+                "threadId": "thread-1",
+                "turnId": "turn-root",
+                "outcome": invalid_outcome,
+            }
+        )
     )
-    root_receipt.write_text(json.dumps({
-        "ok": True,
-        "turnStatus": "completed",
-        "threadId": "thread-1",
-        "turnId": "turn-root",
-        "outcome": invalid_outcome,
-    }))
     assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
 
     recovery_id = worker._outcome_recovery_event_id(root_event_id)
@@ -2048,23 +2689,25 @@ def test_invalid_recovery_reuses_one_event_and_exhausts_existing_attempt_budget(
         )
         recovery_receipts.append(recovery_receipt)
         recovery_receipt.parent.mkdir(parents=True, exist_ok=True)
-        recovery_receipt.write_text(json.dumps({
-            "ok": True,
-            "turnStatus": "completed",
-            "threadId": "thread-1",
-            "turnId": f"turn-recovery-{attempt}",
-            "outcome": invalid_outcome,
-        }))
+        recovery_receipt.write_text(
+            json.dumps(
+                {
+                    "ok": True,
+                    "turnStatus": "completed",
+                    "threadId": "thread-1",
+                    "turnId": f"turn-recovery-{attempt}",
+                    "outcome": invalid_outcome,
+                }
+            )
+        )
         assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
         with lane.connect() as db:
             row = db.execute(
-                "SELECT status,attempts,payload_json FROM event_lane_events "
-                "WHERE event_id=?",
+                "SELECT status,attempts,payload_json FROM event_lane_events WHERE event_id=?",
                 (recovery_id,),
             ).fetchone()
             recovery_count = db.execute(
-                "SELECT count(*) FROM event_lane_events "
-                "WHERE event_id LIKE 'outcome-reconcile:%'"
+                "SELECT count(*) FROM event_lane_events WHERE event_id LIKE 'outcome-reconcile:%'"
             ).fetchone()[0]
         assert row["attempts"] == attempt
         assert recovery_count == 1
@@ -2081,16 +2724,18 @@ def test_invalid_recovery_reuses_one_event_and_exhausts_existing_attempt_budget(
     assert all(path.is_file() for path in recovery_receipts)
 
 
-def test_recovery_retry_uses_distinct_bridge_identity_and_evidence_paths(
-    tmp_path, monkeypatch
-):
+def test_recovery_retry_uses_distinct_bridge_identity_and_evidence_paths(tmp_path, monkeypatch):
     worker = _event_worker_module()
     _configure_manifest(worker, tmp_path, monkeypatch)
     calls = []
-    monkeypatch.setattr(worker, "run_bridge", lambda _root, _operation, **kwargs: (
-        calls.append(kwargs)
-        or {"ok": True, "threadId": CENTRAL_THREAD, "turnId": "turn-recovery-2"}
-    ))
+    monkeypatch.setattr(
+        worker,
+        "run_bridge",
+        lambda _root, _operation, **kwargs: (
+            calls.append(kwargs)
+            or {"ok": True, "threadId": CENTRAL_THREAD, "turnId": "turn-recovery-2"}
+        ),
+    )
     lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
     root_event_id = "event-invalid"
     recovery_id = worker._outcome_recovery_event_id(root_event_id)
@@ -2140,21 +2785,34 @@ def test_recovery_retry_uses_distinct_bridge_identity_and_evidence_paths(
 def test_foreign_pr_is_not_an_event_source_and_closed_issue_is_noop(tmp_path):
     worker = _event_worker_module()
     foreign = _issue(77, "2026-08-23T00:00:00Z", pr=True) | {
-        "state": "open", "user": {"login": "another-contributor"},
-        "comments": 99, "mergeable_state": "blocked",
+        "state": "open",
+        "user": {"login": "another-contributor"},
+        "comments": 99,
+        "mergeable_state": "blocked",
     }
     own_closed = _issue(78, "2026-08-23T00:00:00Z", pr=True) | {
-        "state": "closed", "user": {"login": "Oxygen56"},
+        "state": "closed",
+        "user": {"login": "Oxygen56"},
     }
     assert worker.GitHubIssuePoller._is_relevant(foreign) is False
     assert worker.GitHubIssuePoller._is_relevant(own_closed) is True
     lane = EventLane(tmp_path / "events.db")
     called = []
     worker.run_bridge = lambda *_args, **_kwargs: called.append(True)
-    worker.issue_handler_delivery(tmp_path, lane, {
-        "eventId": "closed-ordinary", "repo": "agentscope-ai/agentscope", "number": 79,
-        "issue": {"number": 79, "state": "closed", "html_url": "https://github.com/agentscope-ai/agentscope/issues/79"},
-    })
+    worker.issue_handler_delivery(
+        tmp_path,
+        lane,
+        {
+            "eventId": "closed-ordinary",
+            "repo": "agentscope-ai/agentscope",
+            "number": 79,
+            "issue": {
+                "number": 79,
+                "state": "closed",
+                "html_url": "https://github.com/agentscope-ai/agentscope/issues/79",
+            },
+        },
+    )
     assert called == []
 
 
@@ -2163,12 +2821,16 @@ def test_outcome_reconcile_with_foreign_public_key_is_quarantined(tmp_path, monk
     _configure_manifest(worker, tmp_path, monkeypatch)
     lane = EventLane(tmp_path / "events.db")
     event = {
-        "eventId": "foreign-outcome", "kind": "outcome_reconcile",
-        "eventKey": "other/project#1", "payload": {"publicKey": "other/project#1"},
+        "eventId": "foreign-outcome",
+        "kind": "outcome_reconcile",
+        "eventKey": "other/project#1",
+        "payload": {"publicKey": "other/project#1"},
     }
     lane.append(event)
     worker.issue_handler_delivery(tmp_path, lane, event)
     with lane.connect() as db:
-        row = db.execute("SELECT status,payload_json FROM event_lane_events WHERE event_id='foreign-outcome'").fetchone()
+        row = db.execute(
+            "SELECT status,payload_json FROM event_lane_events WHERE event_id='foreign-outcome'"
+        ).fetchone()
     assert row["status"] == "needs_reconcile"
     assert json.loads(row["payload_json"])["terminalReason"] == "foreign_repository_event"

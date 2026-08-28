@@ -116,12 +116,8 @@ def _valid_machine_outcome(event_id: str, event_key: str, outcome: dict) -> bool
         return False
     if state == "design_wait":
         try:
-            started = datetime.fromisoformat(
-                str(outcome["waitStartedAt"]).replace("Z", "+00:00")
-            )
-            until = datetime.fromisoformat(
-                str(outcome["waitUntil"]).replace("Z", "+00:00")
-            )
+            started = datetime.fromisoformat(str(outcome["waitStartedAt"]).replace("Z", "+00:00"))
+            until = datetime.fromisoformat(str(outcome["waitUntil"]).replace("Z", "+00:00"))
             if started.tzinfo is None or until.tzinfo is None:
                 return False
         except (KeyError, TypeError, ValueError):
@@ -160,10 +156,7 @@ def _enqueue_unresolved_outcome_recoveries(lane: EventLane) -> dict[str, int]:
             value = {}
         event_id = str(row["event_id"])
         all_events[event_id] = value if isinstance(value, dict) else {}
-        if (
-            event_id.startswith("outcome-reconcile:")
-            or value.get("kind") == "outcome_reconcile"
-        ):
+        if event_id.startswith("outcome-reconcile:") or value.get("kind") == "outcome_reconcile":
             recovery_events.add(event_id)
             if not (
                 str(row["status"] or "") == "coalesced"
@@ -232,9 +225,7 @@ def _enqueue_unresolved_outcome_recoveries(lane: EventLane) -> dict[str, int]:
         except (TypeError, ValueError, json.JSONDecodeError):
             receipt = {}
         reason = str(
-            event.get("terminalReason")
-            or receipt.get("terminalReason")
-            or "legacy_needs_reconcile"
+            event.get("terminalReason") or receipt.get("terminalReason") or "legacy_needs_reconcile"
         )
         recovery = {
             "eventId": _outcome_recovery_event_id(root_event_id),
@@ -264,10 +255,12 @@ def _enqueue_unresolved_outcome_recoveries(lane: EventLane) -> dict[str, int]:
 def _central_handler_busy(lane: EventLane) -> bool:
     """Do not spend an event attempt while the one central task is occupied."""
     with lane.connect() as db:
-        return db.execute(
-            "SELECT 1 FROM event_lane_turns "
-            "WHERE status IN ('reserved','started') LIMIT 1"
-        ).fetchone() is not None
+        return (
+            db.execute(
+                "SELECT 1 FROM event_lane_turns WHERE status IN ('reserved','started') LIMIT 1"
+            ).fetchone()
+            is not None
+        )
 
 
 def _event_artifact_path(
@@ -308,14 +301,10 @@ def _outcome_recovery_lineage(lane: EventLane, event_id: str) -> tuple[str, bool
                 return current, is_recovery
             is_recovery = True
             payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
-            root_event_id = str(
-                event.get("rootEventId") or payload.get("rootEventId") or ""
-            )
+            root_event_id = str(event.get("rootEventId") or payload.get("rootEventId") or "")
             if root_event_id:
                 return root_event_id, True
-            source_event_id = str(
-                event.get("eventIdSource") or payload.get("eventId") or ""
-            )
+            source_event_id = str(event.get("eventIdSource") or payload.get("eventId") or "")
             if not source_event_id:
                 return current, True
             current = source_event_id
@@ -343,10 +332,12 @@ def _retry_or_exhaust_outcome_recovery(
         except (TypeError, ValueError, json.JSONDecodeError):
             event = {"eventId": str(event_id), "kind": "outcome_reconcile"}
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
-        payload.update({
-            "outcome": outcome,
-            "reason": "invalid_or_missing_outcome",
-        })
+        payload.update(
+            {
+                "outcome": outcome,
+                "reason": "invalid_or_missing_outcome",
+            }
+        )
         stable_identity = str(event_id) == _outcome_recovery_event_id(root_event_id)
         if stable_identity:
             event["rootEventId"] = str(root_event_id)
@@ -384,11 +375,13 @@ def _retry_or_exhaust_outcome_recovery(
                 receipt = json.loads(turn["receipt_json"] or "{}")
             except (TypeError, ValueError, json.JSONDecodeError):
                 receipt = {}
-            receipt.update({
-                "terminalReason": "outcome_recovery_attempts_exhausted",
-                "rootEventId": str(root_event_id),
-                "recoveryAttempts": attempts,
-            })
+            receipt.update(
+                {
+                    "terminalReason": "outcome_recovery_attempts_exhausted",
+                    "rootEventId": str(root_event_id),
+                    "recoveryAttempts": attempts,
+                }
+            )
             receipt_json = json.dumps(receipt, sort_keys=True)
             db.execute(
                 "UPDATE event_lane_turns SET status='needs_reconcile',receipt_json=? "
@@ -426,7 +419,9 @@ def _active_task_config(root: Path, repo: str) -> dict[str, str]:
     thread_id = str(entry.get("activeThreadId") or "") if isinstance(entry, dict) else ""
     if not thread_id:
         raise RuntimeError(f"central active task thread is not configured for {repo}")
-    configured_cwd = Path(str(entry.get("cwd") or "")).resolve() if isinstance(entry, dict) else Path("/")
+    configured_cwd = (
+        Path(str(entry.get("cwd") or "")).resolve() if isinstance(entry, dict) else Path("/")
+    )
     if configured_cwd != CENTRAL_CWD or not CENTRAL_CWD.is_dir():
         raise RuntimeError("central task cwd is not the safe repository")
     return {"threadId": thread_id, "cwd": str(CENTRAL_CWD)}
@@ -472,7 +467,9 @@ def _quarantine_event(root: Path, lane: EventLane, event: dict, *, reason: str) 
     lane.terminalize_event(str(event.get("eventId") or ""), reason=reason)
 
 
-def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: dict[str, object] | None = None) -> None:
+def issue_handler_delivery(
+    root: Path, lane: EventLane, event: dict, *, target: dict[str, object] | None = None
+) -> None:
     """Start/resume the detached bridge worker and receipt its turn before ack."""
     target = target or _resolve_event_target(root, event)
     event_repo = str(event.get("repo") or "")
@@ -491,7 +488,10 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
         return
     issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
     public_status = lane.public_status(key)
-    if str(issue.get("state") or "open").casefold() != "open" and public_status not in {"active", "watch_only"}:
+    if str(issue.get("state") or "open").casefold() != "open" and public_status not in {
+        "active",
+        "watch_only",
+    }:
         # A closed ordinary issue is a no-op closeout, not a new public task.
         return
     if str(issue.get("state") or "open").casefold() != "open" and target.get("kind") == "issue":
@@ -529,9 +529,7 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
     if reservation.get("status") == "busy":
         return
     if reservation.get("status") != "reserved":
-        raise RuntimeError(
-            f"handler_reservation_{reservation.get('reason') or 'conflict'}"
-        )
+        raise RuntimeError(f"handler_reservation_{reservation.get('reason') or 'conflict'}")
     if target.get("kind") in {"pr_followup", "pr_watch"}:
         prompt = (
             f"Observe AgentScope PR event {event['eventId']} for {target.get('prUrl') or key} in the configured central task. "
@@ -590,16 +588,26 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
             code_root=ROOT,
             inactive_release=True,
             extra_args=[
-                "--event-id", event_id,
-                "--event-key", key,
-                "--thread-id", str(binding.get("thread_id") or "") if binding else "",
-                "--client-user-message-id", client_message_id,
-                "--cwd", str(central_cwd),
-                "--prompt", prompt,
-                "--receipt", str(receipt),
-                "--outcome-receipt", str(outcome_path),
-                "--design-wait-until", str(event.get("designWaitUntil") or ""),
-                "--design-wait-started-at", str(event.get("designWaitStartedAt") or event.get("updatedAt") or ""),
+                "--event-id",
+                event_id,
+                "--event-key",
+                key,
+                "--thread-id",
+                str(binding.get("thread_id") or "") if binding else "",
+                "--client-user-message-id",
+                client_message_id,
+                "--cwd",
+                str(central_cwd),
+                "--prompt",
+                prompt,
+                "--receipt",
+                str(receipt),
+                "--outcome-receipt",
+                str(outcome_path),
+                "--design-wait-until",
+                str(event.get("designWaitUntil") or ""),
+                "--design-wait-started-at",
+                str(event.get("designWaitStartedAt") or event.get("updatedAt") or ""),
             ],
         )
     except Exception as exc:
@@ -656,9 +664,7 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
         lane.release_handler_reservation(
             event_id,
             result,
-            reason="handler_start_retryable"
-            if result.get("retryable")
-            else "handler_start_failed",
+            reason="handler_start_retryable" if result.get("retryable") else "handler_start_failed",
         )
         lane.defer_event(
             event_id,
@@ -717,13 +723,17 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
         if terminal != "completed" or not _valid_machine_outcome(
             str(row["event_id"]), str(row["event_key"]), outcome
         ):
-            root_event_id, is_recovery = _outcome_recovery_lineage(
-                lane, str(row["event_id"])
+            root_event_id, is_recovery = _outcome_recovery_lineage(lane, str(row["event_id"]))
+            lane.register_public_work(
+                str(row["event_key"]), status="active", source="outcome-invalid"
             )
-            lane.register_public_work(str(row["event_key"]), status="active", source="outcome-invalid")
             lane.bind_handler_turn(
-                str(row["event_key"]), str(row["event_id"]), str(row["thread_id"]),
-                str(row["turn_id"]), value, status="needs_reconcile",
+                str(row["event_key"]),
+                str(row["event_id"]),
+                str(row["thread_id"]),
+                str(row["turn_id"]),
+                value,
+                status="needs_reconcile",
             )
             if is_recovery:
                 _retry_or_exhaust_outcome_recovery(
@@ -733,20 +743,23 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
                     outcome=outcome,
                 )
             else:
-                lane.append({
-                    "eventId": _outcome_recovery_event_id(root_event_id),
-                    "kind": "outcome_reconcile",
-                    "eventKey": str(row["event_key"]),
-                    "rootEventId": root_event_id,
-                    "eventIdSource": str(row["event_id"]),
-                    "payload": {
-                        "eventId": root_event_id,
+                lane.append(
+                    {
+                        "eventId": _outcome_recovery_event_id(root_event_id),
+                        "kind": "outcome_reconcile",
+                        "eventKey": str(row["event_key"]),
                         "rootEventId": root_event_id,
-                        "publicKey": str(row["event_key"]),
-                        "outcome": outcome,
-                        "reason": "invalid_or_missing_outcome",
+                        "eventIdSource": str(row["event_id"]),
+                        "payload": {
+                            "eventId": root_event_id,
+                            "rootEventId": root_event_id,
+                            "publicKey": str(row["event_key"]),
+                            "outcome": outcome,
+                            "reason": "invalid_or_missing_outcome",
+                        },
                     },
-                }, priority=250)
+                    priority=250,
+                )
         elif outcome_state == "design_wait":
             lane.mark_design_wait(str(row["event_id"]))
             until = outcome.get("waitUntil")
@@ -754,7 +767,12 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
                 watch_until = datetime.fromisoformat(str(until).replace("Z", "+00:00")).timestamp()
             except (TypeError, ValueError):
                 watch_until = None
-            lane.register_public_work(str(row["event_key"]), status="design_wait", watch_until=watch_until, source="turn-outcome")
+            lane.register_public_work(
+                str(row["event_key"]),
+                status="design_wait",
+                watch_until=watch_until,
+                source="turn-outcome",
+            )
         elif outcome_state == "claimed_or_pr":
             lane.register_public_work(str(row["event_key"]), status="active", source="turn-outcome")
         elif outcome_state == "no_action":
@@ -775,13 +793,18 @@ def bridge_delivery(root: Path, lane: EventLane, event: dict) -> None:
     queue_kinds = {"intents", "prFollowups", "followups", "slowWorkRequests"}
     if event.get("kind") in queue_kinds:
         lane.terminalize_event(
-            str(event.get("eventId") or ""), status="coalesced", reason="retired_shared_queue_mirror"
+            str(event.get("eventId") or ""),
+            status="coalesced",
+            reason="retired_shared_queue_mirror",
         )
         return
     target = _resolve_event_target(root, event)
     if event.get("kind") == "outcome_reconcile":
-        target = {"key": str(event.get("eventKey") or payload.get("publicKey") or ""),
-                  "kind": "outcome_reconcile", "mapped": False}
+        target = {
+            "key": str(event.get("eventKey") or payload.get("publicKey") or ""),
+            "kind": "outcome_reconcile",
+            "mapped": False,
+        }
         issue_handler_delivery(root, lane, event, target=target)
         return
     issue_handler_delivery(root, lane, event, target=target)
@@ -827,15 +850,23 @@ def _sync_public_work_seed(root: Path, lane: EventLane) -> int:
         status = str(value.get("status") or "active")
         until = value.get("watchUntil") or value.get("designWaitUntil")
         try:
-            watch_until = datetime.fromisoformat(str(until).replace("Z", "+00:00")).timestamp() if until else None
+            watch_until = (
+                datetime.fromisoformat(str(until).replace("Z", "+00:00")).timestamp()
+                if until
+                else None
+            )
         except ValueError:
             watch_until = None
         if status in {"active", "design_wait"}:
-            lane.register_public_work(key, status=status, watch_until=watch_until, source="runtime-seed")
+            lane.register_public_work(
+                key, status=status, watch_until=watch_until, source="runtime-seed"
+            )
         elif status in {"watch_only", "completed", "no_action"}:
             lane.clear_public_work(key)
         synced += 1
-    lane.set_state_value("public_work_seed_digest", {"digest": digest, "importedAt": datetime.now(UTC).isoformat()})
+    lane.set_state_value(
+        "public_work_seed_digest", {"digest": digest, "importedAt": datetime.now(UTC).isoformat()}
+    )
     return synced
 
 
@@ -922,16 +953,24 @@ def run_once(
     last_full_dt = None
     if last_full:
         try:
-            last_full_dt = datetime.fromisoformat(str(last_full).replace("Z", "+00:00")).astimezone(UTC)
+            last_full_dt = datetime.fromisoformat(str(last_full).replace("Z", "+00:00")).astimezone(
+                UTC
+            )
         except ValueError:
             last_full_dt = None
     full_result = None
-    if had_poll_state and (last_full_dt is None or current - last_full_dt >= timedelta(seconds=max(1, reconcile_interval_seconds))):
+    if had_poll_state and (
+        last_full_dt is None
+        or current - last_full_dt >= timedelta(seconds=max(1, reconcile_interval_seconds))
+    ):
         full_result = poll.full_reconcile(now=current)
-        _save_json(state / "agentscope-reconcile.json", {
-            "schemaVersion": "agentscope_reconcile_v1",
-            "lastCompletedAt": current.isoformat().replace("+00:00", "Z"),
-        })
+        _save_json(
+            state / "agentscope-reconcile.json",
+            {
+                "schemaVersion": "agentscope_reconcile_v1",
+                "lastCompletedAt": current.isoformat().replace("+00:00", "Z"),
+            },
+        )
     # Queue work belongs exclusively to the shared Radar controller.  Older
     # event releases mirrored that queue; retire those rows once rather than
     # draining them or starting issue-specific tasks.
@@ -954,15 +993,22 @@ def run_once(
             event_key = f"{event['repo']}#{event['number']}"
         design_wait = bool(event.get("designWait") and event.get("designWaitUntil"))
         watch_reply = lane.public_status(event_key) == "watch_only" if event_key else False
-        priority = 250 if watch_reply else (200 if design_wait else (100 if event.get("kind") == "pr_update" else 10))
+        priority = (
+            250
+            if watch_reply
+            else (200 if design_wait else (100 if event.get("kind") == "pr_update" else 10))
+        )
         inserted += int(lane.append(event, priority=priority))
         if design_wait:
             target = _resolve_event_target(root, event)
             if target.get("key"):
                 wait_until = str(event.get("designWaitUntil"))
                 lane.register_public_work(
-                    str(target["key"]), status="design_wait",
-                    watch_until=datetime.fromisoformat(str(wait_until).replace("Z", "+00:00")).timestamp(),
+                    str(target["key"]),
+                    status="design_wait",
+                    watch_until=datetime.fromisoformat(
+                        str(wait_until).replace("Z", "+00:00")
+                    ).timestamp(),
                     source="github-maintainer-reply",
                 )
     if bootstrap_boundary is not None and bootstrap["terminalized"]:
@@ -971,11 +1017,14 @@ def run_once(
             raise RuntimeError("invalid persisted GitHub event bootstrap state")
         audit["terminalized"] = bootstrap["terminalized"]
         lane.set_state_value(BOOTSTRAP_BOUNDARY_STATE_KEY, audit)
+    pr_snapshots_coalesced = lane.coalesce_pending_pr_updates(now=current.timestamp())
     drained = {"claimed": 0, "delivered": 0, "pending": lane.pending()}
     central_task_busy = production_delivery and _central_handler_busy(lane)
     if deliver is None:
+
         def deliver(event):
             bridge_delivery(root, lane, event)
+
     if lane.pending() > 0 and not central_task_busy:
         # One central task can own only one running turn.  Claiming a batch
         # made the later rows spend retry attempts merely because the first
@@ -986,6 +1035,7 @@ def run_once(
         "status": result.status,
         "eventsSeen": len(events),
         "eventsInserted": inserted,
+        "prSnapshotsCoalesced": pr_snapshots_coalesced,
         "codexWake": bool(drained["delivered"]),
         "drain": drained,
         "receiptsReconciled": receipts_reconciled,
@@ -1000,7 +1050,9 @@ def run_once(
         "fullReconciliation": bool(full_result is not None),
         "fullReconciliationEvents": len(full_result.events) if full_result is not None else 0,
         "publicWorkSeedItems": seed_items,
-        "bootstrapBoundary": bootstrap_boundary.isoformat().replace("+00:00", "Z") if bootstrap_boundary else None,
+        "bootstrapBoundary": bootstrap_boundary.isoformat().replace("+00:00", "Z")
+        if bootstrap_boundary
+        else None,
         "bootstrapApplied": bool(bootstrap["applied"]),
         "bootstrapTerminalized": len(bootstrap["terminalized"]),
     }
