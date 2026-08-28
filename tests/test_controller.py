@@ -269,6 +269,29 @@ def test_controller_cycle_fails_closed_when_context_recovery_fails(tmp_path):
     assert any(item["stage"] == "contextRecovery" for item in result["failures"])
 
 
+@pytest.mark.parametrize(
+    "invalid_response",
+    [
+        pytest.param({}, id="missing"),
+        pytest.param({"ok": None}, id="null"),
+        pytest.param({"ok": "true"}, id="wrong-type"),
+        pytest.param({"ok": 1}, id="numeric"),
+    ],
+)
+def test_controller_cycle_requires_explicit_boolean_success(tmp_path, invalid_response):
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        if stage == "orphanReconcile":
+            return invalid_response
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path, code_root=DEV_CODE_ROOT, allow_unreleased_code=True, runner=runner, notify=False
+    )
+
+    assert result["ok"] is False
+    assert any(item["stage"] == "orphanReconcile" for item in result["failures"])
+
+
 def test_controller_cycle_skips_sync_while_remote_scan_is_active(tmp_path):
     calls: list[str] = []
 
@@ -289,6 +312,35 @@ def test_controller_cycle_skips_sync_while_remote_scan_is_active(tmp_path):
     assert result["ok"] is True
     assert "queueSync" not in calls
     assert result["stages"]["queueSync"]["reason"] == "remote_scan_active"
+
+
+def test_controller_never_promotes_malformed_health_values(tmp_path):
+    calls: list[str] = []
+
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        calls.append(stage)
+        if stage in {"workflowHealth", "finalWorkflowHealth"}:
+            return {
+                "operationalHealthy": "true",
+                "githubNaturalScheduleHealthy": 1,
+                "effectiveScan": {"recentActive": "true"},
+            }
+        if stage == "finalEventLaneHealth":
+            return {"healthy": "true", "lanes": {"agentscope": {"healthy": "true"}}}
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path, code_root=DEV_CODE_ROOT, allow_unreleased_code=True, runner=runner, notify=False
+    )
+
+    assert result["ok"] is False
+    assert "queueSync" not in calls
+    assert result["stages"]["queueSync"]["reason"] == "workflow_not_operational"
+    assert result["summary"]["operationalHealthy"] is False
+    assert result["summary"]["githubNaturalScheduleHealthy"] is False
+    assert result["summary"]["eventLanesHealthy"] is False
+    assert any(item["stage"] == "finalWorkflowHealth" for item in result["finalBlockers"])
+    assert any(item["stage"] == "finalEventLaneHealth" for item in result["finalBlockers"])
 
 
 def test_controller_repairs_after_one_missed_hour_without_tightening_final_health(tmp_path):

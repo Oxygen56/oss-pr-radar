@@ -31,7 +31,7 @@ def main() -> int:
         snapshot = collect_snapshot(args.root, launchctl_output=launchctl_print(service))
     result = audit_snapshot(snapshot)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return 0 if result["ok"] else 2
+    return 0 if result["ok"] is True else 2
 
 
 if __name__ == "__main__":

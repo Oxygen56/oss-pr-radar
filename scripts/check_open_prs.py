@@ -42,7 +42,7 @@ def main() -> int:
             }
         )
     )
-    return 0 if report["scan_ok"] else 1
+    return 0 if report["scan_ok"] is True else 1
 
 
 if __name__ == "__main__":

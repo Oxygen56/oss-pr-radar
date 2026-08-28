@@ -42,7 +42,7 @@ def main() -> int:
     rotate_log(stderr_path)
     result = slow_advance_once(args.root)
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result.get("ok") else 1
+    return 0 if result.get("ok") is True else 1
 
 
 if __name__ == "__main__":

@@ -484,7 +484,7 @@ def main() -> int:
         )
     )
     if args.notify and (
-        repair_would_trigger or repair_error or component_health.get("healthy") is False
+        repair_would_trigger or repair_error or component_health.get("healthy") is not True
     ):
         app_id = os.environ.get("FEISHU_APP_ID")
         app_secret = os.environ.get("FEISHU_APP_SECRET")
@@ -516,7 +516,7 @@ def main() -> int:
             ),
         )
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result["operationalHealthy"] else 2
+    return 0 if result["operationalHealthy"] is True else 2
 
 
 if __name__ == "__main__":

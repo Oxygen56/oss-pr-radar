@@ -333,7 +333,7 @@ def main() -> int:
     args = parser.parse_args()
     result = audit(args.root, home=args.home)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return 0 if result["healthy"] else 2
+    return 0 if result["healthy"] is True else 2
 
 
 if __name__ == "__main__":

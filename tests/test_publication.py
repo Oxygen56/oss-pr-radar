@@ -556,6 +556,26 @@ def test_broker_grants_commit_bound_permit(monkeypatch, tmp_path):
     )
 
 
+def test_broker_reads_private_review_from_durable_runtime_state(monkeypatch, tmp_path):
+    store, request, _ = prepared_request(tmp_path)
+    source_review_root = tmp_path / "state" / "independent_reviews"
+    durable_runtime = tmp_path / "runtime"
+    durable_review_root = durable_runtime / "state" / "independent_reviews"
+    durable_review_root.parent.mkdir(parents=True)
+    source_review_root.rename(durable_review_root)
+    monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt"])
+
+    result = broker_publication_request(
+        store,
+        request["request_id"],
+        client=Client(),
+        review_state_root=durable_runtime,
+    )
+
+    assert result["granted"] is True
+    assert result["audit"]["reason"] == "LIVE_PUBLICATION_GATES_PASSED"
+
+
 def test_bound_evidence_snapshot_prevents_evidence_path_reread(monkeypatch, tmp_path):
     store, request, evidence_path = prepared_request(tmp_path)
     evidence_path.write_text("{}", encoding="utf-8")

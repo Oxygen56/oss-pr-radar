@@ -3930,7 +3930,7 @@ def independent_review_run(args: argparse.Namespace) -> dict[str, Any]:
             "skipped": [],
             "errors": [],
         }
-    result = review_once(ROOT, args.ledger)
+    result = review_once(ROOT, args.ledger, state_root=_review_state_root(args))
     if "errors" not in result:
         return result
     reported_errors = list(result.get("errors") or [])
@@ -3943,6 +3943,22 @@ def independent_review_run(args: argparse.Namespace) -> dict[str, Any]:
         "candidateErrors": candidate_errors,
         "errors": system_errors,
     }
+
+
+def _review_state_root(args: argparse.Namespace) -> Path | None:
+    """Keep controller-private review state durable across immutable releases."""
+
+    runtime_root = getattr(args, "runtime_root", None)
+    return Path(runtime_root).resolve() if runtime_root is not None else None
+
+
+def _controller_review_result(
+    args: argparse.Namespace, value: dict[str, Any]
+) -> dict[str, Any] | None:
+    state_root = _review_state_root(args)
+    if state_root is None:
+        return controller_review_result(ROOT, value)
+    return controller_review_result(ROOT, value, state_root=state_root)
 
 
 def _higher_priority_existing_work(
@@ -3963,7 +3979,11 @@ def _higher_priority_existing_work(
             priorities.append({"kind": "pr_followup", "key": str(item.get("key") or "")})
 
     validation_state = validation_followup_list(
-        argparse.Namespace(ledger=args.ledger, min_age_minutes=90)
+        argparse.Namespace(
+            ledger=args.ledger,
+            min_age_minutes=90,
+            runtime_root=getattr(args, "runtime_root", None),
+        )
     )
     for item in [*validation_state["candidates"], *validation_state["unresolved"]]:
         if item.get("key") != intent_key:
@@ -5663,13 +5683,13 @@ def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
     while monotonic() < deadline:
         if receipt.exists():
             result = read_json(receipt, missing={})
-            if not result.get("ok"):
+            if result.get("ok") is not True:
                 raise RuntimeError(str(result.get("error") or "root task creation failed"))
             return result
         sleep(0.25)
     if receipt.exists():
         result = read_json(receipt, missing={})
-        if not result.get("ok"):
+        if result.get("ok") is not True:
             raise RuntimeError(str(result.get("error") or "root task creation failed"))
         return result
     raise RuntimeError("root task creation result is unknown; orphan reconciliation required")
@@ -6129,7 +6149,7 @@ def _create_codex_decision_task(
     while monotonic() < deadline:
         if receipt.exists():
             result = read_json(receipt, missing={})
-            if not result.get("ok"):
+            if result.get("ok") is not True:
                 raise RuntimeError(str(result.get("error") or "Codex decision task failed"))
             return result
         sleep(0.25)
@@ -7272,6 +7292,26 @@ def active_root_task_worker(thread_id: str) -> dict[str, Any] | None:
     return None
 
 
+def _proved_no_turn_started_receipt(receipt: dict[str, Any]) -> bool:
+    return bool(
+        receipt.get("ok") is False
+        and receipt.get("turnStarted") is False
+        and receipt.get("turnId") is None
+        and receipt.get("turnStatus") in {None, ""}
+        and isinstance(receipt.get("error"), str)
+        and receipt["error"].strip()
+    )
+
+
+def _proved_terminal_task_turn_failure(receipt: dict[str, Any]) -> bool:
+    return bool(
+        receipt.get("ok") is True
+        and isinstance(receipt.get("turnId"), str)
+        and receipt["turnId"]
+        and receipt.get("turnStatus") in {"failed", "interrupted"}
+    )
+
+
 def retryable_negative_task_turn_receipt(
     *,
     delivery_kind: str,
@@ -7297,7 +7337,7 @@ def retryable_negative_task_turn_receipt(
         and receipt.get("reservationDigest") != validation_reservation_digest
     ):
         return None
-    if receipt.get("ok") or receipt.get("turnStarted"):
+    if not _proved_no_turn_started_receipt(receipt):
         return None
     if active_task_turn_worker(thread_id) is not None:
         return None
@@ -7445,9 +7485,9 @@ def _rearm_negative_followup_deliveries(store: RadarLedger) -> list[dict[str, An
         receipt_path = STATE / "task_turn_receipts" / f"{receipt_key}.json"
         receipt = read_json(receipt_path, missing={})
         age = now - parse_time(str(item["reservedAt"]))
-        proved_incomplete = bool(receipt) and (
-            receipt.get("ok") is False or receipt.get("turnStatus") in {"failed", "interrupted"}
-        )
+        proved_incomplete = _proved_no_turn_started_receipt(
+            receipt
+        ) or _proved_terminal_task_turn_failure(receipt)
         launch_path = STATE / "task_turn_receipts" / f"{receipt_key}.launch.json"
         abandoned_worker = launch_path.exists() and age >= timedelta(minutes=5)
         if age < timedelta(minutes=1) or not (proved_incomplete or abandoned_worker):
@@ -7809,7 +7849,9 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
     receipt_root.mkdir(parents=True, exist_ok=True)
 
     def desktop_handoff_result(result: dict[str, Any]) -> dict[str, Any] | None:
-        if "DESKTOP_ACTIVE_WRITER" not in str(result.get("error") or ""):
+        if not _proved_no_turn_started_receipt(result) or "DESKTOP_ACTIVE_WRITER" not in str(
+            result.get("error") or ""
+        ):
             return None
         return {
             "ok": True,
@@ -7822,6 +7864,59 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
                 candidate=candidate,
                 delivery_token=args.delivery_token,
             ),
+        }
+
+    def proved_success_receipt(result: dict[str, Any]) -> bool:
+        return bool(
+            result.get("ok") is True
+            and result.get("threadId") == args.thread_id
+            and result.get("deliveryKind") == args.delivery_kind
+            and result.get("deliveryToken") == args.delivery_token
+            and isinstance(result.get("turnId"), str)
+            and result["turnId"]
+            and result.get("turnStarted") is not False
+            and (
+                not delivery_attempt_digest
+                or result.get("deliveryAttemptDigest") == delivery_attempt_digest
+            )
+            and (
+                not validation_reservation_digest
+                or result.get("reservationDigest") == validation_reservation_digest
+            )
+        )
+
+    def classified_receipt(
+        result: dict[str, Any],
+    ) -> tuple[str, dict[str, Any] | None]:
+        if proved_success_receipt(result):
+            return "resolved", result
+        desktop_result = desktop_handoff_result(result)
+        if desktop_result is not None:
+            return "resolved", desktop_result
+        if (
+            result.get("ok") is False
+            and result.get("turnStarted") is True
+            and isinstance(result.get("turnId"), str)
+            and result["turnId"]
+        ):
+            return "resolved", {
+                "ok": False,
+                "pending": True,
+                "requiresReconciliation": True,
+                "threadId": args.thread_id,
+                "deliveryKind": args.delivery_kind,
+                "turnId": result.get("turnId"),
+                "reason": "TURN_STARTED_BEFORE_LEDGER_COMMIT",
+            }
+        if _proved_no_turn_started_receipt(result):
+            return "negative", None
+        return "resolved", {
+            "ok": False,
+            "pending": True,
+            "requiresReconciliation": True,
+            "threadId": args.thread_id,
+            "deliveryKind": args.delivery_kind,
+            "reason": "INVALID_TASK_TURN_RECEIPT",
         }
 
     try:
@@ -7890,21 +7985,10 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
                 "deliveryKind": args.delivery_kind,
                 "reason": "VALIDATION_RECEIPT_BINDING_MISMATCH",
             }
-        if result.get("ok"):
-            return result
-        desktop_result = desktop_handoff_result(result)
-        if desktop_result is not None:
-            return desktop_result
-        if result.get("turnStarted"):
-            return {
-                "ok": False,
-                "pending": True,
-                "requiresReconciliation": True,
-                "threadId": args.thread_id,
-                "deliveryKind": args.delivery_kind,
-                "turnId": result.get("turnId"),
-                "reason": "TURN_STARTED_BEFORE_LEDGER_COMMIT",
-            }
+        receipt_kind, receipt_result = classified_receipt(result)
+        if receipt_kind == "resolved":
+            assert receipt_result is not None
+            return receipt_result
         receipt.unlink(missing_ok=True)
         launch.unlink(missing_ok=True)
 
@@ -8163,21 +8247,10 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
     while monotonic() < deadline:
         if receipt.exists():
             result = read_json(receipt, missing={})
-            if result.get("ok"):
-                return result
-            desktop_result = desktop_handoff_result(result)
-            if desktop_result is not None:
-                return desktop_result
-            if result.get("turnStarted"):
-                return {
-                    "ok": False,
-                    "pending": True,
-                    "requiresReconciliation": True,
-                    "threadId": args.thread_id,
-                    "deliveryKind": args.delivery_kind,
-                    "turnId": result.get("turnId"),
-                    "reason": "TURN_STARTED_BEFORE_LEDGER_COMMIT",
-                }
+            receipt_kind, receipt_result = classified_receipt(result)
+            if receipt_kind == "resolved":
+                assert receipt_result is not None
+                return receipt_result
             raise RuntimeError(str(result.get("error") or "task-turn delivery failed"))
         sleep(0.25)
     return {
@@ -12177,7 +12250,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             dirty_files = _local_changed_files(worktree) if worktree.is_dir() else []
             authenticated = _read_authenticated_validation_result_if_present(blocked)
             value = authenticated[0] if authenticated is not None else {}
-            review = controller_review_result(ROOT, value)
+            review = _controller_review_result(args, value)
             verdict = str(review.get("verdict") or "") if review else ""
             current_progress_marker = _validation_progress_marker(value)
             recorded_progress_marker = str(blocked.get("progressMarker") or "")
@@ -12330,7 +12403,7 @@ def validation_followup_list(args: argparse.Namespace) -> dict[str, Any]:
             } and not _local_changed_files(worktree):
                 authenticated = _read_authenticated_validation_result_if_present(candidate)
                 value = authenticated[0] if authenticated is not None else {}
-                review = controller_review_result(ROOT, value)
+                review = _controller_review_result(args, value)
                 if review and review.get("verdict") in {"FAIL", "HOLD"}:
                     candidates.append(
                         candidate
@@ -13466,6 +13539,7 @@ def _request_publication_from_task_result(
     result_access: _ValidationWorktreeDirectory,
     value: dict[str, Any],
     raw: bytes,
+    review_state_root: Path | None = None,
 ) -> dict[str, Any]:
     worktree = result_access.worktree
     snapshot = _publication_git_snapshot(worktree)
@@ -13546,7 +13620,11 @@ def _request_publication_from_task_result(
         and request.get("reason") == "CONTROLLER_INDEPENDENT_REVIEW_REQUIRED"
         and request.get("evidence_digest") == evidence_digest
     ):
-        review = controller_review_result(ROOT, value)
+        review = (
+            controller_review_result(ROOT, value)
+            if review_state_root is None
+            else controller_review_result(ROOT, value, state_root=review_state_root)
+        )
         if review and review.get("verdict") == "PASS":
             retried = store.retry_blocked_publication_request(
                 str(request.get("request_id") or request.get("requestId")),
@@ -13925,7 +14003,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and value.get("handoffMode")
                 in {"controller_commit_complete", "controller_merge_complete"}
             ):
-                initial_controller_review = controller_review_result(ROOT, value)
+                initial_controller_review = _controller_review_result(args, value)
                 initial_review_passed = bool(
                     initial_controller_review and initial_controller_review.get("verdict") == "PASS"
                 )
@@ -14327,7 +14405,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and value.get("handoffMode")
                 in {"controller_commit_complete", "controller_merge_complete"}
             ):
-                current_controller_review = controller_review_result(ROOT, value)
+                current_controller_review = _controller_review_result(args, value)
                 current_review_passed = bool(
                     current_controller_review and current_controller_review.get("verdict") == "PASS"
                 )
@@ -14420,7 +14498,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 quality = value.get("quality")
                 assert isinstance(quality, dict)
-                controller_review = controller_review_result(ROOT, value)
+                controller_review = _controller_review_result(args, value)
                 controller_review_verified = bool(
                     controller_review and controller_review.get("verdict") == "PASS"
                 )
@@ -14569,6 +14647,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         result_access=result_access,
                         value=value,
                         raw=raw,
+                        review_state_root=_review_state_root(args),
                     )
                     publication_requests.append(
                         {
@@ -14842,7 +14921,7 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                 )
             evidence_value = _evidence_from_publication_request(request)
             controller_review = (
-                controller_review_result(ROOT, evidence_value)
+                _controller_review_result(args, evidence_value)
                 if isinstance(evidence_value, dict)
                 else None
             )
@@ -14870,7 +14949,16 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                 permit = store.prepare_post_push_reconciliation(request_id)
                 post_push_reconciliation = permit is not None
             if permit is None:
-                broker = broker_publication_request(store, request_id)
+                review_state_root = _review_state_root(args)
+                broker = (
+                    broker_publication_request(store, request_id)
+                    if review_state_root is None
+                    else broker_publication_request(
+                        store,
+                        request_id,
+                        review_state_root=review_state_root,
+                    )
+                )
                 if broker.get("pending"):
                     pending.append(
                         {
@@ -16138,7 +16226,7 @@ def recovery_reserve(args: argparse.Namespace) -> dict[str, Any]:
     probe = recovery_list(argparse.Namespace(ledger=args.ledger, min_age_minutes=0))
     authorized = {item["threadId"]: item for item in probe["recoverable"]}.get(args.thread_id)
     if (
-        not probe["ok"]
+        probe["ok"] is not True
         or authorized is None
         or authorized.get("recoveryNonce") != args.recovery_nonce
     ):
@@ -16304,7 +16392,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
     """Advance at most one user-visible task, terminalizing stale intents on the way."""
 
     restored = restore_reconcile(argparse.Namespace(ledger=args.ledger))
-    if not restored.get("ok"):
+    if restored.get("ok") is not True:
         return {
             "ok": False,
             "action": "restore_failed",
@@ -16321,7 +16409,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             )
         )
         restored_items.extend(target.get("restored") or [])
-        if target.get("ok"):
+        if target.get("ok") is True:
             return None
         return {
             "ok": False,
@@ -16364,7 +16452,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             )
         )
         return {
-            "ok": bool(delivered.get("ok")),
+            "ok": delivered.get("ok") is True,
             "action": "publication_feedback_dispatched",
             "key": candidate.get("key"),
             "threadId": candidate.get("threadId"),
@@ -16386,7 +16474,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             )
         )
         return {
-            "ok": bool(delivered.get("ok")),
+            "ok": delivered.get("ok") is True,
             "action": "implementation_followup_dispatched",
             "key": candidate.get("key"),
             "threadId": candidate.get("threadId"),
@@ -16417,7 +16505,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             )
         )
         return {
-            "ok": bool(delivered.get("ok")),
+            "ok": delivered.get("ok") is True,
             "action": "implementation_followup_dispatched",
             "key": candidate.get("key"),
             "threadId": candidate.get("threadId"),
@@ -16468,7 +16556,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             )
         )
         return {
-            "ok": bool(delivered.get("ok")),
+            "ok": delivered.get("ok") is True,
             "action": "pr_followup_dispatched",
             "key": candidate.get("key"),
             "threadId": candidate.get("threadId"),
@@ -16480,7 +16568,11 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         }
 
     validation_state = validation_followup_list(
-        argparse.Namespace(ledger=args.ledger, min_age_minutes=90)
+        argparse.Namespace(
+            ledger=args.ledger,
+            min_age_minutes=90,
+            runtime_root=getattr(args, "runtime_root", None),
+        )
     )
     if validation_state.get("candidates"):
         candidate = validation_state["candidates"][0]
@@ -16557,7 +16649,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                 "recoveryRetryExhausted": recovery_exhausted,
             }
         return {
-            "ok": bool(delivered.get("ok")),
+            "ok": delivered.get("ok") is True,
             "action": "validation_followup_dispatched",
             "key": candidate.get("key"),
             "threadId": candidate.get("threadId"),
@@ -16595,7 +16687,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             )
         )
         return {
-            "ok": bool(delivered.get("ok")),
+            "ok": delivered.get("ok") is True,
             "action": "recovery_dispatched",
             "key": candidate.get("key"),
             "threadId": candidate.get("threadId"),

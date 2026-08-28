@@ -213,6 +213,7 @@ def ensure_permit(
     branch: str,
     action: str | None = None,
     live_recheck: bool = True,
+    review_state_root: Path | None = None,
 ) -> dict[str, Any]:
     permit = store.publication_permit_by_id(permit_id)
     if not permit and not live_recheck and action:
@@ -226,24 +227,36 @@ def ensure_permit(
     ):
         raise RuntimeError("publication permit binding mismatch")
     if live_recheck:
-        audit = audit_publication_request(store, permit["request_id"])
+        if review_state_root is None:
+            audit = audit_publication_request(store, permit["request_id"])
+        else:
+            audit = audit_publication_request(
+                store,
+                permit["request_id"],
+                review_state_root=review_state_root,
+            )
         if audit.status != "ALLOW":
             raise RuntimeError(f"live publication recheck failed: {audit.reason}")
     return permit
 
 
-def recheck_new_effect(store: RadarLedger, permit: dict[str, Any], effect_id: str) -> None:
+def recheck_new_effect(
+    store: RadarLedger,
+    permit: dict[str, Any],
+    effect_id: str,
+    *,
+    review_state_root: Path | None = None,
+) -> None:
     request = permit_request(store, permit)
     expected_head = None
     if request.get("publicationKind") == "PR_UPDATE" and store.publication_action_succeeded(
         str(permit["request_id"]), action="push"
     ):
         expected_head = str(request.get("commitSha") or "")
-    audit = audit_publication_request(
-        store,
-        permit["request_id"],
-        expected_existing_pr_head=expected_head,
-    )
+    audit_kwargs: dict[str, Any] = {"expected_existing_pr_head": expected_head}
+    if review_state_root is not None:
+        audit_kwargs["review_state_root"] = review_state_root
+    audit = audit_publication_request(store, permit["request_id"], **audit_kwargs)
     if audit.status == "ALLOW":
         return
     disposition = "DEFER" if audit.status == "DEFER" else "BLOCK"
@@ -397,6 +410,7 @@ def _ensure_fork_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[
         issue_url=args.issue_url,
         commit_sha=args.commit_sha,
         branch=args.branch,
+        review_state_root=getattr(args, "runtime_root", None),
     )
     publication = permit_publication(permit)
     if args.head_owner.casefold() != publication["headOwner"].casefold():
@@ -486,6 +500,7 @@ def _push_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[str, An
         branch=args.branch,
         action="push",
         live_recheck=False,
+        review_state_root=getattr(args, "runtime_root", None),
     )
     publication = permit_publication(permit)
     publication_request = permit_request(store, permit)
@@ -516,7 +531,16 @@ def _push_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[str, An
     if permit["status"] != "ACTIVE" and state != "reconcile_only":
         raise RuntimeError("expired permit cannot authorize a new push attempt")
     if state == "new":
-        recheck_new_effect(store, permit, effect["effect_id"])
+        review_state_root = getattr(args, "runtime_root", None)
+        if review_state_root is None:
+            recheck_new_effect(store, permit, effect["effect_id"])
+        else:
+            recheck_new_effect(
+                store,
+                permit,
+                effect["effect_id"],
+                review_state_root=review_state_root,
+            )
     if current == args.commit_sha:
         result = {"ok": True, "reconciled": True, "remoteSha": current}
         store.complete_publication_effect(effect["effect_id"], status="SUCCEEDED", result=result)
@@ -573,6 +597,7 @@ def _push_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[str, An
             store,
             permit["request_id"],
             expected_existing_pr_head=expected_head,
+            review_state_root=getattr(args, "runtime_root", None),
         )
         if audit.status != "ALLOW":
             raise RuntimeError(f"live publication retry recheck failed: {audit.reason}")
@@ -630,6 +655,7 @@ def _create_pr_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[st
         branch=args.branch,
         action="create_pr",
         live_recheck=False,
+        review_state_root=getattr(args, "runtime_root", None),
     )
     publication = permit_publication(permit)
     publication_request = permit_request(store, permit)
@@ -669,7 +695,16 @@ def _create_pr_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[st
     if permit["status"] != "ACTIVE" and state != "reconcile_only":
         raise RuntimeError("expired permit cannot authorize a new PR attempt")
     if state == "new":
-        recheck_new_effect(store, permit, effect["effect_id"])
+        review_state_root = getattr(args, "runtime_root", None)
+        if review_state_root is None:
+            recheck_new_effect(store, permit, effect["effect_id"])
+        else:
+            recheck_new_effect(
+                store,
+                permit,
+                effect["effect_id"],
+                review_state_root=review_state_root,
+            )
     if found and str(found.get("state") or "").upper() != "OPEN":
         result = {"ok": False, "reason": "BRANCH_HAS_CLOSED_OR_MERGED_PR", "pr": found}
         store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
@@ -731,7 +766,11 @@ def _create_pr_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[st
         and retryable_pr_creation_failure(effect)
     )
     if retry_create:
-        audit = audit_publication_request(store, str(permit["request_id"]))
+        audit = audit_publication_request(
+            store,
+            str(permit["request_id"]),
+            review_state_root=getattr(args, "runtime_root", None),
+        )
         if audit.status != "ALLOW":
             raise RuntimeError(f"live publication recheck failed: {audit.reason}")
         permit = store.retry_publication_effect_after_noop(
@@ -908,7 +947,7 @@ def main() -> int:
     except PermissionError as exc:
         result = {"ok": False, "blocked": True, "reason": str(exc)}
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result.get("ok") else 2
+    return 0 if result.get("ok") is True else 2
 
 
 if __name__ == "__main__":

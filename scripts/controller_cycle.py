@@ -42,7 +42,7 @@ def main() -> int:
     report_path = args.root.resolve() / "reports" / "latest_controller_cycle.json"
     output = result if args.full else compact_controller_result(result, report_path=report_path)
     print(json.dumps(output, ensure_ascii=False))
-    return 0 if result.get("ok") else 1
+    return 0 if result.get("ok") is True else 1
 
 
 if __name__ == "__main__":

@@ -718,7 +718,7 @@ def main() -> int:
             )
         result["uninstalled"] = args.uninstall
         print(json.dumps(result, sort_keys=True))
-        return 0 if result["ok"] else 1
+        return 0 if result["ok"] is True else 1
     except Exception as exc:
         print(
             json.dumps(

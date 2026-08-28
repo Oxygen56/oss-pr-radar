@@ -65,6 +65,7 @@ def _runtime(tmp_path: Path) -> Path:
     payload = {
         "schemaVersion": "oss_pr_radar_release_v1",
         "commit": "a" * 40,
+        "capabilities": ["durable-independent-review-state-v1"],
         "files": [],
         "policyDigest": hashlib.sha256(b"[]").hexdigest(),
     }

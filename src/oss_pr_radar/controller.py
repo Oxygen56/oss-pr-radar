@@ -130,7 +130,7 @@ def controller_cycle(
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             value = {"ok": False, "error": f"{type(exc).__name__}:{str(exc)[:400]}"}
         stages[name] = value
-        if require_ok and value.get("ok") is False:
+        if require_ok and value.get("ok") is not True:
             failures.append(
                 {
                     "stage": name,
@@ -192,7 +192,7 @@ def controller_cycle(
         allowed_codes={0, 2},
         require_ok=False,
     )
-    remote_scan_active = bool((health.get("effectiveScan") or {}).get("recentActive"))
+    remote_scan_active = (health.get("effectiveScan") or {}).get("recentActive") is True
 
     bridge(
         "orphanReconcile",
@@ -202,7 +202,7 @@ def controller_cycle(
         require_ok=True,
     )
     bridge("terminalFeedbackBeforeSync", "publish-terminal-feedback")
-    if health.get("operationalHealthy") and not remote_scan_active:
+    if health.get("operationalHealthy") is True and not remote_scan_active:
         bridge("queueSync", "sync", timeout=1200)
     else:
         stages["queueSync"] = {
@@ -220,7 +220,7 @@ def controller_cycle(
     bridge("refreshPullRequests", "refresh-prs")
 
     recovery = bridge("contextRecovery", "context-recover")
-    lifecycle_ready = recovery.get("ok") is not False and not recovery.get("errors")
+    lifecycle_ready = recovery.get("ok") is True and not recovery.get("errors")
     if lifecycle_ready:
         bridge("resultIngestion", "ingest-results")
         independent_review = bridge(
@@ -379,7 +379,7 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         unhealthy = [
             worker
             for worker in (local_status.get("workers") or [])
-            if isinstance(worker, dict) and worker.get("ok") is False
+            if isinstance(worker, dict) and worker.get("ok") is not True
         ]
         blockers.append(
             {
@@ -402,7 +402,7 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         unhealthy_lanes = [
             lane
             for lane in (event_lane_health.get("lanes") or {}).values()
-            if isinstance(lane, dict) and lane.get("healthy") is False
+            if isinstance(lane, dict) and lane.get("healthy") is not True
         ]
         blockers.append(
             {
@@ -423,10 +423,10 @@ def _compact_summary(stages: dict[str, dict[str, Any]]) -> dict[str, Any]:
     result_ingestion = stages.get("resultIngestion") or {}
     post_review_ingestion = stages.get("resultIngestionAfterReview") or {}
     return {
-        "localAgentHealthy": bool((stages.get("finalLocalAgentStatus") or {}).get("ok")),
-        "eventLanesHealthy": bool((stages.get("finalEventLaneHealth") or {}).get("healthy")),
-        "operationalHealthy": bool(health.get("operationalHealthy")),
-        "githubNaturalScheduleHealthy": bool(health.get("githubNaturalScheduleHealthy")),
+        "localAgentHealthy": (stages.get("finalLocalAgentStatus") or {}).get("ok") is True,
+        "eventLanesHealthy": (stages.get("finalEventLaneHealth") or {}).get("healthy") is True,
+        "operationalHealthy": health.get("operationalHealthy") is True,
+        "githubNaturalScheduleHealthy": health.get("githubNaturalScheduleHealthy") is True,
         "drainAction": drain.get("action"),
         "drainKey": drain.get("key"),
         "decisionSessionsCreated": len(decision_sessions.get("created") or []),

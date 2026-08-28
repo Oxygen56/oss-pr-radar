@@ -1,7 +1,10 @@
+import fcntl
 import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 import oss_pr_radar.independent_review as module
 from oss_pr_radar.metrics import QUALITY_FIELDS
@@ -172,6 +175,362 @@ def test_review_once_does_not_repeat_unchanged_hold(tmp_path, monkeypatch):
     assert outcome["skipped"] == [{"key": "owner/repo#1", "reason": "REVIEW_HOLD_ALREADY_APPLIED"}]
 
 
+def test_review_receipt_is_reused_across_code_releases(tmp_path, monkeypatch):
+    release_a, _worktree, result_path, candidate, _base, head = prepared_task(tmp_path)
+    release_b = tmp_path / "release-b"
+    schema_b = release_b / "schemas" / "independent_review.schema.json"
+    schema_b.parent.mkdir(parents=True)
+    schema_b.write_text("{}", encoding="utf-8")
+    state_root = tmp_path / "runtime"
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+    first = module.review_once(
+        release_a,
+        release_a / "ledger.sqlite3",
+        state_root=state_root,
+        reviewer=lambda *_args: {
+            "verdict": "PASS",
+            "summary": "The exact committed diff has no blocking finding.",
+            "findings": [],
+            "evidence": ["The implementation and regression test are narrowly scoped."],
+        },
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+
+    assert first["updated"][0]["commitSha"] == head
+    assert module.controller_review_passed(release_b, value, state_root=state_root) is True
+
+    second = module.review_once(
+        release_b,
+        release_b / "ledger.sqlite3",
+        state_root=state_root,
+        reviewer=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("the durable receipt must be reused by the next code release")
+        ),
+    )
+
+    assert second["ok"] is True
+    assert second["updated"] == []
+    assert second["skipped"] == [{"key": "owner/repo#1", "reason": "REVIEW_PASS_ALREADY_APPLIED"}]
+    assert list((state_root / "state" / "independent_reviews").glob("*.json"))
+    assert not (release_a / "state" / "independent_reviews").exists()
+    assert not (release_b / "state" / "independent_reviews").exists()
+
+
+def test_review_failures_and_cursor_are_shared_across_code_releases(tmp_path, monkeypatch):
+    release_a, _worktree, result_path, candidate, _base, _head = prepared_task(tmp_path)
+    release_b = tmp_path / "release-b"
+    schema_b = release_b / "schemas" / "independent_review.schema.json"
+    schema_b.parent.mkdir(parents=True)
+    schema_b.write_text("{}", encoding="utf-8")
+    state_root = tmp_path / "runtime"
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+
+    def failing_reviewer(*_args):
+        raise RuntimeError("review transport failed")
+
+    first = module.review_once(
+        release_a,
+        release_a / "ledger.sqlite3",
+        state_root=state_root,
+        reviewer=failing_reviewer,
+    )
+    second = module.review_once(
+        release_b,
+        release_b / "ledger.sqlite3",
+        state_root=state_root,
+        reviewer=failing_reviewer,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    cursor = json.loads(
+        (state_root / "state" / "independent_review_cursor.json").read_text(encoding="utf-8")
+    )
+
+    assert first["errors"][0]["key"] == "owner/repo#1"
+    assert second["errors"][0]["key"] == "owner/repo#1"
+    assert cursor["key"] == "owner/repo#1"
+    assert cursor["attempts"] == 2
+    assert (
+        module._review_failure_attempts(
+            state_root,
+            candidate=candidate,
+            source_digest=module._source_digest(value),
+            commit_sha=str(value["commitSha"]),
+        )
+        == 2
+    )
+    assert not (release_a / "state" / "independent_review_cursor.json").exists()
+    assert not (release_b / "state" / "independent_review_cursor.json").exists()
+
+
+def test_review_lock_is_shared_across_code_releases(tmp_path):
+    release_a, _worktree, _result_path, _candidate, _base, _head = prepared_task(tmp_path)
+    release_b = tmp_path / "release-b"
+    schema_b = release_b / "schemas" / "independent_review.schema.json"
+    schema_b.parent.mkdir(parents=True)
+    schema_b.write_text("{}", encoding="utf-8")
+    state_root = tmp_path / "runtime"
+    lock_path = state_root / "state" / "independent_review.lock"
+    lock_path.parent.mkdir(parents=True)
+
+    with lock_path.open("a+", encoding="utf-8") as held_lock:
+        module.fcntl.flock(held_lock.fileno(), module.fcntl.LOCK_EX | module.fcntl.LOCK_NB)
+        outcome = module.review_once(
+            release_b,
+            release_b / "ledger.sqlite3",
+            state_root=state_root,
+            reviewer=lambda *_args: (_ for _ in ()).throw(
+                AssertionError("a shared lock must prevent a second review")
+            ),
+        )
+
+    assert outcome == {"ok": True, "busy": True, "updated": [], "skipped": []}
+    assert lock_path.is_file()
+    assert not (release_a / "state" / "independent_review.lock").exists()
+    assert not (release_b / "state" / "independent_review.lock").exists()
+
+
+def test_migrate_legacy_review_receipts_selects_latest_valid_identity(tmp_path):
+    runtime_root = tmp_path / "runtime"
+    key = "owner/repo#1"
+    commit_sha = "a" * 40
+    source_digest = "b" * 64
+
+    def write_receipt(release: str, *, reviewed_at: str, verdict: str) -> Path:
+        state_root = runtime_root / "releases" / release
+        path = module._receipt_path(
+            state_root,
+            key=key,
+            commit_sha=commit_sha,
+            source_digest=source_digest,
+        )
+        path.parent.mkdir(parents=True)
+        review = {
+            "schemaVersion": "independent-review-v1",
+            "reviewedAt": reviewed_at,
+            "commitSha": commit_sha,
+            "baseRevision": "c" * 40,
+            "sourceDigest": source_digest,
+            "reviewMode": "codex_exec_ephemeral_read_only",
+            "verdict": verdict,
+            "summary": f"The {release} review is structurally valid.",
+            "findings": [],
+            "evidence": [f"receipt from {release}"],
+        }
+        path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "independent-review-v1",
+                    "key": key,
+                    "commitSha": commit_sha,
+                    "sourceDigest": source_digest,
+                    "review": review,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    older = write_receipt("release-a", reviewed_at="2026-08-27T00:00:00Z", verdict="PASS")
+    latest = write_receipt("release-b", reviewed_at="2026-08-28T00:00:00Z", verdict="HOLD")
+    invalid = older.parent / "wrong-name.json"
+    invalid.write_text(older.read_text(encoding="utf-8"), encoding="utf-8")
+
+    first = module.migrate_legacy_review_state(runtime_root)
+    target = runtime_root / "state" / "independent_reviews" / latest.name
+    migrated = json.loads(target.read_text(encoding="utf-8"))
+
+    assert first == {
+        "receiptsScanned": 3,
+        "receiptsInvalid": 1,
+        "receiptsMigrated": 1,
+        "failuresScanned": 0,
+        "failuresInvalid": 0,
+        "failuresMigrated": 0,
+        "cursorsScanned": 0,
+        "cursorsInvalid": 0,
+        "cursorsMigrated": 0,
+    }
+    assert migrated["review"]["reviewedAt"] == "2026-08-28T00:00:00Z"
+    assert migrated["review"]["verdict"] == "HOLD"
+
+    second = module.migrate_legacy_review_state(runtime_root)
+
+    assert second["receiptsMigrated"] == 0
+    assert json.loads(target.read_text(encoding="utf-8")) == migrated
+
+
+def test_migrate_legacy_failures_and_cursor_accumulates_once_under_durable_lock(tmp_path):
+    runtime_root = tmp_path / "runtime"
+    key = "owner/repo#1"
+    commit_sha = "a" * 40
+    source_digest = "b" * 64
+
+    for release, attempts, failed_at, error in (
+        ("release-a", 3, "2026-08-27T00:00:00Z", "RuntimeError:older failure"),
+        ("release-b", 1, "2026-08-28T00:00:00Z", "RuntimeError:latest failure"),
+    ):
+        state_root = runtime_root / "releases" / release
+        failure_path = module._review_failure_path(
+            state_root,
+            candidate={"key": key},
+            source_digest=source_digest,
+            commit_sha=commit_sha,
+        )
+        failure_path.parent.mkdir(parents=True)
+        failure_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "independent-review-failure-v1",
+                    "key": key,
+                    "sourceDigest": source_digest,
+                    "commitSha": commit_sha,
+                    "attempts": attempts,
+                    "failedAt": failed_at,
+                    "error": error,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (state_root / "state" / "independent_review.lock").write_text(
+            "legacy lock must not migrate",
+            encoding="utf-8",
+        )
+
+    cursor_a = runtime_root / "releases" / "release-a" / "state"
+    (cursor_a / "independent_review_cursor.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": "independent-review-cursor-v1",
+                "key": key,
+                "sourceDigest": source_digest,
+                "commitSha": commit_sha,
+                "attempts": 3,
+                "failedAt": "2026-08-27T00:00:00Z",
+                "error": "RuntimeError:older failure",
+            }
+        ),
+        encoding="utf-8",
+    )
+    cursor_b = runtime_root / "releases" / "release-b" / "state"
+    (cursor_b / "independent_review_cursor.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": "independent-review-cursor-v1",
+                "key": "owner/repo#2",
+                "sourceDigest": "d" * 64,
+                "commitSha": "e" * 40,
+                "attempts": 0,
+                "advancedAt": "2026-08-28T00:01:00Z",
+                "reason": "RESULT_CHANGED_DURING_REVIEW",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    first = module.migrate_legacy_review_state(runtime_root)
+    target_failure = module._review_failure_path(
+        runtime_root,
+        candidate={"key": key},
+        source_digest=source_digest,
+        commit_sha=commit_sha,
+    )
+    migrated_failure = json.loads(target_failure.read_text(encoding="utf-8"))
+    migrated_cursor = json.loads(
+        (runtime_root / "state" / "independent_review_cursor.json").read_text(encoding="utf-8")
+    )
+
+    assert first["failuresScanned"] == 2
+    assert first["failuresInvalid"] == 0
+    assert first["failuresMigrated"] == 1
+    assert first["cursorsScanned"] == 2
+    assert first["cursorsInvalid"] == 0
+    assert first["cursorsMigrated"] == 1
+    assert migrated_failure["attempts"] == 4
+    assert migrated_failure["legacyAttemptsImported"] == 4
+    assert migrated_failure["failedAt"] == "2026-08-28T00:00:00Z"
+    assert migrated_failure["error"] == "RuntimeError:latest failure"
+    assert migrated_cursor["key"] == "owner/repo#2"
+    assert migrated_cursor["reason"] == "RESULT_CHANGED_DURING_REVIEW"
+    durable_lock = runtime_root / "state" / "independent_review.lock"
+    assert durable_lock.is_file()
+    assert durable_lock.read_text(encoding="utf-8") == ""
+
+    second = module.migrate_legacy_review_state(runtime_root)
+
+    assert second["failuresMigrated"] == 0
+    assert second["cursorsMigrated"] == 0
+
+    module._record_review_failure(
+        runtime_root,
+        candidate={"key": key},
+        source_digest=source_digest,
+        commit_sha=commit_sha,
+        error=RuntimeError("durable failure"),
+    )
+    after_durable_attempt = json.loads(target_failure.read_text(encoding="utf-8"))
+    assert after_durable_attempt["attempts"] == 5
+    assert after_durable_attempt["legacyAttemptsImported"] == 4
+
+    third = module.migrate_legacy_review_state(runtime_root)
+
+    assert third["failuresMigrated"] == 0
+    assert json.loads(target_failure.read_text(encoding="utf-8"))["attempts"] == 5
+
+    rollback_failure = module._review_failure_path(
+        runtime_root / "releases" / "release-b",
+        candidate={"key": key},
+        source_digest=source_digest,
+        commit_sha=commit_sha,
+    )
+    rollback_value = json.loads(rollback_failure.read_text(encoding="utf-8"))
+    rollback_value |= {
+        "attempts": 2,
+        "failedAt": "2026-08-29T00:00:00Z",
+        "error": "RuntimeError:rollback failure",
+    }
+    rollback_failure.write_text(json.dumps(rollback_value), encoding="utf-8")
+
+    fourth = module.migrate_legacy_review_state(runtime_root)
+    after_rollback = json.loads(target_failure.read_text(encoding="utf-8"))
+
+    assert fourth["failuresMigrated"] == 1
+    assert after_rollback["attempts"] == 6
+    assert after_rollback["legacyAttemptsImported"] == 5
+    assert after_rollback["error"] == "RuntimeError:rollback failure"
+
+
+def test_migrate_legacy_review_state_refuses_concurrent_reviewer(tmp_path):
+    runtime_root = tmp_path / "runtime"
+    lock_path = runtime_root / "state" / "independent_review.lock"
+    lock_path.parent.mkdir(parents=True)
+
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(RuntimeError, match="independent review is active"):
+            module.migrate_legacy_review_state(runtime_root)
+
+
+def test_migrate_legacy_review_state_refuses_active_legacy_reviewer(tmp_path):
+    runtime_root = tmp_path / "runtime"
+    legacy_lock = runtime_root / "releases" / "release-a" / "state" / "independent_review.lock"
+    legacy_lock.parent.mkdir(parents=True)
+
+    with legacy_lock.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(RuntimeError, match="legacy independent review is active"):
+            module.migrate_legacy_review_state(runtime_root)
+
+
 def test_review_waits_for_child_owned_validation(tmp_path, monkeypatch):
     control, _worktree, result_path, candidate, _base, _head = prepared_task(tmp_path)
     value = json.loads(result_path.read_text(encoding="utf-8"))
@@ -307,18 +666,45 @@ def test_active_task_rejects_review_result_from_wrong_context(tmp_path, monkeypa
     ]
 
 
-def test_review_discards_verdict_when_result_changes_during_review(tmp_path, monkeypatch):
-    control, _worktree, result_path, candidate, _base, _head = prepared_task(tmp_path)
+def test_review_discards_changed_result_and_rotates_to_next_candidate(tmp_path, monkeypatch):
+    control, worktree_one, result_path, candidate_one, _base, _head = prepared_task(
+        tmp_path / "one"
+    )
+    (
+        _control_two,
+        worktree_two,
+        result_two,
+        candidate_two,
+        _base_two,
+        head_two,
+    ) = prepared_task(tmp_path / "two")
+    second_value = json.loads(result_two.read_text(encoding="utf-8"))
+    second_value.update(
+        {
+            "key": "owner/repo#2",
+            "issueUrl": "https://github.com/owner/repo/issues/2",
+            "threadId": "thread-2",
+        }
+    )
+    result_two.write_text(json.dumps(second_value), encoding="utf-8")
+    candidate_two.update(
+        {
+            "key": second_value["key"],
+            "issueUrl": second_value["issueUrl"],
+            "threadId": second_value["threadId"],
+        }
+    )
 
     class FakeLedger:
         def task_result_candidates(self):
-            return [candidate]
+            return [candidate_one, candidate_two]
 
     monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
 
-    def reviewer(*_args):
+    def changing_reviewer(cwd, *_args):
+        assert cwd == worktree_one
         latest = json.loads(result_path.read_text(encoding="utf-8"))
-        latest["quality"]["relevant_tests_green"] = False
+        latest["evidence"]["summary"] = "validation evidence changed during review"
         result_path.write_text(json.dumps(latest), encoding="utf-8")
         return {
             "verdict": "PASS",
@@ -327,13 +713,43 @@ def test_review_discards_verdict_when_result_changes_during_review(tmp_path, mon
             "evidence": ["This verdict must be discarded."],
         }
 
-    outcome = module.review_once(control, control / "ledger.sqlite3", reviewer=reviewer)
+    outcome = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=changing_reviewer,
+    )
     latest = json.loads(result_path.read_text(encoding="utf-8"))
+    cursor = json.loads(
+        (control / "state" / "independent_review_cursor.json").read_text(encoding="utf-8")
+    )
 
     assert outcome["updated"] == []
     assert outcome["skipped"] == [{"key": "owner/repo#1", "reason": "RESULT_CHANGED_DURING_REVIEW"}]
-    assert latest["quality"]["relevant_tests_green"] is False
     assert module.controller_review_passed(control, latest) is False
+    assert cursor["key"] == "owner/repo#1"
+    assert cursor["attempts"] == 0
+    assert cursor["reason"] == "RESULT_CHANGED_DURING_REVIEW"
+
+    observed = []
+
+    def passing_reviewer(cwd, *_args):
+        observed.append(cwd)
+        return {
+            "verdict": "PASS",
+            "summary": "The next candidate has no blocking finding.",
+            "findings": [],
+            "evidence": ["The changed candidate did not monopolize the queue."],
+        }
+
+    second = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=passing_reviewer,
+    )
+
+    assert observed == [worktree_two]
+    assert second["updated"][0]["key"] == "owner/repo#2"
+    assert second["updated"][0]["commitSha"] == head_two
 
 
 def test_reviewer_failure_rotates_to_next_candidate(tmp_path, monkeypatch):

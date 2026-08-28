@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -11,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from oss_pr_radar import independent_review as independent_review_module
 from oss_pr_radar import release_binding as release_binding_module
 from oss_pr_radar import runtime as runtime_module
 from oss_pr_radar.managed_lifecycle import ManagedLedger
@@ -106,6 +108,59 @@ def test_deploy_records_release_identity_without_overwriting_worker_health(tmp_p
     }
 
 
+def test_deploy_migrates_release_local_review_failures_before_activation(tmp_path):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    key = "owner/repo#1"
+    commit_sha = "a" * 40
+    source_digest = "b" * 64
+    legacy_failure = independent_review_module._review_failure_path(
+        Path(first["releasePath"]),
+        candidate={"key": key},
+        source_digest=source_digest,
+        commit_sha=commit_sha,
+    )
+    legacy_failure.parent.mkdir(parents=True)
+    legacy_failure.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "independent-review-failure-v1",
+                "key": key,
+                "sourceDigest": source_digest,
+                "commitSha": commit_sha,
+                "attempts": 2,
+                "failedAt": "2026-08-28T00:00:00Z",
+                "error": "RuntimeError:legacy failure",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
+    )
+
+    MODULE.deploy(source, target)
+
+    durable_failure = independent_review_module._review_failure_path(
+        target,
+        candidate={"key": key},
+        source_digest=source_digest,
+        commit_sha=commit_sha,
+    )
+    migrated = json.loads(durable_failure.read_text(encoding="utf-8"))
+    assert migrated["attempts"] == 2
+    assert migrated["legacyAttemptsImported"] == 2
+
+
 def test_deploy_secures_existing_runtime_directories_and_private_files(tmp_path):
     source, target = make_repositories(tmp_path)
     (target / "releases").mkdir()
@@ -154,6 +209,45 @@ def test_release_activation_write_failure_restores_pointer_and_health(tmp_path, 
     assert (target / "current-release").resolve().name == second["releaseId"]
     assert state_path.read_bytes() == before_state
     assert not runtime_module.release_activation_journal_path(target).exists()
+
+
+def test_release_activation_rejects_pre_durable_review_state_release(tmp_path):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
+    )
+    second = MODULE.deploy(source, target)
+    first_release = Path(first["releasePath"])
+    manifest = json.loads((first_release / MODULE.MANIFEST).read_text(encoding="utf-8"))
+    payload = {
+        key: value
+        for key, value in manifest.items()
+        if key not in {"capabilities", "manifestSha256", "releaseId"}
+    }
+    digest = hashlib.sha256(MODULE._canonical(payload)).hexdigest()
+    legacy_id = f"{str(payload['commit'])[:12]}-{digest[:12]}"
+    legacy_release = first_release.with_name(legacy_id)
+    first_release.rename(legacy_release)
+    legacy_manifest = payload | {"manifestSha256": digest, "releaseId": legacy_id}
+    (legacy_release / MODULE.MANIFEST).write_text(
+        json.dumps(legacy_manifest, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="predates durable independent-review state"):
+        MODULE.activate_release(target, legacy_id)
+
+    assert (target / MODULE.RELEASE_POINTER).resolve().name == second["releaseId"]
 
 
 def test_interrupted_release_activation_recovers_to_previous_pair(tmp_path):

@@ -688,6 +688,7 @@ def test_duplicate_task_reconcile_archives_only_exact_renamed_duplicates(monkeyp
 
 def test_event_drain_creates_exactly_one_new_issue_task(monkeypatch, tmp_path):
     calls = []
+    review_state_roots = []
     monkeypatch.setattr(
         MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
     )
@@ -699,7 +700,9 @@ def test_event_drain_creates_exactly_one_new_issue_task(monkeypatch, tmp_path):
     monkeypatch.setattr(
         MODULE,
         "validation_followup_list",
-        lambda _args: {"candidates": [], "unresolved": []},
+        lambda args: (
+            review_state_roots.append(args.runtime_root) or {"candidates": [], "unresolved": []}
+        ),
     )
     monkeypatch.setattr(
         MODULE,
@@ -760,6 +763,7 @@ def test_event_drain_creates_exactly_one_new_issue_task(monkeypatch, tmp_path):
         ("creation", "intent-1"),
         ("create", "token-1", tmp_path),
     ]
+    assert review_state_roots == [tmp_path]
 
 
 def test_event_drain_reports_state_drift_as_scanner_recheck_not_terminal(monkeypatch, tmp_path):
@@ -1187,6 +1191,39 @@ def test_event_drain_restores_an_archived_pr_task_before_followup(monkeypatch, t
 
     assert result["action"] == "pr_followup_dispatched"
     assert restored == ["thread-1"]
+
+
+def test_event_drain_never_promotes_a_non_boolean_delivery_success(monkeypatch, tmp_path):
+    candidate = {"key": "a/b#1", "threadId": "thread-1", "wakeDigest": "wake-1"}
+    monkeypatch.setattr(
+        MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_list",
+        lambda _args: {"candidates": [candidate], "restoreRequired": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_reserve",
+        lambda _args: {"ok": True, "deferred": False},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_deliver",
+        lambda _args: {"ok": "true", "threadId": "thread-1"},
+    )
+
+    result = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            project_id="github-project",
+            owner="event-drain",
+        )
+    )
+
+    assert result["action"] == "pr_followup_dispatched"
+    assert result["ok"] is False
 
 
 def test_event_drain_treats_validation_wip_race_as_a_normal_deferral(monkeypatch, tmp_path):
@@ -5454,6 +5491,7 @@ def test_independent_review_missing_schema_is_nonfatal(monkeypatch, tmp_path):
 
 
 def test_new_issue_priority_includes_pending_independent_review(monkeypatch, tmp_path):
+    review_state_roots = []
     monkeypatch.setattr(
         MODULE,
         "pr_followup_list",
@@ -5466,11 +5504,14 @@ def test_new_issue_priority_includes_pending_independent_review(monkeypatch, tmp
     monkeypatch.setattr(
         MODULE,
         "validation_followup_list",
-        lambda _args: {
-            "candidates": [],
-            "controllerReviewPending": [{"key": "a/b#1"}],
-            "unresolved": [],
-        },
+        lambda args: (
+            review_state_roots.append(args.runtime_root)
+            or {
+                "candidates": [],
+                "controllerReviewPending": [{"key": "a/b#1"}],
+                "unresolved": [],
+            }
+        ),
     )
     monkeypatch.setattr(
         MODULE,
@@ -5479,11 +5520,12 @@ def test_new_issue_priority_includes_pending_independent_review(monkeypatch, tmp
     )
 
     result = MODULE._higher_priority_existing_work(
-        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"),
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", runtime_root=tmp_path / "runtime"),
         intent_key="a/b#2",
     )
 
     assert result == [{"kind": "independent_review", "key": "a/b#1"}]
+    assert review_state_roots == [tmp_path / "runtime"]
 
 
 def test_new_issue_claim_defers_to_existing_validation_work(monkeypatch, tmp_path):
@@ -9324,6 +9366,114 @@ def test_negative_task_turn_receipt_is_retryable_after_worker_exit(monkeypatch, 
         "retryReason": "NEGATIVE_RECEIPT_NO_TURN_STARTED",
         "deliveryError": "RuntimeError:app server could not resume the task",
     }
+
+
+@pytest.mark.parametrize(
+    ("receipt_value", "expected_reason"),
+    [
+        ({"ok": None, "turnStarted": False}, "INVALID_TASK_TURN_RECEIPT"),
+        ({"ok": "true", "turnStarted": False}, "INVALID_TASK_TURN_RECEIPT"),
+        ({"ok": 1, "turnStarted": False}, "INVALID_TASK_TURN_RECEIPT"),
+        ({"ok": True}, "INVALID_TASK_TURN_RECEIPT"),
+        (
+            {
+                "ok": False,
+                "turnStarted": False,
+                "turnId": "turn-1",
+                "error": "contradictory receipt",
+            },
+            "INVALID_TASK_TURN_RECEIPT",
+        ),
+        (
+            {
+                "ok": False,
+                "turnStarted": False,
+                "turnId": None,
+                "turnStatus": "completed",
+                "error": "contradictory receipt",
+            },
+            "INVALID_TASK_TURN_RECEIPT",
+        ),
+        (
+            {
+                "ok": "true",
+                "turnStarted": False,
+                "turnId": None,
+                "error": "DESKTOP_ACTIVE_WRITER: malformed",
+            },
+            "INVALID_TASK_TURN_RECEIPT",
+        ),
+        (
+            {
+                "ok": False,
+                "turnStarted": True,
+                "turnId": "turn-1",
+                "error": "DESKTOP_ACTIVE_WRITER: turn already started",
+            },
+            "TURN_STARTED_BEFORE_LEDGER_COMMIT",
+        ),
+    ],
+)
+def test_task_turn_delivery_never_accepts_a_malformed_or_contradictory_receipt(
+    monkeypatch, tmp_path, receipt_value, expected_reason
+):
+    state = tmp_path / "state"
+    receipt_root = state / "task_turn_receipts"
+    receipt_root.mkdir(parents=True)
+    delivery_token = "a" * 64
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="pr-followup",
+        thread_id="thread-1",
+        delivery_token=delivery_token,
+    )
+    receipt_path = receipt_root / f"{receipt_key}.json"
+    receipt_path.write_text(
+        json.dumps(receipt_value),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: object())
+    monkeypatch.setattr(
+        MODULE,
+        "_task_turn_reservation",
+        lambda *_args, **_kwargs: {"reservedAt": "2026-08-28T00:00:00Z"},
+    )
+    monkeypatch.setattr(MODULE, "_validated_task_turn_thread", lambda _candidate: (tmp_path, None))
+    monkeypatch.setattr(MODULE, "_task_turn_prompt", lambda *_args: "prompt")
+    monkeypatch.setattr(
+        MODULE,
+        "thread_prompt_materialized_after",
+        lambda *_args: (True, False),
+    )
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail(
+            "an invalid receipt must not launch a duplicate turn"
+        ),
+    )
+
+    result = MODULE.task_turn_deliver(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            delivery_kind="pr-followup",
+            delivery_token=delivery_token,
+            thread_id="thread-1",
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["requiresReconciliation"] is True
+    assert result["reason"] == expected_reason
+    assert receipt_path.is_file()
+    assert (
+        MODULE.retryable_negative_task_turn_receipt(
+            delivery_kind="pr-followup",
+            thread_id="thread-1",
+            delivery_token=delivery_token,
+        )
+        is None
+    )
 
 
 def test_recovery_reserve_rephrases_a_benign_policy_false_positive(monkeypatch, tmp_path):

@@ -1,4 +1,4 @@
-"""Controller-owned, ephemeral independent review for committed task results."""
+"""Controller-owned independent review for committed task results."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ PUBLISHED_STAGES = {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "MERGED", "CLO
 BLOCKING_SEVERITIES = {"P0", "P1", "P2"}
 MAX_REVIEW_OUTPUT_BYTES = 128 * 1024
 MAX_REVIEW_ATTEMPTS = 3
+LEGACY_ATTEMPTS_IMPORTED_FIELD = "legacyAttemptsImported"
 REVIEW_PREREQUISITE_FIELDS = tuple(
     field for field in QUALITY_FIELDS if field != "independent_review_passed"
 )
@@ -171,12 +173,42 @@ def _record_review_failure(
         "failedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "error": f"{type(error).__name__}:{str(error)[:500]}",
     }
+    if (
+        isinstance(prior, dict)
+        and type(prior.get(LEGACY_ATTEMPTS_IMPORTED_FIELD)) is int
+        and prior[LEGACY_ATTEMPTS_IMPORTED_FIELD] >= 0
+    ):
+        record[LEGACY_ATTEMPTS_IMPORTED_FIELD] = prior[LEGACY_ATTEMPTS_IMPORTED_FIELD]
     atomic_write_json(failure_path, record)
     atomic_write_json(
         _review_cursor_path(root),
         record
         | {
             "schemaVersion": "independent-review-cursor-v1",
+        },
+    )
+
+
+def _advance_review_cursor(
+    root: Path,
+    *,
+    candidate: dict[str, Any],
+    source_digest: str,
+    commit_sha: str,
+    reason: str,
+) -> None:
+    """Advance fairness without counting a changed result as a review failure."""
+
+    atomic_write_json(
+        _review_cursor_path(root),
+        {
+            "schemaVersion": "independent-review-cursor-v1",
+            "key": str(candidate.get("key") or ""),
+            "sourceDigest": source_digest,
+            "commitSha": commit_sha,
+            "attempts": 0,
+            "advancedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "reason": reason,
         },
     )
 
@@ -260,16 +292,26 @@ def _load_review_receipt(root: Path, value: dict[str, Any]) -> dict[str, Any] | 
     return review
 
 
-def controller_review_result(root: Path, value: dict[str, Any]) -> dict[str, Any] | None:
+def controller_review_result(
+    root: Path,
+    value: dict[str, Any],
+    *,
+    state_root: Path | None = None,
+) -> dict[str, Any] | None:
     """Return the controller-private review bound to this exact result and checkout."""
 
-    return _load_review_receipt(root.resolve(), value)
+    return _load_review_receipt((state_root or root).resolve(), value)
 
 
-def controller_review_passed(root: Path, value: dict[str, Any]) -> bool:
+def controller_review_passed(
+    root: Path,
+    value: dict[str, Any],
+    *,
+    state_root: Path | None = None,
+) -> bool:
     """Return true only for a controller-private PASS receipt bound to this result."""
 
-    review = controller_review_result(root, value)
+    review = controller_review_result(root, value, state_root=state_root)
     return bool(review and review.get("verdict") == "PASS")
 
 
@@ -453,6 +495,320 @@ def _normalized_review(value: dict[str, Any]) -> dict[str, Any]:
     return {"verdict": verdict, "summary": summary, "findings": findings, "evidence": evidence}
 
 
+def _state_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _safe_state_object(path: Path) -> dict[str, Any] | None:
+    try:
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.stat().st_mode & 0o022
+            or path.stat().st_size > MAX_REVIEW_OUTPUT_BYTES * 2
+        ):
+            return None
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _validated_legacy_receipt(path: Path) -> tuple[dict[str, Any], datetime] | None:
+    receipt = _safe_state_object(path)
+    if receipt is None or receipt.get("schemaVersion") != REVIEW_SCHEMA:
+        return None
+    key = receipt.get("key")
+    commit_sha = receipt.get("commitSha")
+    source_digest = receipt.get("sourceDigest")
+    if (
+        not isinstance(key, str)
+        or not key
+        or key != key.strip()
+        or not isinstance(commit_sha, str)
+        or re.fullmatch(r"[0-9a-f]{40}", commit_sha) is None
+        or not isinstance(source_digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", source_digest) is None
+        or path.name
+        != _receipt_path(
+            Path("."), key=key, commit_sha=commit_sha, source_digest=source_digest
+        ).name
+    ):
+        return None
+    review = receipt.get("review")
+    if not isinstance(review, dict):
+        return None
+    if (
+        review.get("schemaVersion") != REVIEW_SCHEMA
+        or review.get("commitSha") != commit_sha
+        or review.get("sourceDigest") != source_digest
+        or review.get("reviewMode") != "codex_exec_ephemeral_read_only"
+    ):
+        return None
+    reviewed_at = _state_timestamp(review.get("reviewedAt"))
+    if reviewed_at is None:
+        return None
+    try:
+        normalized = _normalized_review(review)
+    except RuntimeError:
+        return None
+    if any(review.get(name) != normalized[name] for name in normalized):
+        return None
+    return receipt, reviewed_at
+
+
+def _validated_legacy_failure(path: Path) -> tuple[dict[str, Any], datetime] | None:
+    failure = _safe_state_object(path)
+    if failure is None or failure.get("schemaVersion") != "independent-review-failure-v1":
+        return None
+    key = failure.get("key")
+    commit_sha = failure.get("commitSha")
+    source_digest = failure.get("sourceDigest")
+    attempts = failure.get("attempts")
+    failed_at = _state_timestamp(failure.get("failedAt"))
+    error = failure.get("error")
+    legacy_attempts_imported = failure.get(LEGACY_ATTEMPTS_IMPORTED_FIELD)
+    if (
+        not isinstance(key, str)
+        or not key
+        or key != key.strip()
+        or not isinstance(commit_sha, str)
+        or re.fullmatch(r"[0-9a-f]{40}", commit_sha) is None
+        or not isinstance(source_digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", source_digest) is None
+        or type(attempts) is not int
+        or attempts < 1
+        or failed_at is None
+        or not isinstance(error, str)
+        or not error
+        or len(error) > 600
+        or (
+            legacy_attempts_imported is not None
+            and (
+                type(legacy_attempts_imported) is not int
+                or legacy_attempts_imported < 0
+                or legacy_attempts_imported > attempts
+            )
+        )
+        or path.name
+        != _review_failure_path(
+            Path("."),
+            candidate={"key": key},
+            source_digest=source_digest,
+            commit_sha=commit_sha,
+        ).name
+    ):
+        return None
+    return failure, failed_at
+
+
+def _validated_legacy_cursor(path: Path) -> tuple[dict[str, Any], datetime] | None:
+    cursor = _safe_state_object(path)
+    if cursor is None or cursor.get("schemaVersion") != "independent-review-cursor-v1":
+        return None
+    key = cursor.get("key")
+    commit_sha = cursor.get("commitSha")
+    source_digest = cursor.get("sourceDigest")
+    attempts = cursor.get("attempts")
+    timestamps = [
+        timestamp
+        for timestamp in (
+            _state_timestamp(cursor.get("failedAt")),
+            _state_timestamp(cursor.get("advancedAt")),
+        )
+        if timestamp is not None
+    ]
+    if (
+        path.name != "independent_review_cursor.json"
+        or not isinstance(key, str)
+        or not key
+        or key != key.strip()
+        or not isinstance(commit_sha, str)
+        or re.fullmatch(r"[0-9a-f]{40}", commit_sha) is None
+        or not isinstance(source_digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", source_digest) is None
+        or type(attempts) is not int
+        or attempts < 0
+        or not timestamps
+    ):
+        return None
+    return cursor, max(timestamps)
+
+
+def _legacy_release_state_dirs(runtime_root: Path) -> list[Path]:
+    releases = runtime_root / "releases"
+    if not releases.exists():
+        return []
+    if releases.is_symlink() or not releases.is_dir():
+        raise RuntimeError("independent review legacy releases directory is unsafe")
+    state_dirs: list[Path] = []
+    for release in sorted(releases.iterdir()):
+        if release.is_symlink() or not release.is_dir():
+            continue
+        state = release / "state"
+        if state.is_symlink() or not state.is_dir():
+            continue
+        state_dirs.append(state)
+    return state_dirs
+
+
+def _write_migrated_state(path: Path, value: dict[str, Any], state_dir: Path) -> None:
+    for directory in (state_dir, path.parent):
+        if directory.exists() and (directory.is_symlink() or not directory.is_dir()):
+            raise RuntimeError("independent review durable state directory is unsafe")
+    atomic_write_json(path, value)
+
+
+def _migrate_legacy_review_state_unlocked(
+    runtime_root: Path, *, legacy_states: list[Path] | None = None
+) -> dict[str, int]:
+    state_dir = runtime_root / "state"
+    legacy_states = (
+        legacy_states if legacy_states is not None else _legacy_release_state_dirs(runtime_root)
+    )
+    stats = {
+        "receiptsScanned": 0,
+        "receiptsInvalid": 0,
+        "receiptsMigrated": 0,
+        "failuresScanned": 0,
+        "failuresInvalid": 0,
+        "failuresMigrated": 0,
+        "cursorsScanned": 0,
+        "cursorsInvalid": 0,
+        "cursorsMigrated": 0,
+    }
+
+    receipts: dict[str, tuple[dict[str, Any], datetime]] = {}
+    failures: dict[str, list[tuple[dict[str, Any], datetime]]] = {}
+    cursors: list[tuple[dict[str, Any], datetime]] = []
+    for legacy_state in legacy_states:
+        receipt_dir = legacy_state / "independent_reviews"
+        if receipt_dir.is_dir() and not receipt_dir.is_symlink():
+            for path in sorted(receipt_dir.iterdir()):
+                if path.suffix != ".json":
+                    continue
+                stats["receiptsScanned"] += 1
+                validated = _validated_legacy_receipt(path)
+                if validated is None:
+                    stats["receiptsInvalid"] += 1
+                    continue
+                prior = receipts.get(path.name)
+                if prior is None or validated[1] > prior[1]:
+                    receipts[path.name] = validated
+
+        failure_dir = legacy_state / "independent_review_failures"
+        if failure_dir.is_dir() and not failure_dir.is_symlink():
+            for path in sorted(failure_dir.iterdir()):
+                if path.suffix != ".json":
+                    continue
+                stats["failuresScanned"] += 1
+                validated = _validated_legacy_failure(path)
+                if validated is None:
+                    stats["failuresInvalid"] += 1
+                    continue
+                failures.setdefault(path.name, []).append(validated)
+
+        cursor_path = legacy_state / "independent_review_cursor.json"
+        if cursor_path.exists() or cursor_path.is_symlink():
+            stats["cursorsScanned"] += 1
+            validated = _validated_legacy_cursor(cursor_path)
+            if validated is None:
+                stats["cursorsInvalid"] += 1
+            else:
+                cursors.append(validated)
+
+    for name, source in receipts.items():
+        target = state_dir / "independent_reviews" / name
+        existing = _validated_legacy_receipt(target)
+        selected = existing if existing is not None and existing[1] >= source[1] else source
+        if _safe_state_object(target) == selected[0]:
+            continue
+        _write_migrated_state(target, selected[0], state_dir)
+        stats["receiptsMigrated"] += 1
+
+    for name, source_records in failures.items():
+        target = state_dir / "independent_review_failures" / name
+        existing = _validated_legacy_failure(target)
+        latest, latest_time = max(source_records, key=lambda item: item[1])
+        if existing is not None and existing[1] >= latest_time:
+            latest, latest_time = existing
+        merged = dict(latest)
+        legacy_attempts = sum(int(record[0]["attempts"]) for record in source_records)
+        if existing is None:
+            merged_attempts = legacy_attempts
+            imported_attempts = legacy_attempts
+        else:
+            existing_attempts = int(existing[0]["attempts"])
+            prior_imported = existing[0].get(LEGACY_ATTEMPTS_IMPORTED_FIELD)
+            if type(prior_imported) is int:
+                merged_attempts = existing_attempts + max(0, legacy_attempts - prior_imported)
+                imported_attempts = max(prior_imported, legacy_attempts)
+            else:
+                # Existing durable state may predate migration provenance. Avoid
+                # double-counting a copied aggregate while still preserving the
+                # sum of disjoint release-local attempts.
+                merged_attempts = max(existing_attempts, legacy_attempts)
+                imported_attempts = legacy_attempts
+        merged["attempts"] = merged_attempts
+        merged[LEGACY_ATTEMPTS_IMPORTED_FIELD] = imported_attempts
+        merged["failedAt"] = latest_time.isoformat().replace("+00:00", "Z")
+        if _safe_state_object(target) == merged:
+            continue
+        _write_migrated_state(target, merged, state_dir)
+        stats["failuresMigrated"] += 1
+
+    if cursors:
+        target = state_dir / "independent_review_cursor.json"
+        existing = _validated_legacy_cursor(target)
+        records = [*cursors, *([existing] if existing is not None else [])]
+        selected = max(records, key=lambda item: item[1])[0]
+        if _safe_state_object(target) != selected:
+            _write_migrated_state(target, selected, state_dir)
+            stats["cursorsMigrated"] = 1
+
+    return stats
+
+
+def migrate_legacy_review_state(runtime_root: Path) -> dict[str, int]:
+    """Merge release-local review state while excluding a concurrent reviewer."""
+
+    runtime_root = runtime_root.resolve()
+    state_dir = runtime_root / "state"
+    if state_dir.exists() and (state_dir.is_symlink() or not state_dir.is_dir()):
+        raise RuntimeError("independent review durable state directory is unsafe")
+    state_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = state_dir / "independent_review.lock"
+    if lock_path.is_symlink():
+        raise RuntimeError("independent review durable lock is unsafe")
+    legacy_states = _legacy_release_state_dirs(runtime_root)
+    with ExitStack() as locks:
+        paths = [lock_path, *(state / "independent_review.lock" for state in legacy_states)]
+        for index, path in enumerate(paths):
+            if path.is_symlink():
+                raise RuntimeError("independent review durable lock is unsafe")
+            lock = locks.enter_context(path.open("a+", encoding="utf-8"))
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                scope = "durable" if index == 0 else "legacy"
+                raise RuntimeError(
+                    f"{scope} independent review is active; retry deployment"
+                ) from exc
+        return _migrate_legacy_review_state_unlocked(
+            runtime_root,
+            legacy_states=legacy_states,
+        )
+
+
 def _candidate_result(candidate: dict[str, Any]) -> tuple[Path, dict[str, Any]] | None:
     if str(candidate.get("stage") or "") not in REVIEWABLE_STAGES:
         return None
@@ -587,14 +943,16 @@ def review_once(
     *,
     reviewer: ReviewRunner = codex_review_runner,
     timeout: int = 900,
+    state_root: Path | None = None,
 ) -> dict[str, Any]:
     """Review at most one committed result and atomically bind the verdict to it."""
 
-    root = root.resolve()
-    schema_path = root / "schemas" / "independent_review.schema.json"
+    code_root = root.resolve()
+    state_root = (state_root or code_root).resolve()
+    schema_path = code_root / "schemas" / "independent_review.schema.json"
     if not schema_path.is_file():
         raise RuntimeError("independent review schema is unavailable")
-    lock_path = root / "state" / "independent_review.lock"
+    lock_path = state_root / "state" / "independent_review.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as lock:
         try:
@@ -606,7 +964,7 @@ def review_once(
         skipped: list[dict[str, str]] = []
         errors: list[dict[str, str]] = []
         retry_exhausted: list[dict[str, Any]] = []
-        candidates = _ordered_candidates(root, store.task_result_candidates())
+        candidates = _ordered_candidates(state_root, store.task_result_candidates())
         for candidate in candidates:
             review_attempted = False
             source_digest = ""
@@ -619,7 +977,7 @@ def review_once(
                 source_digest = _source_digest(value)
                 commit_sha = str(value.get("commitSha") or "")
                 attempts = _review_failure_attempts(
-                    root,
+                    state_root,
                     candidate=candidate,
                     source_digest=source_digest,
                     commit_sha=commit_sha,
@@ -636,7 +994,7 @@ def review_once(
                     )
                     continue
                 result_snapshot_digest = sha256_json(value)
-                receipt_review = _load_review_receipt(root, value)
+                receipt_review = _load_review_receipt(state_root, value)
                 if receipt_review is not None:
                     skipped.append(
                         {
@@ -664,6 +1022,13 @@ def review_once(
                 review = _normalized_review(reviewer(worktree, schema_path, prompt, timeout))
                 latest_prepared = _candidate_result(candidate)
                 if latest_prepared is None:
+                    _advance_review_cursor(
+                        state_root,
+                        candidate=candidate,
+                        source_digest=source_digest,
+                        commit_sha=commit_sha,
+                        reason="RESULT_CHANGED_DURING_REVIEW",
+                    )
                     return {
                         "ok": not errors,
                         "busy": False,
@@ -686,6 +1051,13 @@ def review_once(
                     or latest_scope
                     != (review_mode, base_revision, secondary_base_revision, changed_files)
                 ):
+                    _advance_review_cursor(
+                        state_root,
+                        candidate=candidate,
+                        source_digest=source_digest,
+                        commit_sha=commit_sha,
+                        reason="RESULT_CHANGED_DURING_REVIEW",
+                    )
                     return {
                         "ok": not errors,
                         "busy": False,
@@ -711,7 +1083,7 @@ def review_once(
                 }
                 atomic_write_json(
                     _receipt_path(
-                        root,
+                        state_root,
                         key=str(candidate["key"]),
                         commit_sha=head_revision,
                         source_digest=source_digest,
@@ -753,7 +1125,7 @@ def review_once(
                 if review_attempted:
                     try:
                         _record_review_failure(
-                            root,
+                            state_root,
                             candidate=candidate,
                             source_digest=source_digest,
                             commit_sha=commit_sha,

@@ -18,6 +18,7 @@ from oss_pr_radar.local_publication import (
     launch_agent_spec,
     queue_import_launch_agent_spec,
     queue_import_once,
+    retryable_delivery_pending,
     run_bridge,
     slow_advance_once,
     slow_launch_agent_spec,
@@ -91,6 +92,26 @@ def test_run_bridge_terminates_the_process_group_on_timeout(monkeypatch, tmp_pat
 
     assert calls[0][1]["start_new_session"] is True
     assert killed == [(4321, signal.SIGTERM)]
+
+
+@pytest.mark.parametrize("response", [{}, {"ok": None}, {"ok": "true"}, {"ok": 1}])
+def test_run_bridge_requires_explicit_boolean_success(monkeypatch, tmp_path, response):
+    class Process:
+        pid = 4321
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return json.dumps(response), ""
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: Process())
+
+    with pytest.raises(RuntimeError, match="boolean ok"):
+        run_bridge(
+            tmp_path,
+            "list",
+            code_root=Path(__file__).parents[1],
+            allow_unreleased_code=True,
+        )
 
 
 def test_fast_publication_runs_ingestion_and_publication_in_order(tmp_path):
@@ -514,7 +535,10 @@ def test_fast_publication_retries_a_terminal_interrupted_receipt(tmp_path):
     receipt_root = tmp_path / "state" / "task_turn_receipts"
     receipt_root.mkdir(parents=True)
     receipt = receipt_root / "interrupted.json"
-    receipt.write_text(json.dumps({"ok": True, "turnStatus": "interrupted"}), encoding="utf-8")
+    receipt.write_text(
+        json.dumps({"ok": True, "turnId": "turn-1", "turnStatus": "interrupted"}),
+        encoding="utf-8",
+    )
     old = time.time() - 120
     os.utime(receipt, (old, old))
     calls = []
@@ -1519,3 +1543,25 @@ def test_compact_result_keeps_counts_and_omits_large_payloads():
     assert compact["contextsUnavailableCount"] == 20
     assert "contextsUnavailable" not in compact
     assert len(json.dumps(compact)) < 1_000
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        {"ok": False, "turnStarted": False, "turnId": "turn-1", "error": "conflict"},
+        {
+            "ok": False,
+            "turnStarted": False,
+            "turnId": None,
+            "turnStatus": "completed",
+            "error": "conflict",
+        },
+        {"ok": "true", "turnStarted": False, "turnId": None, "error": "malformed"},
+    ],
+)
+def test_retryable_delivery_pending_rejects_contradictory_receipts(tmp_path, receipt):
+    receipt_path = tmp_path / "state" / "task_turn_receipts" / "receipt.json"
+    receipt_path.parent.mkdir(parents=True)
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    assert retryable_delivery_pending(tmp_path, min_age_seconds=0) is False

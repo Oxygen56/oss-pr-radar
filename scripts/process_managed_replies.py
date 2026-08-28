@@ -25,7 +25,7 @@ def main() -> int:
         receipts = value if isinstance(value, dict) else {}
     result = ManagedAdapter(ROOT, args.ledger).process_reply_outbox(sender=None, receipts=receipts)
     print(json.dumps(result, sort_keys=True))
-    return 0 if result["ok"] else 1
+    return 0 if result["ok"] is True else 1
 
 
 if __name__ == "__main__":

@@ -186,6 +186,8 @@ def run_bridge(
         raise RuntimeError(f"{operation}: local bridge returned invalid JSON") from exc
     if not isinstance(value, dict):
         raise RuntimeError(f"{operation}: local bridge returned a non-object")
+    if not isinstance(value.get("ok"), bool):
+        raise RuntimeError(f"{operation}: local bridge omitted a boolean ok result")
     return value
 
 
@@ -203,9 +205,21 @@ def retryable_delivery_pending(root: Path, *, min_age_seconds: int = 60) -> bool
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if value.get("ok") is False and value.get("turnStarted") is False:
+        if (
+            value.get("ok") is False
+            and value.get("turnStarted") is False
+            and value.get("turnId") is None
+            and value.get("turnStatus") in {None, ""}
+            and isinstance(value.get("error"), str)
+            and value["error"].strip()
+        ):
             return True
-        if value.get("turnStatus") in {"failed", "interrupted"}:
+        if (
+            value.get("ok") is True
+            and isinstance(value.get("turnId"), str)
+            and value["turnId"]
+            and value.get("turnStatus") in {"failed", "interrupted"}
+        ):
             return True
     return False
 
@@ -261,7 +275,7 @@ def sync_cloud_queue_if_due(
         sync = runner(root, "sync")
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         sync = {"ok": False, "error": f"{type(exc).__name__}:{str(exc)[:400]}"}
-    if sync.get("ok") is False:
+    if sync.get("ok") is not True:
         errors.append(
             {"error": str(sync.get("error") or sync.get("errors") or "queue sync failed")[:400]}
         )
@@ -272,7 +286,7 @@ def sync_cloud_queue_if_due(
             listing = runner(root, "list")
         except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
             listing = {"ok": False, "error": f"{type(exc).__name__}:{str(exc)[:400]}"}
-        if listing.get("ok") is False:
+        if listing.get("ok") is not True:
             errors.append(
                 {
                     "error": str(
@@ -299,7 +313,7 @@ def sync_cloud_queue_if_due(
                 "ok": False,
                 "error": f"{type(exc).__name__}:{str(exc)[:400]}",
             }
-        if followup_listing.get("ok") is False:
+        if followup_listing.get("ok") is not True:
             errors.append(
                 {
                     "error": str(
@@ -433,7 +447,7 @@ def fast_advance_once(
             errors = list(ingestion.get("errors") or []) + list(ingestion.get("rejected") or [])
             _enqueue_slow_work(root, reason="local_ingest")
             result = {
-                "ok": not errors and ingestion.get("ok") is not False,
+                "ok": not errors and ingestion.get("ok") is True,
                 "activity": bool(ingestion.get("queued") or errors),
                 "receiptsQueued": list(ingestion.get("queued") or []),
                 "errors": errors,
@@ -442,10 +456,10 @@ def fast_advance_once(
             record_cycle(
                 root,
                 worker="fast",
-                ok=bool(result["ok"]),
-                exit_code=0 if result["ok"] else 1,
+                ok=result["ok"] is True,
+                exit_code=0 if result["ok"] is True else 1,
                 started_at=started,
-                error_code="LOCAL_INGEST_FAILED" if not result["ok"] else None,
+                error_code="LOCAL_INGEST_FAILED" if result["ok"] is not True else None,
                 disk=disk,
             )
             return result
@@ -484,7 +498,7 @@ def queue_import_once(
                 result = {"ok": False, "error": "DISK_STOP_THRESHOLD"}
             else:
                 result = runner(root, "queue-import")
-            if result.get("ok"):
+            if result.get("ok") is True:
                 write_json(
                     root / "state" / "queue-import-state.json",
                     {
@@ -499,11 +513,11 @@ def queue_import_once(
             record_cycle(
                 root,
                 worker="queue-importer",
-                ok=bool(result.get("ok")),
-                exit_code=0 if result.get("ok") else 1,
+                ok=result.get("ok") is True,
+                exit_code=0 if result.get("ok") is True else 1,
                 started_at=started,
                 error_code=None
-                if result.get("ok")
+                if result.get("ok") is True
                 else str(result.get("error") or "QUEUE_IMPORT_FAILED"),
                 success_field="queueImportSuccessAt",
                 exit_field="queueLastExitCode",
@@ -661,7 +675,7 @@ def slow_advance_once(
                     "errors": [{"error": str(exc)[:400]}],
                     "slowWorkerDiagnostic": _slow_worker_diagnostic(root),
                 }
-            ok = bool(result.get("ok"))
+            ok = result.get("ok") is True
             completed_retry = time.time() if ok else time.time() + delay
             write_json(
                 backoff_path,
@@ -715,7 +729,7 @@ def advance_once(
     recovery_quarantined = list(context_recovery.get("quarantined") or [])
     public_unavailable = recovery_unavailable[:5]
     public_quarantined = recovery_quarantined[:5]
-    if context_recovery.get("ok") is False or recovery_errors:
+    if context_recovery.get("ok") is not True or recovery_errors:
         return {
             "ok": False,
             "activity": True,
@@ -737,7 +751,7 @@ def advance_once(
     ingestion_quarantined = list(ingestion.get("quarantined") or [])
     ingestion_work_blocked = list(ingestion.get("workBlocked") or [])
     ingestion_errors = list(ingestion.get("errors") or [])
-    if ingestion.get("ok") is False or ingestion_errors:
+    if ingestion.get("ok") is not True or ingestion_errors:
         return {
             "ok": False,
             "activity": True,
@@ -785,7 +799,7 @@ def advance_once(
     ]
     review_updated = bool(independent_review.get("updated"))
     review_system_failed = bool(review_errors) or bool(
-        independent_review.get("ok") is False and not review_candidate_errors
+        independent_review.get("ok") is not True and not review_candidate_errors
     )
     if review_system_failed and not review_updated:
         return {
@@ -821,7 +835,7 @@ def advance_once(
     post_review_errors = list(post_review_ingestion.get("errors") or [])
     post_review_quarantined = list(post_review_ingestion.get("quarantined") or [])
     post_review_work_blocked = list(post_review_ingestion.get("workBlocked") or [])
-    if post_review_ingestion.get("ok") is False or post_review_errors:
+    if post_review_ingestion.get("ok") is not True or post_review_errors:
         return {
             "ok": False,
             "activity": True,
@@ -904,16 +918,16 @@ def advance_once(
     terminal_feedback = {"ok": True, "published": 0, "errors": []}
     lifecycle_healthy = bool(
         not errors
-        and title_reconciliation.get("ok") is not False
-        and cleanup_reconciliation.get("ok") is not False
-        and publication.get("ok") is not False
-        and context_sync.get("ok") is not False
-        and publication_feedback.get("ok") is not False
+        and title_reconciliation.get("ok") is True
+        and cleanup_reconciliation.get("ok") is True
+        and publication.get("ok") is True
+        and context_sync.get("ok") is True
+        and publication_feedback.get("ok") is True
     )
     recovery = (
         runner(root, "recovery-list") if lifecycle_healthy else {"ok": False, "recoverable": []}
     )
-    recoverable = list(recovery.get("recoverable") or []) if recovery.get("ok") else []
+    recoverable = list(recovery.get("recoverable") or []) if recovery.get("ok") is True else []
     should_drain = bool(
         ingested
         or validation_deferred
@@ -961,13 +975,13 @@ def advance_once(
     errors.extend(list(queue_sync.get("errors") or []))
     return {
         "ok": not errors
-        and title_reconciliation.get("ok") is not False
-        and cleanup_reconciliation.get("ok") is not False
-        and publication.get("ok") is not False
-        and context_sync.get("ok") is not False
-        and publication_feedback.get("ok") is not False
-        and drain.get("ok") is not False
-        and terminal_feedback.get("ok") is not False,
+        and title_reconciliation.get("ok") is True
+        and cleanup_reconciliation.get("ok") is True
+        and publication.get("ok") is True
+        and context_sync.get("ok") is True
+        and publication_feedback.get("ok") is True
+        and drain.get("ok") is True
+        and terminal_feedback.get("ok") is True,
         "activity": activity,
         "resultsIngested": ingested,
         "publicationRequests": requests,
@@ -1227,9 +1241,9 @@ def main() -> int:
         result = {"ok": False, "activity": True, "errors": [{"error": str(exc)[:800]}]}
     if args.json:
         print(json.dumps(result, ensure_ascii=False))
-    elif result.get("activity") or not result.get("ok"):
+    elif result.get("activity") or result.get("ok") is not True:
         print(json.dumps(compact_advance_result(result), ensure_ascii=False))
-    return 0 if result.get("ok") else 1
+    return 0 if result.get("ok") is True else 1
 
 
 if __name__ == "__main__":

@@ -42,7 +42,7 @@ def main() -> int:
     if args.out:
         write_json(args.out, output)
     print(json.dumps(output, ensure_ascii=False, sort_keys=True))
-    return 0 if result["ok"] else 1
+    return 0 if result["ok"] is True else 1
 
 
 if __name__ == "__main__":

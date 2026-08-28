@@ -16,6 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from oss_pr_radar.independent_review import migrate_legacy_review_state  # noqa: E402
 from oss_pr_radar.release_binding import (  # noqa: E402
     MANIFEST,
     PRESERVED_ROOTS,
@@ -33,6 +34,7 @@ LOCAL_RUNTIME_IGNORE_PATTERNS = (
     "/state/",
     "/.venv/",
 )
+DURABLE_REVIEW_STATE_CAPABILITY = "durable-independent-review-state-v1"
 
 
 def _canonical(value: object) -> bytes:
@@ -167,6 +169,7 @@ def build_manifest(source: Path, files: set[Path], commit: str) -> dict[str, obj
     payload: dict[str, object] = {
         "schemaVersion": "oss_pr_radar_release_v1",
         "commit": commit,
+        "capabilities": [DURABLE_REVIEW_STATE_CAPABILITY],
         "files": [_file_entry(source, relative) for relative in sorted(files)],
     }
     payload["policyDigest"] = _policy_digest(payload["files"])
@@ -187,9 +190,15 @@ def activate_release(target: Path, release_id: str) -> dict[str, object]:
     manifest = verify_release(release)
     if manifest.get("releaseId") != release_id:
         raise RuntimeError("release directory does not match its manifest")
+    capabilities = manifest.get("capabilities")
+    if not isinstance(capabilities, list) or DURABLE_REVIEW_STATE_CAPABILITY not in capabilities:
+        raise RuntimeError(
+            "release predates durable independent-review state and cannot be safely activated"
+        )
     release_metadata = os.lstat(release)
     if not os.path.isdir(release) or os.path.islink(release):
         raise RuntimeError("release activation target must be a real directory")
+    migrate_legacy_review_state(target)
     activate_release_pointer(
         target,
         release,
