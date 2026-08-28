@@ -15599,9 +15599,7 @@ def test_validation_worker_projects_snapshot_and_sends_exact_local_input_prompt(
     assert store.unresolved_validation_followups() == []
 
 
-def test_task_turn_worker_writes_terminal_failure_when_app_server_exits(
-    monkeypatch, tmp_path
-):
+def test_task_turn_worker_writes_terminal_failure_when_app_server_exits(monkeypatch, tmp_path):
     store, _candidate, _worktree, _result_path, _original, _binding, args = (
         _bound_validation_worker_fixture(monkeypatch, tmp_path)
     )
@@ -15767,12 +15765,14 @@ def test_app_server_cleanup_signals_only_known_descendants_in_mixed_group(monkey
         (110, MODULE.signal.SIGTERM),
         (110, MODULE.signal.SIGKILL),
     ]
-    assert sorted(individual_signals) == sorted([
-        (111, MODULE.signal.SIGTERM),
-        (112, MODULE.signal.SIGTERM),
-        (111, MODULE.signal.SIGKILL),
-        (112, MODULE.signal.SIGKILL),
-    ])
+    assert sorted(individual_signals) == sorted(
+        [
+            (111, MODULE.signal.SIGTERM),
+            (112, MODULE.signal.SIGTERM),
+            (111, MODULE.signal.SIGKILL),
+            (112, MODULE.signal.SIGKILL),
+        ]
+    )
 
 
 def test_root_task_terminal_receipt_preserves_creation_binding(tmp_path):
@@ -15800,9 +15800,7 @@ def test_root_task_terminal_receipt_preserves_creation_binding(tmp_path):
     assert persisted["threadId"] == "thread-1"
 
 
-def test_task_turn_worker_replaces_optimistic_receipt_on_watchdog_error(
-    monkeypatch, tmp_path
-):
+def test_task_turn_worker_replaces_optimistic_receipt_on_watchdog_error(monkeypatch, tmp_path):
     _store, _candidate, _worktree, _result_path, _original, _binding, args = (
         _bound_validation_worker_fixture(monkeypatch, tmp_path)
     )

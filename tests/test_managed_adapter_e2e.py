@@ -28,9 +28,7 @@ def test_followup_snapshot_ignores_unmanaged_pr_without_admission(tmp_path):
 
     assert result["recorded"] == 0
     assert result["added"] == []
-    assert result["ignored"] == [
-        {"key": "new/repo#1", "reason": "FOLLOWUP_KEY_NOT_MANAGED"}
-    ]
+    assert result["ignored"] == [{"key": "new/repo#1", "reason": "FOLLOWUP_KEY_NOT_MANAGED"}]
     assert result["delta"] == {
         "managedPrsBefore": 0,
         "managedPrsAfter": 0,

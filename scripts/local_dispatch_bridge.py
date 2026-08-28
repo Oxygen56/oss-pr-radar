@@ -5533,9 +5533,7 @@ def _capture_app_server_descendants(
     valid = {
         pid
         for pid in descendants
-        if pid in latest
-        and pid in snapshot
-        and latest[pid][1:] == snapshot[pid][1:]
+        if pid in latest and pid in snapshot and latest[pid][1:] == snapshot[pid][1:]
     }
     if not valid:
         return {}, set()

@@ -715,9 +715,7 @@ def test_reingestion_deduplicates_result_and_validation_records(tmp_path):
             return {
                 "ok": True,
                 "ingested": [dict(result_record)],
-                "publicationRequests": [
-                    {"requestId": "request-1", "status": "PENDING"}
-                ],
+                "publicationRequests": [{"requestId": "request-1", "status": "PENDING"}],
                 "validationDeferred": [dict(deferred_record)],
                 "errors": [],
             }
@@ -1285,9 +1283,7 @@ def test_slow_worker_persisted_backoff_does_not_manufacture_success_health(
         {"alive": True, "versionMatched": False},
     ],
 )
-def test_slow_worker_reconciles_stale_inflight_owner(
-    monkeypatch, tmp_path, pid_evidence
-):
+def test_slow_worker_reconciles_stale_inflight_owner(monkeypatch, tmp_path, pid_evidence):
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     now = time.time()
@@ -1331,7 +1327,9 @@ def test_slow_worker_reconciles_stale_inflight_owner(
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
     )
-    monkeypatch.setattr("oss_pr_radar.local_publication.pid_probe", lambda *_args, **_kwargs: pid_evidence)
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.pid_probe", lambda *_args, **_kwargs: pid_evidence
+    )
 
     def must_not_run(_root: Path, _operation: str):
         raise AssertionError("stale in-flight worker must be reconciled before retry")
