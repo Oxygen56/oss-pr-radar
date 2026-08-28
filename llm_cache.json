@@ -33442,6 +33442,39 @@
     ],
     "why": "Issue is a real bug with clear root cause: llm_as_a_judge guardrail bypasses proxy router and calls litellm.acompletion directly, failing for proxy-registered models. However, the deterministic gate requires HUMAN_REVIEW, and existing PR #33624 has semantic overlap in litellm/main.py, requiring maintainer comparison before new work."
   },
+  "903ef17f8a8a47592149599c36b6cb9cda4bdee656e618a3286f0572833b4365": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer recommends deep_gemm or triton for SM90, but reporter states deep_gemm is not viable on H20 due to memory constraints."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "sglang/srt/eplb/expert_location.py",
+      "sglang/srt/models/glm5_next.py",
+      "sglang/srt/layers/moe/fused_moe_triton/layer.py"
+    ],
+    "risks": [
+      "The fix may require careful handling of shared-expert weights when fusion is disabled, potentially affecting other models or backends.",
+      "The maintainer's comment suggests using deep_gemm or triton on SM90, but the issue shows deep_gemm is not viable on H20 due to memory; the fix should not rely on backend switching."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided command on H20 or any GPU; verify no crash and correct weight loading for GLM-5.3-Flash with --moe-runner-backend flashinfer_trtllm.",
+      "Add a unit test for logical_to_all_physical with logical_expert_id >= cpu_map.shape[1] to ensure proper error handling or correct routing."
+    ],
+    "unknowns": [
+      "Exact fix approach (bounds guard vs. separate shared-expert module) is not decided, but this is normal implementation uncertainty.",
+      "Whether the issue is already fixed in a later commit is not confirmed, but no duplicate PR was found."
+    ],
+    "why": "The issue provides a clear root cause: when shared-experts fusion is disabled, the shared-expert weight is routed to the fused MoE layer with expert_id 288, but the EPLB map only has 288 entries, causing an IndexError. The traceback and code paths are identified, and a concrete validation path exists via reproduction with the given command and model."
+  },
   "9084a578341135455595f80c01e9ad245d9ae4cb96987d9a367ebd937ff2341e": {
     "confidence": 0.7,
     "contradictions": [],
@@ -37697,6 +37730,38 @@
       "Maintainer preference on .gitattributes vs alternative solutions; whether the repo has existing .gitattributes conventions."
     ],
     "why": "The issue identifies a clear root cause (core.autocrlf corrupts patch files) and proposes a concrete fix (.gitattributes entry). However, the deterministic gate requires HUMAN_REVIEW, and the maintainer has not confirmed the fix approach or assigned the issue. The proposed change is a config-only fix, which is low-risk but needs maintainer approval to ensure it aligns with repo conventions."
+  },
+  "a634c5ab678a563f905808af9544e4e9e03de1182a44c59921781256f2aba0cc": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #38657 has semantic overlap but different focus (token counting), not a direct duplicate"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/core_helpers.py",
+      "litellm/router_utils/cooldown_handlers.py",
+      "litellm/router_utils/router_callbacks/track_deployment_metrics.py",
+      "litellm/router.py"
+    ],
+    "risks": [
+      "Potential behavior change for existing users if knob defaults are not opt-in",
+      "Streaming abort complexity may require additional handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit tests for map_finish_reason with custom mapping",
+      "Integration test simulating provider returning terminal stop_reason with 200 OK, verifying fallback and cooldown trigger"
+    ],
+    "unknowns": [
+      "Maintainer design preference for knob shape and default behavior"
+    ],
+    "why": "Issue provides detailed root cause analysis with code references, live outage evidence, and a concrete policy knob proposal. The proposed change is actionable and testable, with clear validation path via existing router failure machinery."
   },
   "a6432aa8b2541a57ab7b796fe67b5bec50f24bcb713a4ae4301bdf327fd8582a": {
     "confidence": 0.85,

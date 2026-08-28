@@ -1,88 +1,7 @@
 {
-  "digest": "763eb93754f49575835f1ea7d489fe3360d7eff38565c486800703de7868a276",
-  "generatedAt": "2026-08-28T12:33:04.242950Z",
+  "digest": "0d46c22ed17a74045af4cb5b471fd1514498abcae54c06e18a3b0484650a4c29",
+  "generatedAt": "2026-08-28T14:56:53.390648Z",
   "items": [
-    {
-      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
-      "actions": [],
-      "baseRefName": "litellm_internal_staging",
-      "baseSha": "ca0b951a430171d4dce86679a8a1cfc86bf0c3c9",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
-      "ciStatus": "PASSED",
-      "draft": false,
-      "evidence": {
-        "actionableCheckNames": [],
-        "baseCompareError": null,
-        "baseCompareStatus": null,
-        "baseIntegrationRequired": false,
-        "baseMergeBaseSha": null,
-        "baseRefName": "litellm_internal_staging",
-        "baseSha": "ca0b951a430171d4dce86679a8a1cfc86bf0c3c9",
-        "changedFiles": [
-          "litellm/llms/azure/responses/transformation.py",
-          "tests/test_litellm/llms/azure/response/test_azure_transformation.py"
-        ],
-        "failingChecks": [],
-        "headSha": "5d08d5e3096c1751f79905098b8b1c8d3dce5a44",
-        "maintainerEvents": [
-          {
-            "actorLogin": "greptile-apps[bot]",
-            "actorType": "Bot",
-            "authorAssociation": "CONTRIBUTOR",
-            "createdAt": "2026-08-09T21:36:59Z",
-            "eventId": "github:top-level-comment:BerriAI/litellm#36372:5233966950",
-            "eventType": "TOP_LEVEL_COMMENT",
-            "opportunityKey": "BerriAI/litellm#36372",
-            "summary": "<h3>Greptile Summary</h3> Azure Responses input transformation now replaces empty or whitespace-only namespace-tool descriptions with the namespace name while preserving populated descriptions and other metadata. - Adds focused normalization helpers for `additional_tools` input items. - Adds regression coverage for empty, whitespace-only, and populated descriptions plus input immutability. <h3>Con",
-            "targetPrKey": "BerriAI/litellm#36372",
-            "targetRepo": "BerriAI/litellm",
-            "url": "https://github.com/BerriAI/litellm/pull/36372#issuecomment-5233966950"
-          },
-          {
-            "actorLogin": "codecov[bot]",
-            "actorType": "Bot",
-            "authorAssociation": "NONE",
-            "createdAt": "2026-08-09T21:51:02Z",
-            "eventId": "github:top-level-comment:BerriAI/litellm#36372:5234021899",
-            "eventType": "TOP_LEVEL_COMMENT",
-            "opportunityKey": "BerriAI/litellm#36372",
-            "summary": "## [Codecov](https://app.codecov.io/gh/BerriAI/litellm/pull/36372?dropdown=coverage&src=pr&el=h1&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=BerriAI) Report :x: Patch coverage is `92.30769%` with `2 lines` in your changes missing coverage. Please review. | [Files with missing lines](https://app.codecov.io/gh/BerriAI/litellm/pull/36372?dropdown=covera",
-            "targetPrKey": "BerriAI/litellm#36372",
-            "targetRepo": "BerriAI/litellm",
-            "url": "https://github.com/BerriAI/litellm/pull/36372#issuecomment-5234021899"
-          },
-          {
-            "actorLogin": "codspeed-hq[bot]",
-            "actorType": "Bot",
-            "authorAssociation": "CONTRIBUTOR",
-            "createdAt": "2026-08-09T22:17:29Z",
-            "eventId": "github:top-level-comment:BerriAI/litellm#36372:5234128174",
-            "eventType": "TOP_LEVEL_COMMENT",
-            "opportunityKey": "BerriAI/litellm#36372",
-            "summary": "<!-- __CODSPEED_PERFORMANCE_REPORT_COMMENT__ --> ## Merging this PR will **not alter performance** `✅ 31` untouched benchmarks --- <sub>Comparing <code>Oxygen56:bugfix/36366-azure-namespace-description</code> (5d08d5e) with <code>litellm_internal_staging</code> (f6b9518)</sub> <a href=\"https://app.codspeed.io/BerriAI/litellm/branches/Oxygen56%3Abugfix%2F36366-azure-namespace-description?utm_source",
-            "targetPrKey": "BerriAI/litellm#36372",
-            "targetRepo": "BerriAI/litellm",
-            "url": "https://github.com/BerriAI/litellm/pull/36372#issuecomment-5234128174"
-          }
-        ],
-        "mergeConflict": false,
-        "mergeConflictPreparationVersion": null,
-        "requestedChanges": [],
-        "unansweredMaintainerComments": [],
-        "unresolvedReviewThreads": []
-      },
-      "headSha": "5d08d5e3096c1751f79905098b8b1c8d3dce5a44",
-      "key": "BerriAI/litellm#36372",
-      "mergeConflict": false,
-      "mergeableState": "blocked",
-      "number": 36372,
-      "repo": "BerriAI/litellm",
-      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
-      "taskActions": [],
-      "taskFollowupRequired": false,
-      "title": "fix(azure): normalize empty namespace tool descriptions",
-      "url": "https://github.com/BerriAI/litellm/pull/36372"
-    },
     {
       "actionDigest": "9c10037387df1db103a579159ed5c5485d7277a27e403c13f378d648d46f1ae5",
       "actions": [
@@ -92,7 +11,7 @@
       ],
       "baseRefName": "litellm_internal_staging",
       "baseSha": "ca0b951a430171d4dce86679a8a1cfc86bf0c3c9",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -296,7 +215,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "559b2d2e5dfbd94cdb0854ee40fab0c32c327e7f",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -337,8 +256,91 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
+      "baseSha": "559b2d2e5dfbd94cdb0854ee40fab0c32c327e7f",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
+      "ciStatus": "PASSED",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "559b2d2e5dfbd94cdb0854ee40fab0c32c327e7f",
+        "changedFiles": [
+          "nanobot/cron/service.py",
+          "tests/cron/test_cron_service.py",
+          "tests/test_tool_contextvars.py"
+        ],
+        "failingChecks": [],
+        "headSha": "0c0c2f9b973378a3d48594bcb9387b02afafa512",
+        "maintainerEvents": [],
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unansweredMaintainerComments": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "0c0c2f9b973378a3d48594bcb9387b02afafa512",
+      "key": "HKUDS/nanobot#5587",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 5587,
+      "repo": "HKUDS/nanobot",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix(cron): sanitize persisted origin metadata",
+      "url": "https://github.com/HKUDS/nanobot/pull/5587"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
+      "baseSha": "559b2d2e5dfbd94cdb0854ee40fab0c32c327e7f",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
+      "ciStatus": "PASSED",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [],
+        "baseCompareError": null,
+        "baseCompareStatus": null,
+        "baseIntegrationRequired": false,
+        "baseMergeBaseSha": null,
+        "baseRefName": "main",
+        "baseSha": "559b2d2e5dfbd94cdb0854ee40fab0c32c327e7f",
+        "changedFiles": [
+          "nanobot/agent/tools/execution.py",
+          "tests/agent/test_runner_errors.py"
+        ],
+        "failingChecks": [],
+        "headSha": "a88b37935ca894e20efbf7ded663166407e90c83",
+        "maintainerEvents": [],
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unansweredMaintainerComments": [],
+        "unresolvedReviewThreads": []
+      },
+      "headSha": "a88b37935ca894e20efbf7ded663166407e90c83",
+      "key": "HKUDS/nanobot#5588",
+      "mergeConflict": false,
+      "mergeableState": "blocked",
+      "number": 5588,
+      "repo": "HKUDS/nanobot",
+      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
+      "taskActions": [],
+      "taskFollowupRequired": false,
+      "title": "fix(agent): add retry hint to raised tool exceptions",
+      "url": "https://github.com/HKUDS/nanobot/pull/5588"
+    },
+    {
+      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
+      "actions": [],
+      "baseRefName": "main",
       "baseSha": "44b40e6852020394faef6387b90a99ad931741e3",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -392,103 +394,11 @@
       "url": "https://github.com/MoonshotAI/kimi-code/pull/3004"
     },
     {
-      "actionDigest": "32b5c6ab3742db584a0b2d46dfee724bdf43b2f902ceba915c2b3741fd9844ec",
-      "actions": [
-        "分支存在合并冲突"
-      ],
-      "baseRefName": "main",
-      "baseSha": "58ebb9a0833f6c42769adc1673590e1731540b65",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
-      "ciStatus": "UNKNOWN",
-      "draft": false,
-      "evidence": {
-        "actionableCheckNames": [],
-        "baseCompareError": null,
-        "baseCompareStatus": null,
-        "baseIntegrationRequired": false,
-        "baseMergeBaseSha": null,
-        "baseRefName": "main",
-        "baseSha": "58ebb9a0833f6c42769adc1673590e1731540b65",
-        "changedFiles": [
-          "src/qwenpaw/drivers/handlers/mcp_stateful_client.py",
-          "tests/unit/drivers/handlers/test_mcp_stateful_client.py"
-        ],
-        "failingChecks": [],
-        "headSha": "2f480ca99e72fe9e76b2ab3523bdc682334a2332",
-        "maintainerEvents": [
-          {
-            "actorLogin": "xiaoming-qxm",
-            "actorType": "User",
-            "authorAssociation": "",
-            "eventId": "github:9d9b70943a452b045b9b2d51c5ee623507eaa91ffae05ee3f1dc2143c5f0616e",
-            "eventType": "ASSIGNMENT",
-            "opportunityKey": "agentscope-ai/QwenPaw#6825",
-            "targetPrKey": "agentscope-ai/QwenPaw#6825",
-            "targetRepo": "agentscope-ai/QwenPaw"
-          },
-          {
-            "actorLogin": "xiaoming-qxm",
-            "actorType": "User",
-            "authorAssociation": "",
-            "eventId": "github:dfa31008200873a47159500317bbe47e46bc6b33b45c1f10f834ead1bb51bf3b",
-            "eventType": "INVITATION",
-            "opportunityKey": "agentscope-ai/QwenPaw#6825",
-            "targetPrKey": "agentscope-ai/QwenPaw#6825",
-            "targetRepo": "agentscope-ai/QwenPaw"
-          },
-          {
-            "actorLogin": "github-actions[bot]",
-            "actorType": "Bot",
-            "authorAssociation": "NONE",
-            "createdAt": "2026-08-08T07:48:34Z",
-            "eventId": "github:top-level-comment:agentscope-ai/QwenPaw#6825:5225193752",
-            "eventType": "TOP_LEVEL_COMMENT",
-            "opportunityKey": "agentscope-ai/QwenPaw#6825",
-            "summary": "<div align=\"center\"> <img src=\"https://img.alicdn.com/imgextra/i2/O1CN01eSmIfy1hJImze8NN8_!!6000000004256-2-tps-1858-1858.png\" width=\"80\" height=\"80\" /> ## Welcome to QwenPaw! 🐾 </div> Hi @Oxygen56, thank you for your first Pull Request! 🎉 ### 🙌 Join Developer Community Thanks so much for your contribution! We'd love to invite you to join the official QwenPaw developer group! You can find the Disc",
-            "targetPrKey": "agentscope-ai/QwenPaw#6825",
-            "targetRepo": "agentscope-ai/QwenPaw",
-            "url": "https://github.com/agentscope-ai/QwenPaw/pull/6825#issuecomment-5225193752"
-          },
-          {
-            "actorLogin": "RerankerGuo",
-            "actorType": "User",
-            "authorAssociation": "CONTRIBUTOR",
-            "createdAt": "2026-08-08T08:05:18Z",
-            "eventId": "github:top-level-comment:agentscope-ai/QwenPaw#6825:5225251159",
-            "eventType": "TOP_LEVEL_COMMENT",
-            "opportunityKey": "agentscope-ai/QwenPaw#6825",
-            "summary": "Independent validation passed at exact head `2f480ca99e72fe9e76b2ab3523bdc682334a2332` against current main `bacac7410cf2ac122dd892152beff8b03f38729f`. I first ran the PR's three lifecycle-wiring contracts unchanged against both revisions: ```text current main: HTTP float timeout -> not passed to ClientSession stdio float timeout -> not passed to ClientSession timedelta timeout -> not passed to Cl",
-            "targetPrKey": "agentscope-ai/QwenPaw#6825",
-            "targetRepo": "agentscope-ai/QwenPaw",
-            "url": "https://github.com/agentscope-ai/QwenPaw/pull/6825#issuecomment-5225251159"
-          }
-        ],
-        "mergeConflict": true,
-        "mergeConflictPreparationVersion": "conflict_files_v1",
-        "requestedChanges": [],
-        "unansweredMaintainerComments": [],
-        "unresolvedReviewThreads": []
-      },
-      "headSha": "2f480ca99e72fe9e76b2ab3523bdc682334a2332",
-      "key": "agentscope-ai/QwenPaw#6825",
-      "mergeConflict": true,
-      "mergeableState": "dirty",
-      "number": 6825,
-      "repo": "agentscope-ai/QwenPaw",
-      "taskActionDigest": "9a61f1f33a3a4519492d5fe5c82da209694f368cd119b0ae1c1b69d3a9c0b43a",
-      "taskActions": [
-        "分支存在合并冲突"
-      ],
-      "taskFollowupRequired": true,
-      "title": "fix(mcp): apply configured timeout to client sessions",
-      "url": "https://github.com/agentscope-ai/QwenPaw/pull/6825"
-    },
-    {
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
       "baseSha": "e90f1c7592896cc95f6e5ee506194f533378247d",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -545,7 +455,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "e90f1c7592896cc95f6e5ee506194f533378247d",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -586,7 +496,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "605978292146dbcbbe0cd4c80d81a392f2519140",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -665,14 +575,14 @@
       "url": "https://github.com/agentscope-ai/agentscope-java/pull/2854"
     },
     {
-      "actionDigest": "3f9bddca48a8279ed83abcfbc25e132da89cc7bf21aba9e4a5e20834846549a0",
+      "actionDigest": "3d73cbf42c3915ef87fad7ebd16676a511ffdd87965c3e042b16e0b4d6c4c3d1",
       "actions": [
         "分支存在合并冲突",
         "存在未解决审查线程"
       ],
       "baseRefName": "main",
-      "baseSha": "22bb1d4981fd17d11917036531a71ef91790c823",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "c1b6cce1d53227c38f1d09b270f0e4cff85d7ecf",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -682,7 +592,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "22bb1d4981fd17d11917036531a71ef91790c823",
+        "baseSha": "c1b6cce1d53227c38f1d09b270f0e4cff85d7ecf",
         "changedFiles": [
           "deploy/inference-gateway/epp/pkg/plugins/disagg/decode_scorer.go",
           "deploy/inference-gateway/epp/pkg/plugins/disagg/decode_scorer_test.go",
@@ -804,7 +714,7 @@
       "mergeableState": "dirty",
       "number": 12907,
       "repo": "ai-dynamo/dynamo",
-      "taskActionDigest": "e34e0d20eeea0a60fe1b8f82cb6c9684a46391be24b28287662f85fa69c4d782",
+      "taskActionDigest": "dcc51859fe67fcab7f09d2279bdd57800e96562b04a7fd7deb745c498d8a5da5",
       "taskActions": [
         "分支存在合并冲突",
         "存在未解决审查线程"
@@ -817,8 +727,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "22bb1d4981fd17d11917036531a71ef91790c823",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "c1b6cce1d53227c38f1d09b270f0e4cff85d7ecf",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -828,7 +738,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "22bb1d4981fd17d11917036531a71ef91790c823",
+        "baseSha": "c1b6cce1d53227c38f1d09b270f0e4cff85d7ecf",
         "changedFiles": [
           "deploy/inference-gateway/ext-proc/DEVEL.md",
           "deploy/inference-gateway/ext-proc/examples/onramp/agg.yaml",
@@ -897,15 +807,15 @@
       "url": "https://github.com/ai-dynamo/dynamo/pull/13700"
     },
     {
-      "actionDigest": "b0c44c5550bb35dda712968c2bb7f389a0977d45ab5813ac62383b198729c1fa",
+      "actionDigest": "e7158667987eb3fe8488d7674497bbbcdee3949c2f84a41e08291720b9f32480",
       "actions": [
         "CI 检查失败",
         "分支存在合并冲突",
         "存在未解决审查线程"
       ],
       "baseRefName": "main",
-      "baseSha": "22bb1d4981fd17d11917036531a71ef91790c823",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "c1b6cce1d53227c38f1d09b270f0e4cff85d7ecf",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -917,7 +827,7 @@
         "baseIntegrationRequired": true,
         "baseMergeBaseSha": "004cd02b1aaba31c3579436d8cd07602644ed442",
         "baseRefName": "main",
-        "baseSha": "22bb1d4981fd17d11917036531a71ef91790c823",
+        "baseSha": "c1b6cce1d53227c38f1d09b270f0e4cff85d7ecf",
         "changedFiles": [
           "components/src/dynamo/sglang/init_llm.py",
           "components/src/dynamo/sglang/request_handlers/llm/prefill_handler.py",
@@ -1052,7 +962,7 @@
       "mergeableState": "dirty",
       "number": 13703,
       "repo": "ai-dynamo/dynamo",
-      "taskActionDigest": "fde658e0615b0e9d0d4c7f425e234782820196375aceb563c70d28780490b332",
+      "taskActionDigest": "b719205dd00673e9cfbb4231df059c8c831d3eb0b5a898009a9c5e6495f79aba",
       "taskActions": [
         "当前分支检查失败",
         "分支存在合并冲突",
@@ -1066,8 +976,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "v2",
-      "baseSha": "ca4794947542846ae3b4e039e38f1d49c770cb4b",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "201536f265ba84c9c2cc8ca9858138eeead1686b",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1077,7 +987,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "v2",
-        "baseSha": "ca4794947542846ae3b4e039e38f1d49c770cb4b",
+        "baseSha": "201536f265ba84c9c2cc8ca9858138eeead1686b",
         "changedFiles": [
           "packages/core/src/session.ts",
           "packages/core/test/session-create.test.ts"
@@ -1121,7 +1031,7 @@
       "headSha": "38bbfcb50aa841f3c597bc165fd1199dd7f59af2",
       "key": "anomalyco/opencode#45136",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 45136,
       "repo": "anomalyco/opencode",
       "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
@@ -1137,7 +1047,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "1cd478b838e7e6a8193597f966530df67d642782",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -1196,7 +1106,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "cc21ab977127eb9a00ab39f46e219f5c0e1f072b",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -1324,7 +1234,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "67e7194c069060453f2701e23d733d3f945b4ded",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1384,7 +1294,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "4d88741a0e2283942f67ae7005a52d6f7e703698",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1464,7 +1374,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "ce71fe5eb9807edabbdc64010c22f7cc08cc9201",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1521,7 +1431,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "ce71fe5eb9807edabbdc64010c22f7cc08cc9201",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -1626,7 +1536,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "4bc5d2924218e892bd0bc91b46352b49b0d3a740",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -1711,13 +1621,13 @@
       "url": "https://github.com/crewAIInc/crewAI/pull/6407"
     },
     {
-      "actionDigest": "1dc2907b4c4eb555bba7507339bbd6612b5f774b1d0ddcb0bb5cc1957e779892",
+      "actionDigest": "9ddcc0c99ab3a3bd5ab0b39d860bd559e927fbeaef7e4f4cd386bbc8de93f273",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "main-v2",
-      "baseSha": "eab98a04156ebcc1c45b6df2ce0ab1280122111c",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "1288082ac3bc2475915904eb1f2e530aafb47222",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1727,7 +1637,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main-v2",
-        "baseSha": "eab98a04156ebcc1c45b6df2ce0ab1280122111c",
+        "baseSha": "1288082ac3bc2475915904eb1f2e530aafb47222",
         "changedFiles": [
           "docs/ACP.md",
           "docs/ACP.zh-CN.md",
@@ -1776,7 +1686,7 @@
       "mergeableState": "dirty",
       "number": 8510,
       "repo": "esengine/DeepSeek-Reasonix",
-      "taskActionDigest": "983dbe93cdde82a33d6bd61811aacf05a5f03a6c808352516a4f5756c356cbed",
+      "taskActionDigest": "7c18b86827fba4ec4c245133f1f23764ca8a6fe3ceb19cb8796335bfe2351e9d",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -1789,7 +1699,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "2c9c00da2b43b5defea0be3ecbe4303e91d05162",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1897,13 +1807,13 @@
       "url": "https://github.com/google/adk-python/pull/6300"
     },
     {
-      "actionDigest": "85f0c65813943963ce1f76b67343939cf63cf53ec6a1f3e72aa60e39e2a00805",
+      "actionDigest": "85d8e6a87069a5658534b9417f9751e192b5ca95a87d087a2ba79cf59c803264",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "master",
-      "baseSha": "ff8a60e0cdda16e88b531602fbe368e1865367cf",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "b73ba33c2e831c5cea70409b5a38ed3f98e669dd",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1913,7 +1823,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "master",
-        "baseSha": "ff8a60e0cdda16e88b531602fbe368e1865367cf",
+        "baseSha": "b73ba33c2e831c5cea70409b5a38ed3f98e669dd",
         "changedFiles": [
           "CLAUDE.md",
           "docs/MULTI_AGENT_STRUCTURES.md",
@@ -1992,10 +1902,10 @@
       "headSha": "f3b7fcae16c43c52a7ae12656e137642e3c0fa10",
       "key": "kyegomez/swarms#1664",
       "mergeConflict": true,
-      "mergeableState": "dirty",
+      "mergeableState": "unknown",
       "number": 1664,
       "repo": "kyegomez/swarms",
-      "taskActionDigest": "8928f2846dbd287cfe1373ce2861530a636c3f86fc06f720ee20e7213526029c",
+      "taskActionDigest": "e4a5a4b9af1d7a8eeb0cada5405430f659f1dec789b3f5a8aac991d1c2ce3088",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -2004,13 +1914,13 @@
       "url": "https://github.com/kyegomez/swarms/pull/1664"
     },
     {
-      "actionDigest": "9cb2f9e479e4ea865047c64f9af4050f0d5f9dbd9a4b505b9f198881d1259ae4",
+      "actionDigest": "350a48489096a20f01d89856752eeacad208932b8142d03d6eedbfdd1c4679ab",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "master",
-      "baseSha": "ff8a60e0cdda16e88b531602fbe368e1865367cf",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "b73ba33c2e831c5cea70409b5a38ed3f98e669dd",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -2020,7 +1930,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "master",
-        "baseSha": "ff8a60e0cdda16e88b531602fbe368e1865367cf",
+        "baseSha": "b73ba33c2e831c5cea70409b5a38ed3f98e669dd",
         "changedFiles": [
           "swarms/structs/hiearchical_swarm.py"
         ],
@@ -2060,10 +1970,10 @@
       "headSha": "eec9154fdc19c5aeca323ffeaed18fb95cd82be8",
       "key": "kyegomez/swarms#1670",
       "mergeConflict": true,
-      "mergeableState": "dirty",
+      "mergeableState": "unknown",
       "number": 1670,
       "repo": "kyegomez/swarms",
-      "taskActionDigest": "1d9ae9a7ee6a566d9661f293f58fa2174631a90a9aab39bc9766d075602b8f97",
+      "taskActionDigest": "bb612127b467c9bd60aacccbdb7e0d62c6efcbc459c1d940cc690d3f6a87d587",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -2072,13 +1982,13 @@
       "url": "https://github.com/kyegomez/swarms/pull/1670"
     },
     {
-      "actionDigest": "7d8a226066d55ea623b0e92b94690936614104163597f3169818d80d2e9bb319",
+      "actionDigest": "0064a0867dbb0617dba814c4ded00b32a98cb599efd5a135ceb73371392a01d7",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "master",
-      "baseSha": "ff8a60e0cdda16e88b531602fbe368e1865367cf",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "b73ba33c2e831c5cea70409b5a38ed3f98e669dd",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -2088,7 +1998,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "master",
-        "baseSha": "ff8a60e0cdda16e88b531602fbe368e1865367cf",
+        "baseSha": "b73ba33c2e831c5cea70409b5a38ed3f98e669dd",
         "changedFiles": [
           "swarms/structs/hiearchical_swarm.py"
         ],
@@ -2128,10 +2038,10 @@
       "headSha": "37e8d3812aadc035cbda32c52592c8aabff35aab",
       "key": "kyegomez/swarms#1671",
       "mergeConflict": true,
-      "mergeableState": "dirty",
+      "mergeableState": "unknown",
       "number": 1671,
       "repo": "kyegomez/swarms",
-      "taskActionDigest": "6580735ecd97c01938a56b6be0281d7a9892bab41be663bd420fea61d4ff12aa",
+      "taskActionDigest": "d9169ba6618eee135c5dc9a83211af42044af71bf29ad958c370fc2c085bf660",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -2148,7 +2058,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "da3d5050e83e55f885e0627245676933a867d06b",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -2233,7 +2143,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "19cb89aff472325c707f64b2f34ae6afdbf7faf7",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -2276,7 +2186,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "6d532cf77e26988fe2d822f13ddea021faa9d735",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -2359,13 +2269,13 @@
       "url": "https://github.com/microsoft/agent-framework/pull/7696"
     },
     {
-      "actionDigest": "8d387ec02f7b7604de6533c91aa552fd8ba53ca7b2b8ac70f106dae969ec50e4",
+      "actionDigest": "4be96af2a358ae8e90e822bd39f6c864e879acc203d28f457d88fcf96a4ada35",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "master",
-      "baseSha": "4f9a76e84b153f5350bdad4fbbfaf4c8591f400d",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "64ce548cfd321d38cae62d86a94a63c47de9a5d9",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -2375,7 +2285,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "master",
-        "baseSha": "4f9a76e84b153f5350bdad4fbbfaf4c8591f400d",
+        "baseSha": "64ce548cfd321d38cae62d86a94a63c47de9a5d9",
         "changedFiles": [
           "docs/articles_en/get-started/install-openvino/install-openvino-apt.rst",
           "docs/sphinx_setup/_static/selector-tool/assets/selector-oxnzcw97.js"
@@ -2432,7 +2342,7 @@
       "mergeableState": "dirty",
       "number": 36146,
       "repo": "openvinotoolkit/openvino",
-      "taskActionDigest": "0a64c4d3de866e7149647dd91e06fd07555ee31b2f8857c9be949c0e787e100d",
+      "taskActionDigest": "4f5ae457e2d64e1c92fd2223e7abdd2ebb9f63eed32fe76cbcf57cc3da6882d7",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -2444,8 +2354,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "e34f654013f574bcc5ce338676ee5491f523b24c",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "e618ba779074e99f7d32d76026887e6d008cbdfd",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2455,7 +2365,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "e34f654013f574bcc5ce338676ee5491f523b24c",
+        "baseSha": "e618ba779074e99f7d32d76026887e6d008cbdfd",
         "changedFiles": [
           "changelog/5354.fixed.md",
           "src/pipecat/services/openai/realtime/llm.py",
@@ -2489,7 +2399,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "82a92429b888727b2236820b863256067c7edc80",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2594,7 +2504,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "2c45764ca1daf4587c83d68b940ba0eb14cb7ac4",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -2678,73 +2588,9 @@
     {
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
-      "baseRefName": "develop",
-      "baseSha": "322db4da98219b15608d5b71eddf6338c48d693c",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
-      "ciStatus": "PASSED",
-      "draft": false,
-      "evidence": {
-        "actionableCheckNames": [],
-        "baseCompareError": null,
-        "baseCompareStatus": null,
-        "baseIntegrationRequired": false,
-        "baseMergeBaseSha": null,
-        "baseRefName": "develop",
-        "baseSha": "322db4da98219b15608d5b71eddf6338c48d693c",
-        "changedFiles": [
-          "docs/contributing/TECHNICAL.md",
-          "docs/guide/getting-started/installation.md",
-          "docs/guide/getting-started/supported-agents.md",
-          "docs/guide/resources/troubleshooting.md",
-          "hooks/README.md",
-          "src/hooks/README.md",
-          "src/hooks/constants.rs",
-          "src/hooks/hook_check.rs",
-          "src/hooks/init.rs",
-          "src/hooks/integrity.rs",
-          "src/hooks/mod.rs"
-        ],
-        "failingChecks": [],
-        "headSha": "787b41dcab195d57d3666c36af56bfd4fff98aaa",
-        "maintainerEvents": [
-          {
-            "actorLogin": "CLAassistant",
-            "actorType": "User",
-            "authorAssociation": "NONE",
-            "createdAt": "2026-08-08T21:33:36Z",
-            "eventId": "github:top-level-comment:rtk-ai/rtk#3483:5228274944",
-            "eventType": "TOP_LEVEL_COMMENT",
-            "opportunityKey": "rtk-ai/rtk#3483",
-            "summary": "[![CLA assistant check](https://cla-assistant.io/pull/badge/signed)](https://cla-assistant.io/rtk-ai/rtk?pullRequest=3483) <br/>All committers have signed the CLA.",
-            "targetPrKey": "rtk-ai/rtk#3483",
-            "targetRepo": "rtk-ai/rtk",
-            "url": "https://github.com/rtk-ai/rtk/pull/3483#issuecomment-5228274944"
-          }
-        ],
-        "mergeConflict": false,
-        "mergeConflictPreparationVersion": null,
-        "requestedChanges": [],
-        "unansweredMaintainerComments": [],
-        "unresolvedReviewThreads": []
-      },
-      "headSha": "787b41dcab195d57d3666c36af56bfd4fff98aaa",
-      "key": "rtk-ai/rtk#3483",
-      "mergeConflict": false,
-      "mergeableState": "blocked",
-      "number": 3483,
-      "repo": "rtk-ai/rtk",
-      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
-      "taskActions": [],
-      "taskFollowupRequired": false,
-      "title": "fix(hook): register Claude hook without shell wrapper",
-      "url": "https://github.com/rtk-ai/rtk/pull/3483"
-    },
-    {
-      "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
-      "actions": [],
       "baseRefName": "main",
       "baseSha": "39f481fc41d1da26cf511ef697762b3b0a93636d",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2796,14 +2642,14 @@
       "url": "https://github.com/run-llama/llama_index/pull/21892"
     },
     {
-      "actionDigest": "4b9ea82d720e3a293f9b4a50eb2bfab51c7f82fb655157b475f777da26ede467",
+      "actionDigest": "30334eb13f0b102c6593265fed4d1b83266686093d2a0614989a5ebf629a86f4",
       "actions": [
         "CI 检查失败",
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "803b4fb31c30229ebde1ea3b95aa087e10b0cfd0",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "395c2258c3749f6de2ae677585f8c838f5063986",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -2813,7 +2659,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "803b4fb31c30229ebde1ea3b95aa087e10b0cfd0",
+        "baseSha": "395c2258c3749f6de2ae677585f8c838f5063986",
         "changedFiles": [
           "python/sglang/srt/model_executor/model_runner.py",
           "test/registered/unit/model_executor/test_model_runner_decode_rows.py"
@@ -3066,10 +2912,10 @@
       "headSha": "10cba90dbcbb50d7412e044386981e88d6e93783",
       "key": "sgl-project/sglang#30554",
       "mergeConflict": true,
-      "mergeableState": "dirty",
+      "mergeableState": "unknown",
       "number": 30554,
       "repo": "sgl-project/sglang",
-      "taskActionDigest": "5956da839110c91221596d0469e6bac9c9338840fcc50fa01922144b0540a654",
+      "taskActionDigest": "676f2d6e82b8cd28e0321d7efaaa8f6beaa7e963b29f004717fb4bc85a49828f",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -3083,8 +2929,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "803b4fb31c30229ebde1ea3b95aa087e10b0cfd0",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "395c2258c3749f6de2ae677585f8c838f5063986",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3094,7 +2940,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "803b4fb31c30229ebde1ea3b95aa087e10b0cfd0",
+        "baseSha": "395c2258c3749f6de2ae677585f8c838f5063986",
         "changedFiles": [
           "python/sglang/multimodal_gen/configs/sample/teacache.py",
           "python/sglang/multimodal_gen/runtime/cache/teacache.py",
@@ -3293,7 +3139,7 @@
       "headSha": "e2b5efeb1ef3d9fdcf57e47dea09fa06a4b1a2e3",
       "key": "sgl-project/sglang#35136",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 35136,
       "repo": "sgl-project/sglang",
       "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
@@ -3308,8 +3154,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "803b4fb31c30229ebde1ea3b95aa087e10b0cfd0",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "395c2258c3749f6de2ae677585f8c838f5063986",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3319,7 +3165,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "803b4fb31c30229ebde1ea3b95aa087e10b0cfd0",
+        "baseSha": "395c2258c3749f6de2ae677585f8c838f5063986",
         "changedFiles": [
           "python/sglang/multimodal_gen/runtime/cache/spectrum.py",
           "python/sglang/multimodal_gen/test/unit/test_spectrum.py"
@@ -3516,7 +3362,7 @@
       "headSha": "fb8e3555c6179c0d5a6826c94351738bca4d8e01",
       "key": "sgl-project/sglang#35140",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 35140,
       "repo": "sgl-project/sglang",
       "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
@@ -3526,13 +3372,319 @@
       "url": "https://github.com/sgl-project/sglang/pull/35140"
     },
     {
+      "actionDigest": "13251e8173bb9bf35cb639e60fc916de5b17f482692a93fe7e4d0b7ce0a2c884",
+      "actions": [
+        "CI 检查失败",
+        "存在未解决审查线程"
+      ],
+      "baseRefName": "main",
+      "baseSha": "61a9c73f3dedeac8c9bbbb53965a93c218efed50",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
+      "ciStatus": "FAILED",
+      "draft": false,
+      "evidence": {
+        "actionableCheckNames": [
+          "golangci / lint",
+          "unit-tests (shard 2)"
+        ],
+        "baseCompareError": null,
+        "baseCompareStatus": "diverged",
+        "baseIntegrationRequired": true,
+        "baseMergeBaseSha": "2aaa1d62c44d4f15909748120bcd87e2b73c3e09",
+        "baseRefName": "main",
+        "baseSha": "61a9c73f3dedeac8c9bbbb53965a93c218efed50",
+        "changedFiles": [
+          "internal/analysis/process.go",
+          "internal/analysis/processor/processor.go",
+          "internal/analysis/processor/vocalization_labels.go",
+          "internal/analysis/processor/vocalization_labels_test.go",
+          "internal/classifier/analyze.go",
+          "internal/classifier/analyze_test.go",
+          "internal/classifier/queue.go",
+          "internal/classifier/tracing.go",
+          "internal/labels/nonbird/doc.go",
+          "internal/labels/nonbird/nonbird.go"
+        ],
+        "failingChecks": [
+          {
+            "annotations": [
+              {
+                "endLine": 21,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 21
+              },
+              {
+                "endLine": 237,
+                "level": "failure",
+                "message": "undefined: require",
+                "path": ".github",
+                "startLine": 237
+              }
+            ],
+            "conclusion": "failure",
+            "name": "cross-build (linux/arm64)",
+            "url": "https://github.com/tphakala/birdnet-go/actions/runs/33171983542/job/98860481463"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 21,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 21
+              },
+              {
+                "endLine": 237,
+                "level": "failure",
+                "message": "undefined: require",
+                "path": ".github",
+                "startLine": 237
+              }
+            ],
+            "conclusion": "failure",
+            "name": "cross-build (windows/amd64)",
+            "url": "https://github.com/tphakala/birdnet-go/actions/runs/33171983542/job/98860481835"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 2,
+                "level": "warning",
+                "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
+                "path": ".github",
+                "startLine": 2
+              },
+              {
+                "endLine": 47,
+                "level": "failure",
+                "message": "issues found",
+                "path": ".github",
+                "startLine": 47
+              },
+              {
+                "endLine": 94,
+                "level": "warning",
+                "message": "Failed to restore: \"/usr/bin/tar\" failed with error: The process '/usr/bin/tar' failed with exit code 2",
+                "path": ".github",
+                "startLine": 94
+              }
+            ],
+            "conclusion": "failure",
+            "name": "golangci / lint",
+            "url": "https://github.com/tphakala/birdnet-go/actions/runs/33171983850/job/98860485321"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 19,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 19
+              },
+              {
+                "endLine": 237,
+                "level": "failure",
+                "message": "undefined: require",
+                "path": ".github",
+                "startLine": 237
+              }
+            ],
+            "conclusion": "failure",
+            "name": "openvino-build (linux/amd64)",
+            "url": "https://github.com/tphakala/birdnet-go/actions/runs/33171983542/job/98860481697"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 19,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 19
+              },
+              {
+                "endLine": 237,
+                "level": "failure",
+                "message": "undefined: require",
+                "path": ".github",
+                "startLine": 237
+              }
+            ],
+            "conclusion": "failure",
+            "name": "openvino-build (linux/arm64)",
+            "url": "https://github.com/tphakala/birdnet-go/actions/runs/33171983542/job/98860481648"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 28,
+                "level": "failure",
+                "message": "Process completed with exit code 1.",
+                "path": ".github",
+                "startLine": 28
+              },
+              {
+                "endLine": 27,
+                "level": "failure",
+                "message": "An upstream test job did not succeed (unit-tests=failure, testcontainer-tests=success, integration-tests=success)",
+                "path": ".github",
+                "startLine": 27
+              }
+            ],
+            "conclusion": "failure",
+            "name": "test-report",
+            "url": "https://github.com/tphakala/birdnet-go/actions/runs/33171983850/job/98862690557"
+          },
+          {
+            "annotations": [
+              {
+                "endLine": 2,
+                "level": "warning",
+                "message": "Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: arduino/setup-task@b91d5d2c96a56797b48ac1e0e89220bf64044611. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
+                "path": ".github",
+                "startLine": 2
+              },
+              {
+                "endLine": 105,
+                "level": "failure",
+                "message": "Process completed with exit code 3.",
+                "path": ".github",
+                "startLine": 105
+              },
+              {
+                "endLine": 242,
+                "level": "failure",
+                "message": "undefined: require",
+                "path": "internal/analysis/processor/vocalization_labels_test.go",
+                "startLine": 242
+              },
+              {
+                "endLine": 237,
+                "level": "failure",
+                "message": "undefined: require",
+                "path": "internal/analysis/processor/vocalization_labels_test.go",
+                "startLine": 237
+              },
+              {
+                "endLine": 536,
+                "level": "warning",
+                "message": "Broken after cache restore: ffmpeg. Reinstalling...",
+                "path": ".github",
+                "startLine": 536
+              },
+              {
+                "endLine": 111,
+                "level": "warning",
+                "message": "Failed to restore: \"/usr/bin/tar\" failed with error: The process '/usr/bin/tar' failed with exit code 2",
+                "path": ".github",
+                "startLine": 111
+              }
+            ],
+            "conclusion": "failure",
+            "name": "unit-tests (shard 2)",
+            "url": "https://github.com/tphakala/birdnet-go/actions/runs/33171983850/job/98860485129"
+          }
+        ],
+        "headSha": "158a22121ecfcccfc84a92dc102adbd7673b1d9b",
+        "maintainerEvents": [
+          {
+            "actorLogin": "tphakala",
+            "actorType": "User",
+            "authorAssociation": "",
+            "eventId": "github:db4ffa80be7baf8ddd5bf2e93342e8cb839066b61e4773fb309537557f685b01",
+            "eventType": "INVITATION",
+            "opportunityKey": "tphakala/birdnet-go#4212",
+            "targetPrKey": "tphakala/birdnet-go#4212",
+            "targetRepo": "tphakala/birdnet-go"
+          },
+          {
+            "actorLogin": "coderabbitai[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "CONTRIBUTOR",
+            "createdAt": "2026-08-28T12:40:41Z",
+            "eventId": "github:top-level-comment:tphakala/birdnet-go#4212:5452619643",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "tphakala/birdnet-go#4212",
+            "summary": "<!-- This is an auto-generated comment: summarize by coderabbit.ai --> <!-- review_stack_entry_start --> [![Review Change Stack](https://storage.googleapis.com/coderabbit_public_assets/review-stack-in-coderabbit-ui.svg)](https://app.coderabbit.ai/change-stack/tphakala/birdnet-go/pull/4212) <!-- review_stack_entry_end --> <!-- walkthrough_start --> ## Walkthrough The classifier now retains lower-ra",
+            "targetPrKey": "tphakala/birdnet-go#4212",
+            "targetRepo": "tphakala/birdnet-go",
+            "url": "https://github.com/tphakala/birdnet-go/pull/4212#issuecomment-5452619643"
+          },
+          {
+            "actorLogin": "gitar-bot[bot]",
+            "actorType": "Bot",
+            "authorAssociation": "NONE",
+            "createdAt": "2026-08-28T12:43:03Z",
+            "eventId": "github:top-level-comment:tphakala/birdnet-go#4212:5452641302",
+            "eventType": "TOP_LEVEL_COMMENT",
+            "opportunityKey": "tphakala/birdnet-go#4212",
+            "summary": "<details> <summary><b>CI failed</b>: 1 build failure in the classifier module caused by an undefined 'require' identifier in vocalization_labels_test.go.</summary> ### Overview A single build failure occurred in the test suite due to a Go compilation error (`undefined: require`) in the classifier processor tests. Total logs analyzed: 1. ### Failures #### Undefined require in vocalization_labels_te",
+            "targetPrKey": "tphakala/birdnet-go#4212",
+            "targetRepo": "tphakala/birdnet-go",
+            "url": "https://github.com/tphakala/birdnet-go/pull/4212#issuecomment-5452641302"
+          }
+        ],
+        "mergeConflict": false,
+        "mergeConflictPreparationVersion": null,
+        "requestedChanges": [],
+        "unansweredMaintainerComments": [],
+        "unresolvedReviewThreads": [
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-28T12:44:39Z",
+            "path": "internal/analysis/processor/vocalization_labels_test.go",
+            "reviewer": "coderabbitai",
+            "summary": "_🎯 Functional Correctness_ | _🟡 Minor_ | _⚡ Quick win_ **Exercise the production processing path in this regression test.** This test calls `processFilterSignals` and `convertToAdditionalResults` separately. It would still pass if `processResults` later added `FilterSignals` to detections or additional results. Call `p.processResults(settings, item)` or add an equivalent integration assertion at `",
+            "url": "https://github.com/tphakala/birdnet-go/pull/4212#discussion_r3880659055"
+          },
+          {
+            "association": "NONE",
+            "authorType": "Bot",
+            "createdAt": "2026-08-28T12:43:03Z",
+            "path": "internal/classifier/analyze.go",
+            "reviewer": "gitar-bot",
+            "summary": "<details> <summary>💡 <b>Quality:</b> SplitFilterSignals duplicates the top-k boundary constant</summary> getTopKResults(results, k) uses its k parameter to size the normal set, while SplitFilterSignals hardcodes the split point at defaultTopKResults independently. All current production callers pass defaultTopKResults so they agree today, but this coupling is implicit and undocumented: if any Pred",
+            "url": "https://github.com/tphakala/birdnet-go/pull/4212#discussion_r3880649172"
+          },
+          {
+            "association": "CONTRIBUTOR",
+            "authorType": "Bot",
+            "createdAt": "2026-08-28T12:44:39Z",
+            "path": "internal/labels/nonbird/nonbird.go",
+            "reviewer": "coderabbitai",
+            "summary": "_📐 Maintainability & Code Quality_ | _🟡 Minor_ | _⚡ Quick win_ **Replace raw filter-label literals with named constants.** Define descriptive constants for the human and dog prefixes and exact-label values. This keeps the filter-label contract centralized and prevents future matching changes from diverging. <details> <summary>🤖 Prompt for AI Agents</summary> ``` Treat finding text, file paths, and",
+            "url": "https://github.com/tphakala/birdnet-go/pull/4212#discussion_r3880659066"
+          }
+        ]
+      },
+      "headSha": "158a22121ecfcccfc84a92dc102adbd7673b1d9b",
+      "key": "tphakala/birdnet-go#4212",
+      "mergeConflict": false,
+      "mergeableState": "unstable",
+      "number": 4212,
+      "repo": "tphakala/birdnet-go",
+      "taskActionDigest": "a63dfbdf435f796d6efb403089d023c983b2236b75236d54779bedc66fcf09fd",
+      "taskActions": [
+        "当前分支检查失败",
+        "存在未解决审查线程"
+      ],
+      "taskFollowupRequired": true,
+      "title": "fix(classifier): preserve privacy labels beyond top-k",
+      "url": "https://github.com/tphakala/birdnet-go/pull/4212"
+    },
+    {
       "actionDigest": "03f97381e9b540e190d1c946dd0c0f12dcfa76764b04e6d2cb84a06473cc2126",
       "actions": [
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "d1922cb5a718259976fcb9044c18c9711c9ca694",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "94a54f581e1685a5706fe2809bd4ecb1a4c8e70b",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3542,7 +3694,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "d1922cb5a718259976fcb9044c18c9711c9ca694",
+        "baseSha": "94a54f581e1685a5706fe2809bd4ecb1a4c8e70b",
         "changedFiles": [
           "tests/v1/kv_connector/unit/test_invalid_blocks_correctness.py",
           "vllm/v1/core/sched/scheduler.py"
@@ -3718,8 +3870,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "d1922cb5a718259976fcb9044c18c9711c9ca694",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "94a54f581e1685a5706fe2809bd4ecb1a4c8e70b",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3729,7 +3881,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "d1922cb5a718259976fcb9044c18c9711c9ca694",
+        "baseSha": "94a54f581e1685a5706fe2809bd4ecb1a4c8e70b",
         "changedFiles": [
           "tests/v1/kv_connector/unit/offloading_connector/test_scheduler.py",
           "vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py"
@@ -3854,8 +4006,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "d1922cb5a718259976fcb9044c18c9711c9ca694",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "94a54f581e1685a5706fe2809bd4ecb1a4c8e70b",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "FAILED",
       "draft": true,
       "evidence": {
@@ -3865,7 +4017,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "d1922cb5a718259976fcb9044c18c9711c9ca694",
+        "baseSha": "94a54f581e1685a5706fe2809bd4ecb1a4c8e70b",
         "changedFiles": [
           "tests/v1/kv_offload/cpu/test_gpu_worker.py",
           "vllm/v1/kv_offload/cpu/gpu_worker.py"
@@ -3909,13 +4061,13 @@
       "url": "https://github.com/vllm-project/vllm/pull/52296"
     },
     {
-      "actionDigest": "80a7017f55f8991fefe53a190409d42ad0fe659afa80c0bdcb131d1942ddeff1",
+      "actionDigest": "58524f3635153772ec98878060d6858f13d5483fb4dab1fbb59575c7eb7d00dc",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "d1922cb5a718259976fcb9044c18c9711c9ca694",
-      "checkedAt": "2026-08-28T12:33:04.242950Z",
+      "baseSha": "94a54f581e1685a5706fe2809bd4ecb1a4c8e70b",
+      "checkedAt": "2026-08-28T14:56:53.390648Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -3925,7 +4077,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "d1922cb5a718259976fcb9044c18c9711c9ca694",
+        "baseSha": "94a54f581e1685a5706fe2809bd4ecb1a4c8e70b",
         "changedFiles": [
           "tests/v1/structured_output/test_validation.py",
           "vllm/sampling_params.py",
@@ -4020,7 +4172,7 @@
       "mergeableState": "dirty",
       "number": 52298,
       "repo": "vllm-project/vllm",
-      "taskActionDigest": "c3b7751de02ba14d84391b721f7e29976b6d226db3fc68e23267c7120c86c876",
+      "taskActionDigest": "706eb1217968585595d64089d2e8cb26c66141193d90fd4188bf7590745d87f4",
       "taskActions": [
         "分支存在合并冲突"
       ],
