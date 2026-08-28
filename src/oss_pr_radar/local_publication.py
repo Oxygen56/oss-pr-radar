@@ -22,6 +22,7 @@ from .runtime import (
     disk_pressure_gate,
     disk_snapshot,
     exclusive_lock,
+    pid_probe,
     read_json,
     record_cycle,
     rotate_log,
@@ -311,6 +312,36 @@ def _record_slow_cycle(
         error_code=error_code,
         **extra,
     )
+
+
+def _stale_slow_inflight(
+    root: Path,
+    *,
+    backoff: dict[str, Any],
+) -> tuple[bool, str | None]:
+    """Verify the owner of a persisted slow attempt before honoring it."""
+
+    if backoff.get("inFlight") is not True:
+        return False, None
+    runtime = read_json(root / "state" / "runtime-health.json", {})
+    workers = runtime.get("workers") if isinstance(runtime, dict) else None
+    slow = workers.get("slow") if isinstance(workers, dict) else None
+    slow = slow if isinstance(slow, dict) else {}
+    try:
+        recorded_pid = int(slow.get("workerPid") or 0)
+    except (TypeError, ValueError):
+        return False, None
+    if recorded_pid <= 0:
+        return False, None
+    operation_id = str(backoff.get("operationId") or "")
+    if operation_id and not operation_id.startswith(f"{recorded_pid}-"):
+        return False, None
+    evidence = pid_probe(recorded_pid, expected_fragment="slow_publication_worker.py")
+    if evidence.get("alive") is True and evidence.get("versionMatched") is True:
+        return False, None
+    reason = "SLOW_WORKER_STALE_PID"
+    detail = str(evidence.get("error") or "process identity mismatch")[:160]
+    return True, f"{reason}:{recorded_pid}:{detail}"
 
 
 def _terminate_process_group(process: subprocess.Popen[str]) -> None:
@@ -797,6 +828,57 @@ def slow_advance_once(
                         "inFlight": False,
                     },
                 )
+            stale_inflight, stale_error = _stale_slow_inflight(root, backoff=backoff)
+            if stale_inflight and stale_error:
+                try:
+                    failures = max(0, int(backoff.get("failureCount") or 0))
+                except (TypeError, ValueError):
+                    failures = 0
+                delay = min(3600, 60 * (2 ** min(failures, 5)))
+                failure_retry = now + delay
+                operation_id = str(
+                    backoff.get("operationId") or f"stale-{os.getpid()}-{time.time_ns()}"
+                )
+                write_json(
+                    backoff_path,
+                    {
+                        "schemaVersion": "slow_backoff_v1",
+                        "failureCount": failures + 1,
+                        "backoffSeconds": delay,
+                        "nextAttemptAt": failure_retry,
+                        "retryAfter": failure_retry,
+                        "attemptStartedAt": None,
+                        "lastAttemptAt": utc_now(),
+                        "inFlight": False,
+                        "lastError": stale_error,
+                        "operationId": operation_id,
+                    },
+                )
+                append_operation(
+                    root,
+                    {
+                        "operationId": operation_id,
+                        "worker": "slow",
+                        "operation": "slow-cycle",
+                        "status": "failure",
+                        "errorCode": "SLOW_WORKER_STALE_PID",
+                        "retryAfter": failure_retry,
+                        "inFlight": False,
+                    },
+                )
+                _record_slow_cycle(
+                    root,
+                    ok=False,
+                    exit_code=1,
+                    started_at=started,
+                    error_code="SLOW_WORKER_STALE_PID",
+                    disk=disk,
+                )
+                return {
+                    "ok": False,
+                    "errors": [{"error": stale_error}],
+                    "slowWorkerDiagnostic": _slow_worker_diagnostic(root),
+                }
             retry_at = float(backoff.get("retryAfter") or backoff.get("nextAttemptAt") or 0)
             if backoff.get("inFlight") and now < retry_at:
                 return {

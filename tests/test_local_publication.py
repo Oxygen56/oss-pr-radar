@@ -1278,6 +1278,80 @@ def test_slow_worker_persisted_backoff_does_not_manufacture_success_health(
     assert not (state_dir / "runtime-health.json").exists()
 
 
+@pytest.mark.parametrize(
+    "pid_evidence",
+    [
+        {"alive": False, "versionMatched": False, "error": "ESRCH"},
+        {"alive": True, "versionMatched": False},
+    ],
+)
+def test_slow_worker_reconciles_stale_inflight_owner(
+    monkeypatch, tmp_path, pid_evidence
+):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    now = time.time()
+    operation_id = "26274-1787947635379277000"
+    runtime_health_path = state_dir / "runtime-health.json"
+    runtime_health_path.write_text(
+        json.dumps(
+            {
+                "workers": {
+                    "slow": {
+                        "inFlight": True,
+                        "workerPid": 26274,
+                        "workerPidAlive": True,
+                        "attemptStartedAt": now - 120,
+                        "lastSuccessAt": now - 180,
+                        "lastExitCode": 0,
+                    }
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runtime_health_path.chmod(0o600)
+    (state_dir / "slow-worker-backoff.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": "slow_backoff_v1",
+                "failureCount": 0,
+                "backoffSeconds": 60,
+                "nextAttemptAt": now + 60,
+                "retryAfter": now + 60,
+                "attemptStartedAt": "2026-08-28T20:07:15.379278Z",
+                "inFlight": True,
+                "operationId": operation_id,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
+    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.pid_probe", lambda *_args, **_kwargs: pid_evidence)
+
+    def must_not_run(_root: Path, _operation: str):
+        raise AssertionError("stale in-flight worker must be reconciled before retry")
+
+    result = slow_advance_once(tmp_path, runner=must_not_run)
+
+    assert result["ok"] is False
+    assert result["errors"][0]["error"].startswith("SLOW_WORKER_STALE_PID:26274:")
+    backoff = json.loads((state_dir / "slow-worker-backoff.json").read_text())
+    assert backoff["inFlight"] is False
+    assert backoff["attemptStartedAt"] is None
+    assert backoff["failureCount"] == 1
+    health = json.loads((state_dir / "runtime-health.json").read_text())
+    slow = health["workers"]["slow"]
+    assert slow["inFlight"] is False
+    assert slow["workerPid"] is None
+    assert slow["workerPidAlive"] is False
+    assert slow["lastExitCode"] == 1
+
+
 def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(monkeypatch, tmp_path):
     observed = {}
     monkeypatch.setattr(
