@@ -12,6 +12,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import time
@@ -185,6 +186,17 @@ ISSUE_STARVATION_SECONDS = 5 * 60
 AGED_ISSUE_PRIORITY = 210
 RECOVERY_PRIORITY = 300
 
+# Poll health is intentionally a small, bounded journal in the existing poll
+# state file. Three consecutive failures expose a sustained outage while one
+# transient network error remains recoverable.
+POLL_HEALTH_SCHEMA = "event_poll_health_v1"
+POLL_FAILURE_WINDOW_SECONDS = 15 * 60
+POLL_FAILURE_WINDOW_MAX_ATTEMPTS = 20
+POLL_DEGRADED_CONSECUTIVE_FAILURES = 3
+POLL_DEGRADED_MIN_WINDOW_ATTEMPTS = 3
+POLL_DEGRADED_FAILURE_RATE = 0.5
+POLL_DETAIL_INCOMPLETE_ERROR = "GitHub PR detail refresh incomplete"
+
 
 def _github_check_wake_projection(check_runs: Any) -> dict[str, Any]:
     """Collapse noisy CI progress into actionable wake phases."""
@@ -285,6 +297,7 @@ class PollResult:
     next_since: str | None = None
     etag: str | None = None
     last_modified: str | None = None
+    error: str | None = None
 
 
 class GitHubIssuePoller:
@@ -308,6 +321,7 @@ class GitHubIssuePoller:
         self.details_transport = details_transport or self.transport
         self.overlap_seconds = max(0, overlap_seconds)
         self.per_page = max(1, min(per_page, 100))
+        self._incomplete_details = False
 
     def _load(self) -> dict[str, Any]:
         try:
@@ -334,7 +348,126 @@ class GitHubIssuePoller:
                 return 304, dict(exc.headers.items()), None
             raise
 
+    @staticmethod
+    def _stamp(value: datetime) -> str:
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _error_text(exc: BaseException | str) -> str:
+        if isinstance(exc, BaseException):
+            message = str(exc).strip()
+            text = f"{type(exc).__name__}:{message}" if message else type(exc).__name__
+        else:
+            text = str(exc)
+        return text[:400]
+
+    @staticmethod
+    def _recoverable_poll_error(exc: BaseException) -> bool:
+        if isinstance(exc, urllib.error.HTTPError):
+            return exc.code in {408, 429} or 500 <= exc.code <= 599
+        if isinstance(exc, (OSError, TimeoutError, urllib.error.URLError)):
+            return True
+        if isinstance(exc, RuntimeError):
+            match = re.search(r"\bHTTP (\d{3})\b", str(exc))
+            if match:
+                status = int(match.group(1))
+                return status in {408, 429} or 500 <= status <= 599
+        return False
+
+    def _record_poll_health(
+        self,
+        *,
+        now: datetime,
+        success: bool,
+        error: BaseException | str | None = None,
+    ) -> None:
+        """Persist poll liveness without changing the event watermark."""
+        current = now.astimezone(UTC)
+        state = self._load()
+        raw_window = state.get("failureWindow")
+        window: list[dict[str, Any]] = []
+        if isinstance(raw_window, list):
+            for entry in raw_window:
+                if not isinstance(entry, dict) or not isinstance(entry.get("ok"), bool):
+                    continue
+                at = _parse_time(str(entry.get("at") or ""))
+                if at is None or at > current:
+                    continue
+                if (current - at).total_seconds() <= POLL_FAILURE_WINDOW_SECONDS:
+                    window.append({"at": self._stamp(at), "ok": bool(entry["ok"])})
+        window.append({"at": self._stamp(current), "ok": bool(success)})
+        window = window[-POLL_FAILURE_WINDOW_MAX_ATTEMPTS:]
+        attempts = len(window)
+        failures = sum(1 for entry in window if not entry["ok"])
+        rate = round(failures / attempts, 3) if attempts else 0.0
+        try:
+            prior_consecutive = max(0, int(state.get("consecutiveFailures") or 0))
+        except (TypeError, ValueError):
+            prior_consecutive = 0
+        consecutive = 0 if success else prior_consecutive + 1
+        degraded = (
+            not success
+            and (
+                consecutive >= POLL_DEGRADED_CONSECUTIVE_FAILURES
+                or (
+                    attempts >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS
+                    and rate >= POLL_DEGRADED_FAILURE_RATE
+                )
+            )
+        )
+        stamp = self._stamp(current)
+        state.setdefault("schemaVersion", "agentscope_poll_v1")
+        state["pollHealthSchema"] = POLL_HEALTH_SCHEMA
+        state["lastAttemptAt"] = stamp
+        state["failureWindow"] = window
+        state["failureWindowAttempts"] = attempts
+        state["failureWindowFailures"] = failures
+        state["failureRate"] = rate
+        state["consecutiveFailures"] = consecutive
+        if success:
+            state["lastSuccessAt"] = stamp
+            state["lastError"] = None
+            state["pollHealthStatus"] = "healthy"
+        else:
+            state["lastFailureAt"] = stamp
+            state["lastError"] = self._error_text(error or "poll failed")
+            state["pollHealthStatus"] = "degraded" if degraded else "recovering"
+        self._save(state)
+
     def poll(self, *, now: datetime | None = None) -> PollResult:
+        """Poll once and persist health even when GitHub is unavailable."""
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        try:
+            result = self._poll_once(now=current)
+        except Exception as exc:  # noqa: BLE001 - polling is an isolation boundary
+            error = self._error_text(exc)
+            self._record_poll_health(now=current, success=False, error=error)
+            if not self._recoverable_poll_error(exc):
+                raise
+            state = self._load()
+            return PollResult(
+                "degraded",
+                pages=0,
+                next_since=str(state.get("watermark") or "") or None,
+                error=error,
+            )
+        if result.status == "degraded" or self._incomplete_details:
+            error = result.error or POLL_DETAIL_INCOMPLETE_ERROR
+            self._record_poll_health(now=current, success=False, error=error)
+            return PollResult(
+                "degraded",
+                (),
+                pages=result.pages,
+                next_since=result.next_since,
+                etag=result.etag,
+                last_modified=result.last_modified,
+                error=error,
+            )
+        self._record_poll_health(now=current, success=True)
+        return result
+
+    def _poll_once(self, *, now: datetime | None = None) -> PollResult:
+        self._incomplete_details = False
         state = self._load()
         current = (now or datetime.now(UTC)).astimezone(UTC)
         previous = _parse_time(str(state.get("watermark") or ""))
@@ -389,6 +522,15 @@ class GitHubIssuePoller:
                 item for item in state.get("activePullRequests") or [] if isinstance(item, dict)
             ]
             events = self._active_pull_events(cached, state)
+            if self._incomplete_details:
+                return PollResult(
+                    "degraded",
+                    pages=1,
+                    next_since=str(state.get("watermark") or "") or None,
+                    etag=state.get("gateEtag"),
+                    last_modified=state.get("gateLastModified"),
+                    error=POLL_DETAIL_INCOMPLETE_ERROR,
+                )
             self._save(state)
             return PollResult(
                 "ok" if events else "not_modified",
@@ -420,6 +562,15 @@ class GitHubIssuePoller:
                 self._headers(state, conditional=False, require_auth=self.auth_required),
             )
             if status == 304:
+                if self._incomplete_details:
+                    return PollResult(
+                        "degraded",
+                        pages=page - 1,
+                        next_since=str(state.get("watermark") or "") or None,
+                        etag=state.get("gateEtag"),
+                        last_modified=state.get("gateLastModified"),
+                        error=POLL_DETAIL_INCOMPLETE_ERROR,
+                    )
                 return PollResult("not_modified", pages=page - 1, etag=state.get("etag"))
             if status != 200 or not isinstance(payload, list):
                 raise RuntimeError(f"GitHub issues request failed: HTTP {status}")
@@ -457,6 +608,15 @@ class GitHubIssuePoller:
             if len(payload) < self.per_page:
                 break
             page += 1
+        if self._incomplete_details:
+            return PollResult(
+                "degraded",
+                pages=page,
+                next_since=str(state.get("watermark") or "") or None,
+                etag=state.get("gateEtag"),
+                last_modified=state.get("gateLastModified"),
+                error=POLL_DETAIL_INCOMPLETE_ERROR,
+            )
         watermark = (max_updated or current).isoformat().replace("+00:00", "Z")
         state.update(
             {
@@ -576,13 +736,47 @@ class GitHubIssuePoller:
         if not complete or not all(
             key in details for key in ("pull", "reviews", "comments", "checks")
         ):
+            self._incomplete_details = True
             return dict(previous) if isinstance(previous, dict) else None
         item["agentscopeDetails"] = details
         state.setdefault("completePrSnapshots", {})[snapshot_key] = dict(item)
         return item
 
     def full_reconcile(self, *, now: datetime | None = None) -> PollResult:
+        """Run reconciliation and persist health without advancing on failure."""
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        try:
+            result = self._full_reconcile_once(now=current)
+        except Exception as exc:  # noqa: BLE001 - reconciliation is an isolation boundary
+            error = self._error_text(exc)
+            self._record_poll_health(now=current, success=False, error=error)
+            if not self._recoverable_poll_error(exc):
+                raise
+            state = self._load()
+            return PollResult(
+                "degraded",
+                pages=0,
+                next_since=str(state.get("watermark") or "") or None,
+                error=error,
+            )
+        if result.status == "degraded" or self._incomplete_details:
+            error = result.error or POLL_DETAIL_INCOMPLETE_ERROR
+            self._record_poll_health(now=current, success=False, error=error)
+            return PollResult(
+                "degraded",
+                (),
+                pages=result.pages,
+                next_since=result.next_since,
+                etag=result.etag,
+                last_modified=result.last_modified,
+                error=error,
+            )
+        self._record_poll_health(now=current, success=True)
+        return result
+
+    def _full_reconcile_once(self, *, now: datetime | None = None) -> PollResult:
         """Run a non-conditional, all-pages reconciliation for missed updates."""
+        self._incomplete_details = False
         state = self._load()
         current = (now or datetime.now(UTC)).astimezone(UTC)
         events: list[dict[str, Any]] = []
@@ -656,6 +850,13 @@ class GitHubIssuePoller:
             if len(payload) < self.per_page:
                 break
             page += 1
+        if self._incomplete_details:
+            return PollResult(
+                "degraded",
+                pages=page,
+                next_since=str(state.get("watermark") or "") or None,
+                error=POLL_DETAIL_INCOMPLETE_ERROR,
+            )
         watermark = (max_updated or current).isoformat().replace("+00:00", "Z")
         state.update(
             {

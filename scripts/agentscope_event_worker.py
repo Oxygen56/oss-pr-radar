@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from oss_pr_radar.agentscope_events import (  # noqa: E402
     EventLane,
     GitHubIssuePoller,
+    PollResult,
     dispatch_once,
     github_event_effective_time,
 )
@@ -947,7 +948,18 @@ def run_once(
         result = poll.poll(now=current)
     except TypeError:
         # Keep test/in-process adapters written against the original poll().
-        result = poll.poll()
+        try:
+            result = poll.poll()
+        except Exception as exc:  # noqa: BLE001 - isolate transient transport failures
+            if not GitHubIssuePoller._recoverable_poll_error(exc):
+                raise
+            result = PollResult("degraded", error=f"{type(exc).__name__}:{str(exc)[:400]}")
+    except Exception as exc:  # noqa: BLE001 - isolate transient transport failures
+        if not GitHubIssuePoller._recoverable_poll_error(exc):
+            raise
+        result = PollResult("degraded", error=f"{type(exc).__name__}:{str(exc)[:400]}")
+    poll_status = str(getattr(result, "status", "unknown") or "unknown")
+    poll_error = getattr(result, "error", None)
     reconciliation = _load_json(state / "agentscope-reconcile.json")
     last_full = reconciliation.get("lastCompletedAt")
     last_full_dt = None
@@ -959,18 +971,24 @@ def run_once(
         except ValueError:
             last_full_dt = None
     full_result = None
-    if had_poll_state and (
+    if poll_status != "degraded" and had_poll_state and (
         last_full_dt is None
         or current - last_full_dt >= timedelta(seconds=max(1, reconcile_interval_seconds))
     ):
-        full_result = poll.full_reconcile(now=current)
-        _save_json(
-            state / "agentscope-reconcile.json",
-            {
-                "schemaVersion": "agentscope_reconcile_v1",
-                "lastCompletedAt": current.isoformat().replace("+00:00", "Z"),
-            },
-        )
+        try:
+            full_result = poll.full_reconcile(now=current)
+        except Exception as exc:  # noqa: BLE001 - isolate transient transport failures
+            if not GitHubIssuePoller._recoverable_poll_error(exc):
+                raise
+            full_result = PollResult("degraded", error=f"{type(exc).__name__}:{str(exc)[:400]}")
+        if str(getattr(full_result, "status", "unknown") or "unknown") != "degraded":
+            _save_json(
+                state / "agentscope-reconcile.json",
+                {
+                    "schemaVersion": "agentscope_reconcile_v1",
+                    "lastCompletedAt": current.isoformat().replace("+00:00", "Z"),
+                },
+            )
     # Queue work belongs exclusively to the shared Radar controller.  Older
     # event releases mirrored that queue; retire those rows once rather than
     # draining them or starting issue-specific tasks.
@@ -979,9 +997,10 @@ def run_once(
     # Reviews/CI and PR changes outrank issue discovery.  The worker does not
     # make a claim here; claim eligibility remains the existing bridge policy.
     inserted = 0
-    events = list(result.events)
+    events = list(getattr(result, "events", ()) or ())
     if full_result is not None:
-        events.extend(full_result.events)
+        if str(getattr(full_result, "status", "unknown") or "unknown") != "degraded":
+            events.extend(getattr(full_result, "events", ()) or ())
     for event in events:
         if _is_bootstrap_baseline(event, bootstrap_boundary):
             baseline_record = lane.record_baseline_event(event)
@@ -1032,7 +1051,10 @@ def run_once(
         drained = dispatch_once(lane, deliver, limit=1 if production_delivery else 3)
     return {
         "ok": True,
-        "status": result.status,
+        "status": poll_status,
+        "pollStatus": poll_status,
+        "pollDegraded": poll_status == "degraded",
+        "pollError": str(poll_error)[:400] if poll_error else None,
         "eventsSeen": len(events),
         "eventsInserted": inserted,
         "prSnapshotsCoalesced": pr_snapshots_coalesced,
@@ -1048,7 +1070,16 @@ def run_once(
         "recoveryQueue": recovery_queue,
         "centralTaskBusy": central_task_busy,
         "fullReconciliation": bool(full_result is not None),
-        "fullReconciliationEvents": len(full_result.events) if full_result is not None else 0,
+        "fullReconciliationDegraded": bool(
+            full_result is not None
+            and str(getattr(full_result, "status", "unknown") or "unknown") == "degraded"
+        ),
+        "fullReconciliationEvents": (
+            len(getattr(full_result, "events", ()) or ())
+            if full_result is not None
+            and str(getattr(full_result, "status", "unknown") or "unknown") != "degraded"
+            else 0
+        ),
         "publicWorkSeedItems": seed_items,
         "bootstrapBoundary": bootstrap_boundary.isoformat().replace("+00:00", "Z")
         if bootstrap_boundary

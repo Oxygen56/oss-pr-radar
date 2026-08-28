@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import urllib.error
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,6 +53,58 @@ def _event_worker_module():
     assert spec and spec.loader
     spec.loader.exec_module(module)
     return module
+
+
+def test_poll_health_persists_failures_without_advancing_watermark(tmp_path):
+    failed = False
+
+    def transport(url, headers):
+        nonlocal failed
+        if "direction=desc" in url:
+            if not failed:
+                return 200, {"ETag": "gate"}, [_issue(1, "2026-08-22T00:00:00Z")]
+            raise urllib.error.URLError("TLS handshake failed")
+        return 200, {}, []
+
+    poller = GitHubIssuePoller(tmp_path / "poll.json", transport=transport)
+    first = poller.poll(now=datetime(2026, 8, 22, tzinfo=UTC))
+    state_path = tmp_path / "poll.json"
+    baseline = json.loads(state_path.read_text())
+    failed = True
+    second = poller.poll(now=datetime(2026, 8, 22, 0, 0, 1, tzinfo=UTC))
+    state = json.loads(state_path.read_text())
+    assert first.status == "baseline"
+    assert second.status == "degraded"
+    assert state["watermark"] == baseline["watermark"]
+    assert state["lastSuccessAt"] == "2026-08-22T00:00:00Z"
+    assert state["consecutiveFailures"] == 1
+    assert state["pollHealthStatus"] == "recovering"
+    assert state["failureWindowFailures"] == 1
+    for second_offset in (2, 3):
+        assert poller.poll(now=datetime(2026, 8, 22, 0, 0, second_offset, tzinfo=UTC)).status == "degraded"
+    state = json.loads(state_path.read_text())
+    assert state["consecutiveFailures"] == 3
+    assert state["pollHealthStatus"] == "degraded"
+    assert state["watermark"] == baseline["watermark"]
+
+    failed = False
+    recovered = poller.poll(now=datetime(2026, 8, 22, 0, 0, 4, tzinfo=UTC))
+    state = json.loads(state_path.read_text())
+    assert recovered.status == "ok"
+    assert state["consecutiveFailures"] == 0
+    assert state["pollHealthStatus"] == "healthy"
+
+
+def test_poll_logic_error_is_not_hidden_but_failure_is_recorded(tmp_path):
+    def transport(_url, _headers):
+        raise AssertionError("fixture bug")
+
+    poller = GitHubIssuePoller(tmp_path / "poll.json", transport=transport)
+    with pytest.raises(AssertionError, match="fixture bug"):
+        poller.poll(now=datetime(2026, 8, 22, tzinfo=UTC))
+    state = json.loads((tmp_path / "poll.json").read_text())
+    assert state["consecutiveFailures"] == 1
+    assert state["lastError"].startswith("AssertionError:")
 
 
 def _authorization_bridge_error(operation: str, reason: str, **extra) -> RuntimeError:
