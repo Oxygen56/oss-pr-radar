@@ -809,6 +809,99 @@ class EventLane:
                 raise RuntimeError("prestart authorization reservation changed")
             return True
 
+    def try_reserve_handler_turn_if_idle(
+        self,
+        event_key: str,
+        event_id: str,
+        client_user_message_id: str,
+        *,
+        lease_token: str,
+        owner: str = "event-lane",
+    ) -> dict[str, Any]:
+        """Atomically reserve the central task or refund a busy claim."""
+        token = str(lease_token or "")
+        if not token:
+            return {"status": "conflict", "reason": "lease_token_missing"}
+        with self.writer() as db:
+            event_row = db.execute(
+                "SELECT status,attempts,lease_owner,lease_token FROM event_lane_events "
+                "WHERE event_id=?",
+                (str(event_id),),
+            ).fetchone()
+            if (
+                event_row is None
+                or str(event_row["status"]) != "leased"
+                or int(event_row["attempts"] or 0) <= 0
+                or str(event_row["lease_owner"] or "") != str(owner)
+                or str(event_row["lease_token"] or "") != token
+            ):
+                return {"status": "conflict", "reason": "lease_mismatch"}
+            turn = db.execute(
+                "SELECT * FROM event_lane_turns WHERE event_id=?",
+                (str(event_id),),
+            ).fetchone()
+            resettable = bool(
+                turn is not None
+                and str(turn["status"] or "") == "needs_reconcile"
+                and not str(turn["thread_id"] or "")
+                and not str(turn["turn_id"] or "")
+            )
+            if turn is not None and not resettable:
+                return {"status": "conflict", "reason": "turn_conflict"}
+            active = db.execute(
+                "SELECT event_id FROM event_lane_turns WHERE event_id<>? "
+                "AND status IN ('reserved','started') LIMIT 1",
+                (str(event_id),),
+            ).fetchone()
+            if active is not None:
+                refunded = db.execute(
+                    "UPDATE event_lane_events SET status='pending',attempts=attempts-1,"
+                    "delivered_at=NULL,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+                    "WHERE event_id=? AND status='leased' AND attempts>0 "
+                    "AND lease_owner=? AND lease_token=?",
+                    (str(event_id), str(owner), token),
+                )
+                if refunded.rowcount != 1:
+                    raise RuntimeError("busy claim changed during atomic refund")
+                return {
+                    "status": "busy",
+                    "activeEventId": str(active["event_id"]),
+                }
+            current = time.time()
+            if resettable:
+                changed = db.execute(
+                    "UPDATE event_lane_turns SET event_key=?,client_user_message_id=?,"
+                    "thread_id='',turn_id=NULL,status='reserved',receipt_json='{}',created_at=? "
+                    "WHERE event_id=? AND status='needs_reconcile' AND thread_id='' "
+                    "AND (turn_id IS NULL OR turn_id='')",
+                    (
+                        str(event_key),
+                        str(client_user_message_id),
+                        current,
+                        str(event_id),
+                    ),
+                )
+                if changed.rowcount != 1:
+                    raise RuntimeError("handler turn changed during atomic reservation")
+            else:
+                db.execute(
+                    "INSERT INTO event_lane_turns(event_id,event_key,client_user_message_id,created_at) "
+                    "VALUES(?,?,?,?)",
+                    (
+                        str(event_id),
+                        str(event_key),
+                        str(client_user_message_id),
+                        current,
+                    ),
+                )
+            reserved = db.execute(
+                "SELECT * FROM event_lane_turns WHERE event_id=?",
+                (str(event_id),),
+            ).fetchone()
+            if reserved is None or str(reserved["status"] or "") != "reserved":
+                raise RuntimeError("handler turn reservation was not persisted")
+            return {"status": "reserved", "turn": dict(reserved)}
+
     def pending(self) -> int:
         with self.connect() as db:
             return int(db.execute("SELECT count(*) FROM event_lane_events WHERE status IN ('pending','leased')").fetchone()[0])

@@ -504,15 +504,7 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
         # A delayed retry for the same event is idempotent.
         return
     if existing_turn and str(existing_turn.get("status") or "") == "reserved":
-        lane.defer_event(
-            event_id,
-            lease_token=str(event.get("leaseToken") or ""),
-        )
         raise RuntimeError("event_turn_reserved")
-    active_turn = lane.active_handler_turn(key)
-    if active_turn and str(active_turn.get("event_id") or "") != event_id:
-        lane.defer_event(event_id, lease_token=str(event.get("leaseToken") or ""))
-        raise RuntimeError("central_task_busy")
     central_thread = None
     central_cwd = None
     try:
@@ -522,17 +514,24 @@ def issue_handler_delivery(root: Path, lane: EventLane, event: dict, *, target: 
     except RuntimeError as exc:
         _quarantine_event(root, lane, event, reason=str(exc))
         return
-    central_active = lane.active_handler_thread(central_thread)
-    if central_active and str(central_active.get("event_id") or "") != event_id:
-        lane.defer_event(event_id, lease_token=str(event.get("leaseToken") or ""))
-        raise RuntimeError("central_task_busy")
     binding = {"thread_id": central_thread}
     recovery_attempt = int(event.get("attempts") or 1)
     is_recovery = event.get("kind") == "outcome_reconcile"
     client_message_id = f"oss-pr-radar:agentscope-event:{event_id}"
     if is_recovery and recovery_attempt > 1:
         client_message_id += f":attempt:{recovery_attempt}"
-    lane.reserve_handler_turn(key, event_id, client_message_id)
+    reservation = lane.try_reserve_handler_turn_if_idle(
+        key,
+        event_id,
+        client_message_id,
+        lease_token=str(event.get("leaseToken") or ""),
+    )
+    if reservation.get("status") == "busy":
+        return
+    if reservation.get("status") != "reserved":
+        raise RuntimeError(
+            f"handler_reservation_{reservation.get('reason') or 'conflict'}"
+        )
     if target.get("kind") in {"pr_followup", "pr_watch"}:
         prompt = (
             f"Observe AgentScope PR event {event['eventId']} for {target.get('prUrl') or key} in the configured central task. "

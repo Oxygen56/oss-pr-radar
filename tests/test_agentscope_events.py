@@ -7,8 +7,10 @@ import json
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
@@ -292,6 +294,233 @@ def test_prestart_authorization_gap_refund_is_token_bound(tmp_path):
         ).fetchone()
     assert dict(started_row) == {"status": "leased", "attempts": 1}
     assert lane.handler_turn("started-turn")["status"] == "started"
+
+
+def test_atomic_handler_gate_serializes_two_claimed_events(tmp_path):
+    path = tmp_path / "events.db"
+    lane = EventLane(path)
+    for number in (1, 2):
+        lane.append(
+            {
+                "eventId": f"race-{number}",
+                "eventKey": f"agentscope-ai/agentscope#{number}",
+            }
+        )
+    claimed = lane.claim(limit=2, owner="worker-a")
+    barrier = Barrier(2)
+
+    def reserve(event):
+        connection = EventLane(path)
+        barrier.wait(timeout=5)
+        result = connection.try_reserve_handler_turn_if_idle(
+            str(event["eventKey"]),
+            str(event["eventId"]),
+            f"client:{event['eventId']}",
+            lease_token=str(event["leaseToken"]),
+            owner="worker-a",
+        )
+        return str(event["eventId"]), str(result["status"])
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = dict(executor.map(reserve, claimed))
+
+    assert sorted(outcomes.values()) == ["busy", "reserved"]
+    reserved_event = next(event_id for event_id, status in outcomes.items() if status == "reserved")
+    busy_event = next(event_id for event_id, status in outcomes.items() if status == "busy")
+    with lane.connect() as db:
+        rows = {
+            str(row["event_id"]): dict(row)
+            for row in db.execute(
+                "SELECT event_id,status,attempts,lease_owner,lease_token "
+                "FROM event_lane_events WHERE event_id IN ('race-1','race-2')"
+            ).fetchall()
+        }
+        turns = db.execute(
+            "SELECT event_id,status FROM event_lane_turns "
+            "WHERE status IN ('reserved','started')"
+        ).fetchall()
+        reconcile_count = db.execute(
+            "SELECT count(*) FROM event_lane_turns WHERE status='needs_reconcile'"
+        ).fetchone()[0]
+    assert rows[reserved_event]["status"] == "leased"
+    assert rows[reserved_event]["attempts"] == 1
+    assert rows[reserved_event]["lease_owner"] == "worker-a"
+    assert rows[reserved_event]["lease_token"]
+    assert rows[busy_event] == {
+        "event_id": busy_event,
+        "status": "pending",
+        "attempts": 0,
+        "lease_owner": None,
+        "lease_token": None,
+    }
+    assert [dict(turn) for turn in turns] == [
+        {"event_id": reserved_event, "status": "reserved"}
+    ]
+    assert reconcile_count == 0
+
+
+def test_atomic_handler_gate_resets_empty_reconcile_and_rejects_bad_lease(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    lane.append(
+        {
+            "eventId": "resettable",
+            "eventKey": "agentscope-ai/agentscope#1",
+        }
+    )
+    reset_claim = lane.claim(limit=1, owner="worker-a")[0]
+    lane.reserve_handler_turn(
+        "agentscope-ai/agentscope#1", "resettable", "client:old"
+    )
+    assert lane.release_handler_reservation(
+        "resettable", {"error": "pre-turn"}, reason="pre-turn"
+    )
+
+    reset = lane.try_reserve_handler_turn_if_idle(
+        "agentscope-ai/agentscope#1",
+        "resettable",
+        "client:new",
+        lease_token=str(reset_claim["leaseToken"]),
+        owner="worker-a",
+    )
+
+    assert reset["status"] == "reserved"
+    turn = lane.handler_turn("resettable")
+    assert turn is not None
+    assert turn["status"] == "reserved"
+    assert turn["client_user_message_id"] == "client:new"
+    assert turn["thread_id"] == ""
+    assert turn["turn_id"] is None
+    assert json.loads(turn["receipt_json"]) == {}
+
+    lane.append(
+        {
+            "eventId": "bad-lease",
+            "eventKey": "agentscope-ai/agentscope#2",
+        }
+    )
+    bad_claim = lane.claim(limit=1, owner="worker-a")[0]
+    assert lane.try_reserve_handler_turn_if_idle(
+        "agentscope-ai/agentscope#2",
+        "bad-lease",
+        "client:bad",
+        lease_token="wrong-token",
+        owner="worker-a",
+    ) == {"status": "conflict", "reason": "lease_mismatch"}
+    assert lane.try_reserve_handler_turn_if_idle(
+        "agentscope-ai/agentscope#2",
+        "bad-lease",
+        "client:bad",
+        lease_token=str(bad_claim["leaseToken"]),
+        owner="worker-b",
+    ) == {"status": "conflict", "reason": "lease_mismatch"}
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts,lease_owner,lease_token FROM event_lane_events "
+            "WHERE event_id='bad-lease'"
+        ).fetchone()
+    assert dict(row) == {
+        "status": "leased",
+        "attempts": 1,
+        "lease_owner": "worker-a",
+        "lease_token": bad_claim["leaseToken"],
+    }
+    assert lane.handler_turn("bad-lease") is None
+
+
+def test_atomic_handler_gate_preserves_reconcile_receipts_on_busy_or_conflict(
+    tmp_path,
+):
+    lane = EventLane(tmp_path / "events.db")
+    lane.reserve_handler_turn(
+        "agentscope-ai/agentscope#99", "active", "client:active"
+    )
+    lane.bind_handler_turn(
+        "agentscope-ai/agentscope#99",
+        "active",
+        "thread-active",
+        "turn-active",
+        {"turnStarted": True},
+        status="started",
+    )
+    lane.append(
+        {
+            "eventId": "empty-reconcile",
+            "eventKey": "agentscope-ai/agentscope#1",
+        }
+    )
+    empty_claim = lane.claim(limit=1, owner="worker-a")[0]
+    lane.reserve_handler_turn(
+        "agentscope-ai/agentscope#1", "empty-reconcile", "client:old"
+    )
+    assert lane.release_handler_reservation(
+        "empty-reconcile", {"marker": "keep"}, reason="pre-turn"
+    )
+    before_empty = lane.handler_turn("empty-reconcile")
+
+    busy = lane.try_reserve_handler_turn_if_idle(
+        "agentscope-ai/agentscope#1",
+        "empty-reconcile",
+        "client:new",
+        lease_token=str(empty_claim["leaseToken"]),
+        owner="worker-a",
+    )
+
+    assert busy == {"status": "busy", "activeEventId": "active"}
+    with lane.connect() as db:
+        empty_event = db.execute(
+            "SELECT status,attempts,lease_owner,lease_token FROM event_lane_events "
+            "WHERE event_id='empty-reconcile'"
+        ).fetchone()
+    assert dict(empty_event) == {
+        "status": "pending",
+        "attempts": 0,
+        "lease_owner": None,
+        "lease_token": None,
+    }
+    assert lane.handler_turn("empty-reconcile") == before_empty
+
+    lane.append(
+        {
+            "eventId": "remote-reconcile",
+            "eventKey": "agentscope-ai/agentscope#2",
+        },
+        priority=100,
+    )
+    remote_claim = lane.claim(limit=1, owner="worker-a")[0]
+    lane.reserve_handler_turn(
+        "agentscope-ai/agentscope#2", "remote-reconcile", "client:remote"
+    )
+    lane.bind_handler_turn(
+        "agentscope-ai/agentscope#2",
+        "remote-reconcile",
+        "thread-remote",
+        "turn-remote",
+        {"marker": "remote"},
+        status="needs_reconcile",
+    )
+    before_remote = lane.handler_turn("remote-reconcile")
+
+    conflict = lane.try_reserve_handler_turn_if_idle(
+        "agentscope-ai/agentscope#2",
+        "remote-reconcile",
+        "client:replacement",
+        lease_token=str(remote_claim["leaseToken"]),
+        owner="worker-a",
+    )
+
+    assert conflict == {"status": "conflict", "reason": "turn_conflict"}
+    with lane.connect() as db:
+        remote_event = db.execute(
+            "SELECT status,attempts,lease_owner,lease_token FROM event_lane_events "
+            "WHERE event_id='remote-reconcile'"
+        ).fetchone()
+    assert dict(remote_event) == {
+        "status": "leased",
+        "attempts": 1,
+        "lease_owner": "worker-a",
+        "lease_token": remote_claim["leaseToken"],
+    }
+    assert lane.handler_turn("remote-reconcile") == before_remote
 
 
 def test_github_identity_ignores_metadata_drift_and_tracks_material_revisions(tmp_path):
@@ -635,7 +864,7 @@ def test_busy_central_task_does_not_spend_pending_attempts_across_cycles(
         lambda *_args: (_ for _ in ()).throw(AssertionError("busy task dispatched")),
     )
 
-    results = [worker.run_once(tmp_path) for _ in range(3)]
+    results = [worker.run_once(tmp_path) for _ in range(4)]
 
     assert all(result["centralTaskBusy"] is True for result in results)
     assert all(result["drain"]["claimed"] == 0 for result in results)
@@ -645,6 +874,9 @@ def test_busy_central_task_does_not_spend_pending_attempts_across_cycles(
         ).fetchone()
     assert row["status"] == "pending"
     assert row["attempts"] == 0
+    assert lane.handler_turn("waiting-event") is None
+    assert lane.expire_claims() == 0
+    assert lane.active_handler_thread(CENTRAL_THREAD) is not None
 
 
 def test_material_times_at_or_before_boundary_are_baseline(tmp_path, monkeypatch):
@@ -686,7 +918,9 @@ def test_unmapped_event_uses_explicit_independent_release_bridge(tmp_path, monke
         "issue": {"html_url": "https://github.com/agentscope-ai/agentscope/issues/10"},
     }
     _configure_manifest(worker, tmp_path, monkeypatch)
-    worker.issue_handler_delivery(tmp_path, lane, event)
+    lane.append(event)
+    claimed = lane.claim(limit=1)[0]
+    worker.issue_handler_delivery(tmp_path, lane, claimed)
     assert calls[0][1] == "agentscope-event-create"
     assert calls[0][2]["inactive_release"] is True
     assert calls[0][2]["code_root"] == worker.ROOT
@@ -916,27 +1150,109 @@ def test_busy_central_wakeup_remains_pending_until_turn_is_free(tmp_path, monkey
         "issue": {"state": "open", "html_url": "https://github.com/agentscope-ai/agentscope/issues/2"},
     }
     lane.append(event)
-    claimed = lane.claim(now=0)[0]
-    with pytest.raises(RuntimeError, match="central_task_busy"):
-        worker.issue_handler_delivery(tmp_path, lane, claimed)
-    with lane.connect() as db:
-        assert db.execute("SELECT status FROM event_lane_events WHERE event_id=?", (event["eventId"],)).fetchone()[0] == "pending"
-    same_key = {
-        "eventId": "same-key-review", "repo": "agentscope-ai/agentscope", "number": 1,
-        "issue": {"state": "open", "html_url": "https://github.com/agentscope-ai/agentscope/issues/1"},
-    }
-    lane.append(same_key)
-    same_claimed = next(item for item in lane.claim(limit=2, now=0) if item["eventId"] == "same-key-review")
-    with pytest.raises(RuntimeError, match="central_task_busy"):
-        worker.issue_handler_delivery(tmp_path, lane, same_claimed)
-    with lane.connect() as db:
-        assert db.execute("SELECT status FROM event_lane_events WHERE event_id='same-key-review'").fetchone()[0] == "pending"
+    for _cycle in range(4):
+        result = dispatch_once(
+            lane,
+            lambda item: worker.issue_handler_delivery(tmp_path, lane, item),
+            limit=1,
+        )
+        assert result == {"claimed": 1, "delivered": 0, "pending": 1}
+        with lane.connect() as db:
+            row = db.execute(
+                "SELECT status,attempts FROM event_lane_events WHERE event_id=?",
+                (event["eventId"],),
+            ).fetchone()
+        assert dict(row) == {"status": "pending", "attempts": 0}
+        assert lane.handler_turn(event["eventId"]) is None
+        assert lane.expire_claims() == 0
     lane.bind_handler_turn("agentscope-ai/agentscope#1", "active-event", CENTRAL_THREAD, "turn-active", {}, status="needs_reconcile")
     monkeypatch.setattr(worker, "run_bridge", lambda *_args, **_kwargs: {
         "ok": True, "threadId": CENTRAL_THREAD, "turnId": "turn-next"
     })
     result = dispatch_once(lane, lambda item: worker.issue_handler_delivery(tmp_path, lane, item), limit=1)
     assert result["delivered"] == 1
+
+
+def test_same_key_busy_race_refunds_four_claims_without_reconcile(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    _configure_manifest(worker, tmp_path, monkeypatch)
+    lane = EventLane(tmp_path / "events.db")
+    lane.reserve_handler_turn("agentscope-ai/agentscope#1", "active", "client:active")
+    lane.bind_handler_turn(
+        "agentscope-ai/agentscope#1",
+        "active",
+        CENTRAL_THREAD,
+        "turn-active",
+        {},
+        status="started",
+    )
+    event = {
+        "eventId": "same-key-review",
+        "repo": "agentscope-ai/agentscope",
+        "number": 1,
+        "issue": {
+            "state": "open",
+            "html_url": "https://github.com/agentscope-ai/agentscope/issues/1",
+        },
+    }
+    lane.append(event)
+
+    for _cycle in range(4):
+        claimed = lane.claim(limit=1)[0]
+        worker.issue_handler_delivery(tmp_path, lane, claimed)
+        with lane.connect() as db:
+            row = db.execute(
+                "SELECT status,attempts FROM event_lane_events WHERE event_id=?",
+                (event["eventId"],),
+            ).fetchone()
+        assert dict(row) == {"status": "pending", "attempts": 0}
+        assert lane.handler_turn(event["eventId"]) is None
+
+
+def test_busy_refund_wrong_token_fails_closed(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    _configure_manifest(worker, tmp_path, monkeypatch)
+    lane = EventLane(tmp_path / "events.db")
+    lane.reserve_handler_turn("agentscope-ai/agentscope#1", "active", "client:active")
+    lane.bind_handler_turn(
+        "agentscope-ai/agentscope#1",
+        "active",
+        CENTRAL_THREAD,
+        "turn-active",
+        {},
+        status="started",
+    )
+    event = {
+        "eventId": "busy-stale-token",
+        "repo": "agentscope-ai/agentscope",
+        "number": 2,
+        "issue": {
+            "state": "open",
+            "html_url": "https://github.com/agentscope-ai/agentscope/issues/2",
+        },
+    }
+    lane.append(event)
+    claimed = lane.claim(limit=1)[0]
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET lease_token='replacement-token' WHERE event_id=?",
+            (event["eventId"],),
+        )
+
+    with pytest.raises(RuntimeError, match="handler_reservation_lease_mismatch"):
+        worker.issue_handler_delivery(tmp_path, lane, claimed)
+
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts,lease_token FROM event_lane_events WHERE event_id=?",
+            (event["eventId"],),
+        ).fetchone()
+    assert dict(row) == {
+        "status": "leased",
+        "attempts": 1,
+        "lease_token": "replacement-token",
+    }
+    assert lane.handler_turn(event["eventId"]) is None
 
 
 def test_retryable_start_failure_releases_reservation_and_retries(
@@ -1160,7 +1476,9 @@ def test_runtime_root_manifest_and_foreign_event_fail_closed(tmp_path, monkeypat
         "eventId": "runtime-root-event", "repo": "agentscope-ai/agentscope", "number": 2,
         "issue": {"state": "open", "html_url": "https://github.com/agentscope-ai/agentscope/issues/2"},
     }
-    worker.issue_handler_delivery(runtime_root, lane, normal)
+    lane.append(normal)
+    claimed = lane.claim(limit=1)[0]
+    worker.issue_handler_delivery(runtime_root, lane, claimed)
     extra = calls[-1]["extra_args"]
     assert extra[extra.index("--cwd") + 1] == "/Users/oxygen/Documents/github/agentscope"
     (release_root / worker.EVENT_LANE_MANIFEST).write_text("{}", encoding="utf-8")
@@ -1263,7 +1581,14 @@ def test_pr_event_wakes_central_thread_despite_old_binding(tmp_path, monkeypatch
             "html_url": "https://github.com/agentscope-ai/agentscope/pull/2397"
         }},
     }
-    worker.issue_handler_delivery(tmp_path, lane, event, target=worker._resolve_event_target(tmp_path, event))
+    lane.append(event)
+    claimed = lane.claim(limit=1)[0]
+    worker.issue_handler_delivery(
+        tmp_path,
+        lane,
+        claimed,
+        target=worker._resolve_event_target(tmp_path, claimed),
+    )
     extra = calls[0][2]["extra_args"]
     assert extra[extra.index("--thread-id") + 1] == central
     assert lane.handler_thread("agentscope-ai/agentscope#2397")["thread_id"] == central
@@ -1311,7 +1636,8 @@ def test_invalid_outcome_creates_durable_recovery_event(tmp_path, monkeypatch):
     assert recovery_event["kind"] == "outcome_reconcile"
     assert recovery_event["rootEventId"] == event_id
     assert len(recovery_id) < 120
-    worker.issue_handler_delivery(tmp_path, lane, recovery_event)
+    claimed = lane.claim(limit=1)[0]
+    worker.issue_handler_delivery(tmp_path, lane, claimed)
     extra = calls[0][2]["extra_args"]
     assert extra[extra.index("--thread-id") + 1] == central
     prompt = extra[extra.index("--prompt") + 1]
@@ -1776,7 +2102,13 @@ def test_recovery_retry_uses_distinct_bridge_identity_and_evidence_paths(
         "attempts": 2,
     }
     lane.append(event, priority=250)
-    worker.issue_handler_delivery(tmp_path, lane, event)
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET attempts=1 WHERE event_id=?",
+            (recovery_id,),
+        )
+    claimed = lane.claim(limit=1)[0]
+    worker.issue_handler_delivery(tmp_path, lane, claimed)
     extra = calls[0]["extra_args"]
     client_id = extra[extra.index("--client-user-message-id") + 1]
     receipt = Path(extra[extra.index("--receipt") + 1])
