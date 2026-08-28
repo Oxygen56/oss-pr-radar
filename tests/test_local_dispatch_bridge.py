@@ -12069,6 +12069,69 @@ def test_ingest_keeps_reservation_bound_published_pr_authoritative(
     assert managed.read_task("intent-1") == task_before
 
 
+def test_published_fix_ready_file_repairs_current_result_and_binds_pr(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    raw = result_path.read_bytes()
+    reviewed_digest = MODULE._task_result_digest(value, raw)
+    head_sha = str(value["headSha"])
+    reviewed = managed.record_result(
+        task_id="intent-1",
+        result_digest=reviewed_digest,
+        worker_state="patched",
+        pr_key=None,
+        head_sha=head_sha,
+        commit_sha=head_sha,
+        validation=dict(value["quality"]),
+        source="dispatch-result",
+    )
+    weaker = managed.record_result(
+        task_id="intent-1",
+        result_digest="f" * 64,
+        worker_state="patched",
+        pr_key=None,
+        head_sha=head_sha,
+        commit_sha=head_sha,
+        validation=dict(value["quality"]) | {"independent_review_passed": False},
+        source="dispatch-result",
+    )
+    assert reviewed["is_current"] == 1
+    assert weaker["is_current"] == 1
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["ignored"] == [{"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}]
+    current = managed.current_result_for_pr("a/b#9")
+    assert current is not None
+    assert current["task_id"] == "intent-1"
+    assert current["result_digest"] == reviewed_digest
+    assert current["head_sha"] == head_sha
+    assert current["is_current"] == 1
+    assert json.loads(current["validation_json"])["independent_review_passed"] is True
+    with managed._connection() as connection:
+        keyed = connection.execute(
+            """SELECT COUNT(*) FROM managed_results
+               WHERE task_id='intent-1' AND pr_key='a/b#9'"""
+        ).fetchone()[0]
+        stale_current = connection.execute(
+            """SELECT COUNT(*) FROM managed_results
+               WHERE task_id='intent-1' AND result_digest=? AND is_current=1""",
+            ("f" * 64,),
+        ).fetchone()[0]
+    assert keyed == 1
+    assert stale_current == 0
+    assert store.published_task_result_backfill_seen("a/b#1", digest=reviewed_digest)
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert context["publicationReceipt"]["prUrl"] == pr_url
+    assert context["resultDigest"] == reviewed_digest
+
+
 def test_ingest_keeps_reconciled_current_pr_head_authoritative(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,

@@ -291,6 +291,69 @@ def _publication_snapshot_present(request: dict[str, Any]) -> bool:
     return isinstance(snapshot, str) and bool(snapshot)
 
 
+def _publication_has_irreversible_terminal_evidence(
+    connection: sqlite3.Connection,
+    *,
+    request_id: str,
+    opportunity_key: str,
+) -> bool:
+    """Return whether a publication request already crossed its public boundary.
+
+    Repository-probe freshness authorizes a future side effect.  It cannot
+    invalidate a side effect that was already durably observed.  Keep this
+    check independent of request status so it also repairs databases written
+    by the historical freshness migration.
+    """
+
+    permit = connection.execute(
+        """SELECT 1 FROM publication_permits
+           WHERE request_id=? AND status='CONSUMED' LIMIT 1""",
+        (request_id,),
+    ).fetchone()
+    if permit is not None:
+        return True
+    succeeded_pr = connection.execute(
+        """SELECT 1 FROM publication_effects effect
+           JOIN publication_permits permit ON permit.permit_id=effect.permit_id
+           WHERE permit.request_id=? AND effect.action='create_pr'
+             AND effect.status='SUCCEEDED' LIMIT 1""",
+        (request_id,),
+    ).fetchone()
+    if succeeded_pr is not None:
+        return True
+    published_event = connection.execute(
+        """SELECT 1 FROM events event
+           JOIN publication_permits permit ON permit.request_id=?
+           WHERE event.opportunity_key=? AND event.event_type='PR_OPEN'
+             AND (
+               json_extract(event.payload_json,'$.permitId')=permit.permit_id
+               OR (
+                 permit.pr_url IS NOT NULL
+                 AND COALESCE(
+                   json_extract(event.payload_json,'$.prUrl'),event.dedupe_key
+                 )=permit.pr_url
+               )
+             )
+           LIMIT 1""",
+        (request_id, opportunity_key),
+    ).fetchone()
+    if published_event is not None:
+        return True
+
+    managed_reservations_exist = connection.execute(
+        """SELECT 1 FROM sqlite_master
+           WHERE type='table' AND name='managed_publication_reservations'"""
+    ).fetchone()
+    if managed_reservations_exist is None:
+        return False
+    finalized = connection.execute(
+        """SELECT 1 FROM managed_publication_reservations
+           WHERE request_id=? AND state='FINALIZED' LIMIT 1""",
+        (request_id,),
+    ).fetchone()
+    return finalized is not None
+
+
 RECOVERABLE_CONTEXT_STAGES = {
     "AUDIT_PASS",
     "VALIDATION_PENDING",
@@ -614,6 +677,19 @@ class RadarLedger:
                 "SELECT request_id,request_json,opportunity_key,status FROM publication_requests"
             ).fetchall()
             for row in legacy_publications:
+                if _publication_has_irreversible_terminal_evidence(
+                    connection,
+                    request_id=str(row["request_id"]),
+                    opportunity_key=str(row["opportunity_key"]),
+                ):
+                    connection.execute(
+                        """UPDATE publication_requests
+                           SET status='CONSUMED',reason=NULL,updated_at=?
+                           WHERE request_id=?
+                             AND (status<>'CONSUMED' OR reason IS NOT NULL)""",
+                        (now, row["request_id"]),
+                    )
+                    continue
                 try:
                     request_payload = json.loads(row["request_json"])
                 except (TypeError, json.JSONDecodeError):
@@ -1234,7 +1310,11 @@ class RadarLedger:
                     "recoveredFromTaskContext": True,
                 }
                 request["targetBase"] = context.get("targetBase")
-                recovered_authorized = _publication_probe_valid(request)
+                # This path restores an already public PR from its verified
+                # controller context.  Probe freshness is a pre-publication
+                # authorization constraint, not authority to revoke this
+                # irreversible receipt during a later read recovery.
+                recovered_terminal = stage in PUBLISHED_STAGES
                 existing_publication = connection.execute(
                     """SELECT r.opportunity_key FROM publication_permits p
                        JOIN publication_requests r ON r.request_id=p.request_id
@@ -1261,9 +1341,9 @@ class RadarLedger:
                             branch,
                             str(Path(worktree_path).resolve()),
                             evidence_digest,
-                            "CONSUMED" if recovered_authorized else "BLOCKED",
-                            None if recovered_authorized else "BLOCKED_REPRODUCTION_REQUIRED",
-                            permit_id if recovered_authorized else None,
+                            "CONSUMED" if recovered_terminal else "BLOCKED",
+                            None if recovered_terminal else "BLOCKED_REPRODUCTION_REQUIRED",
+                            permit_id if recovered_terminal else None,
                             canonical_json(request),
                             requested_at,
                             updated_at,
@@ -1280,7 +1360,7 @@ class RadarLedger:
                             issue_url,
                             commit_sha,
                             branch,
-                            "CONSUMED" if recovered_authorized else "BLOCKED",
+                            "CONSUMED" if recovered_terminal else "BLOCKED",
                             updated_at,
                             pr_url,
                             canonical_json(
@@ -1288,7 +1368,7 @@ class RadarLedger:
                                     "contextDigest": context_digest,
                                     "recoveredFromTaskContext": True,
                                     "authorizationStatus": "AUTHENTICATED"
-                                    if recovered_authorized
+                                    if recovered_terminal
                                     else "BLOCKED_REPRODUCTION_REQUIRED",
                                 }
                             ),
@@ -1296,7 +1376,7 @@ class RadarLedger:
                             updated_at,
                         ),
                     )
-                    if recovered_authorized:
+                    if recovered_terminal:
                         self._event(
                             connection,
                             key,
@@ -7295,12 +7375,37 @@ class RadarLedger:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             row = connection.execute(
-                """SELECT opportunity_key,request_json
+                """SELECT opportunity_key,request_json,status
                    FROM publication_requests WHERE request_id=?""",
                 (request_id,),
             ).fetchone()
             if row is None:
                 raise LedgerError("publication request not found")
+            if _publication_has_irreversible_terminal_evidence(
+                connection,
+                request_id=request_id,
+                opportunity_key=str(row["opportunity_key"]),
+            ):
+                connection.execute(
+                    """UPDATE publication_requests
+                       SET status='CONSUMED',reason=NULL,updated_at=?
+                       WHERE request_id=?
+                         AND (status<>'CONSUMED' OR reason IS NOT NULL)""",
+                    (now, request_id),
+                )
+                self._event(
+                    connection,
+                    row["opportunity_key"],
+                    "PUBLICATION_BLOCK_IGNORED_TERMINAL",
+                    f"{request_id}:{reason}",
+                    {
+                        "requestId": request_id,
+                        "reason": reason,
+                        "auditEvidence": evidence or {},
+                    },
+                    now,
+                )
+                return
             connection.execute(
                 """UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=?
                    WHERE request_id=?""",

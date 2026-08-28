@@ -13715,6 +13715,94 @@ def _preserved_published_stage(current_stage: str, managed_pr_state: str) -> str
     return "PR_OPEN"
 
 
+def _backfill_authoritative_fix_ready_result(
+    store: RadarLedger,
+    managed_adapter: ManagedAdapter,
+    *,
+    candidate: dict[str, Any],
+    managed_candidate: dict[str, Any],
+    value: dict[str, Any],
+    raw: bytes,
+    published_pr: dict[str, Any],
+    restored_stage: str,
+) -> dict[str, Any] | None:
+    """Bind the exact submit-ready file to the PR that it already published.
+
+    A finalized publication reservation is authoritative for the issue-to-PR
+    relationship.  The local result is authoritative for validation only when
+    its signed payload is still submit-ready and still matches the current PR
+    head.  This combination repairs the projection without treating arbitrary
+    stale FIX_READY files as published results.
+    """
+
+    quality = value.get("quality")
+    if (
+        published_pr.get("state") != "OPEN"
+        or restored_stage not in PUBLISHED_RESULT_STAGES
+        or value.get("stage") != "FIX_READY"
+        or value.get("handoffMode")
+        not in {"controller_commit_complete", "controller_merge_complete"}
+        or not isinstance(quality, dict)
+        or quality.get("independent_review_passed") is not True
+        or not assess_submit_ready(quality).ready
+    ):
+        return None
+    head_sha = str(value.get("headSha") or "")
+    commit_sha = str(value.get("commitSha") or "")
+    if (
+        not re.fullmatch(r"[0-9a-f]{40}", head_sha)
+        or commit_sha != head_sha
+        or published_pr.get("head_sha") != head_sha
+    ):
+        return None
+    task_id = str(candidate.get("intentId") or candidate.get("threadId") or "")
+    task = managed_adapter.ledger.read_task(task_id) or {}
+    try:
+        task_provenance = json.loads(task.get("provenance_json") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(task_provenance.get("probeReceipt"), dict) or not task_provenance.get(
+        "probeReceiptDigest"
+    ):
+        return None
+    result_digest = _task_result_digest(value, raw)
+    published_value = dict(value)
+    published_value.update(
+        {
+            "stage": restored_stage,
+            "prUrl": str(published_pr["pr_url"]),
+            "headSha": head_sha,
+            "commitSha": commit_sha,
+        }
+    )
+    publication = (
+        dict(value.get("publication")) if isinstance(value.get("publication"), dict) else {}
+    )
+    published_value["publication"] = publication | {"prUrl": str(published_pr["pr_url"])}
+    recorded = managed_adapter.record_task_result(
+        candidate=managed_candidate,
+        value=published_value,
+        result_digest=result_digest,
+    )
+    store.record_published_task_result_backfilled(
+        str(candidate["key"]),
+        task_id=task_id,
+        thread_id=str(candidate["threadId"]),
+        digest=result_digest,
+        stage=restored_stage,
+        pr_url=str(published_pr["pr_url"]),
+        head_sha=head_sha,
+    )
+    store.record_task_result_ingested(
+        str(candidate["key"]),
+        digest=result_digest,
+        stage=restored_stage,
+        task_id=task_id,
+        thread_id=str(candidate["threadId"]),
+    )
+    return {"resultDigest": result_digest, "recorded": recorded}
+
+
 def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     managed_adapter = ManagedAdapter(ROOT, args.ledger)
@@ -13834,6 +13922,16 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     or refreshed_receipt.get("prUrl") != published_pr["pr_url"]
                 ):
                     raise RuntimeError("published task context restoration mismatch")
+                backfilled_result = _backfill_authoritative_fix_ready_result(
+                    store,
+                    managed_adapter,
+                    candidate=candidate,
+                    managed_candidate=managed_candidate,
+                    value=value,
+                    raw=raw,
+                    published_pr=published_pr,
+                    restored_stage=restored_stage,
+                )
                 managed_ledger.record_event(
                     event_type="MANAGED_PUBLISHED_PR_AUTHORITATIVE",
                     idempotency_key=(
@@ -13856,12 +13954,18 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                             else "CURRENT_PR_HEAD"
                         ),
                         "resultFileDigest": result_file_digest,
+                        "resultProjectionRepaired": backfilled_result is not None,
                     },
                     payload={
                         "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE",
                         "ignoredResultStage": value.get("stage"),
                         "legacyStageBefore": previous_stage,
                         "legacyStageAfter": restored_stage,
+                        "resultDigest": (
+                            backfilled_result.get("resultDigest")
+                            if backfilled_result is not None
+                            else None
+                        ),
                     },
                 )
                 ignored.append(

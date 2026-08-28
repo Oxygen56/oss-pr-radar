@@ -107,6 +107,56 @@ def test_result_semantics_require_new_head_and_validation(tmp_path):
         )
 
 
+def test_replayed_result_restores_the_current_projection(tmp_path):
+    _, ledger = new_ledger(tmp_path)
+    ledger.bind_task(
+        task_id="task-1",
+        opportunity_key="owner/repo#1",
+        thread_id="thread-1",
+        worktree_path="/tmp/task-1",
+    )
+    reviewed = {
+        "task_id": "task-1",
+        "result_digest": "reviewed",
+        "worker_state": "patched",
+        "result_type": "state_drift",
+        "pr_key": None,
+        "head_sha": "head-1",
+        "commit_sha": "head-1",
+        "validation": {"independent_review_passed": True},
+    }
+    first = ledger.record_result(**reviewed)
+    weaker = ledger.record_result(
+        task_id="task-1",
+        result_digest="weaker",
+        worker_state="patched",
+        result_type="state_drift",
+        pr_key=None,
+        head_sha="head-1",
+        commit_sha="head-1",
+        validation={"independent_review_passed": False},
+    )
+    assert first["is_current"] == 1
+    assert weaker["is_current"] == 1
+
+    replay = ledger.record_result(**reviewed)
+
+    assert replay["created"] is False
+    assert replay["is_current"] == 1
+    with ledger._connection() as connection:
+        rows = {
+            row["result_digest"]: dict(row)
+            for row in connection.execute(
+                """SELECT result_digest,is_current,superseded_by FROM managed_results
+                   WHERE task_id='task-1'"""
+            ).fetchall()
+        }
+    assert rows["reviewed"]["is_current"] == 1
+    assert rows["reviewed"]["superseded_by"] is None
+    assert rows["weaker"]["is_current"] == 0
+    assert rows["weaker"]["superseded_by"] == first["result_key"]
+
+
 def test_maintainer_qualification_and_public_reply_policy(tmp_path):
     _, ledger = new_ledger(tmp_path)
     ledger.upsert_pr(

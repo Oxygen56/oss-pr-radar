@@ -2477,6 +2477,32 @@ class ManagedLedger:
                 "SELECT * FROM managed_results WHERE result_key=?", (result_key,)
             ).fetchone()
             if existing:
+                # record_result observes the caller's current result file.  A
+                # replay therefore has to repair the current projection too;
+                # returning the historical row unchanged can leave a later,
+                # weaker classification incorrectly marked current forever.
+                current_rows = connection.execute(
+                    """SELECT result_key,result_type,result_digest FROM managed_results
+                       WHERE task_id=? AND pr_key IS ? AND head_sha IS ? AND is_current=1""",
+                    (task_id, pr_key, head_sha),
+                ).fetchall()
+                superseded = [
+                    dict(item) for item in current_rows if item["result_key"] != result_key
+                ]
+                for old in superseded:
+                    connection.execute(
+                        """UPDATE managed_results SET is_current=0,superseded_by=?
+                           WHERE result_key=?""",
+                        (result_key, old["result_key"]),
+                    )
+                connection.execute(
+                    """UPDATE managed_results SET is_current=1,superseded_by=NULL
+                       WHERE result_key=?""",
+                    (result_key,),
+                )
+                restored = connection.execute(
+                    "SELECT * FROM managed_results WHERE result_key=?", (result_key,)
+                ).fetchone()
                 connection.commit()
                 self.record_event(
                     event_type=event_type,
@@ -2489,7 +2515,22 @@ class ManagedLedger:
                     observed_at=observed_at,
                     payload={"worker_state": worker_state, "replayed": True},
                 )
-                return dict(existing) | {
+                for old in superseded:
+                    self.record_event(
+                        event_type="RESULT_CLASSIFICATION_SUPERSEDED",
+                        idempotency_key=f"result-superseded:{old['result_key']}:{result_key}",
+                        task_id=task_id,
+                        pr_key=pr_key,
+                        state="SUPERSEDED",
+                        source=source,
+                        provenance=provenance,
+                        observed_at=observed_at,
+                        payload={
+                            "oldResultKey": old["result_key"],
+                            "newResultKey": result_key,
+                        },
+                    )
+                return dict(restored) | {
                     "created": False,
                     "state": state,
                     "advanced": patch_advanced,

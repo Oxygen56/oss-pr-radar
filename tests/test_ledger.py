@@ -13,7 +13,7 @@ from oss_pr_radar.ledger import (
     bind_dispatched_recovery_prompt,
 )
 from oss_pr_radar.metrics import QUALITY_FIELDS, assess_submit_ready, rolling_quality
-from oss_pr_radar.util import iso_z, parse_time, sha256_json
+from oss_pr_radar.util import iso_z, parse_time, sha256_json, sha256_text
 
 pytestmark = pytest.mark.usefixtures("current_signing_key")
 
@@ -466,6 +466,99 @@ def test_verified_task_context_rebuilds_publication_and_suppresses_duplicate(tmp
         stage="PR_OPEN",
     )
     assert store.pr_followup_candidates() == []
+
+
+def test_published_context_recovery_ignores_expired_prepublication_freshness(tmp_path):
+    old = iso_z(datetime.now(UTC) - timedelta(hours=2))
+    context = published_task_context(liveAuditRecordedAt=old)
+    context["liveAudit"]["capturedAt"] = old
+    context["liveAudit"]["evidence"]["issue"]["updated_at"] = old
+    context["publicationReceipt"]["requestedAt"] = old
+    context["publicationReceipt"]["updatedAt"] = old
+    path = tmp_path / "ledger.sqlite3"
+
+    store = RadarLedger(path)
+    restored = store.restore_task_context(context)
+
+    assert restored["publicationRestored"] is True
+    with store.connect() as connection:
+        request = connection.execute("SELECT status,reason FROM publication_requests").fetchone()
+        permit = connection.execute("SELECT status,pr_url FROM publication_permits").fetchone()
+    assert dict(request) == {"status": "CONSUMED", "reason": None}
+    assert dict(permit) == {
+        "status": "CONSUMED",
+        "pr_url": "https://github.com/a/b/pull/9",
+    }
+
+    reopened = RadarLedger(path)
+    assert (
+        reopened.publication_request(
+            sha256_text("task-context-recovery|a/b#1|https://github.com/a/b/pull/9|" + "a" * 40)
+        )["status"]
+        == "CONSUMED"
+    )
+
+
+def test_terminal_publication_self_heals_and_cannot_be_blocked(tmp_path):
+    path = tmp_path / "ledger.sqlite3"
+    store = RadarLedger(path)
+    insert_publication_preflight(store)
+    old = iso_z(datetime.now(UTC) - timedelta(hours=2))
+    pr_url = "https://github.com/a/b/pull/9"
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE publication_requests
+               SET status='BLOCKED',reason='BLOCKED_REPRODUCTION_REQUIRED',updated_at=?
+               WHERE request_id='request-1'""",
+            (old,),
+        )
+        connection.execute(
+            """UPDATE publication_permits
+               SET status='CONSUMED',pr_url=?,updated_at=?
+               WHERE permit_id='permit-1'""",
+            (pr_url, old),
+        )
+        connection.execute(
+            """UPDATE publication_effects
+               SET action='create_pr',status='SUCCEEDED',result_json=?,updated_at=?
+               WHERE effect_id='effect-1'""",
+            (json.dumps({"ok": True, "prUrl": pr_url}), old),
+        )
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','PR_OPEN',?,?,?)""",
+            (pr_url, json.dumps({"permitId": "permit-1", "prUrl": pr_url}), old),
+        )
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES ('request-2','a/b#1','thread-1',?,'fix/runtime-2','/tmp/worktree',
+                       'evidence-2','GRANTED','{}',?,?)""",
+            ("c" * 40, old, old),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,
+                evidence_json,created_at,updated_at)
+               VALUES ('permit-2','request-2','https://github.com/a/b/issues/1',?,
+                       'fix/runtime-2','ACTIVE',?,'{}',?,?)""",
+            ("c" * 40, old, old, old),
+        )
+
+    reopened = RadarLedger(path)
+    assert reopened.publication_request("request-1")["status"] == "CONSUMED"
+    assert reopened.publication_request("request-1")["reason"] is None
+    assert reopened.publication_request("request-2")["status"] == "BLOCKED"
+    assert reopened.publication_request("request-2")["reason"] == "BLOCKED_REPRODUCTION_REQUIRED"
+
+    reopened.block_publication_request(
+        "request-1", "BLOCKED_REPRODUCTION_REQUIRED", evidence={"probeFresh": False}
+    )
+
+    assert reopened.publication_request("request-1")["status"] == "CONSUMED"
+    assert reopened.publication_request("request-1")["reason"] is None
 
 
 def test_published_terminal_missing_worktree_gate_requires_followup_result(tmp_path):
