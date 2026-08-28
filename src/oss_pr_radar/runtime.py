@@ -880,6 +880,7 @@ def disk_pressure_gate(
     thresholds: DiskThresholds | None = None,
     recheck_seconds: int = DISK_PRESSURE_RECHECK_SECONDS,
     now: float | None = None,
+    force_recheck: bool = False,
 ) -> dict[str, Any]:
     """Coordinate the hard disk stop across fast, slow, and queue workers.
 
@@ -888,6 +889,8 @@ def disk_pressure_gate(
     read that state and return a fail-closed deferred decision; they do not
     append per-worker failure records. A due recheck either advances the
     shared timer or clears the gate exactly once when capacity is healthy.
+    ``force_recheck`` is reserved for a verified local retention pass that
+    actually changed capacity; it never treats an old snapshot as healthy.
     """
 
     thresholds = thresholds or DiskThresholds()
@@ -934,7 +937,7 @@ def disk_pressure_gate(
                 state = _disk_gate_state_at(path, state_fd, thresholds=thresholds)
                 active = bool(state.get("active"))
                 next_check = float(state["nextCheckAtEpoch"]) if active else None
-                if active and next_check is not None and current < next_check:
+                if active and next_check is not None and current < next_check and not force_recheck:
                     snapshot = state.get("lastSnapshot")
                     return _disk_gate_decision(
                         allowed=False,

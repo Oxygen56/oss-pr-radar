@@ -849,15 +849,34 @@ def reconcile(
     run_launchctl = launchctl_runner or _launchctl
     wait = sleeper or time.sleep
     tick = monotonic or time.monotonic
-    before = read_audit(root, home=home, now=now)
     result: dict[str, Any] = {
         "schemaVersion": EVENT_RECONCILE_SCHEMA,
         "checkedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        "before": before,
         "actions": [],
         "errors": [],
         "freshPoll": False,
     }
+    try:
+        before = read_audit(root, home=home, now=now)
+    except Exception as exc:  # noqa: BLE001 - repair must fail closed
+        result.update(
+            {
+                "ok": False,
+                "action": "blocked",
+                "errors": [f"AUDIT_FAILED:{type(exc).__name__}:{str(exc)[:240]}"],
+            }
+        )
+        return result
+    if not isinstance(before, dict):
+        result.update(
+            {
+                "ok": False,
+                "action": "blocked",
+                "errors": ["AUDIT_FAILED:EVENT_LANE_AUDIT_NOT_OBJECT"],
+            }
+        )
+        return result
+    result["before"] = before
     precondition_errors = _reconcile_precondition_errors(before)
     if precondition_errors:
         result.update({"ok": False, "action": "blocked", "errors": precondition_errors})

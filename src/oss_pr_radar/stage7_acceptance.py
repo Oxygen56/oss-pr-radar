@@ -932,6 +932,8 @@ def check(
         retry_reasons.append("automation_snapshot_stale")
     elif strict and not automation_pause_binding_ok:
         retry_reasons.append("automation_snapshot_before_publication_pause")
+    elif strict and not automation_evidence_ok:
+        retry_reasons.append("automation_snapshot_invalid_or_changed")
     if strict and require_publication_pause and not acceptance_window_ok:
         retry_reasons.append("acceptance_window_changed_during_check")
     return {

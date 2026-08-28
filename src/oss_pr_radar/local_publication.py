@@ -31,6 +31,7 @@ from .runtime import (
     write_json,
 )
 from .runtime_audit import active_release_evidence
+from .runtime_retention import maybe_reclaim_runtime_storage
 
 LAUNCH_AGENT_LABEL = "com.oss-pr-radar.local-publication"
 SLOW_WORKER_LABEL = "com.oss-pr-radar.local-publication-slow"
@@ -129,12 +130,18 @@ def _disk_gate(
     root: Path,
     *,
     worker: str,
+    force_recheck: bool = False,
 ) -> dict[str, Any]:
     """Run the shared capacity gate through this module's snapshot seam."""
 
     # Passing the local alias keeps existing tests and callers able to inject
     # a deterministic snapshot without bypassing the shared gate.
-    return disk_pressure_gate(root, worker=worker, snapshot_fn=disk_snapshot)
+    return disk_pressure_gate(
+        root,
+        worker=worker,
+        snapshot_fn=disk_snapshot,
+        force_recheck=force_recheck,
+    )
 
 
 def _record_disk_gate_recovery(root: Path, *, worker: str) -> str | None:
@@ -184,6 +191,9 @@ def _disk_gate_failure(
         result["diskPressureGate"]["error"] = str(gate["error"])[:240]
     if gate.get("recordStop") is True:
         try:
+            record_extra = {}
+            if extra and "storageMaintenance" in extra:
+                record_extra["storageMaintenance"] = extra["storageMaintenance"]
             record_cycle(
                 root,
                 worker=worker,
@@ -192,6 +202,7 @@ def _disk_gate_failure(
                 started_at=started_at,
                 error_code=reason,
                 disk=gate.get("snapshot"),
+                **record_extra,
             )
         except Exception as exc:
             # The gate is already durable and claimed. Do not retry this
@@ -650,14 +661,20 @@ def fast_advance_once(
     started = time.time()
     try:
         with exclusive_lock(root / "state" / FAST_WORK_LOCK):
-            gate = _disk_gate(root, worker="fast")
+            disk_before = disk_snapshot(root)
+            storage_maintenance = maybe_reclaim_runtime_storage(root, disk=disk_before)
+            reclaimed = int(storage_maintenance.get("freedBytes") or 0) > 0
+            gate = _disk_gate(root, worker="fast", force_recheck=reclaimed)
             if gate.get("allowed") is not True:
                 return _disk_gate_failure(
                     root,
                     worker="fast",
                     started_at=started,
                     gate=gate,
-                    extra={"slowWorkQueued": False},
+                    extra={
+                        "slowWorkQueued": False,
+                        "storageMaintenance": storage_maintenance,
+                    },
                 )
             recovery_error = _handle_disk_gate_recovery(root, worker="fast", gate=gate)
             disk = gate.get("snapshot")
@@ -670,6 +687,7 @@ def fast_advance_once(
                 "receiptsQueued": list(ingestion.get("queued") or []),
                 "errors": errors,
                 "slowWorkQueued": True,
+                "storageMaintenance": storage_maintenance,
             }
             record_cycle(
                 root,
@@ -679,6 +697,7 @@ def fast_advance_once(
                 started_at=started,
                 error_code="LOCAL_INGEST_FAILED" if result["ok"] is not True else None,
                 disk=disk,
+                storageMaintenance=storage_maintenance,
             )
             if recovery_error:
                 result.setdefault("errors", []).append({"error": recovery_error})

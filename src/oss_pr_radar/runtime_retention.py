@@ -48,6 +48,11 @@ DEFAULT_MIN_AGE_SECONDS = 24 * 60 * 60
 DEFAULT_KEEP_LATEST = 2
 DEFAULT_MAX_CANDIDATES = 3
 MIN_ARCHIVE_FREE_BYTES = 512 * 1024 * 1024
+# Historical Stage 7 reports remain useful for audit, but they must not pin
+# every raw rehearsal forever.  They are retained in a verified archive before
+# the source directory is removed.  Evidence referenced by the currently
+# active authorization is protected regardless of age.
+ACTIVE_EVIDENCE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 
 
 class RetentionError(RuntimeError):
@@ -147,28 +152,72 @@ def _active_release_tokens(root: Path) -> set[str]:
     return {token for token in tokens if len(token) >= 8}
 
 
-def _active_cutover_names(root: Path, candidate_names: set[str]) -> set[str]:
-    """Find report directory names mentioned by current signed evidence.
+def _active_auth_evidence_digests(root: Path) -> set[str]:
+    """Return evidence digests pinned by the currently active authorizations."""
 
-    Every Stage 7 JSON file is treated as an evidence reference.  This is a
-    small, conservative set compared with the full runtime tree and prevents a
-    retention pass from invalidating an older signed acceptance artifact.
+    digests: set[str] = set()
+    for name in (
+        "operational-authorization.json",
+        "worker-staging-authorization.json",
+    ):
+        path = root / "state" / name
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(value, dict):
+            continue
+        for key, item in value.items():
+            if key.endswith("Sha256") and isinstance(item, str) and len(item) == 64:
+                try:
+                    int(item, 16)
+                except ValueError:
+                    continue
+                digests.add(item)
+    return digests
+
+
+def _active_cutover_names(
+    root: Path,
+    candidate_names: set[str],
+    *,
+    now: float | None = None,
+) -> set[str]:
+    """Find names referenced by live or recently generated Stage 7 evidence.
+
+    Old reports are recoverable from the archive and therefore do not pin raw
+    rehearsal directories indefinitely.  Evidence whose digest is bound into
+    a live authorization is always protected; otherwise only the recent
+    evidence window is scanned.  This keeps the retention pass bounded while
+    preserving the currently active acceptance window.
     """
 
     if not candidate_names:
         return set()
-    names: set[str] = set()
+    current = time.time() if now is None else float(now)
+    active_digests = _active_auth_evidence_digests(root)
     sources: list[Path] = []
-    authorization = root / "state" / "operational-authorization.json"
-    if authorization.is_file():
-        sources.append(authorization)
+    for name in (
+        "operational-authorization.json",
+        "worker-staging-authorization.json",
+    ):
+        path = root / "state" / name
+        if path.is_file() and not path.is_symlink():
+            sources.append(path)
     stage7 = root / "reports" / "stage7"
     if stage7.is_dir():
-        sources.extend(
-            path
-            for path in stage7.rglob("*")
-            if path.is_file() and not path.is_symlink() and path.suffix in {".json", ".gz"}
-        )
+        for path in stage7.rglob("*"):
+            if not path.is_file() or path.is_symlink() or path.suffix not in {".json", ".gz"}:
+                continue
+            try:
+                active = current - path.stat().st_mtime <= ACTIVE_EVIDENCE_MAX_AGE_SECONDS
+                if not active:
+                    active = _sha256(path) in active_digests
+            except OSError:
+                continue
+            if active:
+                sources.append(path)
+    names: set[str] = set()
     for source in sources:
         try:
             if source.suffix == ".gz":
@@ -532,6 +581,22 @@ def maybe_reclaim_runtime_storage(
     snapshot = disk if isinstance(disk, dict) else disk_snapshot(root)
     if snapshot.get("level") not in {"warning", "stop"}:
         return {"attempted": False, "reason": "disk_not_under_pressure", "disk": snapshot}
+    # The fast worker reaches this helper before the normal bridge operation,
+    # so the destructive path must enforce its own authorization boundary.
+    # A missing or expired authorization never turns disk pressure into a
+    # reason to delete local material.
+    try:
+        from .operational_auth import require_operational_authorization
+
+        require_operational_authorization(root)
+    except Exception as exc:  # noqa: BLE001 - retention fails closed
+        return {
+            "attempted": False,
+            "ok": False,
+            "reason": "operational_authorization_required",
+            "error": f"{type(exc).__name__}:{str(exc)[:240]}",
+            "beforeDisk": snapshot,
+        }
     lock_path = root / "state" / RETENTION_LOCK
     try:
         with exclusive_lock(lock_path, blocking=False):
