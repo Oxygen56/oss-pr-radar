@@ -1782,14 +1782,17 @@ def test_daily_cycle_does_not_resend_unchanged_actionable_item(tmp_path, monkeyp
     )
     runtime = ledger_path.parents[1]
     first = run_daily_cycle(runtime)
+    assert first["ok"] is True
     assert first["newActionableCount"] == 1
     sent = run_daily_cycle(runtime, send=True, sender=lambda _event: "message-1")
+    assert sent["ok"] is True
     assert sent["sent"] == 1
 
     def duplicate_sender(_event):
         raise AssertionError("an identical replay must not resend a delivered event")
 
     replayed = run_daily_cycle(runtime, send=True, sender=duplicate_sender)
+    assert replayed["ok"] is True
     assert replayed["newActionableCount"] == 0
     assert replayed["sent"] == 0
     assert replayed["failed"] == 0
@@ -1805,5 +1808,25 @@ def test_daily_cycle_does_not_resend_unchanged_actionable_item(tmp_path, monkeyp
         metadata={"title": "未授权", "preTaskGate": {"allowed": False}},
     )
     rerun = run_daily_cycle(runtime)
+    assert rerun["ok"] is True
     assert rerun["newActionableCount"] == 0
     assert rerun["artifactDigest"] != sent["artifactDigest"]
+
+    ledger.upsert_opportunity(
+        opportunity_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        issue_number=1,
+        issue_url="https://github.com/owner/repo/issues/1",
+        state="DECISION_REQUIRED",
+        source="test",
+        provenance={"title": "候选一更新"},
+        metadata={"title": "候选一更新", "preTaskGate": {"allowed": True}},
+    )
+
+    def failing_sender(_event):
+        raise RuntimeError("send failed")
+
+    failed = run_daily_cycle(runtime, send=True, sender=failing_sender)
+    assert failed["ok"] is False
+    assert failed["failed"] == 1

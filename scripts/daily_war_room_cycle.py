@@ -49,7 +49,7 @@ def main() -> int:
         "manifestSha256": binding.release.get("manifestSha256"),
     }
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return 0 if not result["failed"] else 1
+    return 0 if result["ok"] else 1
 
 
 if __name__ == "__main__":

@@ -135,6 +135,7 @@ def run_daily_cycle(
 
     cycle = {
         "schema": DAILY_CYCLE_SCHEMA,
+        "ok": failed == 0,
         "cycleId": sha256_json(
             {"artifact": artifact["artifactDigest"], "pending": [e["eventId"] for e in pending]}
         ),
