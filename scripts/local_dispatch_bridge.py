@@ -5314,7 +5314,7 @@ def creation_abandon(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _app_server_terminal_turn(
-    message: dict[str, Any],
+    message: object,
     *,
     thread_id: str,
     turn_id: str,
@@ -5322,6 +5322,8 @@ def _app_server_terminal_turn(
 ) -> dict[str, Any] | None:
     """Extract the target turn once app-server reports a terminal state."""
 
+    if not isinstance(message, dict):
+        return None
     turn: dict[str, Any] | None = None
     if message.get("method") == "turn/completed":
         params = message.get("params") or {}
@@ -5381,6 +5383,8 @@ def _wait_for_app_server_terminal_turn(
                 message = json.loads(raw)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(message, dict):
+                raise RuntimeError("app-server emitted a malformed non-object frame")
             terminal = _app_server_terminal_turn(
                 message,
                 thread_id=thread_id,

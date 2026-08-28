@@ -8367,6 +8367,18 @@ def test_app_server_terminal_turn_ignores_in_progress_or_unrelated_turns():
     )
 
 
+@pytest.mark.parametrize("frame", ["unexpected", 7, None])
+def test_app_server_terminal_turn_ignores_non_object_frames(frame):
+    assert (
+        MODULE._app_server_terminal_turn(
+            frame,
+            thread_id="thread-1",
+            turn_id="turn-1",
+        )
+        is None
+    )
+
+
 def test_app_server_watchdog_consumes_buffered_terminal_before_select():
     class FakeStdin:
         @staticmethod
@@ -8410,6 +8422,26 @@ def test_app_server_watchdog_consumes_buffered_terminal_before_select():
     )
 
     assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
+
+
+@pytest.mark.parametrize("frame", [b'"unexpected"\n', b"7\n", b"null\n"])
+def test_app_server_watchdog_fails_closed_on_non_object_json_frame(frame):
+    class FakeProcess:
+        stdin = object()
+        stdout = object()
+
+        @staticmethod
+        def poll():
+            return 0
+
+    with pytest.raises(RuntimeError, match="malformed non-object frame"):
+        MODULE._wait_for_app_server_terminal_turn(
+            FakeProcess(),
+            object(),
+            frame,
+            thread_id="thread-1",
+            turn_id="turn-1",
+        )
 
 
 def test_validation_progress_marker_tracks_check_outcomes_not_wording():
@@ -15797,6 +15829,40 @@ def test_task_turn_worker_replaces_optimistic_receipt_on_watchdog_error(
     assert persisted["turnId"] == "turn-error"
     assert persisted["turnStatus"] == "failed"
     assert persisted["turnError"]["message"] == "RuntimeError:watchdog read failed"
+
+
+def test_task_turn_worker_records_failed_receipt_for_malformed_watchdog_frame(
+    monkeypatch, tmp_path
+):
+    _store, _candidate, _worktree, _result_path, _original, _binding, args = (
+        _bound_validation_worker_fixture(monkeypatch, tmp_path)
+    )
+    process = _FakeTaskTurnProcess()
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": args.thread_id}}}
+        return b'"unexpected frame"\n', {"result": {"turn": {"id": "turn-malformed"}}}
+
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    with pytest.raises(RuntimeError, match="malformed non-object frame"):
+        MODULE._app_server_task_turn_worker(args)
+
+    persisted = json.loads(Path(args.receipt).read_text(encoding="utf-8"))
+    assert persisted["ok"] is True
+    assert persisted["turnId"] == "turn-malformed"
+    assert persisted["turnStatus"] == "failed"
+    assert persisted["turnError"]["message"] == (
+        "RuntimeError:app-server emitted a malformed non-object frame"
+    )
 
 
 @pytest.mark.parametrize("mutation", ["missing", "tampered", "symlink"])
