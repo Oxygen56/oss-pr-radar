@@ -62,6 +62,68 @@ MAX_FAST_OPERATION_SECONDS = 60
 TERMINAL_FEEDBACK_STAGES = {"AUDIT_NO_GO", "MERGED", "CLOSED"}
 
 
+def _record_identity(value: Any) -> str:
+    """Return the stable identity used when combining repeated bridge results.
+
+    A slow cycle may ingest once before independent review and once after it.
+    The ledger treats the second observation as the same event, but the bridge
+    responses are separate lists.  Prefer an explicit result/event digest (or
+    idempotency key) when available; older bridge payloads do not expose one,
+    so their canonical JSON is a safe compatibility fallback.
+    """
+
+    if isinstance(value, dict):
+        for key in (
+            "resultDigest",
+            "result_digest",
+            "eventDigest",
+            "event_digest",
+            "digest",
+            "eventId",
+            "event_id",
+            "idempotencyKey",
+            "idempotency_key",
+            "requestId",
+            "request_id",
+        ):
+            candidate = value.get(key)
+            if candidate not in (None, ""):
+                target = value.get("key") or value.get("opportunityKey") or ""
+                return f"{target}:{key}:{candidate}"
+    try:
+        return "json:" + json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+    except (TypeError, ValueError):
+        return f"repr:{value!r}"
+
+
+def _merge_unique_records(*groups: list[Any]) -> list[Any]:
+    """Merge bridge record groups without counting one event twice.
+
+    When the same identity appears in both ingestion passes, retain the later
+    representation so a refreshed status is not replaced by the stale first
+    observation while preserving the original ordering of identities.
+    """
+
+    merged: list[Any] = []
+    positions: dict[str, int] = {}
+    for group in groups:
+        for value in group:
+            identity = _record_identity(value)
+            position = positions.get(identity)
+            if position is None:
+                positions[identity] = len(merged)
+                merged.append(value)
+            else:
+                merged[position] = value
+    return merged
+
+
 def _disk_gate(
     root: Path,
     *,
@@ -932,9 +994,13 @@ def advance_once(
         return {
             "ok": False,
             "activity": True,
-            "resultsIngested": list(ingestion.get("ingested") or []),
-            "publicationRequests": list(ingestion.get("publicationRequests") or []),
-            "validationDeferred": list(ingestion.get("validationDeferred") or []),
+            "resultsIngested": _merge_unique_records(list(ingestion.get("ingested") or [])),
+            "publicationRequests": _merge_unique_records(
+                list(ingestion.get("publicationRequests") or [])
+            ),
+            "validationDeferred": _merge_unique_records(
+                list(ingestion.get("validationDeferred") or [])
+            ),
             "workBlocked": ingestion_work_blocked,
             "published": [],
             "contextsSynced": [],
@@ -982,10 +1048,14 @@ def advance_once(
         return {
             "ok": False,
             "activity": True,
-            "resultsIngested": list(ingestion.get("ingested") or []),
-            "publicationRequests": list(ingestion.get("publicationRequests") or []),
-            "validationDeferred": list(ingestion.get("validationDeferred") or []),
-            "workBlocked": ingestion_work_blocked + review_work_blocked,
+            "resultsIngested": _merge_unique_records(list(ingestion.get("ingested") or [])),
+            "publicationRequests": _merge_unique_records(
+                list(ingestion.get("publicationRequests") or [])
+            ),
+            "validationDeferred": _merge_unique_records(
+                list(ingestion.get("validationDeferred") or [])
+            ),
+            "workBlocked": _merge_unique_records(ingestion_work_blocked, review_work_blocked),
             "independentReview": independent_review,
             "published": [],
             "contextsSynced": [],
@@ -995,7 +1065,7 @@ def advance_once(
             "contextsUnavailableCount": len(recovery_unavailable),
             "contextsQuarantined": public_quarantined,
             "contextsQuarantinedCount": len(recovery_quarantined),
-            "quarantined": ingestion_quarantined,
+            "quarantined": _merge_unique_records(ingestion_quarantined),
             "errors": review_errors or [{"error": "independent review failed before publication"}],
         }
     post_review_ingestion = (
@@ -1016,20 +1086,22 @@ def advance_once(
         return {
             "ok": False,
             "activity": True,
-            "resultsIngested": [
-                *list(ingestion.get("ingested") or []),
-                *list(post_review_ingestion.get("ingested") or []),
-            ],
-            "publicationRequests": [
-                *list(ingestion.get("publicationRequests") or []),
-                *list(post_review_ingestion.get("publicationRequests") or []),
-            ],
-            "validationDeferred": [
-                *list(ingestion.get("validationDeferred") or []),
-                *list(post_review_ingestion.get("validationDeferred") or []),
-            ],
-            "workBlocked": (
-                ingestion_work_blocked + review_work_blocked + post_review_work_blocked
+            "resultsIngested": _merge_unique_records(
+                list(ingestion.get("ingested") or []),
+                list(post_review_ingestion.get("ingested") or []),
+            ),
+            "publicationRequests": _merge_unique_records(
+                list(ingestion.get("publicationRequests") or []),
+                list(post_review_ingestion.get("publicationRequests") or []),
+            ),
+            "validationDeferred": _merge_unique_records(
+                list(ingestion.get("validationDeferred") or []),
+                list(post_review_ingestion.get("validationDeferred") or []),
+            ),
+            "workBlocked": _merge_unique_records(
+                ingestion_work_blocked,
+                review_work_blocked,
+                post_review_work_blocked,
             ),
             "independentReview": independent_review,
             "published": [],
@@ -1040,14 +1112,14 @@ def advance_once(
             "contextsUnavailableCount": len(recovery_unavailable),
             "contextsQuarantined": public_quarantined,
             "contextsQuarantinedCount": len(recovery_quarantined),
-            "quarantined": ingestion_quarantined + post_review_quarantined,
+            "quarantined": _merge_unique_records(ingestion_quarantined, post_review_quarantined),
             "errors": post_review_errors
             or [{"error": "task result ingestion failed after independent review"}],
         }
-    ingested = [
-        *list(ingestion.get("ingested") or []),
-        *list(post_review_ingestion.get("ingested") or []),
-    ]
+    ingested = _merge_unique_records(
+        list(ingestion.get("ingested") or []),
+        list(post_review_ingestion.get("ingested") or []),
+    )
     terminal_feedback_needed = any(
         item.get("stage") in TERMINAL_FEEDBACK_STAGES for item in ingested
     )
@@ -1077,16 +1149,20 @@ def advance_once(
         *list(publication.get("errors") or []),
         *list(context_sync.get("errors") or []),
     ]
-    requests = [
-        *list(ingestion.get("publicationRequests") or []),
-        *list(post_review_ingestion.get("publicationRequests") or []),
-    ]
-    validation_deferred = [
-        *list(ingestion.get("validationDeferred") or []),
-        *list(post_review_ingestion.get("validationDeferred") or []),
-    ]
-    work_blocked = ingestion_work_blocked + review_work_blocked + post_review_work_blocked
-    quarantined = ingestion_quarantined + post_review_quarantined
+    requests = _merge_unique_records(
+        list(ingestion.get("publicationRequests") or []),
+        list(post_review_ingestion.get("publicationRequests") or []),
+    )
+    validation_deferred = _merge_unique_records(
+        list(ingestion.get("validationDeferred") or []),
+        list(post_review_ingestion.get("validationDeferred") or []),
+    )
+    work_blocked = _merge_unique_records(
+        ingestion_work_blocked,
+        review_work_blocked,
+        post_review_work_blocked,
+    )
+    quarantined = _merge_unique_records(ingestion_quarantined, post_review_quarantined)
     blocked = list(publication.get("blocked") or [])
     pending = list(publication.get("pending") or [])
     renamed = list(title_reconciliation.get("renamed") or [])

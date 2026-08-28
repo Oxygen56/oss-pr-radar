@@ -697,6 +697,80 @@ def test_independent_review_update_is_reingested_before_publication(tmp_path):
     assert result["independentReview"]["updated"][0]["verdict"] == "PASS"
 
 
+def test_reingestion_deduplicates_result_and_validation_records(tmp_path):
+    ingestion_count = 0
+    result_record = {"key": "a/b#1", "stage": "FIX_READY"}
+    deferred_record = {
+        "key": "a/b#2",
+        "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+        "missing": ["relevant_tests_green"],
+    }
+
+    def runner(_root: Path, operation: str):
+        nonlocal ingestion_count
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            ingestion_count += 1
+            return {
+                "ok": True,
+                "ingested": [dict(result_record)],
+                "publicationRequests": [
+                    {"requestId": "request-1", "status": "PENDING"}
+                ],
+                "validationDeferred": [dict(deferred_record)],
+                "errors": [],
+            }
+        if operation == "independent-review-run":
+            return {"ok": True, "updated": [{"key": "a/b#1"}], "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert ingestion_count == 2
+    assert result["resultsIngested"] == [result_record]
+    assert result["publicationRequests"] == [{"requestId": "request-1", "status": "PENDING"}]
+    assert result["validationDeferred"] == [deferred_record]
+
+
+def test_failed_post_review_ingestion_deduplicates_report_records(tmp_path):
+    ingestion_count = 0
+    result_record = {"key": "a/b#1", "stage": "FIX_READY"}
+    deferred_record = {
+        "key": "a/b#2",
+        "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+        "missing": ["relevant_tests_green"],
+    }
+
+    def runner(_root: Path, operation: str):
+        nonlocal ingestion_count
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            ingestion_count += 1
+            response = {
+                "ok": True,
+                "ingested": [dict(result_record)],
+                "publicationRequests": [],
+                "validationDeferred": [dict(deferred_record)],
+                "errors": [],
+            }
+            if ingestion_count == 2:
+                response["ok"] = False
+                response["errors"] = [{"error": "post-review bridge unavailable"}]
+            return response
+        if operation == "independent-review-run":
+            return {"ok": True, "updated": [{"key": "a/b#1"}], "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is False
+    assert result["resultsIngested"] == [result_record]
+    assert result["validationDeferred"] == [deferred_record]
+    assert result["errors"] == [{"error": "post-review bridge unavailable"}]
+
+
 def test_review_update_continues_when_an_older_candidate_is_invalid(tmp_path):
     calls = []
     ingestion_count = 0
