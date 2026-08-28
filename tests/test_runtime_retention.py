@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -62,6 +63,18 @@ def test_plan_protects_active_recent_latest_referenced_and_incomplete(monkeypatc
         ),
         encoding="utf-8",
     )
+    state = tmp_path / "state"
+    state.mkdir(exist_ok=True)
+    current_digest = hashlib.sha256((stage7 / "current.json").read_bytes()).hexdigest()
+    (state / "operational-authorization.json").write_text(
+        json.dumps(
+            {
+                "state": "STAGED",
+                "managedCountsEvidenceSha256": current_digest,
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
         "oss_pr_radar.runtime_retention.active_release_evidence",
         lambda _root: {"valid": True, "releaseId": "abc12345-release"},
@@ -113,6 +126,74 @@ def test_plan_does_not_pin_expired_historical_stage7_reference(monkeypatch, tmp_
     )
 
     assert {item["name"] for item in plan["candidates"]} == {run.name}
+
+
+def test_plan_does_not_pin_recent_historical_stage7_reference_without_authorization(
+    monkeypatch, tmp_path
+):
+    """A fresh historical snapshot is not an ownership claim on raw output."""
+
+    now = time.time()
+    run = _stage6_run(
+        tmp_path,
+        "deadbeef-20260819T000000Z",
+        mtime=now - 3 * 24 * 60 * 60,
+    )
+    stage7 = tmp_path / "reports" / "stage7"
+    stage7.mkdir()
+    # This reproduces the production failure: every cycle writes a recent
+    # snapshot that still mentions an older Stage 6 directory.
+    recent_report = stage7 / "live-managed-pr-states.json"
+    recent_report.write_text(json.dumps({"source": str(run)}), encoding="utf-8")
+    os.utime(recent_report, (now - 60, now - 60))
+    monkeypatch.setattr(
+        "oss_pr_radar.runtime_retention.active_release_evidence",
+        lambda _root: {"valid": False},
+    )
+
+    plan = plan_runtime_retention(
+        tmp_path,
+        now=now,
+        min_age_seconds=24 * 60 * 60,
+        keep_latest=0,
+    )
+
+    assert {item["name"] for item in plan["candidates"]} == {run.name}
+
+
+def test_plan_protects_only_stage7_reference_bound_to_active_authorization(monkeypatch, tmp_path):
+    now = time.time()
+    run = _stage6_run(
+        tmp_path,
+        "deadbeef-20260819T000000Z",
+        mtime=now - 3 * 24 * 60 * 60,
+    )
+    stage7 = tmp_path / "reports" / "stage7"
+    stage7.mkdir()
+    bound = stage7 / "managed-counts-evidence.json"
+    bound.write_text(json.dumps({"source": str(run)}), encoding="utf-8")
+    digest = hashlib.sha256(bound.read_bytes()).hexdigest()
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "operational-authorization.json").write_text(
+        json.dumps({"state": "ACTIVE", "managedCountsEvidenceSha256": digest}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.runtime_retention.active_release_evidence",
+        lambda _root: {"valid": False},
+    )
+
+    plan = plan_runtime_retention(
+        tmp_path,
+        now=now,
+        min_age_seconds=24 * 60 * 60,
+        keep_latest=0,
+    )
+
+    assert plan["candidates"] == []
+    assert plan["protected"][0]["name"] == run.name
+    assert "active_evidence_reference" in plan["protected"][0]["reasons"]
 
 
 def test_plan_fails_closed_when_stage7_root_is_replaced_by_symlink(monkeypatch, tmp_path):
@@ -243,9 +324,7 @@ def test_apply_preserves_verified_archive_if_source_removal_reports_failure(monk
     assert (tmp_path / operation["archive"]).is_file()
 
 
-def test_prune_keeps_archive_when_inventory_digest_or_source_reference_is_untrusted(
-    monkeypatch, tmp_path
-):
+def test_prune_allows_historical_source_reference(monkeypatch, tmp_path):
     now = time.time()
     _stage6_run(
         tmp_path,
@@ -289,10 +368,92 @@ def test_prune_keeps_archive_when_inventory_digest_or_source_reference_is_untrus
         max_archives=20,
     )
 
+    assert not archive.exists()
+    assert any(item["status"] == "archive_pruned" for item in result["operations"])
+
+
+def test_prune_keeps_archive_for_currently_authorized_evidence(monkeypatch, tmp_path):
+    now = time.time()
+    _stage6_run(
+        tmp_path,
+        "deadbeef-20260819T000000Z",
+        mtime=now - 3 * 24 * 60 * 60,
+        payload=b"repeatable" * 100_000,
+    )
+    monkeypatch.setattr(
+        runtime_retention,
+        "active_release_evidence",
+        lambda _root: {"valid": False},
+    )
+    plan = plan_runtime_retention(tmp_path, now=now, min_age_seconds=1, keep_latest=0)
+    created = apply_runtime_retention(
+        tmp_path,
+        plan=plan,
+        now=now,
+        min_age_seconds=1,
+        keep_latest=0,
+        max_candidates=1,
+    )
+    archive = tmp_path / created["operations"][0]["archive"]
+    old = now - 8 * 24 * 60 * 60
+    os.utime(archive, (old, old))
+    stage7 = tmp_path / "reports" / "stage7"
+    stage7.mkdir()
+    evidence = stage7 / "managed-counts-evidence.json"
+    evidence.write_text(
+        json.dumps({"source": "reports/stage6/deadbeef-20260819T000000Z"}),
+        encoding="utf-8",
+    )
+    digest = hashlib.sha256(evidence.read_bytes()).hexdigest()
+    state = tmp_path / "state"
+    state.mkdir(exist_ok=True)
+    (state / "operational-authorization.json").write_text(
+        json.dumps({"state": "ACTIVE", "managedCountsEvidenceSha256": digest}),
+        encoding="utf-8",
+    )
+
+    result = apply_runtime_retention(
+        tmp_path,
+        plan={"candidates": []},
+        now=now,
+        min_age_seconds=1,
+        keep_latest=0,
+        max_candidates=0,
+        archive_min_age_seconds=7 * 24 * 60 * 60,
+        archive_keep_latest=0,
+        max_archives=20,
+    )
+
     assert archive.exists()
     assert any(item["status"] == "kept_evidence_reference" for item in result["operations"])
 
-    (stage7 / "source-reference.json").unlink()
+
+def test_prune_keeps_archive_when_inventory_digest_is_untrusted(monkeypatch, tmp_path):
+    now = time.time()
+    _stage6_run(
+        tmp_path,
+        "deadbeef-20260819T000000Z",
+        mtime=now - 3 * 24 * 60 * 60,
+        payload=b"repeatable" * 100_000,
+    )
+    monkeypatch.setattr(
+        runtime_retention,
+        "active_release_evidence",
+        lambda _root: {"valid": False},
+    )
+    plan = plan_runtime_retention(tmp_path, now=now, min_age_seconds=1, keep_latest=0)
+    created = apply_runtime_retention(
+        tmp_path,
+        plan=plan,
+        now=now,
+        min_age_seconds=1,
+        keep_latest=0,
+        max_candidates=1,
+    )
+    archive = tmp_path / created["operations"][0]["archive"]
+    old = now - 8 * 24 * 60 * 60
+    os.utime(archive, (old, old))
+
     state_path = tmp_path / "state" / "runtime-retention.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
     for entry in state["operations"]:

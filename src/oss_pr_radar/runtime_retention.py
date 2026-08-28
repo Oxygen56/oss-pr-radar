@@ -52,11 +52,23 @@ MIN_ARCHIVE_FREE_BYTES = 512 * 1024 * 1024
 # Historical Stage 7 reports remain useful for audit, but they must not pin
 # every raw rehearsal forever.  They are retained in a verified archive before
 # the source directory is removed.  Evidence referenced by the currently
-# active authorization is protected regardless of age.
+# active authorization is protected regardless of age.  Keep this constant for
+# compatibility with operators that import the old policy value; age is no
+# longer used as a liveness signal.
 ACTIVE_EVIDENCE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 DEFAULT_ARCHIVE_MIN_AGE_SECONDS = 7 * 24 * 60 * 60
 DEFAULT_ARCHIVE_KEEP_LATEST = 3
 DEFAULT_MAX_ARCHIVES = 20
+
+# Only these authorization fields describe Stage 7 evidence files.  Other
+# ``*Sha256`` fields bind release, ledger, worker, or receipt integrity and
+# must not become accidental retention pins.
+ACTIVE_EVIDENCE_DIGEST_FIELDS = frozenset(
+    {
+        "managedCountsEvidenceSha256",
+        "automationSnapshotSha256",
+    }
+)
 
 
 class RetentionError(RuntimeError):
@@ -237,7 +249,13 @@ def _active_release_tokens(root: Path) -> set[str]:
 
 
 def _active_auth_evidence_digests(root: Path) -> set[str]:
-    """Return evidence digests pinned by the currently active authorizations."""
+    """Return Stage 7 evidence digests bound by current authorizations.
+
+    Authorization records also contain hashes for release manifests, ledgers,
+    worker plists, and receipts.  Those hashes describe the authorization's
+    integrity boundary, not a raw Stage 6 directory, so only the two explicit
+    Stage 7 evidence fields are considered here.
+    """
 
     digests: set[str] = set()
     for name in (
@@ -249,10 +267,15 @@ def _active_auth_evidence_digests(root: Path) -> set[str]:
             value = json.loads(path.read_text(encoding="utf-8"))
         except (FileNotFoundError, OSError, json.JSONDecodeError):
             continue
-        if not isinstance(value, dict):
+        if not isinstance(value, dict) or value.get("state") not in {
+            "ACTIVE",
+            "STAGED",
+            "CONSUMED",
+        }:
             continue
-        for key, item in value.items():
-            if key.endswith("Sha256") and isinstance(item, str) and len(item) == 64:
+        for key in ACTIVE_EVIDENCE_DIGEST_FIELDS:
+            item = value.get(key)
+            if isinstance(item, str) and len(item) == 64:
                 try:
                     int(item, 16)
                 except ValueError:
@@ -261,60 +284,60 @@ def _active_auth_evidence_digests(root: Path) -> set[str]:
     return digests
 
 
+def _active_stage7_evidence_sources(root: Path) -> list[Path]:
+    """Return Stage 7 files whose bytes are bound by current authorization."""
+
+    try:
+        stage7 = _managed_path(root, Path("reports") / "stage7")
+    except RetentionError:
+        # Never delete evidence while the evidence root itself is ambiguous.
+        raise
+    active_digests = _active_auth_evidence_digests(root)
+    if not active_digests:
+        return []
+    if not stage7.is_dir() or stage7.is_symlink():
+        return []
+    sources: list[Path] = []
+    for path in stage7.rglob("*"):
+        if not path.is_file() or path.is_symlink() or path.suffix not in {".json", ".gz"}:
+            continue
+        try:
+            if _sha256(path) in active_digests:
+                sources.append(path)
+        except OSError as exc:
+            # This file may be the only copy of an active signed input.
+            raise RetentionError("active Stage 7 evidence is unreadable") from exc
+    return sources
+
+
 def _active_cutover_names(
     root: Path,
     candidate_names: set[str],
     *,
     now: float | None = None,
 ) -> set[str]:
-    """Find names referenced by live or recently generated Stage 7 evidence.
+    """Find names referenced by Stage 7 evidence bound to a live authorization.
 
-    Old reports are recoverable from the archive and therefore do not pin raw
-    rehearsal directories indefinitely.  Evidence whose digest is bound into
-    a live authorization is always protected; otherwise only the recent
-    evidence window is scanned.  This keeps the retention pass bounded while
-    preserving the currently active acceptance window.
+    Stage 7 emits a historical snapshot on every cycle.  Recency is not a
+    liveness signal: using it here pinned every raw rehearsal until the
+    evidence-age window elapsed, precisely when disk pressure is most likely.
+    Hash and inspect only files whose digest is present in the current staging
+    or operational authorization.  Older reports remain auditable and can be
+    recovered from the retention archive without becoming deletion pins.
     """
 
     if not candidate_names:
         return set()
-    current = time.time() if now is None else float(now)
+    # ``now`` remains an API-compatible argument for callers that supplied the
+    # former recency window; authorization digest binding is now the sole
+    # liveness criterion.
+    _ = now
     try:
-        active_digests = _active_auth_evidence_digests(root)
+        sources = _active_stage7_evidence_sources(root)
     except RetentionError:
+        # An active authorization/evidence binding that cannot be inspected is
+        # a live-state uncertainty; protect every candidate until repaired.
         return set(candidate_names)
-    sources: list[Path] = []
-    for name in (
-        "operational-authorization.json",
-        "worker-staging-authorization.json",
-    ):
-        try:
-            path = _managed_path(root, Path("state") / name)
-        except RetentionError:
-            # An authorization file that cannot be inspected is a live-state
-            # uncertainty; protect every candidate until an operator repairs
-            # the runtime layout.
-            return set(candidate_names)
-        if path.is_file() and not path.is_symlink():
-            sources.append(path)
-    try:
-        stage7 = _managed_path(root, Path("reports") / "stage7")
-    except RetentionError:
-        # Never delete evidence while the evidence root itself is ambiguous.
-        return set(candidate_names)
-    if stage7.is_dir() and not stage7.is_symlink():
-        for path in stage7.rglob("*"):
-            if not path.is_file() or path.is_symlink() or path.suffix not in {".json", ".gz"}:
-                continue
-            try:
-                active = current - path.stat().st_mtime <= ACTIVE_EVIDENCE_MAX_AGE_SECONDS
-                if not active:
-                    active = _sha256(path) in active_digests
-            except OSError:
-                # This file may be the only copy of an active signed input.
-                return set(candidate_names)
-            if active:
-                sources.append(path)
     names: set[str] = set()
     for source in sources:
         try:
@@ -395,9 +418,9 @@ def plan_runtime_retention(
             "reasons": reasons,
         }
         preliminary.append(item)
-    # Only scan Stage 7 when a directory has already passed the cheap safety
-    # checks above.  In the normal warning window all recent runs therefore
-    # avoid re-reading the historical evidence tree every 20 seconds.
+    # Only scan Stage 7 for directories that have already passed the cheap
+    # safety checks above.  Historical reports without a current authorization
+    # digest are intentionally ignored as deletion pins.
     reference_names = {str(item["name"]) for item in preliminary if not item["reasons"]}
     active_names = _active_cutover_names(root, reference_names, now=current)
     candidates: list[dict[str, Any]] = []
@@ -728,21 +751,23 @@ def _archive_is_referenced(
     archive_relative: str,
     candidate_relative: str | None = None,
 ) -> bool:
-    """Do not prune an archive named by any Stage 7 evidence."""
+    """Do not prune an archive named by currently authorized evidence.
+
+    Historical Stage 7 reports remain immutable audit material, but their
+    source-path strings are not a live ownership claim.  Once the source is
+    represented by a verified archive, normal archive age/count policy may
+    reclaim it unless the current authorization still binds the evidence.
+    """
 
     archive_name = Path(archive_relative).name
     needles = {archive_name, archive_relative}
     if candidate_relative:
         needles.add(candidate_relative)
     try:
-        stage7 = _managed_path(root, Path("reports") / "stage7")
+        sources = _active_stage7_evidence_sources(root)
     except RetentionError:
         return True
-    if not stage7.is_dir() or stage7.is_symlink():
-        return False
-    for path in stage7.rglob("*"):
-        if not path.is_file() or path.is_symlink() or path.suffix not in {".json", ".gz"}:
-            continue
+    for path in sources:
         try:
             if path.suffix == ".gz":
                 with gzip.open(path, "rt", encoding="utf-8", errors="ignore") as handle:
