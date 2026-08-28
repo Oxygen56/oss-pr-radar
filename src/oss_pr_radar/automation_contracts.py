@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .local_publication import worker_specs
+from .outbound_pause import OUTBOUND_PAUSE_FILENAME, OUTBOUND_PAUSE_SCHEMA
 from .release_binding import bind_runtime, runtime_python
 
 HEARTBEAT_AUTOMATION_ID = "oss-pr-radar"
@@ -206,6 +207,28 @@ def build_contracts(runtime_root: Path, *, home: Path | None = None) -> dict[str
             },
         },
         "stage7": {
+            # The pause is a durable precondition for the evidence window.  It
+            # is intentionally metadata (the contract never performs the
+            # remote pause itself); operators run the release-bound helper
+            # after activation and keep it active through final acceptance.
+            "publicationFreeze": {
+                "schema": OUTBOUND_PAUSE_SCHEMA,
+                "path": str(root / "state" / OUTBOUND_PAUSE_FILENAME),
+                "requiredState": "ACTIVE",
+                "workflowIdleRequired": True,
+                "releaseBound": True,
+                "scope": [
+                    "managedCountsEvidence",
+                    "issueWorkerStagingAuthorization",
+                    "stageWorkerConfigs",
+                    "automationSnapshot",
+                    "strictPreflight",
+                    "issueOperationalAuthorization",
+                    "activateWorkers",
+                    "strictFinalAcceptance",
+                ],
+                "onDrift": "rerun_stage6_and_stage7_evidence",
+            },
             "stopEvidence": {
                 "command": [
                     python,

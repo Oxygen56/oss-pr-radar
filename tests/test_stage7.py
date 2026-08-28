@@ -36,12 +36,14 @@ from oss_pr_radar.operational_auth import (
     verify_operational_authorization,
     worker_spec_digest,
 )
+from oss_pr_radar.outbound_pause import OUTBOUND_PAUSE_FILENAME, OUTBOUND_PAUSE_SCHEMA
 from oss_pr_radar.pr_projection import projection_summary
 from oss_pr_radar.release_binding import runtime_root_digest
 from oss_pr_radar.stage6_verification import build_verification_manifest
 from oss_pr_radar.stage7_acceptance import (
     _activated_worker_execution_ok,
     _managed_counts_append_only,
+    _publication_pause_snapshot,
     build_managed_counts_evidence,
     check,
     issue_operational_authorization,
@@ -77,6 +79,36 @@ def _runtime(tmp_path: Path) -> Path:
     (runtime / "current-release").symlink_to(release)
     (runtime / "state").mkdir()
     return runtime
+
+
+def _write_active_publication_pause(runtime: Path) -> Path:
+    """Create the release-bound idle pause required by production Stage 7."""
+
+    release = (runtime / "current-release").resolve()
+    now = iso_z(utc_now())
+    path = runtime / "state" / OUTBOUND_PAUSE_FILENAME
+    path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": OUTBOUND_PAUSE_SCHEMA,
+                "paused": True,
+                "pauseState": "ACTIVE",
+                "reason": "STAGE7_TEST",
+                "createdAt": now,
+                "expiresAt": iso_z(utc_now() + timedelta(hours=1)),
+                "releaseId": "stage7-test",
+                "releasePath": str(release),
+                "workflowWasActive": False,
+                "workflowStateAfterPause": "disabled_manually",
+                "workflowIdleConfirmedAt": now,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+    return path
 
 
 def _verification(head: str) -> dict:
@@ -212,6 +244,32 @@ def test_final_ledger_append_only_guard_preserves_exact_pr_invariants():
         expected_pr_states=states,
         current_pr_states={**states, "OPEN": 28},
     )
+
+
+def test_stage7_publication_pause_is_release_bound_and_requires_idle(tmp_path):
+    runtime = _runtime(tmp_path)
+    missing = _publication_pause_snapshot(runtime)
+    assert missing["present"] is False
+    assert missing["valid"] is False
+
+    path = _write_active_publication_pause(runtime)
+    active = _publication_pause_snapshot(runtime)
+    assert active["valid"] is True
+    assert active["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["pauseState"] = "PAUSING"
+    path.write_text(json.dumps(value) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+    intermediate = _publication_pause_snapshot(runtime)
+    assert intermediate["valid"] is False
+
+    value["pauseState"] = "ACTIVE"
+    value["releaseId"] = "old-release"
+    path.write_text(json.dumps(value) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+    rebound = _publication_pause_snapshot(runtime)
+    assert rebound["valid"] is False
 
 
 def test_stage7_acceptance_accepts_running_worker_without_last_exit_code():
@@ -1006,6 +1064,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     prepared = prepare(runtime, source, quiesce_token="writer-stopped")
     activate(runtime, Path(prepared["manifestPath"]))
     deploy_local_runtime.activate_release(runtime, "stage7-test")
+    _write_active_publication_pause(runtime)
     home = tmp_path / "home"
     contracts = build_contracts(runtime, home=home)
     launch_dir = home / "Library" / "LaunchAgents"
@@ -1395,16 +1454,16 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     )
     stale_unsigned = {**automation_unsigned, "observedAt": iso_z(utc_now() - timedelta(minutes=11))}
     stale_auth = sign_current(stale_unsigned, context="stage7-automation-snapshot-v1")
-    assert (
-        check(
-            runtime,
-            home=home,
-            launchctl_runner=launchctl,
-            managed_counts_evidence=counts,
-            automation_snapshot={**stale_unsigned, **stale_auth},
-        )["ok"]
-        is False
+    stale_result = check(
+        runtime,
+        home=home,
+        launchctl_runner=launchctl,
+        managed_counts_evidence=counts,
+        automation_snapshot={**stale_unsigned, **stale_auth},
     )
+    assert stale_result["ok"] is False
+    assert stale_result["retry"]["required"] is True
+    assert "automation_snapshot_stale" in stale_result["retry"]["reasons"]
     outputs["com.oss-pr-radar.local-publication"] = outputs[
         "com.oss-pr-radar.local-publication"
     ].replace("working directory = ", "working directory = /poisoned-runtime/")
@@ -1635,6 +1694,13 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     assert "snapshotManagedPrStates" not in contracts["stage6"]
     assert contracts["stage7"]["automationActivation"]["requires"] == ["stageWorkerConfigs"]
     assert contracts["stage7"]["strictFinalAcceptance"]["requires"] == ["activateWorkers"]
+    freeze = contracts["stage7"]["publicationFreeze"]
+    assert freeze["requiredState"] == "ACTIVE"
+    assert freeze["workflowIdleRequired"] is True
+    assert freeze["releaseBound"] is True
+    assert freeze["onDrift"] == "rerun_stage6_and_stage7_evidence"
+    assert "managedCountsEvidence" in freeze["scope"]
+    assert "strictFinalAcceptance" in freeze["scope"]
     plan = contracts["cutoverPlan"]
     assert [item["id"] for item in plan] == order
     assert len({item["contractRef"] for item in plan}) == len(plan)
