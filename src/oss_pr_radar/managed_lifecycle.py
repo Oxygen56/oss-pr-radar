@@ -253,6 +253,17 @@ def _valid_validation(validation: dict[str, Any] | None) -> bool:
     return bool(validation.get("evidence"))
 
 
+def _project_result_task_state(existing_state: str | None, observed_state: str) -> str:
+    """Project one result observation without regressing durable ready states."""
+
+    if existing_state in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"} and observed_state in {
+        "REPRODUCTION_REQUIRED",
+        "SYSTEM_PROCESSING",
+    }:
+        return str(existing_state)
+    return observed_state
+
+
 def _sanitize_check_id(value: object) -> str | None:
     if not isinstance(value, str) or not value or value.startswith(("/", "\\")):
         return None
@@ -2399,16 +2410,10 @@ class ManagedLedger:
                 existing_task = connection.execute(
                     "SELECT state FROM managed_tasks WHERE task_id=?", (task_id,)
                 ).fetchone()
-                if (
-                    existing_task
-                    and existing_task["state"]
-                    in {
-                        "IMPLEMENTATION_READY",
-                        "PORTFOLIO_READY",
-                    }
-                    and state in {"REPRODUCTION_REQUIRED", "SYSTEM_PROCESSING"}
-                ):
-                    state = existing_task["state"]
+                state = _project_result_task_state(
+                    str(existing_task["state"]) if existing_task else None,
+                    state,
+                )
                 connection.execute(
                     "UPDATE managed_tasks SET state=? WHERE task_id=?", (state, task_id)
                 )
@@ -2471,6 +2476,7 @@ class ManagedLedger:
             event_type = "PATCH_REJECTED_MISSING_EVIDENCE"
         connection = self._connection()
         superseded: list[dict[str, Any]] = []
+        reactivation_event: dict[str, Any] | None = None
         try:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
@@ -2500,21 +2506,79 @@ class ManagedLedger:
                        WHERE result_key=?""",
                     (result_key,),
                 )
+                existing_task = connection.execute(
+                    "SELECT state FROM managed_tasks WHERE task_id=?", (task_id,)
+                ).fetchone()
+                state = _project_result_task_state(
+                    str(existing_task["state"]) if existing_task else None,
+                    state,
+                )
+                connection.execute(
+                    "UPDATE managed_tasks SET state=? WHERE task_id=?", (state, task_id)
+                )
+                if superseded:
+                    previous_event_id = int(
+                        connection.execute(
+                            """SELECT COALESCE(MAX(event_id),0)
+                               FROM managed_lifecycle_events WHERE task_id=?""",
+                            (task_id,),
+                        ).fetchone()[0]
+                    )
+                    reactivation_identity = {
+                        "resultKey": result_key,
+                        "previousCurrentResultKeys": sorted(
+                            old["result_key"] for old in superseded
+                        ),
+                        "previousTaskEventId": previous_event_id,
+                    }
+                    reactivation_key = (
+                        f"result-reactivated:{result_key}:{_digest(reactivation_identity)}"
+                    )
+                    reactivation_observed_at = _utc(observed_at)
+                    connection.execute(
+                        """INSERT INTO managed_lifecycle_events
+                           (opportunity_key,task_id,pr_key,event_type,state,idempotency_key,
+                            source,idempotency_fingerprint,provenance_json,observed_at,payload_json)
+                           VALUES (NULL,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            task_id,
+                            pr_key,
+                            "RESULT_REACTIVATED",
+                            state,
+                            reactivation_key,
+                            source,
+                            stable_fingerprint(reactivation_key),
+                            _json(provenance or {}),
+                            reactivation_observed_at,
+                            _json(
+                                reactivation_identity
+                                | {
+                                    "worker_state": worker_state,
+                                    "replayed": True,
+                                }
+                            ),
+                        ),
+                    )
+                    reactivation_event = {
+                        "idempotencyKey": reactivation_key,
+                        "observedAt": reactivation_observed_at,
+                    }
                 restored = connection.execute(
                     "SELECT * FROM managed_results WHERE result_key=?", (result_key,)
                 ).fetchone()
                 connection.commit()
-                self.record_event(
-                    event_type=event_type,
-                    idempotency_key=f"result:{result_key}",
-                    task_id=task_id,
-                    pr_key=pr_key,
-                    state=state,
-                    source=source,
-                    provenance=provenance,
-                    observed_at=observed_at,
-                    payload={"worker_state": worker_state, "replayed": True},
-                )
+                if reactivation_event is None:
+                    self.record_event(
+                        event_type=event_type,
+                        idempotency_key=f"result:{result_key}",
+                        task_id=task_id,
+                        pr_key=pr_key,
+                        state=state,
+                        source=source,
+                        provenance=provenance,
+                        observed_at=observed_at,
+                        payload={"worker_state": worker_state, "replayed": True},
+                    )
                 for old in superseded:
                     self.record_event(
                         event_type="RESULT_CLASSIFICATION_SUPERSEDED",
@@ -2534,6 +2598,8 @@ class ManagedLedger:
                     "created": False,
                     "state": state,
                     "advanced": patch_advanced,
+                    "reactivated": reactivation_event is not None,
+                    "observationCreated": reactivation_event is not None,
                 }
             current_rows = connection.execute(
                 """SELECT result_key,result_type,result_digest FROM managed_results
@@ -2571,16 +2637,10 @@ class ManagedLedger:
             existing_task = connection.execute(
                 "SELECT state FROM managed_tasks WHERE task_id=?", (task_id,)
             ).fetchone()
-            if (
-                existing_task
-                and existing_task["state"]
-                in {
-                    "IMPLEMENTATION_READY",
-                    "PORTFOLIO_READY",
-                }
-                and state in {"REPRODUCTION_REQUIRED", "SYSTEM_PROCESSING"}
-            ):
-                state = existing_task["state"]
+            state = _project_result_task_state(
+                str(existing_task["state"]) if existing_task else None,
+                state,
+            )
             connection.execute("UPDATE managed_tasks SET state=? WHERE task_id=?", (state, task_id))
             row = connection.execute(
                 "SELECT * FROM managed_results WHERE result_key=?", (result_key,)

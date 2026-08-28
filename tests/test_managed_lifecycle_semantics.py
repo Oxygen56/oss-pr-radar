@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
@@ -155,6 +156,76 @@ def test_replayed_result_restores_the_current_projection(tmp_path):
     assert rows["reviewed"]["superseded_by"] is None
     assert rows["weaker"]["is_current"] == 0
     assert rows["weaker"]["superseded_by"] == first["result_key"]
+
+
+def test_replayed_result_restores_task_state_and_records_each_reactivation(tmp_path):
+    _, ledger = new_ledger(tmp_path)
+    ledger.bind_task(
+        task_id="task-1",
+        opportunity_key="owner/repo#1",
+        thread_id="thread-1",
+        worktree_path="/tmp/task-1",
+    )
+    decision = {
+        "task_id": "task-1",
+        "result_digest": "decision",
+        "worker_state": "needs_human",
+        "result_type": "task_no_go",
+        "pr_key": None,
+        "head_sha": "head-1",
+    }
+    waiting = {
+        "task_id": "task-1",
+        "result_digest": "waiting",
+        "worker_state": "skipped",
+        "result_type": "task_no_go",
+        "pr_key": None,
+        "head_sha": "head-1",
+        "waiting_external": True,
+    }
+
+    ledger.record_result(**decision)
+    ledger.record_result(**waiting)
+    replay = ledger.record_result(**decision)
+
+    assert replay["created"] is False
+    assert replay["reactivated"] is True
+    assert replay["observationCreated"] is True
+    assert replay["state"] == "DECISION_REQUIRED"
+    assert ledger.read_task("task-1")["state"] == "DECISION_REQUIRED"
+
+    repeated = ledger.record_result(**decision)
+
+    assert repeated["created"] is False
+    assert repeated["reactivated"] is False
+    assert repeated["observationCreated"] is False
+    assert ledger.read_task("task-1")["state"] == "DECISION_REQUIRED"
+
+    ledger.record_result(**waiting)
+    second_replay = ledger.record_result(**decision)
+
+    assert second_replay["reactivated"] is True
+    assert ledger.read_task("task-1")["state"] == "DECISION_REQUIRED"
+    with ledger._connection() as connection:
+        current = connection.execute(
+            """SELECT result_digest,worker_state FROM managed_results
+               WHERE task_id='task-1' AND is_current=1"""
+        ).fetchone()
+        observations = connection.execute(
+            """SELECT idempotency_key,state,payload_json FROM managed_lifecycle_events
+               WHERE task_id='task-1' AND event_type='RESULT_REACTIVATED'
+               ORDER BY event_id"""
+        ).fetchall()
+
+    assert dict(current) == {"result_digest": "decision", "worker_state": "needs_human"}
+    assert len(observations) == 3
+    assert len({row["idempotency_key"] for row in observations}) == 3
+    assert [row["state"] for row in observations] == [
+        "DECISION_REQUIRED",
+        "WAITING_EXTERNAL",
+        "DECISION_REQUIRED",
+    ]
+    assert all(json.loads(row["payload_json"])["replayed"] is True for row in observations)
 
 
 def test_maintainer_qualification_and_public_reply_policy(tmp_path):
