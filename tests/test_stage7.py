@@ -131,6 +131,24 @@ def test_prompt_digest_accepts_only_codex_terminal_lf_removal(tmp_path):
             )
 
 
+@pytest.mark.parametrize(
+    ("role", "command"),
+    [
+        ("heartbeat", ["python", "controller_cycle.py"]),
+        ("dailyWarRoom", ["python", "daily_war_room_cycle.py", "--send"]),
+    ],
+)
+def test_canonical_prompt_forbids_extra_final_output(tmp_path, role, command):
+    prompt = canonical_prompt(role, tmp_path / "runtime", command)
+
+    assert "whether success or failure" in prompt
+    assert "only the required plain sentence and nothing else" in prompt
+    assert "do not add extra text" in prompt
+    assert "UI directives" in prompt
+    assert "inbox markup including ::inbox-item" in prompt
+    assert "headers, Markdown, labels, or wrappers" in prompt
+
+
 def test_staged_receipt_rejects_observations_older_than_freshness_window():
     observed_at = iso_z(utc_now() - timedelta(minutes=11))
     digest = "a" * 64

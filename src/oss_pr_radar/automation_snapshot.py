@@ -108,6 +108,11 @@ def canonical_prompt(role: str, runtime_root: Path, release_command: list[str]) 
     if role not in {"heartbeat", "dailyWarRoom"}:
         raise ValueError("unknown automation role")
     command_text = shlex.join(release_command)
+    final_reply_contract = (
+        "every final reply, whether success or failure, must contain only the required "
+        "plain sentence and nothing else; do not add extra text, UI directives, inbox markup "
+        "including ::inbox-item, headers, Markdown, labels, or wrappers; "
+    )
     if role == "heartbeat":
         action = (
             "execute only the release-command; it may take several minutes; inspect its final JSON; "
@@ -116,6 +121,7 @@ def canonical_prompt(role: str, runtime_root: Path, release_command: list[str]) 
             "only after that message-tool send succeeds reply '已开始或继续处理；你无需操作。'; "
             "when there is no desktopHandoff, if the command fails or final JSON ok=false, reply with one plain-Chinese sentence naming only the real user-visible blocker; "
             "when there is no desktopHandoff and it succeeds, reply exactly '运行正常；当前没有需要你处理的事情。'; "
+            f"{final_reply_contract}"
             "never show JSON, paths, logs, prompts, or internal fields."
         )
     else:
@@ -123,6 +129,7 @@ def canonical_prompt(role: str, runtime_root: Path, release_command: list[str]) 
             "execute only the release-command; the command must include --send and is the only daily action; "
             "first check command exit and final JSON ok; if the command fails or final JSON ok=false, reply with one plain-Chinese sentence naming only the real user-visible blocker; "
             "only when it succeeds, reply exactly '检查已完成；当前没有需要你处理的事情。'; "
+            f"{final_reply_contract}"
             "never show JSON, paths, logs, prompts, or internal fields."
         )
     return (
