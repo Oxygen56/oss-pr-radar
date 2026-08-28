@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .operational_auth import require_operational_authorization
 from .runtime import RuntimeLockBusy, disk_snapshot, exclusive_lock, utc_now
 from .runtime_audit import active_release_evidence
 
@@ -53,6 +54,9 @@ MIN_ARCHIVE_FREE_BYTES = 512 * 1024 * 1024
 # the source directory is removed.  Evidence referenced by the currently
 # active authorization is protected regardless of age.
 ACTIVE_EVIDENCE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+DEFAULT_ARCHIVE_MIN_AGE_SECONDS = 7 * 24 * 60 * 60
+DEFAULT_ARCHIVE_KEEP_LATEST = 3
+DEFAULT_MAX_ARCHIVES = 20
 
 
 class RetentionError(RuntimeError):
@@ -76,6 +80,42 @@ def _safe_relative(path: Path, root: Path) -> str:
         return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError as exc:
         raise RetentionError("retention path escapes runtime root") from exc
+
+
+def _managed_path(root: Path, relative: Path) -> Path:
+    """Resolve one Radar-owned path without following a managed-root symlink.
+
+    ``Path.resolve()`` alone is not sufficient here: if an operator or a
+    concurrent process replaces ``reports/stage6-archives`` with a symlink,
+    resolving first would silently move a later delete outside the runtime
+    root.  Inspect every existing component lexically, then verify the final
+    resolved path remains below the runtime root.
+    """
+
+    runtime_root = root.resolve()
+    if relative.is_absolute() or ".." in relative.parts:
+        raise RetentionError("retention path is not relative to runtime root")
+    lexical = runtime_root / relative
+    cursor = runtime_root
+    parts = relative.parts
+    for index, part in enumerate(parts):
+        cursor = cursor / part
+        try:
+            metadata = cursor.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise RetentionError("retention path cannot be inspected") from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise RetentionError("managed retention root contains a symlink")
+        if index < len(parts) - 1 and not stat.S_ISDIR(metadata.st_mode):
+            raise RetentionError("managed retention path has a non-directory parent")
+    resolved = lexical.resolve(strict=False)
+    try:
+        resolved.relative_to(runtime_root)
+    except ValueError as exc:
+        raise RetentionError("retention path escapes runtime root") from exc
+    return resolved
 
 
 def _directory_inventory(path: Path, root: Path) -> list[dict[str, Any]]:
@@ -201,11 +241,21 @@ def _active_cutover_names(
         "operational-authorization.json",
         "worker-staging-authorization.json",
     ):
-        path = root / "state" / name
+        try:
+            path = _managed_path(root, Path("state") / name)
+        except RetentionError:
+            # An authorization file that cannot be inspected is a live-state
+            # uncertainty; protect every candidate until an operator repairs
+            # the runtime layout.
+            return set(candidate_names)
         if path.is_file() and not path.is_symlink():
             sources.append(path)
-    stage7 = root / "reports" / "stage7"
-    if stage7.is_dir():
+    try:
+        stage7 = _managed_path(root, Path("reports") / "stage7")
+    except RetentionError:
+        # Never delete evidence while the evidence root itself is ambiguous.
+        return set(candidate_names)
+    if stage7.is_dir() and not stage7.is_symlink():
         for path in stage7.rglob("*"):
             if not path.is_file() or path.is_symlink() or path.suffix not in {".json", ".gz"}:
                 continue
@@ -214,7 +264,8 @@ def _active_cutover_names(
                 if not active:
                     active = _sha256(path) in active_digests
             except OSError:
-                continue
+                # This file may be the only copy of an active signed input.
+                return set(candidate_names)
             if active:
                 sources.append(path)
     names: set[str] = set()
@@ -226,13 +277,16 @@ def _active_cutover_names(
             else:
                 text = source.read_text(encoding="utf-8", errors="ignore")
         except OSError:
-            continue
+            return set(candidate_names)
         names.update(name for name in candidate_names if name in text)
     return names
 
 
 def _candidate_report_dirs(root: Path) -> list[Path]:
-    base = root / CANDIDATE_RELATIVE_ROOT
+    try:
+        base = _managed_path(root, CANDIDATE_RELATIVE_ROOT)
+    except RetentionError:
+        return []
     if not base.is_dir() or base.is_symlink():
         return []
     return [
@@ -249,11 +303,20 @@ def plan_runtime_retention(
     min_age_seconds: int = DEFAULT_MIN_AGE_SECONDS,
     keep_latest: int = DEFAULT_KEEP_LATEST,
     max_candidates: int | None = None,
+    archive_min_age_seconds: int = DEFAULT_ARCHIVE_MIN_AGE_SECONDS,
+    archive_keep_latest: int = DEFAULT_ARCHIVE_KEEP_LATEST,
+    max_archives: int = DEFAULT_MAX_ARCHIVES,
 ) -> dict[str, Any]:
     """Build a read-only plan for reclaiming completed Stage 6 directories."""
 
     root = root.resolve()
-    if min_age_seconds < 0 or keep_latest < 0:
+    if (
+        min_age_seconds < 0
+        or keep_latest < 0
+        or archive_min_age_seconds < 0
+        or archive_keep_latest < 0
+        or max_archives < 1
+    ):
         raise ValueError("retention limits must be non-negative")
     current = time.time() if now is None else float(now)
     all_dirs = _candidate_report_dirs(root)
@@ -311,6 +374,9 @@ def plan_runtime_retention(
             "keepLatest": int(keep_latest),
             "maxCandidates": max_candidates,
             "activeReleaseTokens": sorted(active_tokens),
+            "archiveMinAgeSeconds": int(archive_min_age_seconds),
+            "archiveKeepLatest": int(archive_keep_latest),
+            "maxArchives": int(max_archives),
         },
         "candidates": candidates,
         "protected": protected,
@@ -397,7 +463,7 @@ def _append_record(root: Path, record: dict[str, Any]) -> None:
     records = list(existing.get("operations") or []) if isinstance(existing, dict) else []
     records.append(record)
     # Keep the journal bounded even if a disk-pressure loop is noisy.
-    records = records[-100:]
+    records = records[-1000:]
     _write_json_atomic(
         path,
         {
@@ -409,8 +475,8 @@ def _append_record(root: Path, record: dict[str, Any]) -> None:
 
 
 def _archive_candidate(root: Path, item: dict[str, Any], *, now: float) -> dict[str, Any]:
-    candidate = (root / str(item["path"])).resolve()
-    candidate_root = (root / CANDIDATE_RELATIVE_ROOT).resolve()
+    candidate = _managed_path(root, Path(str(item["path"])))
+    candidate_root = _managed_path(root, CANDIDATE_RELATIVE_ROOT)
     try:
         candidate.relative_to(candidate_root)
     except ValueError as exc:
@@ -419,7 +485,7 @@ def _archive_candidate(root: Path, item: dict[str, Any], *, now: float) -> dict[
         raise RetentionError("candidate disappeared or is not a directory")
     inventory = _directory_inventory(candidate, candidate_root)
     source_bytes = sum(int(entry["bytes"]) for entry in inventory)
-    archive_root = (root / ARCHIVE_RELATIVE_ROOT).resolve()
+    archive_root = _managed_path(root, ARCHIVE_RELATIVE_ROOT)
     archive_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     stamp = datetime.fromtimestamp(now, UTC).strftime("%Y%m%dT%H%M%SZ")
     archive = archive_root / f"{candidate.name}-{stamp}.tar.gz"
@@ -483,6 +549,7 @@ def _archive_candidate(root: Path, item: dict[str, Any], *, now: float) -> dict[
             "archive": _safe_relative(archive, root),
             "sourceBytes": source_bytes,
             "archiveBytes": archive_bytes,
+            "archiveSha256": _sha256(archive),
             "freedBytes": source_bytes - archive_bytes,
             "inventorySha256": hashlib.sha256(_canonical(expected).encode("utf-8")).hexdigest(),
         }
@@ -493,6 +560,195 @@ def _archive_candidate(root: Path, item: dict[str, Any], *, now: float) -> dict[
         temporary.unlink(missing_ok=True)
 
 
+def _archive_records(root: Path) -> dict[str, dict[str, Any]]:
+    path = root / "state" / RETENTION_STATE
+    if not path.is_file() or path.is_symlink():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    records = value.get("operations") if isinstance(value, dict) else None
+    result: dict[str, dict[str, Any]] = {}
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        entries = [record]
+        nested = record.get("operations")
+        if isinstance(nested, list):
+            entries.extend(item for item in nested if isinstance(item, dict))
+        for entry in entries:
+            if entry.get("status") != "archived_and_removed":
+                continue
+            archive = entry.get("archive")
+            if isinstance(archive, str) and archive:
+                result[archive] = entry
+    return result
+
+
+def _archive_is_referenced(root: Path, archive_relative: str) -> bool:
+    """Do not prune an archive named by any Stage 7 evidence."""
+
+    archive_name = Path(archive_relative).name
+    try:
+        stage7 = _managed_path(root, Path("reports") / "stage7")
+    except RetentionError:
+        return True
+    if not stage7.is_dir() or stage7.is_symlink():
+        return False
+    for path in stage7.rglob("*"):
+        if not path.is_file() or path.is_symlink() or path.suffix not in {".json", ".gz"}:
+            continue
+        try:
+            if path.suffix == ".gz":
+                with gzip.open(path, "rt", encoding="utf-8", errors="ignore") as handle:
+                    text = handle.read()
+            else:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if archive_name in text or archive_relative in text:
+            return True
+    return False
+
+
+def _prune_verified_archives(
+    root: Path,
+    *,
+    now: float,
+    min_age_seconds: int = DEFAULT_ARCHIVE_MIN_AGE_SECONDS,
+    keep_latest: int = DEFAULT_ARCHIVE_KEEP_LATEST,
+    max_archives: int = DEFAULT_MAX_ARCHIVES,
+) -> list[dict[str, Any]]:
+    """Remove only our own, verified, old archives and report every decision."""
+
+    if min_age_seconds < 0 or keep_latest < 0 or max_archives < 1:
+        raise ValueError("archive retention limits are invalid")
+    try:
+        archive_root = _managed_path(root, ARCHIVE_RELATIVE_ROOT)
+    except RetentionError as exc:
+        return [
+            {
+                "archive": ARCHIVE_RELATIVE_ROOT.as_posix(),
+                "status": "kept_unsafe_root",
+                "error": str(exc)[:180],
+            }
+        ]
+    if not archive_root.is_dir() or archive_root.is_symlink():
+        return []
+    records = _archive_records(root)
+    archives = sorted(
+        (
+            path
+            for path in archive_root.iterdir()
+            if path.is_file() and not path.is_symlink() and path.name.endswith(".tar.gz")
+        ),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    protected = {path for path in archives[:keep_latest]}
+    operations: list[dict[str, Any]] = []
+    for index, archive in enumerate(archives):
+        relative = _safe_relative(archive, root)
+        record = records.get(relative)
+        age = max(0.0, now - archive.stat().st_mtime)
+        if archive in protected:
+            continue
+        if record is None:
+            # Never touch an archive that was not created and recorded by this
+            # retention implementation.
+            operations.append({"archive": relative, "status": "kept_unmanaged"})
+            continue
+        if age < min_age_seconds and index < max_archives:
+            continue
+        if _archive_is_referenced(root, relative):
+            operations.append({"archive": relative, "status": "kept_evidence_reference"})
+            continue
+        candidate_name = Path(str(record.get("path") or "")).name
+        if not candidate_name:
+            operations.append({"archive": relative, "status": "kept_invalid_record"})
+            continue
+        try:
+            inventory = _archive_inventory(archive, candidate_name)
+            expected_digest = record.get("archiveSha256")
+            # Archives created before the digest field was introduced are not
+            # strong enough evidence for automatic deletion.  Keep them until
+            # an operator explicitly restores or removes them.
+            if not isinstance(expected_digest, str) or not expected_digest:
+                raise RetentionError("archive digest is missing")
+            if expected_digest != _sha256(archive):
+                raise RetentionError("archive digest changed")
+            if not inventory:
+                raise RetentionError("archive inventory is empty")
+        except (OSError, RetentionError, tarfile.TarError) as exc:
+            operations.append(
+                {
+                    "archive": relative,
+                    "status": "kept_unverified",
+                    "error": f"{type(exc).__name__}:{str(exc)[:180]}",
+                }
+            )
+            continue
+        size = archive.stat().st_size
+        try:
+            archive.unlink()
+        except OSError as exc:
+            operations.append(
+                {
+                    "archive": relative,
+                    "status": "kept_unlink_failed",
+                    "error": f"{type(exc).__name__}:{str(exc)[:180]}",
+                }
+            )
+            continue
+        operations.append(
+            {
+                "archive": relative,
+                "status": "archive_pruned",
+                "archiveBytes": size,
+                "freedBytes": size,
+            }
+        )
+    return operations
+
+
+def _archive_retention_due(
+    root: Path,
+    *,
+    now: float,
+    min_age_seconds: int,
+    keep_latest: int,
+    max_archives: int,
+) -> bool:
+    """Cheap preflight used to avoid writing a no-op record every worker tick."""
+
+    try:
+        archive_root = _managed_path(root, ARCHIVE_RELATIVE_ROOT)
+    except RetentionError:
+        return False
+    if not archive_root.is_dir() or archive_root.is_symlink():
+        return False
+    records = _archive_records(root)
+    archives = sorted(
+        (
+            path
+            for path in archive_root.iterdir()
+            if path.is_file() and not path.is_symlink() and path.name.endswith(".tar.gz")
+        ),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for index, archive in enumerate(archives):
+        if index < keep_latest:
+            continue
+        relative = _safe_relative(archive, root)
+        if relative not in records:
+            continue
+        if now - archive.stat().st_mtime >= min_age_seconds or index >= max_archives:
+            return True
+    return False
+
+
 def apply_runtime_retention(
     root: Path,
     *,
@@ -501,6 +757,9 @@ def apply_runtime_retention(
     min_age_seconds: int = DEFAULT_MIN_AGE_SECONDS,
     keep_latest: int = DEFAULT_KEEP_LATEST,
     max_candidates: int = DEFAULT_MAX_CANDIDATES,
+    archive_min_age_seconds: int = DEFAULT_ARCHIVE_MIN_AGE_SECONDS,
+    archive_keep_latest: int = DEFAULT_ARCHIVE_KEEP_LATEST,
+    max_archives: int = DEFAULT_MAX_ARCHIVES,
 ) -> dict[str, Any]:
     """Apply a bounded plan, failing closed before any source deletion."""
 
@@ -514,6 +773,9 @@ def apply_runtime_retention(
         min_age_seconds=min_age_seconds,
         keep_latest=keep_latest,
         max_candidates=max_candidates,
+        archive_min_age_seconds=archive_min_age_seconds,
+        archive_keep_latest=archive_keep_latest,
+        max_archives=max_archives,
     )
     # Recompute eligibility at the destructive boundary.  A plan may have been
     # generated minutes earlier, after which a new release or Stage 7 evidence
@@ -524,6 +786,9 @@ def apply_runtime_retention(
         min_age_seconds=min_age_seconds,
         keep_latest=keep_latest,
         max_candidates=max_candidates,
+        archive_min_age_seconds=archive_min_age_seconds,
+        archive_keep_latest=archive_keep_latest,
+        max_archives=max_archives,
     )
     fresh_by_path = {str(item.get("path")): item for item in fresh.get("candidates") or []}
     stale = [
@@ -549,6 +814,14 @@ def apply_runtime_retention(
         operations.append(operation)
         if operation.get("status") == "deferred_insufficient_space":
             break
+    archive_operations = _prune_verified_archives(
+        root,
+        now=current,
+        min_age_seconds=archive_min_age_seconds,
+        keep_latest=archive_keep_latest,
+        max_archives=max_archives,
+    )
+    operations.extend(archive_operations)
     result = {
         "schema": RETENTION_SCHEMA,
         "ok": not any(item.get("status") == "failed_closed" for item in operations),
@@ -569,6 +842,9 @@ def maybe_reclaim_runtime_storage(
     min_age_seconds: int = DEFAULT_MIN_AGE_SECONDS,
     keep_latest: int = DEFAULT_KEEP_LATEST,
     max_candidates: int = DEFAULT_MAX_CANDIDATES,
+    archive_min_age_seconds: int = DEFAULT_ARCHIVE_MIN_AGE_SECONDS,
+    archive_keep_latest: int = DEFAULT_ARCHIVE_KEEP_LATEST,
+    max_archives: int = DEFAULT_MAX_ARCHIVES,
 ) -> dict[str, Any]:
     """Reclaim old Stage 6 output only while disk pressure is active.
 
@@ -586,8 +862,6 @@ def maybe_reclaim_runtime_storage(
     # A missing or expired authorization never turns disk pressure into a
     # reason to delete local material.
     try:
-        from .operational_auth import require_operational_authorization
-
         require_operational_authorization(root)
     except Exception as exc:  # noqa: BLE001 - retention fails closed
         return {
@@ -606,8 +880,33 @@ def maybe_reclaim_runtime_storage(
                 min_age_seconds=min_age_seconds,
                 keep_latest=keep_latest,
                 max_candidates=max_candidates,
+                archive_min_age_seconds=archive_min_age_seconds,
+                archive_keep_latest=archive_keep_latest,
+                max_archives=max_archives,
             )
             if not plan.get("candidates"):
+                if _archive_retention_due(
+                    root,
+                    now=time.time() if now is None else float(now),
+                    min_age_seconds=archive_min_age_seconds,
+                    keep_latest=archive_keep_latest,
+                    max_archives=max_archives,
+                ):
+                    result = apply_runtime_retention(
+                        root,
+                        plan=plan,
+                        now=now,
+                        min_age_seconds=min_age_seconds,
+                        keep_latest=keep_latest,
+                        max_candidates=max_candidates,
+                        archive_min_age_seconds=archive_min_age_seconds,
+                        archive_keep_latest=archive_keep_latest,
+                        max_archives=max_archives,
+                    )
+                    result["attempted"] = True
+                    result["beforeDisk"] = snapshot
+                    result["afterDisk"] = disk_snapshot(root)
+                    return result
                 return {
                     "attempted": False,
                     "ok": True,
@@ -621,6 +920,9 @@ def maybe_reclaim_runtime_storage(
                 min_age_seconds=min_age_seconds,
                 keep_latest=keep_latest,
                 max_candidates=max_candidates,
+                archive_min_age_seconds=archive_min_age_seconds,
+                archive_keep_latest=archive_keep_latest,
+                max_archives=max_archives,
             )
             result["attempted"] = True
             result["beforeDisk"] = snapshot
@@ -648,7 +950,7 @@ def restore_runtime_archive(root: Path, archive: Path) -> dict[str, Any]:
 
     root = root.resolve()
     archive = archive.resolve()
-    archive_root = (root / ARCHIVE_RELATIVE_ROOT).resolve()
+    archive_root = _managed_path(root, ARCHIVE_RELATIVE_ROOT)
     try:
         archive.relative_to(archive_root)
     except ValueError as exc:

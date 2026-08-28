@@ -224,6 +224,75 @@ def test_pressure_reclaim_is_noop_without_pressure(monkeypatch, tmp_path):
     assert run.is_dir()
 
 
+def test_pressure_reclaim_requires_fresh_operational_authorization(monkeypatch, tmp_path):
+    now = time.time()
+    run = _stage6_run(
+        tmp_path,
+        "deadbeef-20260819T000000Z",
+        mtime=now - 3 * 24 * 60 * 60,
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.runtime_retention.require_operational_authorization",
+        lambda _root: (_ for _ in ()).throw(RuntimeError("authorization expired")),
+    )
+
+    result = maybe_reclaim_runtime_storage(tmp_path, disk={"level": "stop"}, now=now)
+
+    assert result["attempted"] is False
+    assert result["ok"] is False
+    assert result["reason"] == "operational_authorization_required"
+    assert run.is_dir()
+
+
+def test_apply_prunes_only_verified_old_managed_archives(monkeypatch, tmp_path):
+    now = time.time()
+    run = _stage6_run(
+        tmp_path,
+        "deadbeef-20260819T000000Z",
+        mtime=now - 3 * 24 * 60 * 60,
+        payload=b"repeatable" * 100_000,
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.runtime_retention.active_release_evidence",
+        lambda _root: {"valid": False},
+    )
+    plan = plan_runtime_retention(tmp_path, now=now, min_age_seconds=1, keep_latest=0)
+    created = apply_runtime_retention(
+        tmp_path,
+        plan=plan,
+        now=now,
+        min_age_seconds=1,
+        keep_latest=0,
+        max_candidates=1,
+        archive_min_age_seconds=7 * 24 * 60 * 60,
+        archive_keep_latest=3,
+        max_archives=20,
+    )
+    archive = tmp_path / created["operations"][0]["archive"]
+    old = now - 8 * 24 * 60 * 60
+    os.utime(archive, (old, old))
+    unmanaged = tmp_path / "reports" / "stage6-archives" / "unmanaged.tar.gz"
+    unmanaged.write_bytes(b"not a managed archive")
+    os.utime(unmanaged, (old, old))
+
+    result = apply_runtime_retention(
+        tmp_path,
+        plan={"candidates": []},
+        now=now,
+        min_age_seconds=1,
+        keep_latest=0,
+        max_candidates=0,
+        archive_min_age_seconds=7 * 24 * 60 * 60,
+        archive_keep_latest=0,
+        max_archives=20,
+    )
+
+    assert any(item["status"] == "archive_pruned" for item in result["operations"])
+    assert not archive.exists()
+    assert unmanaged.exists()
+    assert not run.exists()
+
+
 def test_fast_worker_rechecks_disk_after_retention(monkeypatch, tmp_path):
     snapshots = iter([{"level": "stop"}, {"level": "ok"}])
     monkeypatch.setattr(
