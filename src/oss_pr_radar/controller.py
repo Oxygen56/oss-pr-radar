@@ -498,6 +498,7 @@ def run_locked_controller_cycle(
     wait_existing: bool = False,
     busy_timeout_seconds: float | None = None,
     report_on_complete: bool = False,
+    automation_run_id: str | None = None,
 ) -> dict[str, Any]:
     if wait_existing and not report_on_complete:
         raise ValueError("joining a controller cycle requires durable reporting")
@@ -664,7 +665,13 @@ def run_locked_controller_cycle(
                     "error": error,
                 }
         if report_on_complete:
-            result = {**result, "controllerRunId": run_id}
+            result = {
+                **result,
+                "controllerRunId": run_id,
+                "boundReleaseId": binding.release_id if binding is not None else None,
+            }
+            if automation_run_id:
+                result["automationRunId"] = automation_run_id
             report_path = write_controller_report(root, result)
             completed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
             _write_controller_lock_marker(

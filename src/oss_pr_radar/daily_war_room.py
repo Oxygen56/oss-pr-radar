@@ -63,6 +63,7 @@ def run_daily_cycle(
     ledger: Path | None = None,
     send: bool = False,
     sender: Callable[[dict[str, Any]], str] | None = None,
+    automation_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Write the shared artifact/views/outboxes and optionally send new events.
 
@@ -150,5 +151,7 @@ def run_daily_cycle(
         "publicReplies": "DRAFT_UNLESS_MANAGED_GATE_AUTHORIZES",
         "sharedChannelArtifact": True,
     }
+    if automation_run_id:
+        cycle["automationRunId"] = automation_run_id
     atomic_write_json(report_root / "cycle.json", cycle)
     return cycle
