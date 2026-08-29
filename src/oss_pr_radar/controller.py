@@ -19,6 +19,7 @@ from .managed_adapter import GitHubAbsenceQueries, ManagedAdapter
 from .managed_snapshot import export_snapshot, import_snapshot
 from .operational_auth import require_operational_authorization
 from .release_binding import bind_runtime, runtime_ledger_path, runtime_python
+from .runtime import read_disk_pressure_gate_health
 
 DEFAULT_PROJECT_ID = "5e41d21c-cba3-4be0-9a02-7eef35b67625"
 CONTROLLER_REPAIR_AGE_MINUTES = 90
@@ -103,6 +104,20 @@ def controller_cycle(
     )
     if not allow_unreleased_code:
         require_operational_authorization(root)
+    stages: dict[str, dict[str, Any]] = {}
+    disk_pressure_health = read_disk_pressure_gate_health(root)
+    stages["diskPressureGate"] = disk_pressure_health
+    if _disk_pressure_health_blocked(disk_pressure_health):
+        final_blockers = _final_blockers(stages)
+        return {
+            "ok": False,
+            "checkedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "blocked": "disk pressure gate blocked",
+            "stages": stages,
+            "failures": [],
+            "finalBlockers": final_blockers,
+            "summary": _compact_summary(stages),
+        }
     managed_path = runtime_ledger_path(root)
     managed_snapshot_path = root / "state" / "managed_lifecycle.snapshot.json.gz"
     if _managed_runtime_has_local_state(managed_path):
@@ -111,10 +126,9 @@ def controller_cycle(
         managed_restore = import_snapshot(managed_path, managed_snapshot_path, allow_missing=True)
     managed_adapter = ManagedAdapter(root)
     managed_adapter.ensure()
+    stages["managedRestore"] = managed_restore
     python = str(runtime_python(root))
     bridge_script = str(binding.script("scripts/local_dispatch_bridge.py"))
-    stages: dict[str, dict[str, Any]] = {}
-    stages["managedRestore"] = managed_restore
     failures: list[dict[str, str]] = []
 
     def run_stage(
@@ -350,18 +364,57 @@ def controller_cycle(
     }
 
 
-def _local_agent_disk_stop(status: dict[str, Any]) -> bool:
+def _disk_pressure_health_blocked(value: object) -> bool:
+    return (
+        not isinstance(value, dict)
+        or value.get("ok") is not True
+        or value.get("blocked") is not False
+    )
+
+
+def _disk_pressure_blocker_queue(value: object) -> str:
+    if not isinstance(value, dict) or value.get("reason") == "DISK_PRESSURE_GATE_UNAVAILABLE":
+        return "gate_unavailable"
+    return "disk_stop"
+
+
+def _local_agent_disk_blocker(status: dict[str, Any]) -> str | None:
+    top_level_gate = status.get("diskPressureGate")
+    if top_level_gate is not None and _disk_pressure_health_blocked(top_level_gate):
+        return _disk_pressure_blocker_queue(top_level_gate)
     for worker in status.get("workers") or []:
         if not isinstance(worker, dict):
             continue
         health = worker.get("runtimeHealth")
-        if isinstance(health, dict) and (health.get("disk") or {}).get("level") == "stop":
-            return True
-    return False
+        if isinstance(health, dict):
+            if (health.get("disk") or {}).get("level") == "stop":
+                return "disk_stop"
+            gate = health.get("diskPressureGate")
+            if gate is not None and _disk_pressure_health_blocked(gate):
+                return _disk_pressure_blocker_queue(gate)
+            health_issues = set(health.get("issues") or [])
+            if "DISK_PRESSURE_GATE_UNAVAILABLE" in health_issues:
+                return "gate_unavailable"
+            if "DISK_STOP_THRESHOLD" in health_issues:
+                return "disk_stop"
+    return None
+
+
+def _local_agent_disk_stop(status: dict[str, Any]) -> bool:
+    return _local_agent_disk_blocker(status) is not None
 
 
 def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
+    gate_health = stages.get("diskPressureGate")
+    if gate_health is not None and _disk_pressure_health_blocked(gate_health):
+        blockers.append(
+            {
+                "stage": "diskPressureGate",
+                "queue": _disk_pressure_blocker_queue(gate_health),
+                "count": 1,
+            }
+        )
     checks = {
         "resultIngestion": ("errors", "workBlocked"),
         "resultIngestionAfterReview": ("errors", "workBlocked"),
@@ -391,7 +444,7 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         blockers.append(
             {
                 "stage": "finalLocalAgentStatus",
-                "queue": ("disk_stop" if _local_agent_disk_stop(local_status) else "unhealthy"),
+                "queue": _local_agent_disk_blocker(local_status) or "unhealthy",
                 "count": max(1, len(unhealthy)),
             }
         )
@@ -440,6 +493,11 @@ def _compact_summary(stages: dict[str, dict[str, Any]]) -> dict[str, Any]:
     post_review_ingestion = stages.get("resultIngestionAfterReview") or {}
     local_status = stages.get("finalLocalAgentStatus") or {}
     return {
+        "diskPressureBlocked": (
+            _disk_pressure_health_blocked(stages["diskPressureGate"])
+            if "diskPressureGate" in stages
+            else False
+        ),
         "localAgentHealthy": (stages.get("finalLocalAgentStatus") or {}).get("ok") is True,
         "localWorkerStates": _compact_local_worker_states(local_status),
         "eventLanesHealthy": (stages.get("finalEventLaneHealth") or {}).get("healthy") is True,
@@ -608,7 +666,9 @@ def run_locked_controller_cycle(
                     command_digest=command_digest,
                     max_age_seconds=CONTROLLER_COMPLETED_REUSE_SECONDS,
                 )
-                if previous is not None:
+                if previous is not None and _cached_disk_pressure_semantics_match(
+                    previous, read_disk_pressure_gate_health(root)
+                ):
                     return previous
                 recovered = _recover_finished_running_marker(
                     root,
@@ -706,6 +766,27 @@ def _controller_command_digest(
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def _cached_disk_pressure_semantics_match(
+    previous: dict[str, Any], current_health: dict[str, Any]
+) -> bool:
+    stages = previous.get("stages") if isinstance(previous.get("stages"), dict) else {}
+    previous_health = stages.get("diskPressureGate")
+    if not isinstance(previous_health, dict) or not isinstance(current_health, dict):
+        return False
+    for health in (previous_health, current_health):
+        if not isinstance(health.get("blocked"), bool) or health.get("ok") is not (
+            not health.get("blocked")
+        ):
+            return False
+    return (
+        previous_health.get("blocked"),
+        previous_health.get("reason"),
+    ) == (
+        current_health.get("blocked"),
+        current_health.get("reason"),
+    )
 
 
 def _read_controller_lock_marker(lock) -> dict[str, Any] | None:
@@ -855,7 +936,13 @@ def compact_controller_result(
             else []
         )
     }
-    local_disk_stop = _local_agent_disk_stop(local_status)
+    local_disk_blocker = _local_agent_disk_blocker(local_status)
+    if (
+        local_disk_blocker is None
+        and "diskPressureGate" in stages
+        and _disk_pressure_health_blocked(stages.get("diskPressureGate"))
+    ):
+        local_disk_blocker = _disk_pressure_blocker_queue(stages.get("diskPressureGate"))
     desktop_handoff = _pending_desktop_handoff(stages)
     summary = dict(result.get("summary") or {})
     if "finalLocalAgentStatus" in stages:
@@ -882,7 +969,8 @@ def compact_controller_result(
             "terminalFeedbackDeferred": len(feedback.get("deferred") or []),
             "parkedRecovery": len(final_recovery.get("parkedRecovery") or []),
             "diskThresholdWarning": int("DISK_WARNING_THRESHOLD" in local_warning_codes),
-            "diskThresholdStop": int(local_disk_stop),
+            "diskThresholdStop": int(local_disk_blocker == "disk_stop"),
+            "diskGateUnavailable": int(local_disk_blocker == "gate_unavailable"),
         },
     }
     if desktop_handoff is not None:

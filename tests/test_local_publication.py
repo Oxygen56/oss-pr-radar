@@ -32,6 +32,14 @@ from oss_pr_radar.runtime import RuntimeLockBusy
 pytestmark = pytest.mark.usefixtures("current_signing_key")
 
 
+def _ok_disk_snapshot(_root: Path) -> dict[str, object]:
+    return {
+        "level": "ok",
+        "freeBytes": 100 * 1024**3,
+        "usedFraction": 0.5,
+    }
+
+
 def test_fast_bridge_deadline_covers_bounded_cold_start(monkeypatch, tmp_path):
     observed = {}
 
@@ -404,9 +412,7 @@ def test_advance_once_rebind_quarantine_only_drains_actionable_recovery(
 
 
 def test_slow_cycle_is_successful_with_task_local_context_quarantine(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.sync_cloud_queue_if_due",
         lambda *args, **kwargs: {"ok": True, "errors": [], "pending": []},
@@ -1025,9 +1031,7 @@ def test_launch_agent_uses_local_venv_and_contains_no_credentials(tmp_path):
 
 
 def test_fast_cycle_restricts_operations_and_enqueues_slow_work(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
     calls = []
 
     def runner(_root: Path, operation: str):
@@ -1043,9 +1047,7 @@ def test_fast_cycle_restricts_operations_and_enqueues_slow_work(monkeypatch, tmp
 
 
 def test_fast_cycle_does_not_call_network_or_publication_operations(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
 
     def runner(_root: Path, operation: str):
         if operation != "local-receipt-enqueue":
@@ -1056,9 +1058,7 @@ def test_fast_cycle_does_not_call_network_or_publication_operations(monkeypatch,
 
 
 def test_fast_cycle_injected_bridge_does_not_execute_git(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
 
     calls = []
 
@@ -1081,9 +1081,7 @@ def test_fast_cycle_injected_bridge_does_not_execute_git(tmp_path, monkeypatch):
 
 
 def test_queue_importer_is_independent_and_only_imports_signed_queue(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
     calls = []
 
     def runner(_root: Path, operation: str):
@@ -1099,9 +1097,7 @@ def test_queue_importer_is_independent_and_only_imports_signed_queue(monkeypatch
 
 
 def test_slow_worker_persists_backoff_after_network_failure(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
 
     def runner(_root: Path, operation: str):
         if operation == "context-recover":
@@ -1126,8 +1122,8 @@ def test_slow_worker_persists_backoff_after_network_failure(monkeypatch, tmp_pat
 def test_slow_worker_disk_stop_does_not_create_exponential_backoff(monkeypatch, tmp_path):
     levels = iter(
         [
-            {"level": "stop", "freeBytes": 1},
-            {"level": "ok", "freeBytes": 100 * 1024**3},
+            {"level": "stop", "freeBytes": 1, "usedFraction": 0.96},
+            {"level": "warning", "freeBytes": 100 * 1024**3, "usedFraction": 0.93},
         ]
     )
     monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", lambda _root: next(levels))
@@ -1184,8 +1180,17 @@ def test_slow_worker_disk_stop_preserves_real_network_backoff(monkeypatch, tmp_p
     backoff_path.write_text(json.dumps(original, sort_keys=True) + "\n", encoding="utf-8")
     levels = iter(
         [
-            {"level": "stop", "freeBytes": 1},
-            {"level": "warning", "freeBytes": 100 * 1024**3},
+            {"level": "stop", "freeBytes": 1, "usedFraction": 0.96},
+            {
+                "level": "warning",
+                "freeBytes": 100 * 1024**3,
+                "usedFraction": 0.945,
+            },
+            {
+                "level": "warning",
+                "freeBytes": 100 * 1024**3,
+                "usedFraction": 0.93,
+            },
         ]
     )
     monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", lambda _root: next(levels))
@@ -1199,6 +1204,16 @@ def test_slow_worker_disk_stop_preserves_real_network_backoff(monkeypatch, tmp_p
     assert json.loads(backoff_path.read_text()) == original
 
     gate_path = state_dir / "disk-pressure-gate.json"
+    gate = json.loads(gate_path.read_text())
+    gate["nextCheckAtEpoch"] = time.time() - 1
+    gate["nextCheckAt"] = datetime.fromtimestamp(gate["nextCheckAtEpoch"], UTC).isoformat()
+    gate_path.write_text(json.dumps(gate) + "\n", encoding="utf-8")
+    gate_path.chmod(0o600)
+    still_stopped = slow_advance_once(tmp_path, runner=must_not_run)
+
+    assert still_stopped["reason"] == "DISK_STOP_THRESHOLD"
+    assert json.loads(backoff_path.read_text()) == original
+
     gate = json.loads(gate_path.read_text())
     gate["nextCheckAtEpoch"] = time.time() - 1
     gate["nextCheckAt"] = datetime.fromtimestamp(gate["nextCheckAtEpoch"], UTC).isoformat()
@@ -1248,7 +1263,11 @@ def test_slow_worker_recovers_exact_legacy_disk_backoff(monkeypatch, tmp_path):
     (state_dir / "runtime-health.json").chmod(0o600)
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.disk_snapshot",
-        lambda _root: {"level": "warning", "freeBytes": 100 * 1024**3},
+        lambda _root: {
+            "level": "warning",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.93,
+        },
     )
     calls = []
 
@@ -1319,7 +1338,11 @@ def test_slow_worker_does_not_clear_ambiguous_legacy_backoff(
     )
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.disk_snapshot",
-        lambda _root: {"level": "warning", "freeBytes": 100 * 1024**3},
+        lambda _root: {
+            "level": "warning",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.945,
+        },
     )
 
     def must_not_run(_root: Path, _operation: str):
@@ -1345,7 +1368,7 @@ def test_slow_worker_persisted_backoff_does_not_manufacture_success_health(
     # disk stop threshold.
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.disk_snapshot",
-        lambda _root: {"level": "ok", "freeBytes": 100 * 1024**3},
+        _ok_disk_snapshot,
     )
     state_dir = tmp_path / "state"
     state_dir.mkdir()
@@ -1423,9 +1446,7 @@ def test_slow_worker_reconciles_stale_inflight_owner(monkeypatch, tmp_path, pid_
         + "\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.pid_probe", lambda *_args, **_kwargs: pid_evidence
     )
@@ -1451,9 +1472,7 @@ def test_slow_worker_reconciles_stale_inflight_owner(monkeypatch, tmp_path, pid_
 
 def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(monkeypatch, tmp_path):
     observed = {}
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
 
     def runner(_root: Path, operation: str):
         if operation == "reproduction-probe":
@@ -1507,9 +1526,7 @@ def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(monkeypatch
 
 
 def test_slow_worker_marks_terminal_missing_worktree_skip_as_success(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
     calls = []
 
     def runner(_root: Path, operation: str):
@@ -1582,9 +1599,7 @@ def test_slow_worker_lock_busy_does_not_manufacture_success_health(monkeypatch, 
 
 
 def test_slow_worker_persists_exception_failure_before_restart(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
     calls = []
 
     def failing_runner(_root: Path, operation: str):
@@ -1613,9 +1628,7 @@ def test_slow_worker_persists_exception_failure_before_restart(monkeypatch, tmp_
 
 
 def test_slow_worker_crash_leaves_restart_backoff(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
 
     def interrupted_runner(_root: Path, _operation: str):
         raise KeyboardInterrupt()
@@ -1639,9 +1652,7 @@ def test_slow_worker_crash_leaves_restart_backoff(monkeypatch, tmp_path):
 
 
 def test_blocked_slow_worker_does_not_block_fast_receipt_registration(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
     slow_started = threading.Event()
     release_slow = threading.Event()
     slow_calls = []
@@ -1868,9 +1879,7 @@ def test_replayed_pr_followup_without_a_candidate_does_not_retrigger_drain(tmp_p
 def test_slow_cycle_polls_cloud_pr_followups_every_five_minutes(monkeypatch, tmp_path):
     observed = []
 
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
 
     def sync(_root, *, runner, interval_seconds, now=None):
         observed.append(interval_seconds)

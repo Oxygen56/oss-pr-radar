@@ -25,6 +25,32 @@ pytestmark = pytest.mark.usefixtures("current_signing_key")
 DEV_CODE_ROOT = Path(__file__).parents[1]
 
 
+def healthy_disk_pressure_gate() -> dict:
+    return {
+        "ok": True,
+        "blocked": False,
+        "reason": None,
+        "active": False,
+        "gateActive": False,
+        "statePresent": False,
+        "episode": None,
+        "snapshot": {
+            "level": "warning",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.93,
+        },
+        "restartSafe": True,
+    }
+
+
+@pytest.fixture(autouse=True)
+def deterministic_controller_disk_pressure(monkeypatch):
+    monkeypatch.setattr(
+        "oss_pr_radar.controller.read_disk_pressure_gate_health",
+        lambda _root: healthy_disk_pressure_gate(),
+    )
+
+
 def healthy_response(stage: str) -> dict:
     if stage in {"workflowHealth", "finalWorkflowHealth"}:
         return {
@@ -186,6 +212,61 @@ def test_controller_stops_immediately_when_disk_guard_is_active(tmp_path):
     compact = compact_controller_result(result)
     assert compact["warnings"]["diskThresholdStop"] == 1
     assert compact["finalBlockers"] == result["finalBlockers"]
+
+
+@pytest.mark.parametrize(
+    ("gate", "queue"),
+    [
+        (
+            {
+                "ok": False,
+                "blocked": True,
+                "reason": "DISK_STOP_THRESHOLD",
+                "active": True,
+                "gateActive": True,
+                "restartSafe": True,
+            },
+            "disk_stop",
+        ),
+        (
+            {
+                "ok": False,
+                "blocked": True,
+                "reason": "DISK_PRESSURE_GATE_UNAVAILABLE",
+                "active": None,
+                "gateActive": None,
+                "restartSafe": None,
+            },
+            "gate_unavailable",
+        ),
+    ],
+)
+def test_controller_disk_gate_preflight_stops_before_business_stages(
+    tmp_path, monkeypatch, gate, queue
+):
+    monkeypatch.setattr(
+        "oss_pr_radar.controller.read_disk_pressure_gate_health", lambda _root: dict(gate)
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.controller._managed_runtime_has_local_state",
+        lambda _path: (_ for _ in ()).throw(
+            AssertionError("disk gate must stop before managed state inspection")
+        ),
+    )
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("disk gate must stop before a controller business stage")
+        ),
+        notify=False,
+    )
+
+    assert result["ok"] is False
+    assert result["finalBlockers"] == [{"stage": "diskPressureGate", "queue": queue, "count": 1}]
+    assert result["stages"]["diskPressureGate"] == gate
 
 
 def test_controller_finishes_terminal_publication_lifecycle_in_same_cycle(tmp_path):
@@ -525,6 +606,137 @@ def test_controller_rejects_stale_fixed_release_before_reusing_marker(tmp_path):
     assert result["blocked"] == "release binding required"
     assert "active immutable release" in result["error"]
     assert result["controllerRunId"] != old_run_id
+
+
+def _write_recent_completed_controller_result(
+    root: Path, *, result: dict, command_digest: str
+) -> None:
+    now = datetime.now(UTC)
+    started_at = (now - timedelta(seconds=2)).isoformat().replace("+00:00", "Z")
+    checked_at = (now - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    completed_at = now.isoformat().replace("+00:00", "Z")
+    result["checkedAt"] = checked_at
+    report_path = write_controller_report(root, result)
+    lock_path = root / "state" / "controller-cycle.lock"
+    lock_path.parent.mkdir(exist_ok=True)
+    lock_path.write_text(
+        json.dumps(
+            {
+                "schema": CONTROLLER_LOCK_MARKER_SCHEMA,
+                "state": "COMPLETED",
+                "runId": result["controllerRunId"],
+                "commandDigest": command_digest,
+                "startedAt": started_at,
+                "completedAt": completed_at,
+                "reportCheckedAt": checked_at,
+                "reportSha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_recent_success_is_not_reused_after_disk_gate_becomes_active(tmp_path, monkeypatch):
+    command_digest = _controller_command_digest(
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        notify=False,
+        project_id="github",
+    )
+    old_run_id = "recent-success"
+    _write_recent_completed_controller_result(
+        tmp_path,
+        command_digest=command_digest,
+        result={
+            "ok": True,
+            "controllerRunId": old_run_id,
+            "stages": {"diskPressureGate": healthy_disk_pressure_gate()},
+            "summary": {},
+            "failures": [],
+            "finalBlockers": [],
+        },
+    )
+    active = {
+        "ok": False,
+        "blocked": True,
+        "reason": "DISK_STOP_THRESHOLD",
+        "active": True,
+        "gateActive": True,
+        "restartSafe": True,
+    }
+    monkeypatch.setattr(
+        "oss_pr_radar.controller.read_disk_pressure_gate_health", lambda _root: dict(active)
+    )
+
+    result = run_locked_controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        notify=False,
+        project_id="github",
+        wait_existing=True,
+        report_on_complete=True,
+        runner=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("active gate must stop before business stages")
+        ),
+    )
+
+    assert result["controllerRunId"] != old_run_id
+    assert result["finalBlockers"] == [
+        {"stage": "diskPressureGate", "queue": "disk_stop", "count": 1}
+    ]
+
+
+def test_recent_disk_blocker_is_not_reused_after_gate_clears(tmp_path, monkeypatch):
+    command_digest = _controller_command_digest(
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        notify=False,
+        project_id="github",
+    )
+    old_run_id = "recent-disk-blocker"
+    active = {
+        "ok": False,
+        "blocked": True,
+        "reason": "DISK_STOP_THRESHOLD",
+        "active": True,
+        "gateActive": True,
+        "restartSafe": True,
+    }
+    _write_recent_completed_controller_result(
+        tmp_path,
+        command_digest=command_digest,
+        result={
+            "ok": False,
+            "controllerRunId": old_run_id,
+            "stages": {"diskPressureGate": active},
+            "summary": {},
+            "failures": [],
+            "finalBlockers": [{"stage": "diskPressureGate", "queue": "disk_stop", "count": 1}],
+        },
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.controller.read_disk_pressure_gate_health",
+        lambda _root: healthy_disk_pressure_gate(),
+    )
+    calls: list[str] = []
+
+    result = run_locked_controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        notify=False,
+        project_id="github",
+        wait_existing=True,
+        report_on_complete=True,
+        runner=lambda _root, stage, _argv, _allowed, _timeout: (
+            calls.append(stage) or healthy_response(stage)
+        ),
+    )
+
+    assert result["controllerRunId"] != old_run_id
+    assert result["ok"] is True
+    assert calls
 
 
 def test_controller_cycle_can_join_existing_run_after_tool_context_loss(tmp_path):

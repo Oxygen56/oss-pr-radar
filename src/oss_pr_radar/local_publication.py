@@ -20,6 +20,7 @@ from .runtime import (
     RuntimeLockBusy,
     append_operation,
     disk_pressure_gate,
+    disk_restart_safe,
     disk_snapshot,
     exclusive_lock,
     pid_probe,
@@ -157,15 +158,21 @@ def _disk_gate(
     *,
     worker: str,
     force_recheck: bool = False,
+    observed_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the shared capacity gate through this module's snapshot seam."""
 
     # Passing the local alias keeps existing tests and callers able to inject
     # a deterministic snapshot without bypassing the shared gate.
+    snapshot_fn = (
+        (lambda _root: dict(observed_snapshot))
+        if isinstance(observed_snapshot, dict)
+        else disk_snapshot
+    )
     return disk_pressure_gate(
         root,
         worker=worker,
-        snapshot_fn=disk_snapshot,
+        snapshot_fn=snapshot_fn,
         force_recheck=force_recheck,
     )
 
@@ -260,7 +267,7 @@ def _legacy_disk_backoff_recoverable(
     """Recognize only a future backoff produced by the former disk-stop bug."""
 
     if (
-        disk.get("level") == "stop"
+        not disk_restart_safe(disk)
         or backoff.get("schemaVersion") != "slow_backoff_v1"
         or backoff.get("inFlight") is not False
         or int(backoff.get("failureCount") or 0) <= 0
@@ -688,9 +695,32 @@ def fast_advance_once(
     try:
         with exclusive_lock(root / "state" / FAST_WORK_LOCK):
             disk_before = disk_snapshot(root)
+            initial_stop_gate = None
+            if disk_before.get("level") == "stop":
+                # Persist the hard-stop episode before retention changes the
+                # measurement.  A reclaim may recheck immediately, but it may
+                # not turn a near-boundary warning into an implicit restart.
+                initial_stop_gate = _disk_gate(
+                    root,
+                    worker="fast",
+                    observed_snapshot=disk_before,
+                )
             storage_maintenance = maybe_reclaim_runtime_storage(root, disk=disk_before)
             reclaimed = int(storage_maintenance.get("freedBytes") or 0) > 0
-            gate = _disk_gate(root, worker="fast", force_recheck=reclaimed)
+            gate = (
+                _disk_gate(root, worker="fast", force_recheck=True)
+                if reclaimed
+                else (initial_stop_gate or _disk_gate(root, worker="fast"))
+            )
+            if (
+                isinstance(initial_stop_gate, dict)
+                and initial_stop_gate.get("recordStop") is True
+                and gate.get("allowed") is not True
+            ):
+                gate = dict(gate)
+                gate["recordStop"] = True
+                gate["firstStop"] = True
+                gate["snapshot"] = initial_stop_gate.get("snapshot")
             if gate.get("allowed") is not True:
                 return _disk_gate_failure(
                     root,

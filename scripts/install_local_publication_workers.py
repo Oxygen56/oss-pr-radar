@@ -46,6 +46,7 @@ from oss_pr_radar.runtime import (  # noqa: E402
     evaluate_health,
     pending_publication_effects,
     pid_probe,
+    read_disk_pressure_gate_health,
     read_json,
 )
 from oss_pr_radar.runtime_audit import active_release_evidence  # noqa: E402
@@ -229,7 +230,14 @@ def _launchctl_config_matches(service: str, expected: dict[str, object]) -> bool
     ] and actual.get("WorkingDirectory") == str(expected["WorkingDirectory"])
 
 
-def service_status(service: str, plist_path: Path, expected: dict) -> dict:
+def service_status(
+    service: str,
+    plist_path: Path,
+    expected: dict,
+    *,
+    disk: dict | None = None,
+    disk_pressure_gate: dict | None = None,
+) -> dict:
     """Read one worker status without changing launchd or the managed ledger."""
 
     result = launchctl("print", service, check=False)
@@ -289,7 +297,13 @@ def service_status(service: str, plist_path: Path, expected: dict) -> dict:
             slow_state["lastExitCode"] = 1
         workers["slow"] = slow_state
         runtime_state["workers"] = workers
-    disk = disk_snapshot(root)
+    if disk_pressure_gate is None:
+        disk = disk_snapshot(root)
+        disk_pressure_gate = read_disk_pressure_gate_health(
+            root, snapshot_fn=lambda _root: dict(disk)
+        )
+    elif disk is None and isinstance(disk_pressure_gate.get("snapshot"), dict):
+        disk = dict(disk_pressure_gate["snapshot"])
     log_bytes = sum(
         path.stat().st_size
         for path in (
@@ -303,6 +317,7 @@ def service_status(service: str, plist_path: Path, expected: dict) -> dict:
         expected_release=release.get("releaseId") if release.get("valid") else None,
         expected_policy_digest=release.get("policyDigest") if release.get("valid") else None,
         disk=disk,
+        disk_pressure_gate=disk_pressure_gate,
         log_bytes=log_bytes,
     )
     if pid is not None and not process["alive"]:
@@ -635,17 +650,36 @@ def main() -> int:
         )
         _validate_specs(specs)
         if args.status:
+            disk_pressure_gate = read_disk_pressure_gate_health(
+                runtime_root, snapshot_fn=lambda root: disk_snapshot(root)
+            )
+            shared_disk = (
+                dict(disk_pressure_gate["snapshot"])
+                if isinstance(disk_pressure_gate.get("snapshot"), dict)
+                else None
+            )
             statuses: list[dict[str, object]] = []
             for spec in specs:
                 label = str(spec["Label"])
                 plist_path = home / "Library" / "LaunchAgents" / f"{label}.plist"
-                status = service_status(f"{domain}/{label}", plist_path, spec)
+                status = service_status(
+                    f"{domain}/{label}",
+                    plist_path,
+                    spec,
+                    disk=shared_disk,
+                    disk_pressure_gate=disk_pressure_gate,
+                )
                 status["label"] = label
                 statuses.append(status)
             print(
                 json.dumps(
                     {
-                        "ok": all(status.get("ok") is True for status in statuses),
+                        "ok": (
+                            disk_pressure_gate.get("ok") is True
+                            and disk_pressure_gate.get("blocked") is False
+                            and all(status.get("ok") is True for status in statuses)
+                        ),
+                        "diskPressureGate": disk_pressure_gate,
                         "workers": statuses,
                     },
                     sort_keys=True,

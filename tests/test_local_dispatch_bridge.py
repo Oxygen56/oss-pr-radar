@@ -20310,7 +20310,12 @@ def test_slow_cycle_quarantine_excludes_bad_result_and_continues_normal_task(mon
     """Exercise recovery, ingestion, and the slow cycle with two real tasks."""
 
     monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
+        "oss_pr_radar.local_publication.disk_snapshot",
+        lambda _root: {
+            "level": "ok",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.5,
+        },
     )
     monkeypatch.setattr(MODULE, "ROOT", tmp_path)
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
@@ -20731,6 +20736,7 @@ def test_real_slow_worker_subprocess_quarantines_history_without_publication(mon
         "actualAutomationEvidence": {"valid": True},
         "pendingPublicationEffectsValid": True,
         "diskStopThresholdOk": True,
+        "diskRestartSafe": True,
         "runtimeReleasePolicyIdentityMatch": True,
         "noRuntimeCodeDrift": True,
         "noSharedGitWrites": True,
@@ -20754,6 +20760,22 @@ def test_real_slow_worker_subprocess_quarantines_history_without_publication(mon
         managed_counts_evidence=counts_path,
         automation_snapshot=automation_path,
     )
+    monkeypatch.setattr(
+        operational_auth,
+        "read_disk_pressure_gate_health",
+        lambda _root: {
+            "ok": True,
+            "blocked": False,
+            "reason": None,
+            "active": False,
+            "snapshot": {
+                "level": "warning",
+                "freeBytes": 100 * 1024**3,
+                "usedFraction": 0.93,
+            },
+            "restartSafe": True,
+        },
+    )
     finalize_operational_authorization(runtime)
     operational_auth.require_operational_authorization(runtime)
 
@@ -20764,7 +20786,9 @@ from pathlib import Path
 import oss_pr_radar.local_publication as _publication
 from oss_pr_radar.release_binding import runtime_ledger_path
 _bridge = Path(os.environ['RADAR_TEST_BRIDGE'])
-_publication.disk_snapshot = lambda _root: {'level': 'ok'}
+_publication.disk_snapshot = lambda _root: {
+    'level': 'ok', 'freeBytes': 100 * 1024**3, 'usedFraction': 0.5
+}
 def _real_bridge(root, operation, **kwargs):
     if operation == 'publish-terminal-feedback':
         return {'ok': True, 'published': 1, 'errors': []}

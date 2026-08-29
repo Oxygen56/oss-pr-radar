@@ -172,7 +172,12 @@ def test_first_activation_promotes_auth_before_bootstrap_and_rolls_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str | None
 ) -> None:
     monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
+        "oss_pr_radar.local_publication.disk_snapshot",
+        lambda _root: {
+            "level": "ok",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.5,
+        },
     )
     runtime = tmp_path / "runtime"
     (runtime / "state").mkdir(parents=True)
@@ -506,7 +511,15 @@ def test_worker_status_is_read_only_and_requires_only_runtime_binding(
         "active_release_evidence",
         lambda _root: {"valid": True, "releaseId": "r1", "policyDigest": "p1"},
     )
-    monkeypatch.setattr(INSTALL, "disk_snapshot", lambda _root: {"level": "ok"})
+    monkeypatch.setattr(
+        INSTALL,
+        "disk_snapshot",
+        lambda _root: {
+            "level": "ok",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.5,
+        },
+    )
     monkeypatch.setattr(INSTALL, "pending_publication_effects", lambda _path: 0)
     monkeypatch.setattr(
         INSTALL,
@@ -585,7 +598,15 @@ def test_worker_status_uses_complete_runtime_state_without_cross_worker_false_al
         "active_release_evidence",
         lambda _root: {"valid": True, "releaseId": "r1", "policyDigest": "p1"},
     )
-    monkeypatch.setattr(INSTALL, "disk_snapshot", lambda _root: {"level": "ok"})
+    monkeypatch.setattr(
+        INSTALL,
+        "disk_snapshot",
+        lambda _root: {
+            "level": "ok",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.5,
+        },
+    )
     monkeypatch.setattr(INSTALL, "pending_publication_effects", lambda _path: 0)
     monkeypatch.setattr(
         INSTALL,
@@ -663,7 +684,11 @@ def test_worker_status_reports_disk_warning_without_failing_loaded_workers(
     monkeypatch.setattr(
         INSTALL,
         "disk_snapshot",
-        lambda _root: {"level": "warning", "freeBytes": 50 * 1024 * 1024 * 1024},
+        lambda _root: {
+            "level": "warning",
+            "freeBytes": 50 * 1024 * 1024 * 1024,
+            "usedFraction": 0.93,
+        },
     )
     monkeypatch.setattr(INSTALL, "pending_publication_effects", lambda _path: 0)
     monkeypatch.setattr(
@@ -710,10 +735,31 @@ def test_status_top_level_ok_aggregates_worker_health(
         },
     )
     monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: worker_specs)
+    gate_reads = 0
+    gate_health = {
+        "ok": False,
+        "blocked": True,
+        "reason": "DISK_STOP_THRESHOLD",
+        "active": True,
+        "gateActive": True,
+        "restartSafe": True,
+        "snapshot": {
+            "level": "warning",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.93,
+        },
+    }
+
+    def read_gate_once(*_args, **_kwargs):
+        nonlocal gate_reads
+        gate_reads += 1
+        return dict(gate_health)
+
+    monkeypatch.setattr(INSTALL, "read_disk_pressure_gate_health", read_gate_once)
     monkeypatch.setattr(
         INSTALL,
         "service_status",
-        lambda _service, _plist_path, expected: {
+        lambda _service, _plist_path, expected, **_kwargs: {
             "ok": worker_health[str(expected["Label"])],
             "installed": True,
         },
@@ -732,6 +778,8 @@ def test_status_top_level_ok_aggregates_worker_health(
     assert INSTALL.main() == 0
     result = json.loads(capsys.readouterr().out)
     assert result["ok"] is False
+    assert result["diskPressureGate"] == gate_health
+    assert gate_reads == 1
     assert [worker["ok"] for worker in result["workers"]] == [True, False, True]
 
 

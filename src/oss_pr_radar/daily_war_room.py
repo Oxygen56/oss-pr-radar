@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .release_binding import runtime_ledger_path
+from .runtime import read_disk_pressure_gate_health
 from .util import atomic_write_json, sha256_json
 from .war_room_delivery import sign_delivery_receipt, verify_delivery_receipt
 from .war_room_messages import build_outbox, canonical_event_digest, validate_outboxes
@@ -103,10 +104,60 @@ def run_daily_cycle(
 
     sent = 0
     failed = 0
+    delivery_gate_blocked: dict[str, Any] | None = None
     if send:
+        # This is the authoritative effect-time check.  Entry points may have
+        # performed an earlier check before constructing credentials, but a
+        # caller cannot supply or cache that authorization across projection
+        # work and then send after the gate changes.
+        gate_health = read_disk_pressure_gate_health(runtime_root)
+        if (
+            not isinstance(gate_health, dict)
+            or gate_health.get("ok") is not True
+            or gate_health.get("blocked") is not False
+        ):
+            cycle = {
+                "schema": DAILY_CYCLE_SCHEMA,
+                "ok": False,
+                "cycleId": sha256_json(
+                    {
+                        "artifact": artifact["artifactDigest"],
+                        "pending": [event["eventId"] for event in pending],
+                    }
+                ),
+                "artifactDigest": artifact["artifactDigest"],
+                "ledger": str(ledger),
+                "buckets": {key: len(value) for key, value in artifact["buckets"].items()},
+                "actionableCount": len(feishu["events"]),
+                "newActionableCount": len(pending),
+                "sent": 0,
+                "failed": 0,
+                "sendRequested": True,
+                "blocked": "disk pressure gate blocked",
+                "error": str(
+                    gate_health.get("reason")
+                    if isinstance(gate_health, dict)
+                    else "DISK_PRESSURE_GATE_UNAVAILABLE"
+                ),
+                "diskPressureGate": gate_health,
+                "publicReplies": "DRAFT_UNLESS_MANAGED_GATE_AUTHORIZES",
+                "sharedChannelArtifact": True,
+            }
+            if automation_run_id:
+                cycle["automationRunId"] = automation_run_id
+            atomic_write_json(report_root / "cycle.json", cycle)
+            return cycle
         if sender is None:
             raise ValueError("--send requires an authenticated sender")
         for event in pending:
+            effect_gate_health = read_disk_pressure_gate_health(runtime_root)
+            if (
+                not isinstance(effect_gate_health, dict)
+                or effect_gate_health.get("ok") is not True
+                or effect_gate_health.get("blocked") is not False
+            ):
+                delivery_gate_blocked = effect_gate_health
+                break
             try:
                 message_id = str(sender(event)).strip()
                 if not message_id:
@@ -136,7 +187,7 @@ def run_daily_cycle(
 
     cycle = {
         "schema": DAILY_CYCLE_SCHEMA,
-        "ok": failed == 0,
+        "ok": failed == 0 and delivery_gate_blocked is None,
         "cycleId": sha256_json(
             {"artifact": artifact["artifactDigest"], "pending": [e["eventId"] for e in pending]}
         ),
@@ -151,6 +202,16 @@ def run_daily_cycle(
         "publicReplies": "DRAFT_UNLESS_MANAGED_GATE_AUTHORIZES",
         "sharedChannelArtifact": True,
     }
+    if delivery_gate_blocked is not None:
+        cycle.update(
+            {
+                "blocked": "disk pressure gate blocked",
+                "error": str(
+                    delivery_gate_blocked.get("reason") or "DISK_PRESSURE_GATE_UNAVAILABLE"
+                ),
+                "diskPressureGate": delivery_gate_blocked,
+            }
+        )
     if automation_run_id:
         cycle["automationRunId"] = automation_run_id
     atomic_write_json(report_root / "cycle.json", cycle)

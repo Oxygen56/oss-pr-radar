@@ -39,8 +39,10 @@ from .pr_projection import ledger_projection
 from .release_binding import bind_runtime, runtime_ledger_path, runtime_root_digest
 from .runtime import (
     REQUIRED_WORKERS,
+    disk_restart_safe,
     disk_snapshot,
     pending_publication_effects,
+    read_disk_pressure_gate_health,
     read_json,
     release_activation_journal_path,
 )
@@ -853,6 +855,18 @@ def check(
         for argument in actual_loaded_arguments
     )
     disk = disk_snapshot(runtime_root)
+    # Bind the final durable-gate observation to this exact live capacity
+    # sample.  The earlier runtime snapshot is diagnostic only: a worker may
+    # activate an episode while the rest of this acceptance check is running.
+    disk_pressure_gate = read_disk_pressure_gate_health(
+        runtime_root,
+        snapshot_fn=lambda _root: disk,
+    )
+    disk_pressure_gate_clear = bool(
+        isinstance(disk_pressure_gate, dict)
+        and disk_pressure_gate.get("ok") is True
+        and disk_pressure_gate.get("blocked") is False
+    )
     deployment = (
         runtime_state.get("deployment") if isinstance(runtime_state.get("deployment"), dict) else {}
     )
@@ -866,6 +880,7 @@ def check(
     )
     pending_ok = pending_effects == 0
     disk_ok = disk.get("level") != "stop"
+    disk_restart_ok = disk_restart_safe(disk)
     runtime_git = runtime_root / ".git"
     code_git = binding.code_root / ".git"
     shared_git = (
@@ -934,6 +949,8 @@ def check(
         retry_reasons.append("automation_snapshot_invalid_or_changed")
     if strict and require_publication_pause and not acceptance_window_ok:
         retry_reasons.append("acceptance_window_changed_during_check")
+    if strict and require_workers_loaded and not disk_pressure_gate_clear:
+        retry_reasons.append("disk_pressure_gate_active_or_unavailable")
     return {
         "schema": "oss-pr-radar.stage7-acceptance.v3",
         "ok": (
@@ -949,7 +966,8 @@ def check(
             and no_runtime_code_drift
             and not shared_git
             and (not strict or launch_error is None)
-            and (not strict or disk_ok)
+            and (not strict or disk_restart_ok)
+            and (not strict or not require_workers_loaded or disk_pressure_gate_clear)
             and (not strict or (pending_ok and pending_effects == 0))
             and (not strict or identity_ok)
             and (not strict or current_signing_key_available())
@@ -979,6 +997,9 @@ def check(
         "noSharedGitWrites": not shared_git,
         "disk": disk,
         "diskStopThresholdOk": disk_ok,
+        "diskRestartSafe": disk_restart_ok,
+        "diskPressureGate": disk_pressure_gate,
+        "diskPressureGateClear": disk_pressure_gate_clear,
         "pendingPublicationEffects": pending_effects,
         "pendingPublicationEffectsValid": pending_ok,
         "pendingPublicationEffectsClear": pending_effects == 0,

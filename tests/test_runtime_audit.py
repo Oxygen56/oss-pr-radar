@@ -125,7 +125,14 @@ def test_collect_snapshot_reads_pid_and_version_from_fast_worker(tmp_path, monke
             "policyDigest": "policy-a",
         },
     )
-    monkeypatch.setattr("oss_pr_radar.runtime_audit.disk_snapshot", lambda _root: {"level": "ok"})
+    monkeypatch.setattr(
+        "oss_pr_radar.runtime_audit.disk_snapshot",
+        lambda _root: {
+            "level": "ok",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.5,
+        },
+    )
     monkeypatch.setattr(
         "oss_pr_radar.runtime_audit.process_probe",
         lambda _pid, **_kwargs: {
@@ -165,7 +172,14 @@ def test_collect_snapshot_rejects_replacement_slow_pid(tmp_path, monkeypatch):
             "policyDigest": "policy-a",
         },
     )
-    monkeypatch.setattr("oss_pr_radar.runtime_audit.disk_snapshot", lambda _root: {"level": "ok"})
+    monkeypatch.setattr(
+        "oss_pr_radar.runtime_audit.disk_snapshot",
+        lambda _root: {
+            "level": "ok",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.5,
+        },
+    )
     monkeypatch.setattr(
         "oss_pr_radar.runtime_audit.process_probe",
         lambda pid, **_kwargs: {
@@ -384,6 +398,41 @@ def test_fault_replay_is_clean_for_verified_healthy_runtime():
 
     assert result["ok"] is True
     assert result["faults"] == []
+
+
+def test_runtime_audit_exposes_and_blocks_an_active_disk_pressure_episode():
+    now = time.time()
+    gate = {
+        "ok": False,
+        "blocked": True,
+        "reason": "DISK_STOP_THRESHOLD",
+        "active": True,
+        "gateActive": True,
+        "episode": 7,
+    }
+    result = audit_snapshot(
+        {
+            "state": healthy_state(now),
+            "disk": {
+                "level": "warning",
+                "freeBytes": 100 * 1024**3,
+                "usedFraction": 0.93,
+            },
+            "diskPressureGate": gate,
+            "logBytes": 1024,
+            "release": {
+                "valid": True,
+                "releaseId": "release-a",
+                "policyDigest": "policy-a",
+            },
+            "workerProcesses": healthy_worker_processes(),
+        },
+        now=now,
+    )
+
+    assert result["ok"] is False
+    assert "DISK_STOP_THRESHOLD" in result["faults"]
+    assert result["health"]["diskPressureGate"] == gate
 
 
 def test_fault_replay_accepts_successful_short_lived_workers_without_pid():

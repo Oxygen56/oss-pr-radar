@@ -21,6 +21,7 @@ from oss_pr_radar.daily_war_room import run_daily_cycle  # noqa: E402
 from oss_pr_radar.notifier import FeishuClient  # noqa: E402
 from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
 from oss_pr_radar.release_binding import bind_runtime  # noqa: E402
+from oss_pr_radar.runtime import read_disk_pressure_gate_health  # noqa: E402
 from oss_pr_radar.util import iso_z, utc_now  # noqa: E402
 
 AUTOMATION_ID = "daily-github-open-pr-status-review"
@@ -99,34 +100,59 @@ def main(argv: list[str] | None = None) -> int:
             result = _error_result(blocked_reason, exc)
             startup_effects_known = True
         else:
-            sender = None
+            disk_pressure_health = None
             if args.send:
-                app_id = os.environ.get("FEISHU_APP_ID")
-                app_secret = os.environ.get("FEISHU_APP_SECRET")
-                chat_id = os.environ.get("FEISHU_CHAT_ID")
-                if not app_id or not app_secret or not chat_id:
-                    raise RuntimeError("authenticated Feishu credentials are required for --send")
-                client = FeishuClient(app_id, app_secret, chat_id)
-
-                def sender(event: dict) -> str:
-                    response = client.send_card(
-                        event["card"], idempotency_key=event["idempotencyKey"]
+                disk_pressure_health = read_disk_pressure_gate_health(args.runtime_root)
+                if (
+                    disk_pressure_health.get("ok") is not True
+                    or disk_pressure_health.get("blocked") is not False
+                ):
+                    reason = str(
+                        disk_pressure_health.get("reason") or "DISK_PRESSURE_GATE_UNAVAILABLE"
                     )
-                    return str((response.get("data") or {}).get("message_id") or "")
+                    result = _error_result(
+                        "disk pressure gate blocked",
+                        RuntimeError(reason),
+                    ) | {
+                        "sendRequested": True,
+                        "sent": 0,
+                        "failed": 0,
+                        "diskPressureGate": disk_pressure_health,
+                    }
+                    blocked_reason = "disk pressure gate blocked"
+                    error = f"RuntimeError:{reason}"
+                    startup_effects_known = True
+            if result is None:
+                sender = None
+                if args.send:
+                    app_id = os.environ.get("FEISHU_APP_ID")
+                    app_secret = os.environ.get("FEISHU_APP_SECRET")
+                    chat_id = os.environ.get("FEISHU_CHAT_ID")
+                    if not app_id or not app_secret or not chat_id:
+                        raise RuntimeError(
+                            "authenticated Feishu credentials are required for --send"
+                        )
+                    client = FeishuClient(app_id, app_secret, chat_id)
 
-            cycle_entered = True
-            result = run_daily_cycle(
-                args.runtime_root,
-                ledger=args.ledger,
-                send=args.send,
-                sender=sender,
-                automation_run_id=str(started["runId"]),
-            )
-            result["release"] = {
-                "releaseId": binding.release_id,
-                "path": str(binding.code_root),
-                "manifestSha256": binding.release.get("manifestSha256"),
-            }
+                    def sender(event: dict) -> str:
+                        response = client.send_card(
+                            event["card"], idempotency_key=event["idempotencyKey"]
+                        )
+                        return str((response.get("data") or {}).get("message_id") or "")
+
+                cycle_entered = True
+                result = run_daily_cycle(
+                    args.runtime_root,
+                    ledger=args.ledger,
+                    send=args.send,
+                    sender=sender,
+                    automation_run_id=str(started["runId"]),
+                )
+                result["release"] = {
+                    "releaseId": binding.release_id,
+                    "path": str(binding.code_root),
+                    "manifestSha256": binding.release.get("manifestSha256"),
+                }
     except SystemExit as exc:
         blocked_reason = blocked_reason or "daily War Room cycle exited"
         error = str(exc)

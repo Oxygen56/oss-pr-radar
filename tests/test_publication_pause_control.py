@@ -28,6 +28,15 @@ def _runtime(monkeypatch, tmp_path):
         "active_release",
         lambda _root: (release, {"releaseId": "release-1"}),
     )
+    monkeypatch.setattr(
+        MODULE,
+        "disk_snapshot",
+        lambda _root: {
+            "level": "warning",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.93,
+        },
+    )
     return release, state, ledger
 
 
@@ -113,6 +122,87 @@ def test_resume_does_not_enable_remote_before_resuming_record_is_durable(monkeyp
         MODULE.resume(tmp_path)
 
     assert actions == []
+
+
+def test_resume_keeps_pause_when_disk_restart_margin_is_missing(monkeypatch, tmp_path):
+    _release, state, _ledger = _runtime(monkeypatch, tmp_path)
+    record_path = state / MODULE.FILENAME
+    record = {
+        "schemaVersion": MODULE.SCHEMA,
+        "paused": True,
+        "pauseState": "ACTIVE",
+        "workflowRepo": MODULE.DEFAULT_REPO,
+        "workflowFile": MODULE.DEFAULT_WORKFLOW,
+        "workflowWasActive": True,
+    }
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    record_path.chmod(0o600)
+    monkeypatch.setattr(MODULE, "active_outbound_pause", lambda _root: record)
+    monkeypatch.setattr(
+        MODULE,
+        "disk_snapshot",
+        lambda _root: {
+            "level": "warning",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.945,
+        },
+    )
+    actions = []
+    monkeypatch.setattr(
+        MODULE,
+        "_set_workflow_enabled",
+        lambda *_args, **_kwargs: actions.append("remote-enable"),
+    )
+
+    with pytest.raises(RuntimeError, match="restart-safe disk capacity"):
+        MODULE.resume(tmp_path)
+
+    assert actions == []
+    assert json.loads(record_path.read_text(encoding="utf-8"))["pauseState"] == "ACTIVE"
+
+
+def test_resume_keeps_pause_until_worker_clears_persisted_disk_episode(monkeypatch, tmp_path):
+    _release, state, _ledger = _runtime(monkeypatch, tmp_path)
+    record_path = state / MODULE.FILENAME
+    record = {
+        "schemaVersion": MODULE.SCHEMA,
+        "paused": True,
+        "pauseState": "ACTIVE",
+        "workflowRepo": MODULE.DEFAULT_REPO,
+        "workflowFile": MODULE.DEFAULT_WORKFLOW,
+        "workflowWasActive": True,
+    }
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    record_path.chmod(0o600)
+    monkeypatch.setattr(MODULE, "active_outbound_pause", lambda _root: record)
+    monkeypatch.setattr(
+        MODULE,
+        "read_disk_pressure_gate_health",
+        lambda *_args, **_kwargs: {
+            "ok": False,
+            "blocked": True,
+            "reason": "DISK_STOP_THRESHOLD",
+            "active": True,
+            "restartSafe": True,
+            "snapshot": {
+                "level": "warning",
+                "freeBytes": 100 * 1024**3,
+                "usedFraction": 0.93,
+            },
+        },
+    )
+    actions = []
+    monkeypatch.setattr(
+        MODULE,
+        "_set_workflow_enabled",
+        lambda *_args, **_kwargs: actions.append("remote-enable"),
+    )
+
+    with pytest.raises(RuntimeError, match="clear disk pressure gate"):
+        MODULE.resume(tmp_path)
+
+    assert actions == []
+    assert json.loads(record_path.read_text(encoding="utf-8"))["pauseState"] == "ACTIVE"
 
 
 def test_resume_rollback_is_uncertain_if_active_record_is_not_durable(monkeypatch, tmp_path):

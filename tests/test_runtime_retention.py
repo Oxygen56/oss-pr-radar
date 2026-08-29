@@ -663,7 +663,12 @@ def test_apply_prunes_only_verified_old_managed_archives(monkeypatch, tmp_path):
 
 
 def test_fast_worker_rechecks_disk_after_retention(monkeypatch, tmp_path):
-    snapshots = iter([{"level": "stop"}, {"level": "ok"}])
+    snapshots = iter(
+        [
+            {"level": "stop", "freeBytes": 1, "usedFraction": 0.96},
+            {"level": "warning", "freeBytes": 100 * 1024**3, "usedFraction": 0.93},
+        ]
+    )
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.disk_snapshot", lambda _root: next(snapshots)
     )
@@ -687,3 +692,35 @@ def test_fast_worker_rechecks_disk_after_retention(monkeypatch, tmp_path):
     assert result["ok"] is True
     assert result["storageMaintenance"]["freedBytes"] == 123
     assert calls == ["local-receipt-enqueue"]
+
+
+def test_fast_worker_retention_does_not_bypass_restart_margin(monkeypatch, tmp_path):
+    snapshots = iter(
+        [
+            {"level": "stop", "freeBytes": 1, "usedFraction": 0.96},
+            {"level": "warning", "freeBytes": 100 * 1024**3, "usedFraction": 0.945},
+        ]
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: next(snapshots)
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.maybe_reclaim_runtime_storage",
+        lambda _root, *, disk: {
+            "attempted": True,
+            "ok": True,
+            "freedBytes": 123,
+            "beforeDisk": disk,
+        },
+    )
+    calls: list[str] = []
+
+    result = fast_advance_once(
+        tmp_path,
+        runner=lambda _root, operation: calls.append(operation) or {"ok": True},
+    )
+
+    assert result["ok"] is False
+    assert result["reason"] == "DISK_STOP_THRESHOLD"
+    assert result["storageMaintenance"]["freedBytes"] == 123
+    assert calls == []

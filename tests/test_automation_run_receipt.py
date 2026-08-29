@@ -461,6 +461,54 @@ def test_controller_and_daily_entrypoints_write_blocked_receipts(
     assert daily_audit["failedRuns"][0]["blockedReason"] == "operational authorization required"
 
 
+def test_daily_send_gate_blocks_before_credentials_and_records_zero_effects(
+    tmp_path: Path, monkeypatch, capsys
+):
+    root = Path(__file__).parents[1]
+    daily = _load_script("daily_war_room_disk_gate_test", root / "scripts/daily_war_room_cycle.py")
+
+    class Binding:
+        release_id = "test-release"
+        code_root = root
+        release = {"manifestSha256": "digest"}
+
+    class UnexpectedClient:
+        def __init__(self, *_args, **_kwargs):
+            raise AssertionError("disk gate must run before sender credentials are constructed")
+
+    monkeypatch.setattr(daily, "bind_runtime", lambda *_args, **_kwargs: Binding())
+    monkeypatch.setattr(daily, "require_operational_authorization", lambda *_args: {})
+    monkeypatch.setattr(daily, "FeishuClient", UnexpectedClient)
+    monkeypatch.setattr(
+        daily,
+        "read_disk_pressure_gate_health",
+        lambda _root: {
+            "ok": False,
+            "blocked": True,
+            "reason": "DISK_STOP_THRESHOLD",
+            "active": True,
+            "restartSafe": True,
+        },
+    )
+    monkeypatch.setenv("FEISHU_APP_ID", "app")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "secret")
+    monkeypatch.setenv("FEISHU_CHAT_ID", "chat")
+
+    assert daily.main(["--runtime-root", str(tmp_path), "--send"]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["ok"] is False
+    assert output["sent"] == 0
+    assert output["failed"] == 0
+    records, issues = load_automation_run_receipts(tmp_path)
+    assert not issues
+    completion = records[-1]
+    assert completion["externalEffects"]["feishu"] == {
+        "sendRequested": True,
+        "sent": 0,
+        "failed": 0,
+    }
+
+
 def test_entrypoint_exception_is_closed_and_marks_effects_uncertain(
     tmp_path: Path, monkeypatch, capsys
 ):
