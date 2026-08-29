@@ -168,6 +168,145 @@ def test_scheduler_gap_ignores_manual_run_and_normalizes_offsets(tmp_path: Path)
     assert "manual" in audit["schedulerEvidenceMissingRunIds"]
 
 
+def test_untrusted_scheduled_at_cannot_hide_missed_window(tmp_path: Path):
+    """A manual timestamp must not fill a natural scheduler slot."""
+
+    entries = (
+        (
+            "natural-a",
+            {"RADAR_TRIGGER_ID": "trigger-a", "RADAR_SCHEDULED_AT": "2026-08-29T09:00:00Z"},
+            "2026-08-29T09:00:01Z",
+        ),
+        # A caller can set only the timestamp.  It remains diagnostic and is
+        # deliberately excluded from schedule reconciliation.
+        ("manual", {"RADAR_SCHEDULED_AT": "2026-08-29T10:00:00Z"}, "2026-08-29T10:00:01Z"),
+        (
+            "natural-b",
+            {"RADAR_TRIGGER_ID": "trigger-b", "RADAR_SCHEDULED_AT": "2026-08-29T11:00:00Z"},
+            "2026-08-29T11:00:01Z",
+        ),
+    )
+    for run_id, environment, started_at in entries:
+        started = start_automation_run(
+            tmp_path,
+            automation_id="test-automation",
+            role="test-role",
+            argv=["cycle"],
+            environment={**environment, "RADAR_INVOCATION_ID": run_id},
+            run_id=run_id,
+            started_at=started_at,
+        )
+        complete_automation_run(
+            tmp_path,
+            started,
+            exit_code=0,
+            final_json={"ok": True},
+            external_effects={"summaryAvailable": True},
+            completed_at=started_at,
+        )
+
+    records, source_issues = load_automation_run_receipts(tmp_path)
+    audit = audit_automation_runs(
+        records,
+        source_issues=source_issues,
+        automation_id="test-automation",
+        window_start="2026-08-29T09:00:00Z",
+        window_end="2026-08-29T11:00:00Z",
+        expected_interval_minutes=60,
+        grace_minutes=5,
+    )
+    missed = [item for item in audit["issues"] if item["code"] == "MISSED_RUN_WINDOW"]
+    assert [item["scheduledAt"] for item in missed] == ["2026-08-29T10:00:00Z"]
+    assert "manual" in audit["schedulerEvidenceMissingRunIds"]
+
+
+def test_untrusted_scheduled_at_is_not_counted_as_duplicate(tmp_path: Path):
+    """Duplicate checks must ignore timestamps without a scheduler envelope."""
+
+    for run_id in ("manual-a", "manual-b"):
+        started = start_automation_run(
+            tmp_path,
+            automation_id="test-automation",
+            role="test-role",
+            argv=["cycle"],
+            environment={
+                "RADAR_INVOCATION_ID": run_id,
+                "RADAR_SCHEDULED_AT": "2026-08-29T10:00:00Z",
+            },
+            run_id=run_id,
+            started_at="2026-08-29T10:00:01Z",
+        )
+        complete_automation_run(
+            tmp_path,
+            started,
+            exit_code=0,
+            final_json={"ok": True},
+            external_effects={"summaryAvailable": True},
+            completed_at="2026-08-29T10:00:02Z",
+        )
+
+    records, source_issues = load_automation_run_receipts(tmp_path)
+    audit = audit_automation_runs(records, source_issues=source_issues)
+    assert not any(item["code"] == "DUPLICATE_SCHEDULED_WINDOW" for item in audit["issues"])
+    assert set(audit["schedulerEvidenceMissingRunIds"]) == {"manual-a", "manual-b"}
+
+
+def test_mismatched_scheduler_identity_cannot_fill_a_schedule_slot(tmp_path: Path):
+    """An envelope that relabels the command is not natural-schedule evidence."""
+
+    entries = (
+        (
+            "natural-a",
+            {"RADAR_TRIGGER_ID": "trigger-a", "RADAR_SCHEDULED_AT": "2026-08-29T09:00:00Z"},
+        ),
+        (
+            "forged",
+            {
+                "RADAR_AUTOMATION_ID": "other-automation",
+                "RADAR_TRIGGER_ID": "trigger-forged",
+                "RADAR_SCHEDULED_AT": "2026-08-29T10:00:00Z",
+            },
+        ),
+        (
+            "natural-b",
+            {"RADAR_TRIGGER_ID": "trigger-b", "RADAR_SCHEDULED_AT": "2026-08-29T11:00:00Z"},
+        ),
+    )
+    for index, (run_id, environment) in enumerate(entries):
+        started = start_automation_run(
+            tmp_path,
+            automation_id="test-automation",
+            role="test-role",
+            argv=["cycle"],
+            environment={**environment, "RADAR_INVOCATION_ID": run_id},
+            run_id=run_id,
+            started_at=f"2026-08-29T{9 + index:02d}:00:01Z",
+        )
+        complete_automation_run(
+            tmp_path,
+            started,
+            exit_code=0,
+            final_json={"ok": True},
+            external_effects={"summaryAvailable": True},
+            completed_at=started["startedAt"],
+        )
+
+    records, source_issues = load_automation_run_receipts(tmp_path)
+    audit = audit_automation_runs(
+        records,
+        source_issues=source_issues,
+        automation_id="test-automation",
+        window_start="2026-08-29T09:00:00Z",
+        window_end="2026-08-29T11:00:00Z",
+        expected_interval_minutes=60,
+        grace_minutes=5,
+    )
+    missed = [item for item in audit["issues"] if item["code"] == "MISSED_RUN_WINDOW"]
+    assert [item["scheduledAt"] for item in missed] == ["2026-08-29T10:00:00Z"]
+    assert "forged" in audit["schedulerEvidenceMissingRunIds"]
+    assert any(item["code"] == "TRIGGER_IDENTITY_MISMATCH" for item in audit["issues"])
+
+
 def test_scheduler_environment_cannot_relabel_identity_or_runtime(tmp_path: Path):
     started = start_automation_run(
         tmp_path,

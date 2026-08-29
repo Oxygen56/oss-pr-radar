@@ -334,12 +334,13 @@ def audit_automation_runs(
     ]
     issues.extend(_duplicate_invocation_issues(starts))
     issues.extend(_duplicate_schedule_issues(starts))
-    scheduled_starts = [item for item in starts if _valid_scheduled_at(item.get("scheduledAt"))]
+    # Only a complete scheduler envelope may participate in schedule
+    # reconciliation.  A manually supplied ``scheduledAt`` is diagnostic
+    # metadata, not proof that the scheduler fired; allowing it into the gap
+    # or duplicate checks would let a hand-run command hide a missed slot.
+    scheduled_starts = [item for item in starts if _trusted_scheduled_record(item)]
     scheduler_missing = [
-        item.get("runId")
-        for item in starts
-        if item.get("triggerEvidencePresent") is not True
-        or not _valid_scheduled_at(item.get("scheduledAt"))
+        item.get("runId") for item in starts if not _trusted_scheduled_record(item)
     ]
     if expected_interval_minutes is not None and scheduled_starts:
         issues.extend(
@@ -487,7 +488,13 @@ def _record_in_window(
 
     if start_boundary is None and end_boundary is None:
         return True
-    raw = record.get("scheduledAt") or record.get("startedAt")
+    # Prefer the scheduler timestamp only when it carries the stronger
+    # envelope marker.  Otherwise use the observed process start for window
+    # selection, while leaving the untrusted schedule fields visible to the
+    # integrity/warning paths.
+    raw = (
+        record.get("scheduledAt") if _trusted_scheduled_record(record) else record.get("startedAt")
+    )
     try:
         observed = parse_time(str(raw))
     except (TypeError, ValueError):
@@ -508,6 +515,24 @@ def _valid_scheduled_at(value: object) -> bool:
     except (TypeError, ValueError):
         return False
     return True
+
+
+def _trusted_scheduled_record(record: Mapping[str, Any]) -> bool:
+    """Return whether a receipt can be used as natural-schedule evidence.
+
+    ``scheduledAt`` may be present in a manually launched process (or in an
+    untrusted environment).  The explicit envelope marker is therefore part
+    of the predicate everywhere schedule slots are reconciled.
+    """
+
+    return (
+        record.get("triggerEvidencePresent") is True
+        and record.get("triggerIdentityMismatch") is not True
+        and record.get("triggerMetadataPresent") is True
+        and isinstance(record.get("triggerId"), str)
+        and bool(record.get("triggerId"))
+        and _valid_scheduled_at(record.get("scheduledAt"))
+    )
 
 
 def _read_receipt_payload(
@@ -738,6 +763,8 @@ def _duplicate_invocation_issues(starts: Sequence[Mapping[str, Any]]) -> list[di
 def _duplicate_schedule_issues(starts: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, datetime], set[str]] = defaultdict(set)
     for record in starts:
+        if not _trusted_scheduled_record(record):
+            continue
         automation_id = record.get("automationId")
         scheduled_at = record.get("scheduledAt")
         run_id = record.get("runId")
@@ -773,6 +800,8 @@ def _schedule_gap_issues(
     timestamps: list[tuple[datetime, Mapping[str, Any]]] = []
     issues: list[dict[str, Any]] = []
     for record in starts:
+        if record.get("triggerEvidencePresent") is not True:
+            continue
         # A command start is not evidence that the scheduler fired.  Never
         # use startedAt to fill a scheduled slot; doing so makes a manual
         # fallback run hide a missed natural trigger.
