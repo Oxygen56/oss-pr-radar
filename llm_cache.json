@@ -54737,6 +54737,36 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a reproducible AttributeError in ParallelLMHead with a plausible root cause identified in comments (missing output_size_per_partition in CompressedTensorsW8A8Fp8.create_weights). However, the supplied evidence indicates a potential duplicate issue #52407 sharing stack signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not fully confirmed by maintainers, and the fix is not yet implemented."
   },
+  "e873db86995c18769a31227f7aa9949058dacfdbe3db96d825bff875711acaf6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #22350 and #22542 show semantic overlap but do not directly reference this issue; their root cause coverage is not confirmed."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/durable/stream-adapter.ts",
+      "packages/core/src/agent/durable/workflows/steps/tool-call.ts",
+      "packages/core/src/loop/workflows/stream.ts",
+      "packages/core/src/workflows/workflow.ts"
+    ],
+    "risks": [
+      "Potential overlap with open PRs #22350 and #22542; need to compare implementation boundaries to avoid duplication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided SQL query on @mastra/pg VNext store to confirm orphan PROCESSOR_RUN spans, then apply fix and verify single root row and correct parentage."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the proper fix (A) or defensive fix (B/C); whether existing PRs already address the root cause."
+    ],
+    "why": "Issue provides a detailed root cause analysis with specific code anchors and a clear reproduction path. The bug is user-visible (trace mislabeling) and affects a critical path (durable agents). The suggested fix is concrete and testable. No material unknowns block actionability."
+  },
   "e88773b4a2ceee557ef860584fa4b49bfc2c7d13d8491fb9d609aecda8c34086": {
     "confidence": 0.85,
     "contradictions": [],
@@ -55565,6 +55595,38 @@
       "Whether PR #9752's approach is compatible with the proposed fix"
     ],
     "why": "The issue provides a detailed root cause: Dynamo's kimi_k2 parser lacks a structural tag builder, causing tool_choice='required' to fall back to a JSON-array grammar that conflicts with Kimi's native envelope, leading to whitespace generation and token exhaustion. The fix likely lives in an external crate (frontend-crates), and an existing PR (#9752) overlaps semantically but is a draft with CI failures and no tests. Given the external dependency and existing PR, maintainer guidance is needed to avoid duplicate or conflicting work."
+  },
+  "eafe2aecf6398f1caa3fe67c4087b54712c256823f57c57b616b747db052c085": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #7170 is closed but may be reopened; issue comments suggest it is ready for acceptance."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "server/dashboard/src/utils/api.ts",
+      "server/dashboard/entrypoint.sh",
+      "server/dashboard/docker-compose.yaml"
+    ],
+    "risks": [
+      "Potential conflict with existing PR #7170; need to coordinate or supersede.",
+      "Changing API base URL behavior may affect other deployments; ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test for api.ts that verifies baseURL uses same-origin or localhost when NEXT_PUBLIC_API_URL is a Docker-internal host.",
+      "Add an integration test that starts the dashboard with a mocked API and asserts login requests go to localhost:8888."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a proxy approach vs. env var fix.",
+      "Exact test infrastructure for dashboard components."
+    ],
+    "why": "Issue provides a clear root cause (browser cannot resolve host.docker.internal) with reproduction steps, expected/actual behavior, and code anchor in api.ts. A concrete fix is to proxy API requests on the same origin or use localhost for browser. Existing PR #7170 directly addresses this but lacks tests; a new contribution can add regression tests and a robust fix."
   },
   "eb07aaf244db2a11f56df0b57fd4650c553a5cad6f2533ceb61b643574e85046": {
     "confidence": 0.8,
