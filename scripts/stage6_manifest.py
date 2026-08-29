@@ -11,7 +11,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).parents[1]
+# Resolve the active-release symlink before choosing the verification cwd.
+# Otherwise ``subprocess.run(..., cwd=ROOT)`` can execute the tracked commands
+# against the mutable runtime checkout that contains ``current-release`` rather
+# than against the immutable release whose identity is being attested.
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from oss_pr_radar.release_binding import (  # noqa: E402

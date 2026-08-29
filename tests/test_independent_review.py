@@ -1,6 +1,7 @@
 import fcntl
 import json
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -481,6 +482,15 @@ def test_migrate_legacy_failures_and_cursor_accumulates_once_under_durable_lock(
     assert after_durable_attempt["attempts"] == 5
     assert after_durable_attempt["legacyAttemptsImported"] == 4
 
+    # Make the later legacy record newer than the durable record regardless of
+    # the wall clock date on which the test runs.  The migration contract is
+    # timestamp based; a fixed historical timestamp eventually becomes older
+    # than the record just written above and makes this test flaky over time.
+    durable_failed_at = datetime.fromisoformat(
+        after_durable_attempt["failedAt"].replace("Z", "+00:00")
+    )
+    rollback_failed_at = (durable_failed_at + timedelta(microseconds=1)).astimezone(UTC)
+
     third = module.migrate_legacy_review_state(runtime_root)
 
     assert third["failuresMigrated"] == 0
@@ -495,7 +505,7 @@ def test_migrate_legacy_failures_and_cursor_accumulates_once_under_durable_lock(
     rollback_value = json.loads(rollback_failure.read_text(encoding="utf-8"))
     rollback_value |= {
         "attempts": 2,
-        "failedAt": "2026-08-29T00:00:00Z",
+        "failedAt": rollback_failed_at.isoformat().replace("+00:00", "Z"),
         "error": "RuntimeError:rollback failure",
     }
     rollback_failure.write_text(json.dumps(rollback_value), encoding="utf-8")

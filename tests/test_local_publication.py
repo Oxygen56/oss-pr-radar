@@ -1246,8 +1246,15 @@ def test_slow_worker_does_not_clear_ambiguous_legacy_backoff(
     ],
 )
 def test_slow_worker_persisted_backoff_does_not_manufacture_success_health(
-    tmp_path, in_flight, reason
+    tmp_path, monkeypatch, in_flight, reason
 ):
+    # This test exercises the persisted-backoff branch, not host capacity.
+    # Keep it deterministic when the development host itself is at the Radar
+    # disk stop threshold.
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot",
+        lambda _root: {"level": "ok", "freeBytes": 100 * 1024**3},
+    )
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     retry_at = time.time() + 3600
