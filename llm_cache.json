@@ -5905,6 +5905,36 @@
     ],
     "why": "Issue reports a regression in DeepSpeed launcher causing NCCL CUDA error 600 during process-group init, but root cause is unconfirmed; no maintainer investigation or design confirmation. Track requires concrete algorithm mechanism; this is a runtime/launcher bug with no clear algorithmic invariant or reference implementation."
   },
+  "1c3e470f15afe02af3c834076da4b5a1f5eff2406ed8b9649f6a29eeac6f367c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in the supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/fused_moe/fused_moe.py",
+      "kernel selection logic for FP8 dtypes on SM80"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #47629 and #54341, which may already address the issue; need to compare implementations to avoid duplication.",
+      "The fix may require hardware-specific behavior that could affect other architectures."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on 4x A100 with the provided Docker command and model; verify the error occurs. Then apply a fix that selects a supported FP8 dtype or falls back to a compatible kernel, and run the same command to confirm successful initialization and numerical correctness against a reference output."
+    ],
+    "unknowns": [
+      "Whether existing PRs #47629 or #54341 fully resolve this issue; requires manual comparison of code changes."
+    ],
+    "why": "The issue provides a clear root cause: fp8e4nv is unsupported on SM80, causing failure in the fused MoE kernel during initialization. The evidence includes a traceback and code anchors, and the track is llm_algorithm with concrete mechanisms (numerics_quantization, kernel_algorithm). A validation path exists via numerical regression on A100 hardware."
+  },
   "1ca8cd3deca97b673859cbace91bbabe1969b203183862c033e9911b141fe3d1": {
     "confidence": 0.9,
     "contradictions": [],
@@ -9749,6 +9779,39 @@
       "Whether #10751 is truly duplicate and should be merged"
     ],
     "why": "Issue describes a clear ACP contract failure where unreachable provider turns return end_turn without JSON-RPC error. Root cause likely in retry/backoff or ACP session handling, but not pinpointed. Potential duplicate #10751 and no maintainer confirmation. Gate requires HUMAN_REVIEW."
+  },
+  "2c2c5501f7c07dbad10afabee8d2c1bf90085c4335c7d975575b6bfbbc8583fc": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue title and initial description attribute the failure to MCP tool schemas, but the reporter's later comment shows that disabling MCP admission does not fix it, while setting tools.eager: [] does. This shifts the root cause to eager built-in schemas."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/client.ts",
+      "packages/core/src/tools/tool-registry.ts",
+      "packages/core/src/core/openaiContentGenerator/converter.ts"
+    ],
+    "risks": [
+      "Changing eager-deferral behavior may affect prompt-cache stability or tool availability for other backends.",
+      "The exact unsupported schema construct is not yet identified, so the fix may need to be generic (e.g., sanitization) rather than targeted."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that reproduces the grammar failure by preloading a tool schema with an unsupported construct (e.g., a large maxLength or type union) and verify that the request either excludes the offending tool or falls back to deferred loading.",
+      "Run existing unit tests for tool registry and converter to ensure no regressions."
+    ],
+    "unknowns": [
+      "The specific schema construct that llama.cpp rejects is not identified.",
+      "Whether maintainers prefer sanitization, exclusion, or fallback as the fix approach."
+    ],
+    "why": "The issue provides a clear, reproducible bug with a concrete toggle (threshold > 0 vs 0) and detailed environment/config. The triage bot's static analysis identifies a plausible root-cause chain in the codebase, and the reporter's follow-up experiments narrow the trigger to eager built-in tool schemas. The fix direction is actionable: extend eager-deferral eligibility or retry without preload on grammar errors."
   },
   "2c3f1e7861212ab9543faa10e8ea644425aabc2d8c3ed0de62d3446d17078cb7": {
     "confidence": 0.7,
@@ -16396,6 +16459,36 @@
     ],
     "why": "Issue clearly identifies missing pass-through of ElevenLabs diarization parameters in LiteLLM's speech-to-text provider, with expected vs actual behavior and example request. No duplicate PR found; root cause is likely in provider parameter mapping."
   },
+  "4acffcf26665cbf2b15e7c1cb17430466ab34b0a1c6a76ec0f84144322ddf5ee": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims error is from Qwen Code, but triage bot states the error message is not found in the codebase and likely originates from the external server."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/memory/extractionAgentPlanner.ts",
+      "error handling in memory extraction pipeline"
+    ],
+    "risks": [
+      "Misdiagnosis: fixing error handling in Qwen Code may not address the actual issue if the error originates from the external server.",
+      "Potential unnecessary changes if the error is already handled gracefully."
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the exact model and provider configuration; capture debug logs to confirm error origin; then add a regression test for graceful handling of malformed model output."
+    ],
+    "unknowns": [
+      "Reporter's debug logs and provider configuration",
+      "Whether the error persists when bypassing llama-swap",
+      "Exact source of the error message"
+    ],
+    "why": "The issue reports a bug, but the triage bot's investigation found that the error message does not exist in the codebase or dependency tree, and the error likely originates from the external OpenAI-compatible server (llama-swap/llama.cpp). The root cause is unconfirmed and the reporter has not yet provided the requested debug logs and configuration. Without this, the contribution is not actionable."
+  },
   "4afef72f7faab589c64235738ae45e53d02e3da49950703caefc8301617da865": {
     "confidence": 0.9,
     "contradictions": [
@@ -22632,6 +22725,37 @@
     ],
     "why": "The issue is a well-diagnosed, high-impact bug with a clear root cause and a concrete fix direction. However, the supplied gate decision is HUMAN_REVIEW, and there is an open PR (#21487) with semantic overlap that requires maintainer comparison before starting new work."
   },
+  "62a6f48137c452fe82da88deaafc8afc3018527126e8041cba9e068117775653": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      ".github/workflows/release-ready.yml permissions block",
+      "add regression test for workflow permission validation"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #16994; need to coordinate or ensure added value via tests.",
+      "Changing permissions may have unintended security implications if not scoped correctly."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a fork with the issue's reproduction steps: same PR and head commit, change contents: read to write, verify run succeeds with 4 jobs instead of startup_failure.",
+      "Add a test that statically validates the workflow permissions match the reusable workflow requirements."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different fix location or approach beyond the proposed permission change.",
+      "Exact test framework and location for adding regression tests in the repository."
+    ],
+    "why": "Issue provides a clear root cause (caller grants contents:read while reusable workflow requires write permissions, causing static validation startup_failure), a concrete reproduction (fork with same PR and head commit, only difference is contents line), and acceptance criteria. An open PR #16994 exists but lacks tests, so a contribution adding regression tests and possibly refining the fix is actionable."
+  },
   "62cd36a2fb7f4c7629a4746bfd5f400285a6ab6620a462cca2860c10ae33b936": {
     "confidence": 0.85,
     "contradictions": [],
@@ -27780,6 +27904,39 @@
       "Whether the fix should also cover other unsupported passthrough endpoints (e.g., /v1/audio) or only embeddings"
     ],
     "why": "The issue precisely identifies two hardcoded gates in the OpenAI passthrough path that prevent spend logging for /v1/embeddings, with a clear mechanism and a reproducible end-to-end test. The bug is user-visible, causes budget under-enforcement, and has no competing PR or open issue. The fix is a minimal code change in the dispatcher and handler, with a clear test path."
+  },
+  "777e2011d0c6b7cfaec87877f08385594711ed46c35a07a7729c13f717eb3138": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #37060 claims to fix the issue but lacks tests; issue states root cause clearly, PR may not fully cover it."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/mimo_audio.py",
+      "python/sglang/srt/models/mimo_v2_asr.py",
+      "python/sglang/srt/layers/attention/vision.py"
+    ],
+    "risks": [
+      "Potential interaction with other parallel configurations; need to ensure the fix does not break non-DP attention paths.",
+      "The open PR #37060 may be merged first, requiring coordination to avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction command with --tp 8 --dp 2 --enable-dp-attention and send an audio request; verify no hang and correct output.",
+      "Add a multi-GPU regression test that exercises audio encoder with DP attention, comparing numerics against a single-GPU reference."
+    ],
+    "unknowns": [
+      "Whether the open PR #37060 will be merged and whether it includes sufficient regression tests.",
+      "Exact maintainer preference for implementation approach (e.g., passing flags vs. changing defaults)."
+    ],
+    "why": "Issue provides a precise root cause: audio encoder attention reduces over the full TP group instead of the attention-TP group, causing collective desynchronization and hangs under DP attention. Concrete reproduction command and code anchors are supplied, and the fix is a targeted change to pass the correct parallel flags. Although an open PR #37060 directly addresses the issue, it lacks tests and is not yet merged, leaving room for an independent implementation with regression tests."
   },
   "7782ccef795ada8d12221ca0b308e706f25006d725db244e18781a4e2ac5d109": {
     "confidence": 0.6,
