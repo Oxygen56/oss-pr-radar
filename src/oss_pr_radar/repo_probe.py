@@ -24,6 +24,11 @@ from .util import iso_z, parse_time, sha256_json
 
 PROBE_SCHEMA = "repo_probe_receipt_v1"
 PROBE_CONTEXT = "repo-probe-v1"
+CODE_PATH_TOMBSTONE_RECEIPT_SCHEMA = "code-path-tombstone-v1"
+CODE_PATH_TOMBSTONE_RECEIPT_CONTEXT = "code-path-tombstone-v1"
+# Compatibility aliases for callers that adopted the initial internal names.
+CODE_PATH_TOMBSTONE_SCHEMA = CODE_PATH_TOMBSTONE_RECEIPT_SCHEMA
+CODE_PATH_TOMBSTONE_CONTEXT = CODE_PATH_TOMBSTONE_RECEIPT_CONTEXT
 MAX_PROBE_SECONDS = 30
 PATHS_VERIFIED = "PATHS_VERIFIED"
 REPRODUCED_VALIDATED = "REPRODUCED_VALIDATED"
@@ -587,6 +592,203 @@ def rebind_probe_receipt(
     ):
         raise ProbeUnavailable("REPRODUCTION_RECEIPT_REBIND_FAILED")
     return rebound
+
+
+def _normalized_tombstone_paths(values: list[str], *, required: bool) -> list[str]:
+    normalized: list[str] = []
+    for raw in sorted({str(path) for path in values if str(path).strip()}):
+        path = PurePosixPath(raw)
+        if (
+            not raw
+            or path.is_absolute()
+            or "\\" in raw
+            or any(part in {"", ".", ".."} for part in path.parts)
+        ):
+            raise ProbeUnavailable("CODE_PATH_UNSAFE")
+        normalized.append(path.as_posix())
+    if required and not normalized:
+        raise ProbeUnavailable("CODE_PATHS_REQUIRED")
+    return normalized
+
+
+def attest_code_path_tombstones(
+    *,
+    source_receipt_digest: str,
+    base_sha: str,
+    key: str,
+    issue_url: str,
+    intent_id: str,
+    thread_id: str,
+    worktree_path_fingerprint: str,
+    pr_url: str,
+    wake_digest: str,
+    action_digest: str,
+    task_action_digest: str,
+    checked_at: str,
+    prepared_head_sha: str,
+    code_paths: list[str],
+    present_paths: list[str],
+    tombstone_paths: list[str],
+) -> dict[str, Any]:
+    """Sign exact durable-receipt paths absent from one prepared PR head.
+
+    This receipt does not replace or narrow the reproduction receipt. It only
+    proves why a historical path cannot be materialized in this exact follow-up
+    checkout, and gives result ingestion a stable no-recreation boundary.
+    """
+
+    if not re.fullmatch(r"[0-9a-f]{64}", source_receipt_digest):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_SOURCE_RECEIPT_INVALID")
+    if not re.fullmatch(r"[0-9a-f]{40}", base_sha):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_BASE_INVALID")
+    if not re.fullmatch(r"[0-9a-f]{40}", prepared_head_sha):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_HEAD_INVALID")
+    if not re.fullmatch(r"[0-9a-f]{64}", wake_digest):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_WAKE_INVALID")
+    if not re.fullmatch(r"[0-9a-f]{64}", worktree_path_fingerprint):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_WORKTREE_INVALID")
+    if (
+        not isinstance(action_digest, str)
+        or not action_digest
+        or not isinstance(task_action_digest, str)
+        or not task_action_digest
+    ):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_ACTION_INVALID")
+    if not isinstance(checked_at, str) or not checked_at:
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_CHECKED_AT_INVALID")
+    try:
+        parse_time(checked_at)
+    except (TypeError, ValueError) as exc:
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_CHECKED_AT_INVALID") from exc
+    if not all(
+        isinstance(value, str) and value for value in (key, issue_url, intent_id, thread_id, pr_url)
+    ):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_IDENTITY_REQUIRED")
+    if not all(isinstance(value, list) for value in (code_paths, present_paths, tombstone_paths)):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_SCOPE_INVALID")
+
+    full = _normalized_tombstone_paths(code_paths, required=True)
+    present = _normalized_tombstone_paths(present_paths, required=False)
+    tombstones = _normalized_tombstone_paths(tombstone_paths, required=True)
+    if set(present) & set(tombstones) or set(present) | set(tombstones) != set(full):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_SCOPE_INVALID")
+
+    payload: dict[str, Any] = {
+        "schemaVersion": CODE_PATH_TOMBSTONE_RECEIPT_SCHEMA,
+        "sourceReceiptDigest": source_receipt_digest,
+        "baseSha": base_sha,
+        "key": key,
+        "issueUrl": issue_url,
+        "intentId": intent_id,
+        "threadFingerprint": thread_fingerprint(thread_id),
+        "worktreePathFingerprint": worktree_path_fingerprint,
+        "prUrl": pr_url,
+        "wakeDigest": wake_digest,
+        "actionDigest": action_digest,
+        "taskActionDigest": task_action_digest,
+        "checkedAt": checked_at,
+        "preparedHeadSha": prepared_head_sha,
+        "codePaths": full,
+        "presentPaths": present,
+        "tombstonePaths": tombstones,
+    }
+    payload["receiptDigest"] = sha256_json(payload)
+    auth = sign_current(payload, context=CODE_PATH_TOMBSTONE_RECEIPT_CONTEXT)
+    if not auth.get("keyId") or not auth.get("signature"):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_SIGNING_KEY_UNAVAILABLE")
+    return payload | {"keyId": auth["keyId"], "signature": auth["signature"]}
+
+
+def verify_code_path_tombstone_receipt(
+    receipt: dict[str, Any],
+    *,
+    source_receipt_digest: str,
+    base_sha: str,
+    key: str,
+    issue_url: str,
+    intent_id: str,
+    thread_id: str,
+    worktree_path_fingerprint: str,
+    pr_url: str,
+    wake_digest: str,
+    action_digest: str,
+    task_action_digest: str,
+    checked_at: str,
+    prepared_head_sha: str,
+    code_paths: list[str],
+) -> bool:
+    """Verify a tombstone with the active key and its exact follow-up binding."""
+
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("schemaVersion") != CODE_PATH_TOMBSTONE_RECEIPT_SCHEMA
+    ):
+        return False
+    if not all(
+        isinstance(receipt.get(field), list)
+        for field in ("codePaths", "presentPaths", "tombstonePaths")
+    ):
+        return False
+    if (
+        not re.fullmatch(r"[0-9a-f]{64}", source_receipt_digest)
+        or not re.fullmatch(r"[0-9a-f]{40}", base_sha)
+        or not re.fullmatch(r"[0-9a-f]{64}", worktree_path_fingerprint)
+        or not re.fullmatch(r"[0-9a-f]{64}", wake_digest)
+        or not re.fullmatch(r"[0-9a-f]{40}", prepared_head_sha)
+        or not isinstance(action_digest, str)
+        or not action_digest
+        or not isinstance(task_action_digest, str)
+        or not task_action_digest
+    ):
+        return False
+    try:
+        full = _normalized_tombstone_paths(code_paths, required=True)
+        recorded_full = _normalized_tombstone_paths(receipt.get("codePaths") or [], required=True)
+        present = _normalized_tombstone_paths(receipt.get("presentPaths") or [], required=False)
+        tombstones = _normalized_tombstone_paths(receipt.get("tombstonePaths") or [], required=True)
+    except ProbeUnavailable:
+        return False
+    if (
+        recorded_full != full
+        or set(present) & set(tombstones)
+        or set(present) | set(tombstones) != set(full)
+    ):
+        return False
+    expected = {
+        "sourceReceiptDigest": source_receipt_digest,
+        "baseSha": base_sha,
+        "key": key,
+        "issueUrl": issue_url,
+        "intentId": intent_id,
+        "threadFingerprint": thread_fingerprint(thread_id),
+        "worktreePathFingerprint": worktree_path_fingerprint,
+        "prUrl": pr_url,
+        "wakeDigest": wake_digest,
+        "actionDigest": action_digest,
+        "taskActionDigest": task_action_digest,
+        "checkedAt": checked_at,
+        "preparedHeadSha": prepared_head_sha,
+    }
+    if any(receipt.get(field) != value for field, value in expected.items()):
+        return False
+    try:
+        parse_time(str(receipt.get("checkedAt") or ""))
+    except (TypeError, ValueError):
+        return False
+    unsigned = {
+        field: value
+        for field, value in receipt.items()
+        if field not in {"keyId", "signature", "receiptDigest"}
+    }
+    if receipt.get("receiptDigest") != sha256_json(unsigned):
+        return False
+    signed_payload = unsigned | {"receiptDigest": receipt["receiptDigest"]}
+    return verify_current(
+        signed_payload,
+        context=CODE_PATH_TOMBSTONE_RECEIPT_CONTEXT,
+        key_id=receipt.get("keyId"),
+        signature=receipt.get("signature"),
+    )
 
 
 def run_repo_probe(

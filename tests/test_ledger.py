@@ -6490,3 +6490,2007 @@ def test_exact_task_quarantine_batch_clear_rolls_back_every_write(tmp_path, monk
             ).fetchone()[0]
             == 0
         )
+
+
+def _task_result_tombstone_ledger(tmp_path: Path) -> RadarLedger:
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    store.commit_dispatch(
+        "intent-1",
+        owner="controller",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/worktree",
+    )
+    return store
+
+
+def _record_tombstone_preparation(
+    store: RadarLedger,
+    *,
+    wake_digest: str,
+    prepared_head_sha: str,
+    thread_id: str = "thread-1",
+) -> dict[str, Any]:
+    snapshot = {
+        "prUrl": "https://github.com/a/b/pull/9",
+        "headSha": "9" * 40,
+        "preparedHeadSha": prepared_head_sha,
+        "actionDigest": "published-authority-action",
+        "taskActionDigest": "published-authority-task-action",
+        "wakeDigest": wake_digest,
+        "actions": ["review follow-up"],
+        "evidence": {"actionableCheckNames": ["test"]},
+        "checkedAt": iso_z(datetime.now(UTC)),
+    }
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_FOLLOWUP_PREPARATION_BOUND",
+            wake_digest,
+            {"threadId": thread_id, "snapshot": snapshot},
+            iso_z(datetime.now(UTC)),
+        )
+    return snapshot
+
+
+def _ledger_tombstone_receipt(*, snapshot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schemaVersion": "code-path-tombstone-v1",
+        "wakeDigest": snapshot["wakeDigest"],
+        "preparedHeadSha": snapshot["preparedHeadSha"],
+        "prUrl": snapshot["prUrl"],
+        "actionDigest": snapshot["actionDigest"],
+        "taskActionDigest": snapshot["taskActionDigest"],
+        "checkedAt": snapshot["checkedAt"],
+        "receiptDigest": sha256_json(snapshot),
+    }
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "followup_wake_digest",
+        "code_path_tombstone_receipt",
+        "continuation_head_sha",
+        "pr_followup_snapshot",
+    ],
+)
+def test_task_result_tombstone_binding_fields_are_all_or_none(tmp_path, missing_field):
+    store = _task_result_tombstone_ledger(tmp_path)
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="1" * 64,
+        prepared_head_sha="2" * 40,
+    )
+    binding = {
+        "followup_wake_digest": snapshot["wakeDigest"],
+        "code_path_tombstone_receipt": _ledger_tombstone_receipt(snapshot=snapshot),
+        "continuation_head_sha": "3" * 40,
+        "pr_followup_snapshot": snapshot,
+    }
+    binding.pop(missing_field)
+
+    with pytest.raises(ValueError, match="tombstone continuation"):
+        store.record_task_result_ingested(
+            "a/b#1",
+            digest="result-1",
+            stage="FIX_READY",
+            task_id="intent-1",
+            thread_id="thread-1",
+            **binding,
+        )
+
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='TASK_RESULT_INGESTED'"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.parametrize("mismatch", ["receipt", "snapshot"])
+def test_task_result_tombstone_binding_rejects_wake_mismatch(tmp_path, mismatch):
+    store = _task_result_tombstone_ledger(tmp_path)
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="1" * 64,
+        prepared_head_sha="3" * 40,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=snapshot)
+    if mismatch == "receipt":
+        receipt = dict(receipt) | {"wakeDigest": "2" * 64}
+    else:
+        snapshot = dict(snapshot) | {"wakeDigest": "2" * 64}
+
+    with pytest.raises(ValueError, match="tombstone continuation"):
+        store.record_task_result_ingested(
+            "a/b#1",
+            digest="result-1",
+            stage="FIX_READY",
+            task_id="intent-1",
+            thread_id="thread-1",
+            followup_wake_digest="1" * 64,
+            code_path_tombstone_receipt=receipt,
+            continuation_head_sha="5" * 40,
+            pr_followup_snapshot=snapshot,
+        )
+
+
+def test_task_context_ignores_tombstone_continuation_for_different_result_digest(tmp_path):
+    store = _task_result_tombstone_ledger(tmp_path)
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="1" * 64,
+        prepared_head_sha="3" * 40,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=snapshot)
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="result-1",
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+    mismatched_continuation = {
+        "taskId": "intent-1",
+        "threadId": "thread-1",
+        "stage": "FIX_READY",
+        "resultDigest": "result-2",
+        "followupWakeDigest": snapshot["wakeDigest"],
+        "codePathTombstoneReceipt": receipt,
+        "continuationHeadSha": "5" * 40,
+        "prFollowupSnapshot": snapshot,
+    }
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND",
+            sha256_json(mismatched_continuation),
+            mismatched_continuation,
+            iso_z(datetime.now(UTC)),
+        )
+
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert "codePathTombstoneReceipt" not in context
+    assert "codePathTombstoneContinuationHeadSha" not in context
+    assert context["prFollowup"] is None
+
+
+def test_existing_task_result_digest_can_be_upgraded_with_exact_tombstone_continuation(
+    tmp_path,
+):
+    store = _task_result_tombstone_ledger(tmp_path)
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="1" * 64,
+        prepared_head_sha="4" * 40,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=snapshot)
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="result-1",
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="result-1",
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=receipt,
+        continuation_head_sha="5" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert "codePathTombstoneReceipt" not in context
+    assert "edit_files" not in context["allowedActions"]
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='TASK_RESULT_INGESTED'"
+            ).fetchone()[0]
+            == 1
+        )
+        continuation = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events "
+                "WHERE event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'"
+            ).fetchone()[0]
+        )
+    assert continuation["continuationHeadSha"] == "5" * 40
+
+
+def test_task_context_accepts_latest_exact_tombstone_round_for_same_wake(tmp_path):
+    store = _task_result_tombstone_ledger(tmp_path)
+    wake_digest = "1" * 64
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest=wake_digest,
+        prepared_head_sha="4" * 40,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=snapshot)
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="result-1",
+        stage="VALIDATION_PENDING",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=wake_digest,
+        code_path_tombstone_receipt=receipt,
+        continuation_head_sha="5" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=wake_digest,
+        result_digest="result-1",
+        stage="VALIDATION_PENDING",
+    )
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="result-2",
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=wake_digest,
+        code_path_tombstone_receipt=receipt,
+        continuation_head_sha="6" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=wake_digest,
+        result_digest="result-2",
+        stage="FIX_READY",
+    )
+
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert "codePathTombstoneReceipt" not in context
+    with store.connect() as connection:
+        continuation = json.loads(
+            connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()[0]
+        )
+    assert continuation["resultDigest"] == "result-2"
+    assert continuation["continuationHeadSha"] == "6" * 40
+
+
+def test_task_context_tombstone_binding_is_thread_latest_and_yields_to_active_preparation(
+    tmp_path,
+):
+    store = _task_result_tombstone_ledger(tmp_path)
+    old_wake = "1" * 64
+    old_result = "result-1"
+    receipt_head = "4" * 40
+    old_snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest=old_wake,
+        prepared_head_sha=receipt_head,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=old_snapshot)
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=old_result,
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=old_wake,
+        code_path_tombstone_receipt=receipt,
+        continuation_head_sha="5" * 40,
+        pr_followup_snapshot=old_snapshot,
+    )
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=old_wake,
+        result_digest=old_result,
+        stage="FIX_READY",
+    )
+
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert "codePathTombstoneReceipt" not in context
+    assert "edit_files" not in context["allowedActions"]
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="other-thread-result",
+        stage="FIX_READY",
+        task_id="intent-2",
+        thread_id="thread-2",
+    )
+    same_thread_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert "codePathTombstoneReceipt" not in same_thread_context
+
+    active_wake = "6" * 64
+    active_head = "7" * 40
+    _record_tombstone_preparation(
+        store,
+        wake_digest=active_wake,
+        prepared_head_sha=active_head,
+    )
+    active_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert active_context["prFollowup"]["wakeDigest"] == active_wake
+    assert active_context["prFollowup"]["preparedHeadSha"] == active_head
+    assert "codePathTombstoneReceipt" not in active_context
+    assert "codePathTombstoneContinuationHeadSha" not in active_context
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="result-without-receipt",
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=active_wake,
+        result_digest="result-without-receipt",
+        stage="FIX_READY",
+    )
+    cleared_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert cleared_context["prFollowup"] is None
+    assert "codePathTombstoneReceipt" not in cleared_context
+    assert "codePathTombstoneContinuationHeadSha" not in cleared_context
+
+
+def _signed_recovered_tombstone_bundle(
+    tmp_path: Path,
+    *,
+    task_id: str,
+    thread_id: str,
+    worktree_path: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    from oss_pr_radar.repo_probe import (
+        attest_code_path_tombstones,
+        attest_task_reproduction_result,
+    )
+
+    checkout = tmp_path / f"signed-recovery-{task_id}"
+    checkout.mkdir()
+
+    def git(*args: str) -> str:
+        completed = subprocess.run(
+            ["git", *args], cwd=checkout, check=True, capture_output=True, text=True
+        )
+        return completed.stdout.strip()
+
+    git("init")
+    git("config", "user.name", "Test Contributor")
+    git("config", "user.email", "test@example.com")
+    (checkout / "deleted.py").write_text("deleted = True\n", encoding="utf-8")
+    (checkout / "present.py").write_text("present = True\n", encoding="utf-8")
+    git("add", "deleted.py", "present.py")
+    git("commit", "-m", "test: signed recovery base")
+    base_sha = git("rev-parse", "HEAD")
+    code_paths = ["deleted.py", "present.py"]
+    result_digest = sha256_json(
+        {
+            "taskId": task_id,
+            "threadId": thread_id,
+            "baseSha": base_sha,
+            "codePaths": code_paths,
+        }
+    )
+    reproduction_receipt = attest_task_reproduction_result(
+        checkout_path=checkout,
+        repo="a/b",
+        default_branch="main",
+        selected_base_sha=base_sha,
+        code_paths=code_paths,
+        issue_url="https://github.com/a/b/issues/1",
+        task_id=task_id,
+        thread_id=thread_id,
+        head_sha=base_sha,
+        commit_sha=base_sha,
+        result_digest=result_digest,
+        result={
+            "reproductionVerified": True,
+            "evidence": {"summary": "The regression is reproduced."},
+            "tests": [{"command": "python3 present.py", "exitCode": 0}],
+        },
+    )
+    snapshot = {
+        "prUrl": "https://github.com/a/b/pull/9",
+        "headSha": "8" * 40,
+        "preparedHeadSha": "9" * 40,
+        "actionDigest": "signed-recovery-action",
+        "taskActionDigest": "signed-recovery-task-action",
+        "wakeDigest": "7" * 64,
+        "actions": ["review follow-up"],
+        "evidence": {"actionableCheckNames": ["test"]},
+        "checkedAt": iso_z(datetime.now(UTC)),
+    }
+    tombstone_receipt = attest_code_path_tombstones(
+        source_receipt_digest=str(reproduction_receipt["receiptDigest"]),
+        base_sha=base_sha,
+        key="a/b#1",
+        issue_url="https://github.com/a/b/issues/1",
+        intent_id=task_id,
+        thread_id=thread_id,
+        worktree_path_fingerprint=sha256_text(str(Path(worktree_path).resolve())),
+        pr_url=snapshot["prUrl"],
+        wake_digest=snapshot["wakeDigest"],
+        action_digest=snapshot["actionDigest"],
+        task_action_digest=snapshot["taskActionDigest"],
+        checked_at=snapshot["checkedAt"],
+        prepared_head_sha=snapshot["preparedHeadSha"],
+        code_paths=code_paths,
+        present_paths=["present.py"],
+        tombstone_paths=["deleted.py"],
+    )
+    return reproduction_receipt, tombstone_receipt, snapshot
+
+
+def _recovered_tombstone_context(
+    *,
+    worktree_path: str,
+    reproduction_receipt: dict[str, Any],
+    tombstone_receipt: dict[str, Any],
+    snapshot: dict[str, Any],
+    context_digest: str,
+    **updates: Any,
+) -> dict[str, Any]:
+    prepared_head_sha = str(tombstone_receipt["preparedHeadSha"])
+    current_result_digest = sha256_json(
+        {
+            "contextDigest": context_digest,
+            "preparedHeadSha": prepared_head_sha,
+            "wakeDigest": snapshot["wakeDigest"],
+        }
+    )
+    value = published_task_context(
+        intentId="intent-1",
+        threadId="thread-1",
+        worktreePath=worktree_path,
+        selectedBaseSha=reproduction_receipt["baseSha"],
+        codePaths=list(reproduction_receipt["codePaths"]),
+        probeReceiptDigest=reproduction_receipt["receiptDigest"],
+        resultDigest=current_result_digest,
+        headSha=prepared_head_sha,
+        commitSha=prepared_head_sha,
+        reproductionReceipt=reproduction_receipt,
+        codePathTombstoneReceipt=tombstone_receipt,
+        prFollowup=snapshot,
+        contextDigest=context_digest,
+    )
+    value.update(updates)
+    return value
+
+
+def _resign_recovered_tombstone(
+    *,
+    reproduction_receipt: dict[str, Any],
+    snapshot: dict[str, Any],
+    worktree_path: str,
+    prepared_head_sha: str,
+    wake_digest: str,
+    checked_at: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    from oss_pr_radar.repo_probe import attest_code_path_tombstones
+
+    refreshed_snapshot = dict(snapshot) | {
+        "preparedHeadSha": prepared_head_sha,
+        "wakeDigest": wake_digest,
+        "actionDigest": f"refreshed-action-{wake_digest[:8]}",
+        "taskActionDigest": f"refreshed-task-action-{wake_digest[:8]}",
+        "checkedAt": checked_at,
+    }
+    refreshed_receipt = attest_code_path_tombstones(
+        source_receipt_digest=str(reproduction_receipt["receiptDigest"]),
+        base_sha=str(reproduction_receipt["baseSha"]),
+        key="a/b#1",
+        issue_url="https://github.com/a/b/issues/1",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path_fingerprint=sha256_text(str(Path(worktree_path).resolve())),
+        pr_url=str(refreshed_snapshot["prUrl"]),
+        wake_digest=str(refreshed_snapshot["wakeDigest"]),
+        action_digest=str(refreshed_snapshot["actionDigest"]),
+        task_action_digest=str(refreshed_snapshot["taskActionDigest"]),
+        checked_at=str(refreshed_snapshot["checkedAt"]),
+        prepared_head_sha=str(refreshed_snapshot["preparedHeadSha"]),
+        code_paths=list(reproduction_receipt["codePaths"]),
+        present_paths=["present.py"],
+        tombstone_paths=["deleted.py"],
+    )
+    return refreshed_receipt, refreshed_snapshot
+
+
+def _bind_managed_reproduction_receipt(
+    store: RadarLedger,
+    *,
+    worktree_path: str,
+    reproduction_receipt: dict[str, Any],
+) -> None:
+    from oss_pr_radar.managed_lifecycle import ManagedLedger
+
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    managed.upsert_opportunity(
+        opportunity_key="a/b#1",
+        owner="a",
+        repo="b",
+        issue_number=1,
+        issue_url="https://github.com/a/b/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test-context-authority",
+        provenance={"fixture": True},
+        metadata={
+            "selectedBaseSha": reproduction_receipt["baseSha"],
+            "codePaths": reproduction_receipt["codePaths"],
+        },
+    )
+    managed.bind_task(
+        task_id="intent-1",
+        opportunity_key="a/b#1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+        state="REPRODUCTION_REQUIRED",
+        provenance={
+            "selectedBaseSha": reproduction_receipt["baseSha"],
+            "codePaths": reproduction_receipt["codePaths"],
+            "headSha": reproduction_receipt["headSha"],
+            "commitSha": reproduction_receipt["commitSha"],
+            "resultDigest": reproduction_receipt["resultDigest"],
+        },
+    )
+    managed.transition_task_to_implementation(
+        task_id="intent-1",
+        receipt_digest=reproduction_receipt["receiptDigest"],
+        receipt=reproduction_receipt,
+    )
+
+
+def test_restore_existing_legacy_intent_atomically_adds_verified_recovery_receipt(tmp_path):
+    store = RadarLedger(tmp_path / "restore-existing.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    old_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="old-context",
+        autoSubmitAuthorized=False,
+        publicSubmissionAllowed=False,
+        resultDigest=reproduction_receipt["resultDigest"],
+        headSha=reproduction_receipt["headSha"],
+        commitSha=reproduction_receipt["commitSha"],
+    )
+    old_context.pop("reproductionReceipt")
+    old_context.pop("codePathTombstoneReceipt")
+    old_context.pop("prFollowup")
+    old_context.pop("resultDigest")
+    old_context.pop("headSha")
+    old_context.pop("commitSha")
+    store.restore_task_context(old_context)
+
+    upgraded_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="new-context",
+        autoSubmitAuthorized=True,
+        publicSubmissionAllowed=True,
+    )
+    restored = store.restore_task_context(upgraded_context)
+    store.restore_task_context(upgraded_context)
+
+    assert restored["intentRestored"] is False
+    with store.connect() as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+    assert payload["recoveredReproductionReceipt"] == reproduction_receipt
+    assert payload["probeReceiptDigest"] == reproduction_receipt["receiptDigest"]
+    assert payload["selectedBaseSha"] == reproduction_receipt["baseSha"]
+    assert payload["codePaths"] == reproduction_receipt["codePaths"]
+    assert payload["resultDigest"] == upgraded_context["resultDigest"]
+    assert payload["headSha"] == upgraded_context["headSha"]
+    assert payload["commitSha"] == upgraded_context["commitSha"]
+    assert payload["resultDigest"] != reproduction_receipt["resultDigest"]
+    assert payload["headSha"] != reproduction_receipt["headSha"]
+    assert payload["autoSubmitAuthorized"] is False
+    assert payload["publicSubmissionAllowed"] is False
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=reproduction_receipt["resultDigest"],
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=tombstone_receipt,
+        continuation_head_sha="6" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+    task = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert task["taskStage"] == "IMPLEMENTATION_READY"
+    assert "edit_files" in task["allowedActions"]
+    assert task["reproductionReceipt"] == reproduction_receipt
+
+
+@pytest.mark.parametrize(
+    ("field", "conflicting_value"),
+    [
+        ("codePaths", ["other.py"]),
+        ("selectedBaseSha", "e" * 40),
+        ("probeReceiptDigest", "f" * 64),
+    ],
+)
+def test_restore_existing_intent_rejects_conflicting_recovery_bundle_atomically(
+    tmp_path,
+    field,
+    conflicting_value,
+):
+    store = RadarLedger(tmp_path / "restore-conflict.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    old_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="old-conflicting-context",
+        **{field: conflicting_value},
+    )
+    old_context.pop("reproductionReceipt")
+    old_context.pop("codePathTombstoneReceipt")
+    old_context.pop("prFollowup")
+    store.restore_task_context(old_context)
+    with store.connect() as connection:
+        before_payload = connection.execute(
+            "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()[0]
+        before_events = connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+
+    with pytest.raises(LedgerError, match=rf"conflicts with intent {field}"):
+        store.restore_task_context(
+            _recovered_tombstone_context(
+                worktree_path=worktree_path,
+                reproduction_receipt=reproduction_receipt,
+                tombstone_receipt=tombstone_receipt,
+                snapshot=snapshot,
+                context_digest="new-conflicting-context",
+            )
+        )
+
+    with store.connect() as connection:
+        after_payload = connection.execute(
+            "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()[0]
+        after_events = connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    assert after_payload == before_payload
+    assert after_events == before_events
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"resultDigest": "not-a-result-digest"},
+        {"headSha": "e" * 40},
+        {"commitSha": "e" * 40},
+    ],
+)
+def test_restore_tombstone_context_rejects_unbound_current_result_tuple(tmp_path, updates):
+    store = RadarLedger(tmp_path / "restore-current-tuple.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="invalid-current-tuple",
+        **updates,
+    )
+
+    with pytest.raises(LedgerError, match="tombstone authority"):
+        store.restore_task_context(context)
+
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM intents").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    "intent_status",
+    [
+        "PENDING",
+        "LEASED",
+        "CREATING",
+        "REJECTED",
+        "SUPERSEDED",
+        "EXPIRED",
+        "SHADOW_OBSERVED",
+    ],
+)
+def test_inactive_intent_cannot_recover_tombstone_edit_authority(tmp_path, intent_status):
+    store = RadarLedger(tmp_path / f"inactive-{intent_status}.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path=worktree_path,
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest=f"inactive-{intent_status}",
+        )
+    )
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE intents SET status=? WHERE intent_id='intent-1'", (intent_status,)
+        )
+
+    task = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert task["intentStatus"] == intent_status
+    assert task["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in task["allowedActions"]
+    assert task["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in task
+    assert "codePathTombstoneContinuationHeadSha" not in task
+
+
+def test_managed_receipt_cannot_bypass_corrupt_tombstone_continuation(tmp_path):
+    from oss_pr_radar.managed_lifecycle import ManagedLedger
+
+    store = RadarLedger(tmp_path / "managed-corrupt-tombstone.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path=worktree_path,
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest="managed-signed-context",
+        )
+    )
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    managed.upsert_opportunity(
+        opportunity_key="a/b#1",
+        owner="a",
+        repo="b",
+        issue_number=1,
+        issue_url="https://github.com/a/b/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test-managed-corrupt-continuation",
+        provenance={"fixture": True},
+        metadata={
+            "selectedBaseSha": reproduction_receipt["baseSha"],
+            "codePaths": reproduction_receipt["codePaths"],
+        },
+    )
+    managed.bind_task(
+        task_id="intent-1",
+        opportunity_key="a/b#1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+        state="REPRODUCTION_REQUIRED",
+        provenance={
+            "selectedBaseSha": reproduction_receipt["baseSha"],
+            "codePaths": reproduction_receipt["codePaths"],
+            "headSha": reproduction_receipt["headSha"],
+            "commitSha": reproduction_receipt["commitSha"],
+            "resultDigest": reproduction_receipt["resultDigest"],
+        },
+    )
+    managed.transition_task_to_implementation(
+        task_id="intent-1",
+        receipt_digest=reproduction_receipt["receiptDigest"],
+        receipt=reproduction_receipt,
+    )
+    corrupt_receipt = dict(tombstone_receipt) | {"signature": "corrupt-signature"}
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="f" * 64,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=corrupt_receipt,
+        continuation_head_sha="6" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+
+    task = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert task["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in task["allowedActions"]
+    assert task["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in task
+    assert "codePathTombstoneContinuationHeadSha" not in task
+    assert "codePathTombstoneReceipt" not in task
+    assert "codePathTombstoneContinuationHeadSha" not in task
+
+
+def test_audit_no_go_cannot_recover_tombstone_edit_authority_for_completed_intent(tmp_path):
+    store = RadarLedger(tmp_path / "inactive-audit-no-go.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path=worktree_path,
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest="inactive-audit-no-go",
+        )
+    )
+    with store.transaction() as connection:
+        connection.execute("UPDATE intents SET status='COMPLETED' WHERE intent_id='intent-1'")
+        connection.execute("UPDATE opportunities SET stage='AUDIT_NO_GO' WHERE key='a/b#1'")
+
+    task = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert task["intentStatus"] == "COMPLETED"
+    assert task["stage"] == "AUDIT_NO_GO"
+    assert task["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in task["allowedActions"]
+    assert task["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in task
+
+
+def test_same_digest_continuation_exactly_binds_legacy_threadless_result(tmp_path):
+    store = _task_result_tombstone_ledger(tmp_path)
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="1" * 64,
+        prepared_head_sha="4" * 40,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=snapshot)
+    store.record_task_result_ingested("a/b#1", digest="legacy-result", stage="FIX_READY")
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="legacy-result",
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=receipt,
+        continuation_head_sha="5" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert "codePathTombstoneReceipt" not in context
+    with store.connect() as connection:
+        result_row = connection.execute(
+            """SELECT id FROM events WHERE event_type='TASK_RESULT_INGESTED'
+               AND dedupe_key='legacy-result'"""
+        ).fetchone()
+        continuation = json.loads(
+            connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'"""
+            ).fetchone()[0]
+        )
+    assert continuation["sourceResultEventId"] == result_row["id"]
+    assert continuation["taskId"] == "intent-1"
+    assert continuation["threadId"] == "thread-1"
+
+
+def test_legacy_threadless_result_rejects_nonexistent_intent_binding(tmp_path):
+    store = _task_result_tombstone_ledger(tmp_path)
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="1" * 64,
+        prepared_head_sha="4" * 40,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=snapshot)
+    store.record_task_result_ingested("a/b#1", digest="legacy-result", stage="FIX_READY")
+
+    with pytest.raises(ValueError, match="continuation identity"):
+        store.record_task_result_ingested(
+            "a/b#1",
+            digest="legacy-result",
+            stage="FIX_READY",
+            task_id="other-intent",
+            thread_id="thread-1",
+            followup_wake_digest=snapshot["wakeDigest"],
+            code_path_tombstone_receipt=receipt,
+            continuation_head_sha="5" * 40,
+            pr_followup_snapshot=snapshot,
+        )
+
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'"""
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_unbound_newer_result_does_not_clear_exact_threadless_result_binding(tmp_path):
+    store = _task_result_tombstone_ledger(tmp_path)
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="1" * 64,
+        prepared_head_sha="4" * 40,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=snapshot)
+    store.record_task_result_ingested("a/b#1", digest="legacy-result", stage="FIX_READY")
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="legacy-result",
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=receipt,
+        continuation_head_sha="5" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+    store.record_task_result_ingested("a/b#1", digest="unbound-newer", stage="FIX_READY")
+
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert "codePathTombstoneReceipt" not in context
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'"""
+            ).fetchone()[0]
+            == 1
+        )
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="wrong-intent-newer",
+        stage="FIX_READY",
+        task_id="other-intent",
+        thread_id="thread-1",
+    )
+    still_bound = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert "codePathTombstoneReceipt" not in still_bound
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="task-bound-newer",
+        stage="FIX_READY",
+        task_id="intent-1",
+    )
+    cleared = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert "codePathTombstoneReceipt" not in cleared
+
+
+def test_recovered_receipt_projection_rejects_corrupt_tombstone_signature(tmp_path):
+    store = RadarLedger(tmp_path / "corrupt-tombstone.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path=worktree_path,
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest="signed-context",
+        )
+    )
+    corrupt_receipt = dict(tombstone_receipt) | {"signature": "corrupt-signature"}
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=reproduction_receipt["resultDigest"],
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=corrupt_receipt,
+        continuation_head_sha="6" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+
+    task = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert task["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in task["allowedActions"]
+    assert task["reproductionReceipt"] is None
+
+
+def test_active_new_preparation_cannot_reuse_old_recovered_tombstone_authority(tmp_path):
+    store = RadarLedger(tmp_path / "active-preparation.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path=worktree_path,
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest="signed-context",
+        )
+    )
+    active_snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="a" * 64,
+        prepared_head_sha="b" * 40,
+    )
+
+    task = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert task["prFollowup"]["wakeDigest"] == active_snapshot["wakeDigest"]
+    assert task["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in task["allowedActions"]
+    assert task["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in task
+
+
+def test_native_existing_intent_can_recover_exact_signed_tombstone_authority(tmp_path):
+    store = _task_result_tombstone_ledger(tmp_path)
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path="/tmp/worktree",
+    )
+
+    restored = store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path="/tmp/worktree",
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest="native-existing-context",
+        )
+    )
+
+    assert restored["intentRestored"] is False
+    task = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert task["taskStage"] == "IMPLEMENTATION_READY"
+    assert "edit_files" in task["allowedActions"]
+    assert task["reproductionReceipt"] == reproduction_receipt
+    assert task["codePathTombstoneReceipt"] == tombstone_receipt
+
+
+@pytest.mark.parametrize("stage", ["VALIDATION_PENDING", "FIX_READY"])
+def test_empty_ledger_context_recovery_projects_tombstone_until_new_result(
+    tmp_path,
+    stage,
+):
+    store = RadarLedger(tmp_path / f"context-continuation-{stage}.sqlite3")
+    worktree_path = str(tmp_path / f"managed-worktree-{stage}")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path=worktree_path,
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest=f"{stage.lower()}-context",
+            stage=stage,
+        )
+    )
+
+    recovered = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert recovered["taskStage"] == "IMPLEMENTATION_READY"
+    assert "edit_files" in recovered["allowedActions"]
+    assert recovered["codePathTombstoneReceipt"] == tombstone_receipt
+    assert recovered["codePathTombstoneContinuationHeadSha"] == snapshot["preparedHeadSha"]
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND'"""
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='TASK_RESULT_INGESTED'"
+            ).fetchone()[0]
+            == 0
+        )
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="new-result-without-tombstone",
+        stage=stage,
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+    superseded = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert superseded["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in superseded["allowedActions"]
+    assert "codePathTombstoneReceipt" not in superseded
+
+
+def test_newer_context_revokes_old_tombstone_authority_and_blocks_replay(tmp_path):
+    from oss_pr_radar.managed_lifecycle import ManagedLedger
+    from oss_pr_radar.repo_probe import attest_code_path_tombstones
+
+    store = RadarLedger(tmp_path / "context-authority-revocation.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    authorized_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="authorized-context-a",
+    )
+    store.restore_task_context(
+        authorized_context,
+        source_updated_at="2026-08-30T01:00:00Z",
+    )
+
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    managed.upsert_opportunity(
+        opportunity_key="a/b#1",
+        owner="a",
+        repo="b",
+        issue_number=1,
+        issue_url="https://github.com/a/b/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test-context-authority-revocation",
+        provenance={"fixture": True},
+        metadata={
+            "selectedBaseSha": reproduction_receipt["baseSha"],
+            "codePaths": reproduction_receipt["codePaths"],
+        },
+    )
+    managed.bind_task(
+        task_id="intent-1",
+        opportunity_key="a/b#1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+        state="REPRODUCTION_REQUIRED",
+        provenance={
+            "selectedBaseSha": reproduction_receipt["baseSha"],
+            "codePaths": reproduction_receipt["codePaths"],
+            "headSha": reproduction_receipt["headSha"],
+            "commitSha": reproduction_receipt["commitSha"],
+            "resultDigest": reproduction_receipt["resultDigest"],
+        },
+    )
+    managed.transition_task_to_implementation(
+        task_id="intent-1",
+        receipt_digest=reproduction_receipt["receiptDigest"],
+        receipt=reproduction_receipt,
+    )
+
+    revoked_context = dict(authorized_context) | {
+        "contextDigest": "revoked-context-b",
+        "taskStage": "REPRODUCTION_REQUIRED",
+        "probeLevel": "UNVERIFIED",
+    }
+    for field in (
+        "reproductionReceipt",
+        "codePathTombstoneReceipt",
+        "prFollowup",
+        "resultDigest",
+        "headSha",
+        "commitSha",
+    ):
+        revoked_context.pop(field, None)
+    store.restore_task_context(
+        revoked_context,
+        source_updated_at="2026-08-30T01:01:00Z",
+    )
+
+    revoked = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert revoked["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in revoked["allowedActions"]
+    assert revoked["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in revoked
+    assert "codePathTombstoneContinuationHeadSha" not in revoked
+    with store.connect() as connection:
+        revoked_payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+        before_replay = connection.execute(
+            "SELECT event_type,dedupe_key,payload_json FROM events ORDER BY id"
+        ).fetchall()
+        latest_marker = json.loads(
+            connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()[0]
+        )
+    assert "recoveredReproductionReceipt" not in revoked_payload
+    assert latest_marker["hasContinuation"] is False
+    assert latest_marker["revokedContinuationDedupeKey"]
+
+    replay = store.restore_task_context(
+        authorized_context,
+        source_updated_at="2026-08-30T01:02:00Z",
+    )
+    assert replay["supersededContextMirror"] is True
+    with store.connect() as connection:
+        after_replay = connection.execute(
+            "SELECT event_type,dedupe_key,payload_json FROM events ORDER BY id"
+        ).fetchall()
+        replayed_payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+    assert after_replay == before_replay
+    assert replayed_payload == revoked_payload
+    still_revoked = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert still_revoked["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in still_revoked["allowedActions"]
+
+    new_snapshot = dict(snapshot) | {
+        "preparedHeadSha": "c" * 40,
+        "wakeDigest": "d" * 64,
+        "actionDigest": "new-signed-recovery-action",
+        "taskActionDigest": "new-signed-recovery-task-action",
+        "checkedAt": "2026-08-30T01:03:00Z",
+    }
+    new_tombstone_receipt = attest_code_path_tombstones(
+        source_receipt_digest=str(reproduction_receipt["receiptDigest"]),
+        base_sha=str(reproduction_receipt["baseSha"]),
+        key="a/b#1",
+        issue_url="https://github.com/a/b/issues/1",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path_fingerprint=sha256_text(str(Path(worktree_path).resolve())),
+        pr_url=str(new_snapshot["prUrl"]),
+        wake_digest=str(new_snapshot["wakeDigest"]),
+        action_digest=str(new_snapshot["actionDigest"]),
+        task_action_digest=str(new_snapshot["taskActionDigest"]),
+        checked_at=str(new_snapshot["checkedAt"]),
+        prepared_head_sha=str(new_snapshot["preparedHeadSha"]),
+        code_paths=list(reproduction_receipt["codePaths"]),
+        present_paths=["present.py"],
+        tombstone_paths=["deleted.py"],
+    )
+    new_authorized_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=new_tombstone_receipt,
+        snapshot=new_snapshot,
+        context_digest="new-authorized-context-c",
+    )
+    restored = store.restore_task_context(
+        new_authorized_context,
+        source_updated_at="2026-08-30T01:04:00Z",
+    )
+    assert restored.get("supersededContextMirror") is not True
+    reauthorized = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert reauthorized["taskStage"] == "IMPLEMENTATION_READY"
+    assert "edit_files" in reauthorized["allowedActions"]
+    assert reauthorized["reproductionReceipt"] == reproduction_receipt
+    assert reauthorized["codePathTombstoneReceipt"] == new_tombstone_receipt
+    with store.connect() as connection:
+        active_marker = json.loads(
+            connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()[0]
+        )
+        active_continuation = connection.execute(
+            """SELECT dedupe_key FROM events
+               WHERE event_type='TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND'
+               ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+    assert active_marker["hasContinuation"] is True
+    assert active_marker["continuationDedupeKey"] == active_continuation["dedupe_key"]
+
+
+def test_equal_source_time_cannot_replace_context_authority(tmp_path):
+    store = RadarLedger(tmp_path / "equal-context-authority-time.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    authorized_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="equal-time-authority-a",
+    )
+    store.restore_task_context(
+        authorized_context,
+        source_updated_at="2026-08-30T02:00:00Z",
+    )
+    conflicting_context = dict(authorized_context) | {"contextDigest": "equal-time-authority-b"}
+
+    rejected = store.restore_task_context(
+        conflicting_context,
+        source_updated_at="2026-08-30T02:00:00Z",
+    )
+
+    assert rejected["supersededContextMirror"] is True
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert context["taskStage"] == "IMPLEMENTATION_READY"
+    assert context["codePathTombstoneReceipt"] == tombstone_receipt
+
+
+def test_same_context_refresh_advances_replay_watermark(tmp_path):
+    store = RadarLedger(tmp_path / "context-authority-watermark.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    authorized_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="watermark-authority-a",
+    )
+    store.restore_task_context(
+        authorized_context,
+        source_updated_at="2026-08-30T03:00:00Z",
+    )
+    refreshed = store.restore_task_context(
+        authorized_context,
+        source_updated_at="2026-08-30T03:02:00Z",
+    )
+    assert refreshed["duplicateContextMirror"] is True
+    assert refreshed["authorityWatermarkAdvanced"] is True
+
+    unseen_stale_context = dict(authorized_context) | {"contextDigest": "unseen-stale-authority-d"}
+    rejected = store.restore_task_context(
+        unseen_stale_context,
+        source_updated_at="2026-08-30T03:01:00Z",
+    )
+
+    assert rejected["supersededContextMirror"] is True
+    current = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert current["taskStage"] == "IMPLEMENTATION_READY"
+    assert current["codePathTombstoneReceipt"] == tombstone_receipt
+    with store.connect() as connection:
+        latest_marker = json.loads(
+            connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()[0]
+        )
+    assert latest_marker["authorityObservedAt"] == "2026-08-30T03:02:00Z"
+    assert latest_marker["authorityTransition"] is False
+
+
+@pytest.mark.parametrize("record_new_preparation", [False, True])
+def test_fresh_context_authority_cannot_resurrect_older_preparation(
+    tmp_path,
+    record_new_preparation,
+):
+    store = _task_result_tombstone_ledger(tmp_path)
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path="/tmp/worktree",
+    )
+    _record_tombstone_preparation(
+        store,
+        wake_digest=snapshot["wakeDigest"],
+        prepared_head_sha=snapshot["preparedHeadSha"],
+    )
+    authorized_context = _recovered_tombstone_context(
+        worktree_path="/tmp/worktree",
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="preparation-authority-a",
+    )
+    store.restore_task_context(
+        authorized_context,
+        source_updated_at="2026-08-30T04:00:00Z",
+    )
+    revoked_context = dict(authorized_context) | {
+        "contextDigest": "preparation-revocation-b",
+        "taskStage": "REPRODUCTION_REQUIRED",
+        "probeLevel": "UNVERIFIED",
+    }
+    for field in (
+        "reproductionReceipt",
+        "codePathTombstoneReceipt",
+        "prFollowup",
+        "resultDigest",
+        "headSha",
+        "commitSha",
+    ):
+        revoked_context.pop(field, None)
+    store.restore_task_context(
+        revoked_context,
+        source_updated_at="2026-08-30T04:01:00Z",
+    )
+    new_tombstone_receipt, new_snapshot = _resign_recovered_tombstone(
+        reproduction_receipt=reproduction_receipt,
+        snapshot=snapshot,
+        worktree_path="/tmp/worktree",
+        prepared_head_sha="c" * 40,
+        wake_digest="d" * 64,
+        checked_at="2026-08-30T04:02:00Z",
+    )
+    if record_new_preparation:
+        _record_tombstone_preparation(
+            store,
+            wake_digest=new_snapshot["wakeDigest"],
+            prepared_head_sha=new_snapshot["preparedHeadSha"],
+        )
+    fresh_context = _recovered_tombstone_context(
+        worktree_path="/tmp/worktree",
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=new_tombstone_receipt,
+        snapshot=new_snapshot,
+        context_digest="preparation-authority-c",
+    )
+    store.restore_task_context(
+        fresh_context,
+        source_updated_at="2026-08-30T04:03:00Z",
+    )
+
+    current = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert current["taskStage"] == "IMPLEMENTATION_READY"
+    assert "edit_files" in current["allowedActions"]
+    assert current["prFollowup"]["wakeDigest"] == new_snapshot["wakeDigest"]
+    assert current["codePathTombstoneReceipt"] == new_tombstone_receipt
+
+
+@pytest.mark.parametrize("old_result_has_continuation", [False, True])
+@pytest.mark.parametrize(
+    "revocation_offset_seconds",
+    [0, 10],
+    ids=["equal-time-fails-closed", "newer-revocation"],
+)
+def test_newer_context_revocation_beats_older_task_result_authority(
+    tmp_path,
+    old_result_has_continuation,
+    revocation_offset_seconds,
+):
+    store = RadarLedger(tmp_path / "context-result-authority.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    authorized_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="result-authority-a",
+    )
+    store.restore_task_context(authorized_context)
+    _bind_managed_reproduction_receipt(
+        store,
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+    )
+    old_result_digest = "a" * 64 if old_result_has_continuation else "b" * 64
+    old_result_args: dict[str, Any] = {}
+    if old_result_has_continuation:
+        old_result_args = {
+            "followup_wake_digest": snapshot["wakeDigest"],
+            "code_path_tombstone_receipt": tombstone_receipt,
+            "continuation_head_sha": snapshot["preparedHeadSha"],
+            "pr_followup_snapshot": snapshot,
+        }
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=old_result_digest,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        **old_result_args,
+    )
+    with store.connect() as connection:
+        old_result_created_at = parse_time(
+            connection.execute(
+                """SELECT created_at FROM events
+                   WHERE event_type='TASK_RESULT_INGESTED' AND dedupe_key=?""",
+                (old_result_digest,),
+            ).fetchone()[0]
+        )
+    revocation_time = iso_z(old_result_created_at + timedelta(seconds=revocation_offset_seconds))
+    revoked_context = dict(authorized_context) | {
+        "contextDigest": "result-revocation-b",
+        # These unsigned projection fields must not preserve authority after
+        # the signed receipt/continuation has disappeared.
+        "taskStage": "IMPLEMENTATION_READY",
+        "probeLevel": "REPRODUCED_VALIDATED",
+    }
+    for field in (
+        "reproductionReceipt",
+        "codePathTombstoneReceipt",
+        "prFollowup",
+        "resultDigest",
+        "headSha",
+        "commitSha",
+    ):
+        revoked_context.pop(field, None)
+    store.restore_task_context(
+        revoked_context,
+        source_updated_at=revocation_time,
+    )
+
+    revoked = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert revoked["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in revoked["allowedActions"]
+    assert revoked["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in revoked
+
+    fresh_result_digest = "c" * 64
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=fresh_result_digest,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=tombstone_receipt,
+        continuation_head_sha=snapshot["preparedHeadSha"],
+        pr_followup_snapshot=snapshot,
+    )
+    fresh_result_time = iso_z(parse_time(revocation_time) + timedelta(seconds=10))
+    with store.transaction() as connection:
+        connection.execute(
+            """UPDATE events SET created_at=?
+               WHERE event_type='TASK_RESULT_INGESTED' AND dedupe_key=?""",
+            (fresh_result_time, fresh_result_digest),
+        )
+        marker_row = connection.execute(
+            """SELECT id,payload_json FROM events
+               WHERE event_type='TASK_RESULT_AUTHORITY_BOUND'
+                 AND json_extract(payload_json,'$.resultDigest')=?""",
+            (fresh_result_digest,),
+        ).fetchone()
+        marker = json.loads(marker_row["payload_json"])
+        marker["authorityObservedAt"] = fresh_result_time
+        connection.execute(
+            """UPDATE events SET created_at=?,dedupe_key=?,payload_json=? WHERE id=?""",
+            (
+                fresh_result_time,
+                sha256_json(marker),
+                json.dumps(marker, sort_keys=True, separators=(",", ":")),
+                marker_row["id"],
+            ),
+        )
+
+    reauthorized = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert reauthorized["taskStage"] == "IMPLEMENTATION_READY"
+    assert "edit_files" in reauthorized["allowedActions"]
+    assert reauthorized["codePathTombstoneReceipt"] == tombstone_receipt
+
+
+@pytest.mark.parametrize("authority_history", ["revoked", "legacy-unmarked"])
+def test_fresh_signed_context_preserves_prior_result_revocation_watermark(
+    tmp_path,
+    authority_history,
+):
+    store = RadarLedger(tmp_path / f"fresh-context-{authority_history}.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    authorized_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="result-lineage-authority-a",
+    )
+    store.restore_task_context(authorized_context)
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="1" * 64,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=tombstone_receipt,
+        continuation_head_sha=snapshot["preparedHeadSha"],
+        pr_followup_snapshot=snapshot,
+    )
+    with store.connect() as connection:
+        result_created_at = parse_time(
+            connection.execute(
+                """SELECT created_at FROM events
+                   WHERE event_type='TASK_RESULT_INGESTED' AND dedupe_key=?""",
+                ("1" * 64,),
+            ).fetchone()[0]
+        )
+
+    if authority_history == "revoked":
+        revoked_context = dict(authorized_context) | {
+            "contextDigest": "result-lineage-revocation-b",
+            "taskStage": "REPRODUCTION_REQUIRED",
+            "probeLevel": "UNVERIFIED",
+        }
+        for field in (
+            "reproductionReceipt",
+            "codePathTombstoneReceipt",
+            "prFollowup",
+            "resultDigest",
+            "headSha",
+            "commitSha",
+        ):
+            revoked_context.pop(field, None)
+        store.restore_task_context(
+            revoked_context,
+            source_updated_at=iso_z(result_created_at + timedelta(seconds=10)),
+        )
+    else:
+        with store.transaction() as connection:
+            connection.execute(
+                """DELETE FROM events WHERE event_type IN (
+                     'TASK_CONTEXT_AUTHORITY_BOUND',
+                     'TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND',
+                     'TASK_RESULT_AUTHORITY_BOUND'
+                   )"""
+            )
+
+    new_tombstone_receipt, new_snapshot = _resign_recovered_tombstone(
+        reproduction_receipt=reproduction_receipt,
+        snapshot=snapshot,
+        worktree_path=worktree_path,
+        prepared_head_sha="2" * 40,
+        wake_digest="3" * 64,
+        checked_at=iso_z(result_created_at + timedelta(seconds=15)),
+    )
+    fresh_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=new_tombstone_receipt,
+        snapshot=new_snapshot,
+        context_digest="result-lineage-authority-c",
+    )
+    store.restore_task_context(
+        fresh_context,
+        source_updated_at=iso_z(result_created_at + timedelta(seconds=20)),
+    )
+
+    current = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert current["taskStage"] == "IMPLEMENTATION_READY"
+    assert "edit_files" in current["allowedActions"]
+    assert current["prFollowup"]["wakeDigest"] == new_snapshot["wakeDigest"]
+    assert current["codePathTombstoneReceipt"] == new_tombstone_receipt
+    assert current["codePathTombstoneContinuationHeadSha"] == new_snapshot["preparedHeadSha"]
+
+
+def test_legacy_unmarked_context_continuation_fails_closed_even_with_task_result(tmp_path):
+    store = RadarLedger(tmp_path / "legacy-unmarked-context-authority.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    legacy_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="legacy-unmarked-authority",
+    )
+    store.restore_task_context(legacy_context)
+    _bind_managed_reproduction_receipt(
+        store,
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+    )
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="e" * 64,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=tombstone_receipt,
+        continuation_head_sha=snapshot["preparedHeadSha"],
+        pr_followup_snapshot=snapshot,
+    )
+    with store.transaction() as connection:
+        connection.execute(
+            """DELETE FROM events WHERE event_type IN (
+                 'TASK_CONTEXT_AUTHORITY_BOUND',
+                 'TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND',
+                 'TASK_RESULT_AUTHORITY_BOUND'
+               )"""
+        )
+
+    current = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert current["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in current["allowedActions"]
+    assert current["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in current
+    with store.connect() as connection:
+        events_before_result_replay = connection.execute("SELECT COUNT(*) FROM events").fetchone()[
+            0
+        ]
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="e" * 64,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=tombstone_receipt,
+        continuation_head_sha=snapshot["preparedHeadSha"],
+        pr_followup_snapshot=snapshot,
+    )
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == (
+            events_before_result_replay
+        )
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='TASK_RESULT_AUTHORITY_BOUND'"""
+            ).fetchone()[0]
+            == 0
+        )
+        payload_before_replay = connection.execute(
+            "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()[0]
+        events_before_replay = connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+
+    replay = store.restore_task_context(
+        legacy_context,
+        source_updated_at=iso_z(datetime.now(UTC) + timedelta(hours=1)),
+    )
+
+    assert replay["supersededContextMirror"] is True
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+            == payload_before_replay
+        )
+        assert connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == (
+            events_before_replay
+        )
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='TASK_CONTEXT_AUTHORITY_BOUND'"""
+            ).fetchone()[0]
+            == 0
+        )
+    still_closed = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert still_closed["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in still_closed["allowedActions"]
+
+
+def test_existing_result_cannot_gain_tombstone_authority_by_replay(tmp_path):
+    store = RadarLedger(tmp_path / "result-continuation-replay.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    authorized_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="result-continuation-replay-a",
+    )
+    store.restore_task_context(authorized_context)
+    _bind_managed_reproduction_receipt(
+        store,
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+    )
+    result_digest = "f" * 64
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=result_digest,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+
+    result_only = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert result_only["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in result_only["allowedActions"]
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=result_digest,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=tombstone_receipt,
+        continuation_head_sha=snapshot["preparedHeadSha"],
+        pr_followup_snapshot=snapshot,
+    )
+
+    replayed = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert replayed["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in replayed["allowedActions"]
+    assert "codePathTombstoneReceipt" not in replayed
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='TASK_RESULT_AUTHORITY_BOUND'"""
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_late_context_recovery_cannot_override_existing_result_without_tombstone(tmp_path):
+    store = RadarLedger(tmp_path / "newer-context-continuation.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    legacy_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="legacy-context",
+        stage="VALIDATION_PENDING",
+    )
+    legacy_context.pop("reproductionReceipt")
+    legacy_context.pop("codePathTombstoneReceipt")
+    legacy_context.pop("prFollowup")
+    store.restore_task_context(legacy_context)
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="older-result-without-tombstone",
+        stage="VALIDATION_PENDING",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+
+    store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path=worktree_path,
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest="newer-context",
+            stage="VALIDATION_PENDING",
+        )
+    )
+
+    recovered = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert recovered["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in recovered["allowedActions"]
+    assert recovered["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in recovered
+    assert "codePathTombstoneContinuationHeadSha" not in recovered

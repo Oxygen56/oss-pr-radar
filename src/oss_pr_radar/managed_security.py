@@ -16,6 +16,7 @@ PREVIOUS_SIGNING_KEY_ENV = "RADAR_DISPATCH_HMAC_KEY_PREVIOUS"
 CURRENT_KEY_ID_ENV = "RADAR_DISPATCH_HMAC_KEY_ID"
 PREVIOUS_KEY_ID_ENV = "RADAR_DISPATCH_HMAC_KEY_PREVIOUS_ID"
 CONTEXTS = {
+    "code-path-tombstone-v1": "code-path-tombstone-v1",
     "evidence-cert-v1": "evidence-cert-v1",
     "absence-attestation-v1": "absence-attestation-v1",
     "managed-snapshot-v1": "managed-snapshot-v1",

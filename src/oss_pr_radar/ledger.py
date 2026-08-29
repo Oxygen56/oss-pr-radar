@@ -13,7 +13,12 @@ from typing import Any, Iterable, Iterator
 from urllib.parse import quote
 
 from .action_guard import ledger_action_guard_root, opportunity_action_guard
-from .repo_probe import PATHS_VERIFIED, REPRODUCED_VALIDATED, verify_probe_receipt
+from .repo_probe import (
+    PATHS_VERIFIED,
+    REPRODUCED_VALIDATED,
+    verify_code_path_tombstone_receipt,
+    verify_probe_receipt,
+)
 from .task_quarantine import active as active_quarantine
 from .task_quarantine import attach_artifact as attach_quarantine_artifact
 from .task_quarantine import backfill_from_managed_events, backfill_from_radar_events
@@ -1126,6 +1131,94 @@ class RadarLedger:
             if not str(receipt.get("branch") or "").strip():
                 raise LedgerError("task context publication branch is missing")
 
+        recovered_reproduction_receipt = None
+        recovered_receipt_bundle: dict[str, Any] | None = None
+        recovered_current_result_bundle: dict[str, str] | None = None
+        recovered_context_continuation: dict[str, Any] | None = None
+        tombstone_receipt = context.get("codePathTombstoneReceipt")
+        if tombstone_receipt is not None:
+            reproduction_receipt = context.get("reproductionReceipt")
+            followup = context.get("prFollowup")
+            context_result_digest = str(context.get("resultDigest") or "")
+            context_head_sha = str(context.get("headSha") or "")
+            context_commit_sha = str(context.get("commitSha") or "")
+            code_paths = [
+                str(path) for path in (context.get("codePaths") or []) if str(path).strip()
+            ]
+            if (
+                not isinstance(reproduction_receipt, dict)
+                or not isinstance(tombstone_receipt, dict)
+                or not isinstance(followup, dict)
+                or not code_paths
+                or context.get("selectedBaseSha") != reproduction_receipt.get("baseSha")
+                or not re.fullmatch(r"[0-9a-f]{64}", context_result_digest)
+                or not re.fullmatch(r"[0-9a-f]{40}", context_head_sha)
+                or context_commit_sha != context_head_sha
+                or context_head_sha != tombstone_receipt.get("preparedHeadSha")
+                or not verify_probe_receipt(
+                    reproduction_receipt,
+                    repo=repo,
+                    base_sha=str(reproduction_receipt.get("baseSha") or ""),
+                    code_paths=code_paths,
+                    required_level=REPRODUCED_VALIDATED,
+                    issue_url=issue_url,
+                    task_id=intent_id,
+                    thread_id=(
+                        thread_id if reproduction_receipt.get("threadFingerprint") else None
+                    ),
+                    head_sha=str(reproduction_receipt.get("headSha") or ""),
+                    commit_sha=str(reproduction_receipt.get("commitSha") or ""),
+                    result_digest=str(reproduction_receipt.get("resultDigest") or ""),
+                    enforce_freshness=False,
+                )
+                or not verify_code_path_tombstone_receipt(
+                    tombstone_receipt,
+                    source_receipt_digest=str(reproduction_receipt.get("receiptDigest") or ""),
+                    base_sha=str(reproduction_receipt.get("baseSha") or ""),
+                    key=key,
+                    issue_url=issue_url,
+                    intent_id=intent_id,
+                    thread_id=thread_id,
+                    worktree_path_fingerprint=sha256_text(str(Path(worktree_path).resolve())),
+                    pr_url=str(followup.get("prUrl") or ""),
+                    wake_digest=str(followup.get("wakeDigest") or ""),
+                    action_digest=str(followup.get("actionDigest") or ""),
+                    task_action_digest=str(followup.get("taskActionDigest") or ""),
+                    checked_at=str(followup.get("checkedAt") or ""),
+                    prepared_head_sha=str(followup.get("preparedHeadSha") or ""),
+                    code_paths=code_paths,
+                )
+            ):
+                raise LedgerError("task context tombstone authority is invalid")
+            recovered_reproduction_receipt = reproduction_receipt
+            receipt_digest = str(reproduction_receipt.get("receiptDigest") or "")
+            context_receipt_digest = str(context.get("probeReceiptDigest") or "")
+            if context_receipt_digest and context_receipt_digest != receipt_digest:
+                raise LedgerError("task context tombstone probe receipt digest disagrees")
+            recovered_receipt_bundle = {
+                "recoveredReproductionReceipt": reproduction_receipt,
+                "probeReceiptDigest": receipt_digest,
+                "selectedBaseSha": reproduction_receipt.get("baseSha"),
+                "codePaths": list(reproduction_receipt.get("codePaths") or []),
+            }
+            recovered_current_result_bundle = {
+                "resultDigest": context_result_digest,
+                "headSha": context_head_sha,
+                "commitSha": context_commit_sha,
+            }
+            followup_snapshot = dict(followup)
+            followup_snapshot.pop("resultContract", None)
+            recovered_context_continuation = {
+                "taskId": intent_id,
+                "threadId": thread_id,
+                "contextDigest": context_digest,
+                **recovered_current_result_bundle,
+                "followupWakeDigest": followup.get("wakeDigest"),
+                "codePathTombstoneReceipt": tombstone_receipt,
+                "continuationHeadSha": context_head_sha,
+                "prFollowupSnapshot": followup_snapshot,
+            }
+
         now_dt = datetime.now(UTC)
         now = iso_z(now_dt)
         payload = {
@@ -1158,9 +1251,52 @@ class RadarLedger:
             "probeReceiptDigest": context.get("probeReceiptDigest"),
             "selectedBaseSha": context.get("selectedBaseSha"),
             "codePaths": context.get("codePaths") or [],
+            "resultDigest": context.get("resultDigest"),
+            "headSha": context.get("headSha"),
+            "commitSha": context.get("commitSha"),
             "targetBase": context.get("targetBase"),
             "recoveredFromTaskContext": True,
             "titleTime": title_time,
+        }
+        if recovered_reproduction_receipt is not None:
+            payload["recoveredReproductionReceipt"] = recovered_reproduction_receipt
+        authority_observed_at = str(source_updated_at or captured_at)
+        try:
+            authority_observed_time = parse_time(authority_observed_at)
+        except (TypeError, ValueError) as exc:
+            raise LedgerError("task context source timestamp is invalid") from exc
+        continuation_dedupe_key = (
+            sha256_json(recovered_context_continuation)
+            if recovered_context_continuation is not None
+            else None
+        )
+        tombstone_receipt_digest = (
+            sha256_json(tombstone_receipt)
+            if recovered_context_continuation is not None and isinstance(tombstone_receipt, dict)
+            else None
+        )
+        context_authority_state = {
+            "taskId": intent_id,
+            "threadId": thread_id,
+            "contextDigest": context_digest,
+            "hasContinuation": recovered_context_continuation is not None,
+            "continuationDedupeKey": continuation_dedupe_key,
+            "probeReceiptDigest": (
+                str(recovered_reproduction_receipt.get("receiptDigest") or "")
+                if isinstance(recovered_reproduction_receipt, dict)
+                else None
+            ),
+            "tombstoneReceiptDigest": tombstone_receipt_digest,
+            "implementationClaimed": bool(recovered_context_continuation)
+            or (
+                str(context.get("taskStage") or "") == "IMPLEMENTATION_READY"
+                and str(context.get("probeLevel") or "") == REPRODUCED_VALIDATED
+            ),
+        }
+        context_authority_state_digest = sha256_json(context_authority_state)
+        context_authority_marker = context_authority_state | {
+            "authorityObservedAt": authority_observed_at,
+            "authorityStateDigest": context_authority_state_digest,
         }
         restored_intent = False
         restored_publication = False
@@ -1170,6 +1306,206 @@ class RadarLedger:
             ).fetchone()
             if existing_intent is not None and existing_intent["opportunity_key"] != key:
                 raise LedgerError("task context intent is bound to another opportunity")
+            latest_authority_row = connection.execute(
+                """SELECT id,payload_json FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+                     AND json_extract(payload_json,'$.taskId')=?
+                     AND json_extract(payload_json,'$.threadId')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (key, intent_id, thread_id),
+            ).fetchone()
+            latest_authority: dict[str, Any] | None = None
+            if latest_authority_row is not None:
+                try:
+                    latest_authority = json.loads(latest_authority_row["payload_json"])
+                    latest_observed_time = parse_time(
+                        str(latest_authority.get("authorityObservedAt") or "")
+                    )
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise LedgerError("task context authority marker is invalid") from exc
+                if authority_observed_time < latest_observed_time:
+                    return {
+                        "key": key,
+                        "stage": stage,
+                        "intentRestored": False,
+                        "publicationRestored": False,
+                        "supersededContextMirror": True,
+                    }
+                if latest_authority.get("authorityStateDigest") == context_authority_state_digest:
+                    watermark_advanced = authority_observed_time > latest_observed_time
+                    if watermark_advanced:
+                        context_authority_marker["authorityTransition"] = False
+                        for field in (
+                            "revokedContinuationDedupeKey",
+                            "revokedTombstoneReceiptDigest",
+                            "revocationObservedAt",
+                        ):
+                            if latest_authority.get(field):
+                                context_authority_marker[field] = latest_authority[field]
+                        if recovered_context_continuation is None and (
+                            context_authority_marker.get("revokedContinuationDedupeKey")
+                            or context_authority_marker.get("revokedTombstoneReceiptDigest")
+                        ):
+                            context_authority_marker["revocationObservedAt"] = authority_observed_at
+                        self._event(
+                            connection,
+                            key,
+                            "TASK_CONTEXT_AUTHORITY_BOUND",
+                            sha256_json(context_authority_marker),
+                            context_authority_marker,
+                            authority_observed_at,
+                        )
+                    return {
+                        "key": key,
+                        "stage": stage,
+                        "intentRestored": False,
+                        "publicationRestored": False,
+                        "duplicateContextMirror": True,
+                        "authorityWatermarkAdvanced": watermark_advanced,
+                    }
+                if (
+                    authority_observed_time == latest_observed_time
+                    and recovered_context_continuation is not None
+                ):
+                    return {
+                        "key": key,
+                        "stage": stage,
+                        "intentRestored": False,
+                        "publicationRestored": False,
+                        "supersededContextMirror": True,
+                    }
+
+            historical_continuation_rows = connection.execute(
+                """SELECT dedupe_key,payload_json FROM events
+                   WHERE opportunity_key=?
+                     AND event_type IN (
+                       'TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND',
+                       'TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+                     )
+                     AND json_extract(payload_json,'$.taskId')=?
+                     AND json_extract(payload_json,'$.threadId')=?
+                   ORDER BY id""",
+                (key, intent_id, thread_id),
+            ).fetchall()
+            historical_continuation_refs: set[str] = set()
+            historical_tombstone_digests: set[str] = set()
+            for historical_row in historical_continuation_rows:
+                historical_continuation_refs.add(str(historical_row["dedupe_key"]))
+                try:
+                    historical_payload = json.loads(historical_row["payload_json"])
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise LedgerError("task context continuation history is invalid") from exc
+                historical_tombstone = historical_payload.get("codePathTombstoneReceipt")
+                if isinstance(historical_tombstone, dict):
+                    historical_tombstone_digests.add(sha256_json(historical_tombstone))
+
+            if (
+                recovered_context_continuation is not None
+                and latest_authority is None
+                and historical_continuation_rows
+                and (
+                    continuation_dedupe_key in historical_continuation_refs
+                    or tombstone_receipt_digest in historical_tombstone_digests
+                )
+            ):
+                return {
+                    "key": key,
+                    "stage": stage,
+                    "intentRestored": False,
+                    "publicationRestored": False,
+                    "supersededContextMirror": True,
+                }
+
+            if recovered_context_continuation is not None and latest_authority is not None:
+                latest_has_continuation = latest_authority.get("hasContinuation") is True
+                latest_continuation_ref = str(latest_authority.get("continuationDedupeKey") or "")
+                latest_tombstone_digest = str(latest_authority.get("tombstoneReceiptDigest") or "")
+                replayed_after_revocation = not latest_has_continuation and (
+                    continuation_dedupe_key in historical_continuation_refs
+                    or tombstone_receipt_digest in historical_tombstone_digests
+                )
+                replayed_superseded_context = (
+                    latest_has_continuation
+                    and latest_continuation_ref != continuation_dedupe_key
+                    and continuation_dedupe_key in historical_continuation_refs
+                )
+                replayed_superseded_receipt = (
+                    latest_has_continuation
+                    and latest_tombstone_digest != tombstone_receipt_digest
+                    and tombstone_receipt_digest in historical_tombstone_digests
+                )
+                if (
+                    replayed_after_revocation
+                    or replayed_superseded_context
+                    or replayed_superseded_receipt
+                ):
+                    return {
+                        "key": key,
+                        "stage": stage,
+                        "intentRestored": False,
+                        "publicationRestored": False,
+                        "supersededContextMirror": True,
+                    }
+
+            if latest_authority is not None:
+                for field in (
+                    "revokedContinuationDedupeKey",
+                    "revokedTombstoneReceiptDigest",
+                    "revocationObservedAt",
+                ):
+                    if latest_authority.get(field):
+                        context_authority_marker[field] = latest_authority[field]
+            elif (
+                recovered_context_continuation is not None
+                and historical_continuation_rows
+                and continuation_dedupe_key not in historical_continuation_refs
+                and tombstone_receipt_digest not in historical_tombstone_digests
+            ):
+                superseded_legacy_continuation = historical_continuation_rows[-1]
+                context_authority_marker["revokedContinuationDedupeKey"] = str(
+                    superseded_legacy_continuation["dedupe_key"]
+                )
+                superseded_legacy_payload = json.loads(
+                    superseded_legacy_continuation["payload_json"]
+                )
+                superseded_legacy_tombstone = superseded_legacy_payload.get(
+                    "codePathTombstoneReceipt"
+                )
+                if isinstance(superseded_legacy_tombstone, dict):
+                    context_authority_marker["revokedTombstoneReceiptDigest"] = sha256_json(
+                        superseded_legacy_tombstone
+                    )
+                context_authority_marker["revocationObservedAt"] = authority_observed_at
+
+            if recovered_context_continuation is None:
+                revoked_continuation_ref = None
+                revoked_tombstone_digest = None
+                if latest_authority is not None:
+                    revoked_continuation_ref = latest_authority.get(
+                        "continuationDedupeKey"
+                    ) or latest_authority.get("revokedContinuationDedupeKey")
+                    revoked_tombstone_digest = latest_authority.get(
+                        "tombstoneReceiptDigest"
+                    ) or latest_authority.get("revokedTombstoneReceiptDigest")
+                if revoked_continuation_ref is None and historical_continuation_rows:
+                    legacy_continuation = historical_continuation_rows[-1]
+                    revoked_continuation_ref = str(legacy_continuation["dedupe_key"])
+                    legacy_payload = json.loads(legacy_continuation["payload_json"])
+                    legacy_tombstone = legacy_payload.get("codePathTombstoneReceipt")
+                    if isinstance(legacy_tombstone, dict):
+                        revoked_tombstone_digest = sha256_json(legacy_tombstone)
+                if revoked_continuation_ref:
+                    context_authority_marker["revokedContinuationDedupeKey"] = str(
+                        revoked_continuation_ref
+                    )
+                if revoked_tombstone_digest:
+                    context_authority_marker["revokedTombstoneReceiptDigest"] = str(
+                        revoked_tombstone_digest
+                    )
+                if revoked_continuation_ref or revoked_tombstone_digest:
+                    context_authority_marker["revocationObservedAt"] = authority_observed_at
+            context_authority_marker["authorityTransition"] = True
             restored_intent = existing_intent is None
             existing_opportunity = connection.execute(
                 "SELECT stage,first_seen FROM opportunities WHERE key=?", (key,)
@@ -1257,10 +1593,50 @@ class RadarLedger:
                     and Path(existing_worktree).resolve() != Path(worktree_path).resolve()
                 ):
                     raise LedgerError("task context worktree binding disagrees with the ledger")
-                if not str(existing_intent["title_time"] or ""):
+                existing_payload = json.loads(existing_intent["payload_json"])
+                if not isinstance(existing_payload, dict):
+                    raise LedgerError("task context intent payload is invalid")
+                payload_changed = False
+                if recovered_receipt_bundle is not None:
+                    for field, recovered_value in recovered_receipt_bundle.items():
+                        if field not in existing_payload or existing_payload[field] is None:
+                            existing_payload[field] = recovered_value
+                            payload_changed = True
+                            continue
+                        current_value = existing_payload[field]
+                        if field == "codePaths":
+                            current_value = (
+                                sorted({str(path) for path in current_value if str(path).strip()})
+                                if isinstance(current_value, list)
+                                else current_value
+                            )
+                            recovered_value = sorted(
+                                {str(path) for path in recovered_value if str(path).strip()}
+                            )
+                        if current_value != recovered_value:
+                            raise LedgerError(
+                                f"task context recovered receipt conflicts with intent {field}"
+                            )
+                elif "recoveredReproductionReceipt" in existing_payload:
+                    existing_payload.pop("recoveredReproductionReceipt", None)
+                    payload_changed = True
+                for field in ("taskStage", "probeLevel"):
+                    if existing_payload.get(field) != payload.get(field):
+                        existing_payload[field] = payload.get(field)
+                        payload_changed = True
+                if recovered_current_result_bundle is not None:
+                    for field, recovered_value in recovered_current_result_bundle.items():
+                        if existing_payload.get(field) != recovered_value:
+                            existing_payload[field] = recovered_value
+                            payload_changed = True
+                title_time_missing = not str(existing_intent["title_time"] or "")
+                if payload_changed or title_time_missing:
                     connection.execute(
-                        "UPDATE intents SET title_time=?,updated_at=? WHERE intent_id=?",
-                        (title_time, now, intent_id),
+                        """UPDATE intents SET payload_json=?,
+                           title_time=CASE WHEN title_time IS NULL OR title_time=''
+                                           THEN ? ELSE title_time END,
+                           updated_at=? WHERE intent_id=?""",
+                        (canonical_json(existing_payload), title_time, now, intent_id),
                     )
             connection.execute(
                 """UPDATE intents SET status='SUPERSEDED',lease_owner=NULL,lease_until=NULL,
@@ -1295,6 +1671,23 @@ class RadarLedger:
                     "recoveredFromTaskContext": True,
                 },
                 captured_at,
+            )
+            if recovered_context_continuation is not None:
+                self._event(
+                    connection,
+                    key,
+                    "TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND",
+                    str(continuation_dedupe_key),
+                    recovered_context_continuation,
+                    captured_at,
+                )
+            self._event(
+                connection,
+                key,
+                "TASK_CONTEXT_AUTHORITY_BOUND",
+                sha256_json(context_authority_marker),
+                context_authority_marker,
+                authority_observed_at,
             )
 
             if isinstance(receipt, dict) and receipt.get("prUrl"):
@@ -1839,7 +2232,7 @@ class RadarLedger:
                     now,
                 )
                 event = connection.execute(
-                    """SELECT payload_json FROM events
+                    """SELECT id,payload_json FROM events
                        WHERE opportunity_key=? AND event_type='AUDIT_PASS' AND dedupe_key=?""",
                     (row["opportunity_key"], dedupe_key),
                 ).fetchone()
@@ -5802,23 +6195,403 @@ class RadarLedger:
                 if row is not None
                 else None
             )
-            preparation_row = (
+            context_authority_row = (
                 connection.execute(
-                    """SELECT b.payload_json FROM events b
-                       WHERE b.opportunity_key=?
-                         AND b.event_type='PR_FOLLOWUP_PREPARATION_BOUND'
-                         AND json_extract(b.payload_json,'$.threadId')=?
-                         AND NOT EXISTS (
-                           SELECT 1 FROM events x
-                           WHERE x.opportunity_key=b.opportunity_key
-                             AND x.event_type='PR_FOLLOWUP_RESULT_INGESTED'
-                             AND x.dedupe_key=b.dedupe_key
-                         )
-                       ORDER BY b.id DESC LIMIT 1""",
-                    (row["key"], row["thread_id"]),
+                    """SELECT payload_json FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+                         AND json_extract(payload_json,'$.taskId')=?
+                         AND json_extract(payload_json,'$.threadId')=?
+                       ORDER BY id DESC LIMIT 1""",
+                    (row["key"], row["intent_id"], row["thread_id"]),
                 ).fetchone()
                 if row is not None
                 else None
+            )
+            context_authority_payload: dict[str, Any] | None = None
+            context_authority_observed_time: datetime | None = None
+            context_revocation_observed_time: datetime | None = None
+            active_context_continuation_ref = ""
+            active_context_authority_origin_id = 0
+            legacy_unmarked_context_authority = False
+            if context_authority_row is not None:
+                try:
+                    context_authority_payload = json.loads(context_authority_row["payload_json"])
+                    context_authority_observed_time = parse_time(
+                        str(context_authority_payload.get("authorityObservedAt") or "")
+                    )
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise LedgerError("task context authority marker is invalid") from exc
+                marker_state = {
+                    field: context_authority_payload.get(field)
+                    for field in (
+                        "taskId",
+                        "threadId",
+                        "contextDigest",
+                        "hasContinuation",
+                        "continuationDedupeKey",
+                        "probeReceiptDigest",
+                        "tombstoneReceiptDigest",
+                        "implementationClaimed",
+                    )
+                }
+                if (
+                    marker_state["taskId"] != row["intent_id"]
+                    or marker_state["threadId"] != row["thread_id"]
+                    or context_authority_payload.get("authorityStateDigest")
+                    != sha256_json(marker_state)
+                    or not isinstance(context_authority_payload.get("authorityTransition"), bool)
+                ):
+                    raise LedgerError("task context authority marker is invalid")
+                revocation_observed_at = str(
+                    context_authority_payload.get("revocationObservedAt") or ""
+                )
+                if revocation_observed_at:
+                    try:
+                        context_revocation_observed_time = parse_time(revocation_observed_at)
+                    except (TypeError, ValueError) as exc:
+                        raise LedgerError("task context authority marker is invalid") from exc
+                    if (
+                        not (
+                            context_authority_payload.get("revokedContinuationDedupeKey")
+                            or context_authority_payload.get("revokedTombstoneReceiptDigest")
+                        )
+                        or context_authority_observed_time is None
+                        or context_revocation_observed_time > context_authority_observed_time
+                    ):
+                        raise LedgerError("task context authority marker is invalid")
+                if marker_state["hasContinuation"] is True:
+                    active_context_continuation_ref = str(
+                        marker_state["continuationDedupeKey"] or ""
+                    )
+                    if not re.fullmatch(r"[0-9a-f]{64}", active_context_continuation_ref):
+                        raise LedgerError("task context authority marker is invalid")
+                    authority_origin_row = connection.execute(
+                        """SELECT id FROM events
+                           WHERE opportunity_key=?
+                             AND event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+                             AND json_extract(payload_json,'$.taskId')=?
+                             AND json_extract(payload_json,'$.threadId')=?
+                             AND json_extract(payload_json,'$.authorityStateDigest')=?
+                             AND json_extract(payload_json,'$.authorityTransition')=1
+                           ORDER BY id DESC LIMIT 1""",
+                        (
+                            row["key"],
+                            row["intent_id"],
+                            row["thread_id"],
+                            context_authority_payload["authorityStateDigest"],
+                        ),
+                    ).fetchone()
+                    if authority_origin_row is None:
+                        raise LedgerError("task context authority marker is invalid")
+                    active_context_authority_origin_id = int(authority_origin_row["id"])
+            elif row is not None:
+                legacy_context_continuation = connection.execute(
+                    """SELECT 1 FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND'
+                         AND json_extract(payload_json,'$.taskId')=?
+                         AND json_extract(payload_json,'$.threadId')=?
+                       LIMIT 1""",
+                    (row["key"], row["intent_id"], row["thread_id"]),
+                ).fetchone()
+                try:
+                    legacy_intent_payload = json.loads(row["payload_json"])
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise LedgerError("task context intent payload is invalid") from exc
+                legacy_unmarked_context_authority = (
+                    legacy_context_continuation is not None
+                    or legacy_intent_payload.get("recoveredFromTaskContext") is True
+                )
+            preparation_row = (
+                connection.execute(
+                    """WITH latest_preparation AS (
+                         SELECT id,opportunity_key,dedupe_key,payload_json
+                         FROM events
+                         WHERE opportunity_key=?
+                           AND event_type='PR_FOLLOWUP_PREPARATION_BOUND'
+                           AND json_extract(payload_json,'$.threadId')=?
+                         ORDER BY id DESC LIMIT 1
+                       )
+                       SELECT b.payload_json FROM latest_preparation b
+                       WHERE NOT (? > b.id)
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events x
+                           WHERE x.opportunity_key=b.opportunity_key
+                             AND (
+                               (x.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                                AND x.dedupe_key=b.dedupe_key)
+                               OR
+                               (x.event_type=
+                                  'TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+                                AND json_extract(
+                                  x.payload_json,'$.followupWakeDigest'
+                                )=b.dedupe_key
+                                AND json_extract(x.payload_json,'$.threadId')=
+                                    json_extract(b.payload_json,'$.threadId'))
+                               OR
+                               (x.event_type=
+                                  'TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND'
+                               AND json_extract(
+                                  x.payload_json,'$.followupWakeDigest'
+                                )=b.dedupe_key
+                                AND json_extract(x.payload_json,'$.threadId')=
+                                    json_extract(b.payload_json,'$.threadId')
+                                AND x.dedupe_key=?)
+                             )
+                         )""",
+                    (
+                        row["key"],
+                        row["thread_id"],
+                        active_context_authority_origin_id,
+                        active_context_continuation_ref,
+                    ),
+                ).fetchone()
+                if row is not None
+                else None
+            )
+            latest_task_result_row = (
+                connection.execute(
+                    """WITH current_result AS (
+                         SELECT result2.id,result2.opportunity_key,result2.dedupe_key,
+                                result2.created_at
+                         FROM events result2
+                         WHERE result2.opportunity_key=?
+                           AND result2.event_type='TASK_RESULT_INGESTED'
+                           AND (
+                             (
+                               json_extract(result2.payload_json,'$.threadId')=?
+                               AND COALESCE(
+                                 json_extract(result2.payload_json,'$.taskId'),''
+                               ) IN ('',?)
+                             )
+                             OR (
+                               COALESCE(
+                                 json_extract(result2.payload_json,'$.threadId'),''
+                               )=''
+                               AND json_extract(result2.payload_json,'$.taskId')=?
+                             )
+                             OR EXISTS (
+                               SELECT 1 FROM events binding
+                               WHERE binding.opportunity_key=result2.opportunity_key
+                                 AND binding.event_type=
+                                   'TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+                                 AND json_extract(
+                                   binding.payload_json,'$.sourceResultEventId'
+                                 )=result2.id
+                                 AND json_extract(
+                                   binding.payload_json,'$.resultDigest'
+                                 )=result2.dedupe_key
+                                 AND json_extract(binding.payload_json,'$.taskId')=?
+                                 AND json_extract(binding.payload_json,'$.threadId')=?
+                             )
+                           )
+                         ORDER BY result2.id DESC LIMIT 1
+                       )
+                       SELECT result.id AS result_id,
+                              result.created_at AS result_created_at,
+                              continuation.dedupe_key AS continuation_dedupe_key,
+                              continuation.payload_json AS continuation_json
+                       FROM current_result result
+                       LEFT JOIN events continuation ON continuation.id=(
+                         SELECT MAX(continuation2.id) FROM events continuation2
+                         WHERE continuation2.opportunity_key=result.opportunity_key
+                           AND continuation2.event_type=
+                             'TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+                           AND json_extract(
+                             continuation2.payload_json,'$.threadId'
+                           )=?
+                           AND json_extract(
+                             continuation2.payload_json,'$.resultDigest'
+                           )=result.dedupe_key
+                           AND json_extract(continuation2.payload_json,'$.taskId')=?
+                           AND (
+                             json_extract(
+                               continuation2.payload_json,'$.sourceResultEventId'
+                             )=result.id
+                             OR (
+                               json_type(
+                                 continuation2.payload_json,'$.sourceResultEventId'
+                               ) IS NULL
+                               AND EXISTS (
+                                 SELECT 1 FROM events direct_result
+                                 WHERE direct_result.id=result.id
+                                   AND json_extract(
+                                     direct_result.payload_json,'$.threadId'
+                                   )=?
+                               )
+                             )
+                           )
+                       )
+                         AND json_type(
+                           continuation.payload_json,'$.codePathTombstoneReceipt'
+                         )='object'
+                         AND json_type(
+                           continuation.payload_json,'$.prFollowupSnapshot'
+                         )='object'
+                       LIMIT 1""",
+                    (
+                        row["key"],
+                        row["thread_id"],
+                        row["intent_id"],
+                        row["intent_id"],
+                        row["intent_id"],
+                        row["thread_id"],
+                        row["thread_id"],
+                        row["intent_id"],
+                        row["thread_id"],
+                    ),
+                ).fetchone()
+                if row is not None
+                else None
+            )
+            task_result_continuation_authorized = False
+            if latest_task_result_row is not None:
+                try:
+                    result_observed_time = parse_time(
+                        str(latest_task_result_row["result_created_at"] or "")
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise LedgerError("task result authority timestamp is invalid") from exc
+                if latest_task_result_row["continuation_json"] is not None:
+                    try:
+                        result_continuation = json.loads(
+                            latest_task_result_row["continuation_json"]
+                        )
+                    except (TypeError, json.JSONDecodeError) as exc:
+                        raise LedgerError("task result authority marker is invalid") from exc
+                    result_authority_row = connection.execute(
+                        """SELECT payload_json FROM events
+                           WHERE opportunity_key=?
+                             AND event_type='TASK_RESULT_AUTHORITY_BOUND'
+                             AND json_extract(payload_json,'$.taskId')=?
+                             AND json_extract(payload_json,'$.threadId')=?
+                             AND json_extract(payload_json,'$.sourceResultEventId')=?
+                             AND json_extract(payload_json,'$.continuationDedupeKey')=?
+                           ORDER BY id DESC LIMIT 1""",
+                        (
+                            row["key"],
+                            row["intent_id"],
+                            row["thread_id"],
+                            latest_task_result_row["result_id"],
+                            latest_task_result_row["continuation_dedupe_key"],
+                        ),
+                    ).fetchone()
+                    if result_authority_row is not None:
+                        try:
+                            result_authority = json.loads(result_authority_row["payload_json"])
+                            result_authority_observed_time = parse_time(
+                                str(result_authority.get("authorityObservedAt") or "")
+                            )
+                        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                            raise LedgerError("task result authority marker is invalid") from exc
+                        result_authority_state = {
+                            field: result_authority.get(field)
+                            for field in (
+                                "taskId",
+                                "threadId",
+                                "sourceResultEventId",
+                                "resultDigest",
+                                "continuationDedupeKey",
+                                "tombstoneReceiptDigest",
+                            )
+                        }
+                        continuation_tombstone = result_continuation.get("codePathTombstoneReceipt")
+                        if (
+                            not isinstance(continuation_tombstone, dict)
+                            or result_authority_state["taskId"] != row["intent_id"]
+                            or result_authority_state["threadId"] != row["thread_id"]
+                            or result_authority_state["sourceResultEventId"]
+                            != latest_task_result_row["result_id"]
+                            or result_authority_state["resultDigest"]
+                            != result_continuation.get("resultDigest")
+                            or result_authority_state["continuationDedupeKey"]
+                            != latest_task_result_row["continuation_dedupe_key"]
+                            or result_authority_state["tombstoneReceiptDigest"]
+                            != sha256_json(continuation_tombstone)
+                            or result_authority.get("authorityStateDigest")
+                            != sha256_json(result_authority_state)
+                            or result_authority_observed_time < result_observed_time
+                        ):
+                            raise LedgerError("task result authority marker is invalid")
+                        task_result_continuation_authorized = True
+                if latest_task_result_row is not None and (
+                    legacy_unmarked_context_authority
+                    or (
+                        context_revocation_observed_time is not None
+                        and result_observed_time <= context_revocation_observed_time
+                    )
+                ):
+                    latest_task_result_row = None
+                    task_result_continuation_authorized = False
+            task_result_tombstone_row = (
+                latest_task_result_row
+                if latest_task_result_row is not None
+                and latest_task_result_row["continuation_json"] is not None
+                and task_result_continuation_authorized
+                else None
+            )
+            task_context_tombstone_row = (
+                connection.execute(
+                    """SELECT payload_json AS continuation_json FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND'
+                         AND dedupe_key=?
+                         AND json_extract(payload_json,'$.taskId')=?
+                         AND json_extract(payload_json,'$.threadId')=?
+                         AND json_extract(payload_json,'$.contextDigest')=?
+                         AND json_type(
+                           payload_json,'$.codePathTombstoneReceipt'
+                         )='object'
+                         AND json_type(payload_json,'$.prFollowupSnapshot')='object'
+                       LIMIT 1""",
+                    (
+                        row["key"],
+                        active_context_continuation_ref,
+                        row["intent_id"],
+                        row["thread_id"],
+                        (
+                            context_authority_payload.get("contextDigest")
+                            if context_authority_payload is not None
+                            else None
+                        ),
+                    ),
+                ).fetchone()
+                if row is not None
+                and latest_task_result_row is None
+                and active_context_continuation_ref
+                else None
+            )
+            tombstone_continuation_row = task_result_tombstone_row or task_context_tombstone_row
+            tombstone_authority_history_present = (
+                connection.execute(
+                    """SELECT 1 FROM events
+                       WHERE opportunity_key=?
+                         AND event_type IN (
+                           'TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND',
+                           'TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND'
+                         )
+                         AND json_extract(payload_json,'$.taskId')=?
+                         AND json_extract(payload_json,'$.threadId')=?
+                       LIMIT 1""",
+                    (row["key"], row["intent_id"], row["thread_id"]),
+                ).fetchone()
+                is not None
+                if row is not None
+                else False
+            )
+            tombstone_authority_missing_from_current_source = (
+                tombstone_authority_history_present
+                and (
+                    (
+                        latest_task_result_row is not None
+                        and (
+                            latest_task_result_row["continuation_json"] is None
+                            or not task_result_continuation_authorized
+                        )
+                    )
+                    or (latest_task_result_row is None and not active_context_continuation_ref)
+                )
             )
         if row is None:
             return None
@@ -5831,7 +6604,9 @@ class RadarLedger:
         if not submission_policy and audit_policy.get("ai_disclosure") is True:
             submission_policy = "ai_disclosure_conflict"
         submission_policy = submission_policy or "normal"
-        authorization_active = row["status"] != "REJECTED" and row["stage"] != "AUDIT_NO_GO"
+        authorization_active = (
+            row["status"] in RECOVERABLE_CONTEXT_INTENT_STATUSES and row["stage"] != "AUDIT_NO_GO"
+        )
         raw_probe_level = str(payload.get("probeLevel") or "UNVERIFIED")
         raw_task_stage = str(payload.get("taskStage") or "REPRODUCTION_REQUIRED")
         probe_receipt_digest = str(payload.get("probeReceiptDigest") or "")
@@ -5874,6 +6649,166 @@ class RadarLedger:
                         payload["resultDigest"] = current_published["resultDigest"]
         except (OSError, RuntimeError, ValueError, sqlite3.Error, json.JSONDecodeError):
             verified_probe_receipt = None
+        if tombstone_authority_missing_from_current_source:
+            verified_probe_receipt = None
+            raw_task_stage = "REPRODUCTION_REQUIRED"
+            raw_probe_level = "UNVERIFIED"
+        if (
+            verified_probe_receipt is None
+            and tombstone_continuation_row is not None
+            and preparation_row is None
+        ):
+            recovered_receipt = payload.get("recoveredReproductionReceipt")
+            continuation = json.loads(tombstone_continuation_row["continuation_json"])
+            tombstone_receipt = continuation.get("codePathTombstoneReceipt")
+            followup_snapshot = continuation.get("prFollowupSnapshot")
+            followup_wake_digest = str(continuation.get("followupWakeDigest") or "")
+            continuation_result_digest = str(continuation.get("resultDigest") or "")
+            continuation_head_sha = str(continuation.get("continuationHeadSha") or "")
+            context_continuation = continuation.get("contextDigest") is not None
+            recovered_paths = [
+                str(path) for path in (payload.get("codePaths") or []) if str(path).strip()
+            ]
+            if (
+                isinstance(recovered_receipt, dict)
+                and isinstance(tombstone_receipt, dict)
+                and isinstance(followup_snapshot, dict)
+                and continuation.get("taskId") == row["intent_id"]
+                and continuation.get("threadId") == row["thread_id"]
+                and re.fullmatch(r"[0-9a-f]{64}", continuation_result_digest)
+                and re.fullmatch(r"[0-9a-f]{40}", continuation_head_sha)
+                and (
+                    not context_continuation
+                    or (
+                        context_authority_payload is not None
+                        and context_authority_payload.get("hasContinuation") is True
+                        and active_context_continuation_ref == sha256_json(continuation)
+                        and context_authority_payload.get("tombstoneReceiptDigest")
+                        == sha256_json(tombstone_receipt)
+                        and continuation.get("headSha") == continuation_head_sha
+                        and continuation.get("commitSha") == continuation_head_sha
+                        and tombstone_receipt.get("preparedHeadSha") == continuation_head_sha
+                    )
+                )
+                and recovered_receipt.get("receiptDigest")
+                == tombstone_receipt.get("sourceReceiptDigest")
+                and verify_probe_receipt(
+                    recovered_receipt,
+                    repo=str(row["key"]).split("#", 1)[0],
+                    base_sha=str(payload.get("selectedBaseSha") or ""),
+                    code_paths=recovered_paths,
+                    required_level=REPRODUCED_VALIDATED,
+                    issue_url=str(row["issue_url"]),
+                    task_id=str(row["intent_id"] or ""),
+                    thread_id=(
+                        str(row["thread_id"] or "")
+                        if recovered_receipt.get("threadFingerprint")
+                        else None
+                    ),
+                    head_sha=str(recovered_receipt.get("headSha") or ""),
+                    commit_sha=str(recovered_receipt.get("commitSha") or ""),
+                    result_digest=str(recovered_receipt.get("resultDigest") or ""),
+                    enforce_freshness=False,
+                )
+                and verify_code_path_tombstone_receipt(
+                    tombstone_receipt,
+                    source_receipt_digest=str(recovered_receipt.get("receiptDigest") or ""),
+                    base_sha=str(recovered_receipt.get("baseSha") or ""),
+                    key=str(row["key"]),
+                    issue_url=str(row["issue_url"]),
+                    intent_id=str(row["intent_id"] or ""),
+                    thread_id=str(row["thread_id"] or ""),
+                    worktree_path_fingerprint=sha256_text(
+                        str(Path(str(row["worktree_path"] or "")).resolve())
+                    ),
+                    pr_url=str(followup_snapshot.get("prUrl") or ""),
+                    wake_digest=followup_wake_digest,
+                    action_digest=str(followup_snapshot.get("actionDigest") or ""),
+                    task_action_digest=str(followup_snapshot.get("taskActionDigest") or ""),
+                    checked_at=str(followup_snapshot.get("checkedAt") or ""),
+                    prepared_head_sha=str(followup_snapshot.get("preparedHeadSha") or ""),
+                    code_paths=recovered_paths,
+                )
+            ):
+                verified_probe_receipt = recovered_receipt
+                raw_task_stage = "IMPLEMENTATION_READY"
+                raw_probe_level = "REPRODUCED_VALIDATED"
+                probe_receipt_digest = str(recovered_receipt.get("receiptDigest") or "")
+                payload["selectedBaseSha"] = recovered_receipt.get("baseSha")
+                payload["codePaths"] = list(recovered_receipt.get("codePaths") or [])
+                payload["resultDigest"] = continuation_result_digest
+                payload["headSha"] = continuation_head_sha
+                payload["commitSha"] = continuation_head_sha
+        verified_tombstone_continuation = (
+            tombstone_continuation_row is None or preparation_row is not None
+        )
+        if (
+            tombstone_continuation_row is not None
+            and preparation_row is None
+            and verified_probe_receipt is not None
+        ):
+            try:
+                continuation = json.loads(tombstone_continuation_row["continuation_json"])
+            except (TypeError, json.JSONDecodeError):
+                continuation = {}
+            tombstone_receipt = continuation.get("codePathTombstoneReceipt")
+            followup_snapshot = continuation.get("prFollowupSnapshot")
+            followup_wake_digest = str(continuation.get("followupWakeDigest") or "")
+            continuation_result_digest = str(continuation.get("resultDigest") or "")
+            continuation_head_sha = str(continuation.get("continuationHeadSha") or "")
+            context_continuation = continuation.get("contextDigest") is not None
+            verified_paths = [
+                str(path)
+                for path in (verified_probe_receipt.get("codePaths") or [])
+                if str(path).strip()
+            ]
+            verified_tombstone_continuation = bool(
+                isinstance(tombstone_receipt, dict)
+                and isinstance(followup_snapshot, dict)
+                and continuation.get("taskId") == row["intent_id"]
+                and continuation.get("threadId") == row["thread_id"]
+                and continuation_result_digest
+                and re.fullmatch(r"[0-9a-f]{40}", continuation_head_sha)
+                and (
+                    not context_continuation
+                    or (
+                        context_authority_payload is not None
+                        and context_authority_payload.get("hasContinuation") is True
+                        and active_context_continuation_ref == sha256_json(continuation)
+                        and context_authority_payload.get("tombstoneReceiptDigest")
+                        == sha256_json(tombstone_receipt)
+                        and re.fullmatch(r"[0-9a-f]{64}", continuation_result_digest)
+                        and continuation.get("headSha") == continuation_head_sha
+                        and continuation.get("commitSha") == continuation_head_sha
+                        and tombstone_receipt.get("preparedHeadSha") == continuation_head_sha
+                    )
+                )
+                and verified_probe_receipt.get("receiptDigest")
+                == tombstone_receipt.get("sourceReceiptDigest")
+                and followup_snapshot.get("wakeDigest") == followup_wake_digest
+                and tombstone_receipt.get("wakeDigest") == followup_wake_digest
+                and followup_snapshot.get("preparedHeadSha")
+                == tombstone_receipt.get("preparedHeadSha")
+                and verify_code_path_tombstone_receipt(
+                    tombstone_receipt,
+                    source_receipt_digest=str(verified_probe_receipt.get("receiptDigest") or ""),
+                    base_sha=str(verified_probe_receipt.get("baseSha") or ""),
+                    key=str(row["key"]),
+                    issue_url=str(row["issue_url"]),
+                    intent_id=str(row["intent_id"] or ""),
+                    thread_id=str(row["thread_id"] or ""),
+                    worktree_path_fingerprint=sha256_text(
+                        str(Path(str(row["worktree_path"] or "")).resolve())
+                    ),
+                    pr_url=str(followup_snapshot.get("prUrl") or ""),
+                    wake_digest=followup_wake_digest,
+                    action_digest=str(followup_snapshot.get("actionDigest") or ""),
+                    task_action_digest=str(followup_snapshot.get("taskActionDigest") or ""),
+                    checked_at=str(followup_snapshot.get("checkedAt") or ""),
+                    prepared_head_sha=str(followup_snapshot.get("preparedHeadSha") or ""),
+                    code_paths=verified_paths,
+                )
+            )
         audited_code_paths = None
         if verified_probe_receipt is None:
             selected_base = str(
@@ -5893,9 +6828,12 @@ class RadarLedger:
                     expected_base_sha=selected_base,
                     require_receipt_digest_match=False,
                 )
-        implementation_authorized = verified_probe_receipt is not None
+        implementation_authorized = (
+            authorization_active
+            and verified_probe_receipt is not None
+            and verified_tombstone_continuation
+        )
         task_stage = raw_task_stage if implementation_authorized else "REPRODUCTION_REQUIRED"
-        implementation_authorized = verified_probe_receipt is not None
         allowed_actions = (
             ["read_issue", "read_repo", "run_reproduction_probe", "write_structured_result"]
             if not implementation_authorized
@@ -5920,8 +6858,12 @@ class RadarLedger:
                 or publication_row["request_updated_at"],
             }
         pr_followup = None
-        if preparation_row is not None or (
-            followup_row is not None and bool(followup_row["followup_required"])
+        code_path_tombstone_receipt = None
+        code_path_tombstone_continuation_head = None
+        if (
+            preparation_row is not None
+            or tombstone_continuation_row is not None
+            or (followup_row is not None and bool(followup_row["followup_required"]))
         ):
             result_contract = {
                 "requiredWakeDigestField": "followupDigest",
@@ -5947,7 +6889,46 @@ class RadarLedger:
             if not isinstance(snapshot, dict):
                 raise LedgerError("PR follow-up preparation snapshot is invalid")
             pr_followup = dict(snapshot) | {"resultContract": result_contract}
-        return {
+        elif (
+            tombstone_continuation_row is not None
+            and implementation_authorized
+            and verified_tombstone_continuation
+        ):
+            continuation = json.loads(tombstone_continuation_row["continuation_json"])
+            snapshot = continuation.get("prFollowupSnapshot")
+            receipt = continuation.get("codePathTombstoneReceipt")
+            continuation_head = str(continuation.get("continuationHeadSha") or "")
+            continuation_result_digest = str(continuation.get("resultDigest") or "")
+            wake_digest = str(continuation.get("followupWakeDigest") or "")
+            receipt_prepared_head = (
+                str(receipt.get("preparedHeadSha") or "") if isinstance(receipt, dict) else ""
+            )
+            if (
+                not isinstance(snapshot, dict)
+                or not isinstance(receipt, dict)
+                or not re.fullmatch(r"[0-9a-f]{64}", wake_digest)
+                or snapshot.get("wakeDigest") != wake_digest
+                or receipt.get("wakeDigest") != wake_digest
+                or snapshot.get("prUrl") != receipt.get("prUrl")
+                or snapshot.get("actionDigest") != receipt.get("actionDigest")
+                or snapshot.get("taskActionDigest") != receipt.get("taskActionDigest")
+                or snapshot.get("checkedAt") != receipt.get("checkedAt")
+                or snapshot.get("preparedHeadSha") != receipt_prepared_head
+                or not re.fullmatch(r"[0-9a-f]{40}", receipt_prepared_head)
+                or not re.fullmatch(r"[0-9a-f]{40}", continuation_head)
+                or not continuation_result_digest
+            ):
+                raise LedgerError("task result tombstone continuation is invalid")
+            pr_followup = dict(snapshot) | {
+                "preparedHeadSha": receipt_prepared_head,
+                "resultContract": result_contract,
+            }
+            code_path_tombstone_receipt = receipt
+            code_path_tombstone_continuation_head = continuation_head
+            payload["resultDigest"] = continuation_result_digest
+            payload["headSha"] = continuation_head
+            payload["commitSha"] = continuation_head
+        result = {
             "key": row["key"],
             "stage": row["stage"],
             "issueUrl": row["issue_url"],
@@ -5962,13 +6943,13 @@ class RadarLedger:
             "probeRequired": payload.get("probeRequired") is True or not payload.get("probeLevel"),
             "probeLevel": raw_probe_level,
             "probeReceiptDigest": probe_receipt_digest or None,
-            "reproductionReceipt": verified_probe_receipt,
+            "reproductionReceipt": (verified_probe_receipt if implementation_authorized else None),
             "probeProfileId": payload.get("probeProfileId"),
             "defaultBranch": payload.get("defaultBranch"),
             "selectedBaseSha": payload.get("selectedBaseSha")
             or (payload.get("preTaskEvidence") or {}).get("baseSha"),
             "codePaths": list(verified_probe_receipt["codePaths"])
-            if verified_probe_receipt is not None
+            if implementation_authorized
             else audited_code_paths
             or payload.get("codePaths")
             or (payload.get("preTaskEvidence") or {}).get("codePathsPlan"),
@@ -5997,6 +6978,10 @@ class RadarLedger:
             "publicationReceipt": publication_receipt,
             "prFollowup": pr_followup,
         }
+        if code_path_tombstone_receipt is not None and implementation_authorized:
+            result["codePathTombstoneReceipt"] = code_path_tombstone_receipt
+            result["codePathTombstoneContinuationHeadSha"] = code_path_tombstone_continuation_head
+        return result
 
     def audited_probe_code_paths(
         self,
@@ -9636,6 +10621,20 @@ class RadarLedger:
                        WHERE rebound.opportunity_key=r.opportunity_key
                          AND rebound.event_type='PR_FOLLOWUP_REBIND_REQUIRED'
                          AND rebound.id>r.id
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events repair
+                       WHERE repair.opportunity_key=r.opportunity_key
+                         AND repair.event_type='PR_FOLLOWUP_RESERVATION_REPAIR_REQUIRED'
+                         AND repair.dedupe_key=r.dedupe_key
+                         AND repair.id>r.id
+                         AND NOT EXISTS (
+                           SELECT 1 FROM events repaired
+                           WHERE repaired.opportunity_key=repair.opportunity_key
+                             AND repaired.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
+                             AND repaired.dedupe_key=repair.dedupe_key
+                             AND repaired.id>repair.id
+                         )
                      ) ORDER BY r.created_at"""
             ).fetchall()
         return [
@@ -9872,21 +10871,138 @@ class RadarLedger:
         stage: str,
         task_id: str | None = None,
         thread_id: str | None = None,
+        followup_wake_digest: str | None = None,
+        code_path_tombstone_receipt: dict[str, Any] | None = None,
+        continuation_head_sha: str | None = None,
+        pr_followup_snapshot: dict[str, Any] | None = None,
     ) -> None:
+        tombstone_binding = (
+            followup_wake_digest,
+            code_path_tombstone_receipt,
+            continuation_head_sha,
+            pr_followup_snapshot,
+        )
+        if any(value is not None for value in tombstone_binding):
+            if (
+                not task_id
+                or not thread_id
+                or not re.fullmatch(r"[0-9a-f]{64}", str(followup_wake_digest or ""))
+                or not isinstance(code_path_tombstone_receipt, dict)
+                or not code_path_tombstone_receipt
+                or not isinstance(pr_followup_snapshot, dict)
+                or not pr_followup_snapshot
+                or code_path_tombstone_receipt.get("wakeDigest") != followup_wake_digest
+                or pr_followup_snapshot.get("wakeDigest") != followup_wake_digest
+                or pr_followup_snapshot.get("prUrl") != code_path_tombstone_receipt.get("prUrl")
+                or pr_followup_snapshot.get("actionDigest")
+                != code_path_tombstone_receipt.get("actionDigest")
+                or pr_followup_snapshot.get("taskActionDigest")
+                != code_path_tombstone_receipt.get("taskActionDigest")
+                or pr_followup_snapshot.get("checkedAt")
+                != code_path_tombstone_receipt.get("checkedAt")
+                or pr_followup_snapshot.get("preparedHeadSha")
+                != code_path_tombstone_receipt.get("preparedHeadSha")
+                or not re.fullmatch(r"[0-9a-f]{40}", str(continuation_head_sha or ""))
+            ):
+                raise ValueError("task result tombstone continuation is invalid")
         with self.transaction() as connection:
+            recorded_at = iso_z(datetime.now(UTC))
+            existing_result_row = connection.execute(
+                """SELECT id FROM events
+                   WHERE opportunity_key=? AND event_type='TASK_RESULT_INGESTED'
+                     AND dedupe_key=?""",
+                (key, digest),
+            ).fetchone()
             payload = {"stage": stage, "resultDigest": digest}
             if task_id:
                 payload["taskId"] = task_id
             if thread_id:
                 payload["threadId"] = thread_id
+            if followup_wake_digest is not None:
+                payload["followupWakeDigest"] = followup_wake_digest
+                payload["codePathTombstoneReceipt"] = code_path_tombstone_receipt
+                payload["continuationHeadSha"] = continuation_head_sha
             self._event(
                 connection,
                 key,
                 "TASK_RESULT_INGESTED",
                 digest,
                 payload,
-                iso_z(datetime.now(UTC)),
+                recorded_at,
             )
+            if followup_wake_digest is not None:
+                exact_intent = connection.execute(
+                    """SELECT 1 FROM intents
+                       WHERE opportunity_key=? AND intent_id=? AND thread_id=?""",
+                    (key, task_id, thread_id),
+                ).fetchone()
+                result_row = connection.execute(
+                    """SELECT id,payload_json FROM events
+                       WHERE opportunity_key=? AND event_type='TASK_RESULT_INGESTED'
+                         AND dedupe_key=?""",
+                    (key, digest),
+                ).fetchone()
+                if exact_intent is None or result_row is None:
+                    raise ValueError("task result tombstone continuation identity is invalid")
+                result_payload = json.loads(result_row["payload_json"])
+                if not isinstance(result_payload, dict):
+                    raise ValueError("task result tombstone continuation identity is invalid")
+                existing_task_id = str(result_payload.get("taskId") or "")
+                existing_thread_id = str(result_payload.get("threadId") or "")
+                if (
+                    (existing_task_id and existing_task_id != task_id)
+                    or (existing_thread_id and existing_thread_id != thread_id)
+                    or result_payload.get("resultDigest") != digest
+                ):
+                    raise ValueError("task result tombstone continuation identity is invalid")
+                continuation_payload = {
+                    "sourceResultEventId": int(result_row["id"]),
+                    "taskId": task_id,
+                    "threadId": thread_id,
+                    "stage": stage,
+                    "resultDigest": digest,
+                    "followupWakeDigest": followup_wake_digest,
+                    "codePathTombstoneReceipt": code_path_tombstone_receipt,
+                    "continuationHeadSha": continuation_head_sha,
+                    "prFollowupSnapshot": pr_followup_snapshot,
+                }
+                continuation_dedupe_key = sha256_json(continuation_payload)
+                existing_continuation_row = connection.execute(
+                    """SELECT id FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+                         AND dedupe_key=?""",
+                    (key, continuation_dedupe_key),
+                ).fetchone()
+                self._event(
+                    connection,
+                    key,
+                    "TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND",
+                    continuation_dedupe_key,
+                    continuation_payload,
+                    recorded_at,
+                )
+                if existing_result_row is None and existing_continuation_row is None:
+                    result_authority_state = {
+                        "taskId": task_id,
+                        "threadId": thread_id,
+                        "sourceResultEventId": int(result_row["id"]),
+                        "resultDigest": digest,
+                        "continuationDedupeKey": continuation_dedupe_key,
+                        "tombstoneReceiptDigest": sha256_json(code_path_tombstone_receipt),
+                    }
+                    result_authority_marker = result_authority_state | {
+                        "authorityObservedAt": recorded_at,
+                        "authorityStateDigest": sha256_json(result_authority_state),
+                    }
+                    self._event(
+                        connection,
+                        key,
+                        "TASK_RESULT_AUTHORITY_BOUND",
+                        sha256_json(result_authority_marker),
+                        result_authority_marker,
+                        recorded_at,
+                    )
 
     def published_task_result_backfill_seen(self, key: str, *, digest: str) -> bool:
         """Return whether the legacy controller recorded a published-result backfill."""

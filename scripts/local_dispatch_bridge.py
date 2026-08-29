@@ -23,7 +23,7 @@ import tomllib
 from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from time import monotonic, sleep
 from typing import Any, Callable
 
@@ -93,10 +93,12 @@ from oss_pr_radar.repo_probe import (  # noqa: E402
     PATHS_VERIFIED,
     REPRODUCED_VALIDATED,
     ProbeUnavailable,
+    attest_code_path_tombstones,
     attest_task_reproduction_result,
     rebind_probe_receipt,
     run_repo_probe,
     validate_indexable_checkout_paths,
+    verify_code_path_tombstone_receipt,
     verify_probe_receipt,
 )
 from oss_pr_radar.target_branch import (  # noqa: E402
@@ -178,7 +180,23 @@ TERMINAL_PUBLICATION_BLOCK_REASONS = {
     "ACTIVE_OR_CONDITIONAL_CLAIM",
     "STRONG_EXISTING_PR",
 }
-TASK_RESULT_EVIDENCE_POLICY_REVISION = "managed-reproduction-scope-v1"
+TASK_RESULT_EVIDENCE_POLICY_REVISION = "managed-reproduction-scope-v2"
+PR_FOLLOWUP_ISOLATABLE_PATH_ERRORS = frozenset(
+    {
+        "CODE_PATH_UNSAFE",
+        "CODE_PATH_MISSING",
+        "CODE_PATH_SYMLINK",
+        "CODE_PATH_PARENT_UNSAFE",
+        "CODE_PATH_FILE_UNSAFE",
+        "CODE_PATH_OUTSIDE_SPARSE_CHECKOUT",
+        "CODE_PATH_NOT_INDEXABLE",
+        "CODE_PATH_TOMBSTONE_WORKTREE_UNSAFE",
+        "CODE_PATH_TOMBSTONE_PATH_UNAVAILABLE",
+        "CODE_PATH_TOMBSTONE_SYMLINK",
+        "CODE_PATH_TOMBSTONE_PARENT_NOT_DIRECTORY",
+        "CODE_PATH_TOMBSTONE_PRESENT",
+    }
+)
 
 
 class TaskResultEvidenceBlocked(RuntimeError):
@@ -187,6 +205,21 @@ class TaskResultEvidenceBlocked(RuntimeError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+def _isolatable_pr_followup_path_error(error: BaseException) -> str | None:
+    """Return one repository-local path failure without hiding system failures."""
+
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        message = str(current)
+        for reason in PR_FOLLOWUP_ISOLATABLE_PATH_ERRORS:
+            if re.search(rf"(?<![A-Z0-9_]){re.escape(reason)}(?![A-Z0-9_])", message):
+                return reason
+        current = current.__cause__ or current.__context__
+    return None
 
 
 def _task_result_evidence_block_key(
@@ -1687,6 +1720,91 @@ def _prepare_indexable_worktree_paths(worktree: Path, paths: list[str]) -> list[
     return normalized
 
 
+def _git_tree_code_path_partition(
+    worktree: Path,
+    revision: str,
+    paths: list[str],
+    *,
+    require_checkout_head: bool = False,
+) -> tuple[list[str], list[str], list[str]]:
+    """Partition exact repository paths by presence in one immutable Git tree."""
+
+    normalized = _validated_changed_files(paths)
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise RuntimeError("code path tree revision is invalid")
+    resolved = command(["git", "rev-parse", f"{revision}^{{commit}}"], cwd=worktree)
+    if resolved != revision:
+        raise RuntimeError("code path tree revision is unavailable")
+    if require_checkout_head and command(["git", "rev-parse", "HEAD"], cwd=worktree) != revision:
+        raise RuntimeError("prepared PR follow-up checkout head changed")
+    completed = subprocess.run(
+        [
+            "git",
+            "--literal-pathspecs",
+            "ls-tree",
+            "-z",
+            "--full-tree",
+            revision,
+            "--",
+            *normalized,
+        ],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        timeout=60,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("unable to inspect prepared PR follow-up code path tree")
+    allowed = set(normalized)
+    present: set[str] = set()
+    for record in completed.stdout.split(b"\0"):
+        if not record:
+            continue
+        try:
+            _metadata, raw_path = record.split(b"\t", 1)
+        except ValueError as exc:
+            raise RuntimeError("prepared PR follow-up tree response is invalid") from exc
+        path = os.fsdecode(raw_path)
+        if path not in allowed:
+            raise RuntimeError("prepared PR follow-up tree returned an unexpected path")
+        present.add(path)
+    return normalized, sorted(present), sorted(allowed - present)
+
+
+def _require_absent_tombstone_worktree_paths(
+    worktree: Path,
+    paths: list[str],
+) -> list[str]:
+    """Require each tombstone to be absent without traversing any symlink."""
+
+    normalized = _validated_changed_files(paths)
+    try:
+        root_stat = os.lstat(worktree)
+    except OSError as exc:
+        raise RuntimeError("CODE_PATH_TOMBSTONE_WORKTREE_UNAVAILABLE") from exc
+    if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+        raise RuntimeError("CODE_PATH_TOMBSTONE_WORKTREE_UNSAFE")
+    for raw_path in normalized:
+        current = worktree
+        parts = PurePosixPath(raw_path).parts
+        for index, part in enumerate(parts):
+            current = current / part
+            try:
+                path_stat = os.lstat(current)
+            except FileNotFoundError:
+                break
+            except OSError as exc:
+                raise RuntimeError("CODE_PATH_TOMBSTONE_PATH_UNAVAILABLE") from exc
+            if stat.S_ISLNK(path_stat.st_mode):
+                raise RuntimeError("CODE_PATH_TOMBSTONE_SYMLINK")
+            if index < len(parts) - 1:
+                if not stat.S_ISDIR(path_stat.st_mode):
+                    raise RuntimeError("CODE_PATH_TOMBSTONE_PARENT_NOT_DIRECTORY")
+                continue
+            raise RuntimeError("CODE_PATH_TOMBSTONE_PRESENT")
+    return normalized
+
+
 def prepare_managed_worktree(
     source: Path,
     *,
@@ -1947,11 +2065,57 @@ def _task_context_digest_payload(
         "threadId": context.get("threadId"),
         "worktreePath": context.get("worktreePath"),
     }
+    if "codePathTombstoneReceipt" in context:
+        payload["codePathTombstoneReceipt"] = context.get("codePathTombstoneReceipt")
     if include_target_base:
         payload["targetBase"] = context.get("targetBase")
     if include_prepared_head:
         payload["prFollowupPreparedHeadSha"] = prepared_head
     return payload
+
+
+def _worktree_path_fingerprint(path: str | Path) -> str:
+    return hashlib.sha256(str(Path(path).resolve()).encode("utf-8")).hexdigest()
+
+
+def _verified_context_code_path_tombstone_receipt(
+    context: dict[str, Any],
+) -> dict[str, Any] | None:
+    receipt = context.get("codePathTombstoneReceipt")
+    if receipt is None:
+        return None
+    reproduction_receipt = context.get("reproductionReceipt")
+    followup = context.get("prFollowup")
+    code_paths = context.get("codePaths")
+    if (
+        not isinstance(receipt, dict)
+        or not isinstance(reproduction_receipt, dict)
+        or not isinstance(followup, dict)
+        or not isinstance(code_paths, list)
+    ):
+        raise RuntimeError("code path tombstone context is incomplete")
+    valid = verify_code_path_tombstone_receipt(
+        receipt,
+        source_receipt_digest=str(reproduction_receipt.get("receiptDigest") or ""),
+        base_sha=str(reproduction_receipt.get("baseSha") or ""),
+        key=str(context.get("key") or ""),
+        issue_url=str(context.get("issueUrl") or ""),
+        intent_id=str(context.get("intentId") or ""),
+        thread_id=str(context.get("threadId") or ""),
+        worktree_path_fingerprint=_worktree_path_fingerprint(
+            str(context.get("worktreePath") or "")
+        ),
+        pr_url=str(followup.get("prUrl") or ""),
+        wake_digest=str(followup.get("wakeDigest") or ""),
+        action_digest=str(followup.get("actionDigest") or ""),
+        task_action_digest=str(followup.get("taskActionDigest") or ""),
+        checked_at=str(followup.get("checkedAt") or ""),
+        prepared_head_sha=str(followup.get("preparedHeadSha") or ""),
+        code_paths=[str(path) for path in code_paths],
+    )
+    if not valid:
+        raise RuntimeError("code path tombstone receipt is invalid")
+    return receipt
 
 
 def _legacy_task_context_digest_allowed(context: dict[str, Any]) -> bool:
@@ -2268,6 +2432,7 @@ def _verified_shared_task_context_from_raw(
         if isinstance(followup, dict) and followup.get("preparedHeadSha")
         else None
     )
+    _verified_context_code_path_tombstone_receipt(context)
     if context.get("contextDigest") not in _task_context_digest_candidates(context, prepared_head):
         raise RuntimeError("shared task context digest mismatch")
 
@@ -2316,7 +2481,7 @@ def _verified_shared_task_context_from_raw(
 
 def _recoverable_published_result(
     context: dict[str, Any], *, store: RadarLedger | None = None
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     """Identify a clean result already represented by a published task context."""
 
     if str(context.get("stage") or "") not in PUBLISHED_TASK_STAGES:
@@ -2410,11 +2575,23 @@ def _recoverable_published_result(
         "taskId": str(context.get("intentId") or context["threadId"]),
         "threadId": str(context["threadId"]),
     }
+    tombstone_continuation = _recovered_task_result_tombstone_continuation_kwargs(
+        context,
+        value,
+        worktree=worktree,
+        continuation_head=commit_sha,
+    )
+    if tombstone_continuation:
+        recovered["tombstoneContinuation"] = tombstone_continuation
     if stage == "FIX_READY":
         return recovered
     followup = context.get("prFollowup")
     wake_digest = str(followup.get("wakeDigest") or "") if isinstance(followup, dict) else ""
-    if stage == "PR_OPEN" and wake_digest and value.get("followupDigest") == wake_digest:
+    if (
+        stage in PUBLISHED_TASK_STAGES
+        and wake_digest
+        and value.get("followupDigest") == wake_digest
+    ):
         return recovered | {"wakeDigest": wake_digest}
     return None
 
@@ -2491,25 +2668,34 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
     for path in paths:
         try:
             context, source_updated_at = _verified_shared_task_context(path)
-            result_receipt = _recoverable_published_result(context, store=store)
             restored_context = store.restore_task_context(
                 context, source_updated_at=source_updated_at
             )
-            _clear_exact_published_validation_auth_quarantines(
-                store,
-                path=path,
-                context=context,
+            superseded_mirror = bool(
+                restored_context.get("supersededContextMirror")
+                or restored_context.get("supersededActiveMirror")
             )
+            result_receipt = None
+            if not superseded_mirror:
+                result_receipt = _recoverable_published_result(context, store=store)
+                _clear_exact_published_validation_auth_quarantines(
+                    store,
+                    path=path,
+                    context=context,
+                )
             receipt_restored = False
-            if result_receipt and not store.task_result_digest_seen(
-                result_receipt["key"], result_receipt["digest"]
-            ):
+            result_seen = bool(
+                result_receipt
+                and store.task_result_digest_seen(result_receipt["key"], result_receipt["digest"])
+            )
+            if result_receipt and (not result_seen or result_receipt.get("tombstoneContinuation")):
                 store.record_task_result_ingested(
                     result_receipt["key"],
                     digest=result_receipt["digest"],
                     stage=result_receipt["stage"],
                     task_id=result_receipt.get("taskId"),
                     thread_id=result_receipt.get("threadId"),
+                    **result_receipt.get("tombstoneContinuation", {}),
                 )
                 if result_receipt.get("wakeDigest"):
                     store.record_followup_result(
@@ -2518,8 +2704,9 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                         result_digest=result_receipt["digest"],
                         stage=result_receipt["stage"],
                     )
-                receipt_restored = True
-                result_receipts_restored += 1
+                if not result_seen:
+                    receipt_restored = True
+                    result_receipts_restored += 1
             restored.append(restored_context | {"resultReceiptRestored": receipt_restored})
         except TaskContextWorktreeUnavailable as exc:
             context = exc.context
@@ -5086,6 +5273,11 @@ def write_task_context(
     project_root = GITHUB_ROOT.resolve() if managed else cwd.resolve()
     raw_task_stage = str(context.get("taskStage") or "REPRODUCTION_REQUIRED")
     raw_probe_level = str(context.get("probeLevel") or "UNVERIFIED")
+    tombstone_continuation_bound = context.get("codePathTombstoneContinuationHeadSha") is not None
+    context_authorization_active = (
+        context.get("intentStatus") in {"DISPATCHED", "COMPLETED"}
+        and context.get("stage") != "AUDIT_NO_GO"
+    )
     managed_ledger = ManagedLedger(store.path, ensure_schema=True)
     managed_task = managed_ledger.read_task(str(context.get("intentId") or ""))
     managed_provenance: dict[str, Any] = {}
@@ -5099,7 +5291,11 @@ def write_task_context(
     if issue_match is None:
         raise RuntimeError("issue URL is invalid")
     repo_identity = issue_match.group(1)
-    if managed_task and managed_task.get("state") in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}:
+    if (
+        context_authorization_active
+        and managed_task
+        and managed_task.get("state") in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}
+    ):
         managed_receipt = managed_provenance.get("probeReceipt")
         if isinstance(managed_receipt, dict):
             verified_receipt = managed_ledger.implementation_authorization_receipt(
@@ -5113,16 +5309,46 @@ def write_task_context(
             if verified_receipt is not None:
                 context["selectedBaseSha"] = verified_receipt["baseSha"]
                 context["codePaths"] = verified_receipt["codePaths"]
-                context["headSha"] = verified_receipt["headSha"]
-                context["commitSha"] = verified_receipt["commitSha"]
-                context["resultDigest"] = verified_receipt["resultDigest"]
-                current_published = managed_ledger.current_published_result_for_task(
-                    str(context.get("intentId") or "")
-                )
-                if current_published is not None:
-                    context["headSha"] = current_published["headSha"]
-                    context["commitSha"] = current_published["commitSha"]
-                    context["resultDigest"] = current_published["resultDigest"]
+                if not tombstone_continuation_bound:
+                    context["headSha"] = verified_receipt["headSha"]
+                    context["commitSha"] = verified_receipt["commitSha"]
+                    context["resultDigest"] = verified_receipt["resultDigest"]
+                    current_published = managed_ledger.current_published_result_for_task(
+                        str(context.get("intentId") or "")
+                    )
+                    if current_published is not None:
+                        context["headSha"] = current_published["headSha"]
+                        context["commitSha"] = current_published["commitSha"]
+                        context["resultDigest"] = current_published["resultDigest"]
+    if (
+        context_authorization_active
+        and verified_receipt is None
+        and context.get("codePathTombstoneReceipt") is not None
+    ):
+        recovered_receipt = context.get("reproductionReceipt")
+        recovered_paths = [
+            str(item) for item in (context.get("codePaths") or []) if str(item).strip()
+        ]
+        if isinstance(recovered_receipt, dict) and verify_probe_receipt(
+            recovered_receipt,
+            repo=repo_identity,
+            base_sha=str(context.get("selectedBaseSha") or ""),
+            code_paths=recovered_paths,
+            required_level=REPRODUCED_VALIDATED,
+            issue_url=issue_url,
+            task_id=str(context.get("intentId") or ""),
+            thread_id=(thread_id if recovered_receipt.get("threadFingerprint") else None),
+            head_sha=str(recovered_receipt.get("headSha") or ""),
+            commit_sha=str(recovered_receipt.get("commitSha") or ""),
+            result_digest=str(recovered_receipt.get("resultDigest") or ""),
+            enforce_freshness=False,
+        ):
+            _verified_context_code_path_tombstone_receipt(context)
+            verified_receipt = recovered_receipt
+    if not context_authorization_active:
+        context.pop("reproductionReceipt", None)
+        context.pop("codePathTombstoneReceipt", None)
+        context.pop("codePathTombstoneContinuationHeadSha", None)
     if verified_receipt is not None:
         context["reproductionReceipt"] = verified_receipt
         raw_task_stage = "IMPLEMENTATION_READY"
@@ -5132,6 +5358,27 @@ def write_task_context(
         raw_probe_level = "UNVERIFIED"
     task_stage = raw_task_stage
     reproduction_only = task_stage == "REPRODUCTION_REQUIRED"
+    tombstone_continuation_head = context.pop("codePathTombstoneContinuationHeadSha", None)
+    if "codePathTombstoneReceipt" in context:
+        if (
+            verified_receipt is None
+            or not isinstance(followup, dict)
+            or not re.fullmatch(r"[0-9a-f]{40}", str(tombstone_continuation_head or ""))
+        ):
+            raise RuntimeError("task result tombstone continuation is incomplete")
+        _verified_context_code_path_tombstone_receipt(context)
+        current_head = command(["git", "rev-parse", "HEAD"], cwd=cwd)
+        if current_head != tombstone_continuation_head:
+            raise RuntimeError("task result tombstone continuation head changed")
+        _enforce_code_path_tombstones(
+            context=context,
+            worktree=cwd,
+            final_commit=current_head,
+        )
+        effective_prepared_head = current_head
+        context["prFollowup"] = dict(followup) | {
+            "preparedHeadSha": effective_prepared_head,
+        }
     declared_code_paths = [
         str(path) for path in (context.get("codePaths") or []) if str(path).strip()
     ]
@@ -5140,7 +5387,49 @@ def write_task_context(
     # Implementation contexts are backed by a verified receipt, so their paths
     # are concrete and must already be writable through the Git index.
     if declared_code_paths and not reproduction_only:
-        context["codePaths"] = _prepare_indexable_worktree_paths(cwd, declared_code_paths)
+        current_followup = context.get("prFollowup")
+        if (
+            verified_receipt is not None
+            and isinstance(current_followup, dict)
+            and effective_prepared_head is not None
+            and command(["git", "rev-parse", "HEAD"], cwd=cwd) == effective_prepared_head
+        ):
+            _normalized, present_paths, tombstone_paths = _git_tree_code_path_partition(
+                cwd,
+                effective_prepared_head,
+                declared_code_paths,
+                require_checkout_head=True,
+            )
+            if present_paths:
+                _prepare_indexable_worktree_paths(cwd, present_paths)
+            if tombstone_paths:
+                _require_absent_tombstone_worktree_paths(cwd, tombstone_paths)
+                try:
+                    context["codePathTombstoneReceipt"] = attest_code_path_tombstones(
+                        source_receipt_digest=str(verified_receipt.get("receiptDigest") or ""),
+                        base_sha=str(verified_receipt.get("baseSha") or ""),
+                        key=str(context.get("key") or ""),
+                        issue_url=issue_url,
+                        intent_id=str(context.get("intentId") or ""),
+                        thread_id=thread_id,
+                        worktree_path_fingerprint=_worktree_path_fingerprint(cwd),
+                        pr_url=str(current_followup.get("prUrl") or ""),
+                        wake_digest=str(current_followup.get("wakeDigest") or ""),
+                        action_digest=str(current_followup.get("actionDigest") or ""),
+                        task_action_digest=str(current_followup.get("taskActionDigest") or ""),
+                        checked_at=str(current_followup.get("checkedAt") or ""),
+                        prepared_head_sha=effective_prepared_head,
+                        code_paths=declared_code_paths,
+                        present_paths=present_paths,
+                        tombstone_paths=tombstone_paths,
+                    )
+                except ProbeUnavailable as exc:
+                    raise RuntimeError(f"code path tombstone attestation failed: {exc}") from exc
+                _verified_context_code_path_tombstone_receipt(context)
+            else:
+                context.pop("codePathTombstoneReceipt", None)
+        else:
+            context["codePaths"] = _prepare_indexable_worktree_paths(cwd, declared_code_paths)
     allowed_actions = (
         ["read_issue", "read_repo", "run_reproduction_probe", "write_structured_result"]
         if reproduction_only
@@ -5186,6 +5475,30 @@ def write_task_context(
         if bootstrap_path is not None:
             for fd in reversed(context_handles):
                 os.close(fd)
+    tombstone_receipt = context.get("codePathTombstoneReceipt")
+    if isinstance(tombstone_receipt, dict):
+        managed_ledger.record_event(
+            event_type="CODE_PATH_TOMBSTONE_ATTESTED",
+            idempotency_key=(f"code-path-tombstone:{tombstone_receipt.get('receiptDigest') or ''}"),
+            opportunity_key=str(context.get("key") or ""),
+            task_id=str(context.get("intentId") or ""),
+            state=task_stage,
+            source="task-context",
+            provenance={
+                "receiptDigest": tombstone_receipt.get("receiptDigest"),
+                "sourceReceiptDigest": tombstone_receipt.get("sourceReceiptDigest"),
+                "preparedHeadSha": tombstone_receipt.get("preparedHeadSha"),
+                "wakeDigest": tombstone_receipt.get("wakeDigest"),
+                "worktreePathFingerprint": tombstone_receipt.get("worktreePathFingerprint"),
+            },
+            observed_at=str(tombstone_receipt.get("checkedAt") or ""),
+            payload={
+                "receiptDigest": tombstone_receipt.get("receiptDigest"),
+                "codePaths": tombstone_receipt.get("codePaths") or [],
+                "presentPaths": tombstone_receipt.get("presentPaths") or [],
+                "tombstonePaths": tombstone_receipt.get("tombstonePaths") or [],
+            },
+        )
     prior_result_digest = prior_context.get("resultDigest")
     repaired_same_result = (
         not reproduction_only
@@ -10412,6 +10725,140 @@ def _validated_changed_files(value: Any) -> list[str]:
     return sorted(normalized)
 
 
+def _enforce_code_path_tombstones(
+    *,
+    context: dict[str, Any],
+    worktree: Path,
+    touched_paths: list[str] | None = None,
+    final_commit: str | None = None,
+) -> dict[str, Any] | None:
+    """Verify a follow-up tombstone and prevent any final path resurrection."""
+
+    try:
+        receipt = _verified_context_code_path_tombstone_receipt(context)
+    except RuntimeError as exc:
+        raise TaskResultEvidenceBlocked("CODE_PATH_TOMBSTONE_RECEIPT_INVALID") from exc
+    if receipt is None:
+        return None
+    tombstones = [str(path) for path in receipt.get("tombstonePaths") or []]
+    full_paths = [str(path) for path in receipt.get("codePaths") or []]
+    prepared_head = str(receipt.get("preparedHeadSha") or "")
+    try:
+        _require_absent_tombstone_worktree_paths(worktree, tombstones)
+    except RuntimeError as exc:
+        raise TaskResultEvidenceBlocked(str(exc)) from exc
+    try:
+        _normalized, prepared_present, prepared_missing = _git_tree_code_path_partition(
+            worktree,
+            prepared_head,
+            full_paths,
+        )
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise TaskResultEvidenceBlocked("CODE_PATH_TOMBSTONE_TREE_UNAVAILABLE") from exc
+    if (
+        prepared_present != list(receipt.get("presentPaths") or [])
+        or prepared_missing != tombstones
+    ):
+        raise TaskResultEvidenceBlocked("CODE_PATH_TOMBSTONE_TREE_MISMATCH")
+
+    touched = _validated_changed_files(touched_paths) if touched_paths else []
+    if set(touched) & set(tombstones):
+        raise TaskResultEvidenceBlocked("CODE_PATH_TOMBSTONE_TOUCHED")
+    if final_commit is not None:
+        try:
+            _normalized, recreated, _missing = _git_tree_code_path_partition(
+                worktree,
+                final_commit,
+                tombstones,
+            )
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            raise TaskResultEvidenceBlocked("CODE_PATH_TOMBSTONE_TREE_UNAVAILABLE") from exc
+        if recreated:
+            raise TaskResultEvidenceBlocked("CODE_PATH_TOMBSTONE_RECREATED")
+    return receipt
+
+
+def _context_tombstone_continuation_kwargs(
+    context: dict[str, Any],
+    *,
+    continuation_head: str,
+    require_receipt_at_head: bool,
+) -> dict[str, Any]:
+    context_receipt = context.get("codePathTombstoneReceipt")
+    if context_receipt is None:
+        return {}
+    try:
+        verified_receipt = _verified_context_code_path_tombstone_receipt(context)
+    except RuntimeError as exc:
+        raise TaskResultEvidenceBlocked("CODE_PATH_TOMBSTONE_CONTINUATION_INVALID") from exc
+    followup = context.get("prFollowup")
+    wake_digest = str(followup.get("wakeDigest") or "") if isinstance(followup, dict) else ""
+    followup_snapshot = dict(followup) if isinstance(followup, dict) else {}
+    followup_snapshot.pop("resultContract", None)
+    if (
+        verified_receipt is None
+        or not re.fullmatch(r"[0-9a-f]{64}", wake_digest)
+        or verified_receipt.get("wakeDigest") != wake_digest
+        or followup_snapshot.get("preparedHeadSha") != verified_receipt.get("preparedHeadSha")
+        or not re.fullmatch(r"[0-9a-f]{40}", continuation_head)
+        or (
+            require_receipt_at_head and verified_receipt.get("preparedHeadSha") != continuation_head
+        )
+    ):
+        raise TaskResultEvidenceBlocked("CODE_PATH_TOMBSTONE_CONTINUATION_INVALID")
+    return {
+        "followup_wake_digest": wake_digest,
+        "code_path_tombstone_receipt": verified_receipt,
+        "continuation_head_sha": continuation_head,
+        "pr_followup_snapshot": followup_snapshot,
+    }
+
+
+def _task_result_tombstone_continuation_kwargs(
+    context: dict[str, Any], value: dict[str, Any]
+) -> dict[str, Any]:
+    """Bind a verified tombstone to the controller-finalized result commit."""
+
+    continuation = _context_tombstone_continuation_kwargs(
+        context,
+        continuation_head=str(value.get("commitSha") or ""),
+        require_receipt_at_head=False,
+    )
+    if continuation and value.get("codePathTombstoneReceipt") != continuation.get(
+        "code_path_tombstone_receipt"
+    ):
+        raise TaskResultEvidenceBlocked("CODE_PATH_TOMBSTONE_CONTINUATION_INVALID")
+    return continuation
+
+
+def _recovered_task_result_tombstone_continuation_kwargs(
+    context: dict[str, Any],
+    value: dict[str, Any],
+    *,
+    worktree: Path,
+    continuation_head: str,
+) -> dict[str, Any]:
+    """Recover a tombstone binding from a verified shared or refreshed context."""
+
+    if context.get("codePathTombstoneReceipt") is None:
+        return {}
+    _enforce_code_path_tombstones(
+        context=context,
+        worktree=worktree,
+        final_commit=continuation_head,
+    )
+    if (
+        value.get("codePathTombstoneReceipt") == context.get("codePathTombstoneReceipt")
+        and value.get("commitSha") == continuation_head
+    ):
+        return _task_result_tombstone_continuation_kwargs(context, value)
+    return _context_tombstone_continuation_kwargs(
+        context,
+        continuation_head=continuation_head,
+        require_receipt_at_head=True,
+    )
+
+
 def _optional_command(args: list[str], *, cwd: Path) -> str | None:
     completed = subprocess.run(
         args,
@@ -10491,6 +10938,11 @@ def _finalize_controller_merge(
             raise RuntimeError("controller merge resolution receipts do not match")
     else:
         changed_files = _validated_changed_files(value.get("changedFiles"))
+    _enforce_code_path_tombstones(
+        context=context,
+        worktree=worktree,
+        touched_paths=changed_files,
+    )
     branch = str(value.get("branch") or "").strip()
     commit_message = str(value.get("commitMessage") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{2,119}", branch):
@@ -10594,8 +11046,16 @@ def _finalize_controller_merge(
     if command(["git", "status", "--porcelain"], cwd=worktree):
         raise RuntimeError("controller merge did not leave a clean worktree")
 
+    final_commit = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    _enforce_code_path_tombstones(
+        context=context,
+        worktree=worktree,
+        touched_paths=changed_files,
+        final_commit=final_commit,
+    )
+
     finalized = dict(value)
-    finalized["commitSha"] = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    finalized["commitSha"] = final_commit
     finalized["branch"] = command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
     finalized["controllerCommitChangedFiles"] = changed_files
     finalized["mergeResolutionFiles"] = changed_files
@@ -10854,6 +11314,12 @@ def _finalize_controller_commit(
                 worktree, commit_sha
             ) != _stable_patch_id(worktree, head_sha):
                 raise RuntimeError("controller commit receipt does not match HEAD")
+        _enforce_code_path_tombstones(
+            context=context,
+            worktree=worktree,
+            touched_paths=actual_commit_files,
+            final_commit=head_sha,
+        )
         is_validation_continuation = context.get("stage") == "VALIDATION_PENDING" or isinstance(
             context.get("prFollowup"), dict
         )
@@ -10937,6 +11403,11 @@ def _finalize_controller_commit(
         if not re.fullmatch(r"[0-9a-f]{40}", expected_parent):
             raise RuntimeError("controller commit lacks a valid PR follow-up parent")
     if actual:
+        _enforce_code_path_tombstones(
+            context=context,
+            worktree=worktree,
+            touched_paths=actual,
+        )
         commit_changed_files = changed_files
         if actual != changed_files:
             if not is_validation_continuation:
@@ -10976,6 +11447,11 @@ def _finalize_controller_commit(
             ).splitlines()
             if line
         )
+        _enforce_code_path_tombstones(
+            context=context,
+            worktree=worktree,
+            touched_paths=committed,
+        )
         if committed != changed_files:
             if context.get("stage") == "VALIDATION_PENDING" or isinstance(followup, dict):
                 cumulative = _validation_publication_changed_files(
@@ -11002,8 +11478,16 @@ def _finalize_controller_commit(
     if committed != commit_changed_files:
         raise RuntimeError("controller commit does not match changedFiles")
 
+    final_commit = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    _enforce_code_path_tombstones(
+        context=context,
+        worktree=worktree,
+        touched_paths=commit_changed_files,
+        final_commit=final_commit,
+    )
+
     finalized = dict(value)
-    finalized["commitSha"] = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    finalized["commitSha"] = final_commit
     finalized["branch"] = command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
     finalized["controllerCommitChangedFiles"] = commit_changed_files
     publication_changed_files = _validation_publication_changed_files(
@@ -13398,6 +13882,7 @@ def _validation_followup_result_requires_receipt_rebind(
                 "publication",
                 "targetBase",
                 "controllerPolicyVerification",
+                "codePathTombstoneReceipt",
             )
         )
     ):
@@ -13712,6 +14197,14 @@ def _bind_final_reproduction_receipt(
             reported_code_paths = _validated_changed_files(reported_code_paths)
         except RuntimeError as exc:
             raise TaskResultEvidenceBlocked("REPORTED_SCOPE_PATHS_INVALID") from exc
+    controller_touched: set[str] = set()
+    for field in ("controllerCommitChangedFiles", "mergeResolutionFiles"):
+        if value.get(field):
+            try:
+                field_paths = _validated_changed_files(value.get(field))
+            except RuntimeError as exc:
+                raise TaskResultEvidenceBlocked("CONTROLLER_CHANGED_FILES_INVALID") from exc
+            controller_touched.update(field_paths)
     task_id = str(
         value.get("taskId")
         or value.get("intentId")
@@ -13737,6 +14230,12 @@ def _bind_final_reproduction_receipt(
         ) != durable_receipt.get("receiptDigest"):
             raise TaskResultEvidenceBlocked("DURABLE_REPRODUCTION_RECEIPT_CONTEXT_MISMATCH")
     authorization_receipt = durable_receipt or context_receipt
+    tombstone_receipt = _enforce_code_path_tombstones(
+        context=context,
+        worktree=result_access.worktree,
+        touched_paths=sorted(controller_touched),
+        final_commit=commit_sha,
+    )
     authorized_code_paths = [
         str(path)
         for path in (
@@ -13799,6 +14298,8 @@ def _bind_final_reproduction_receipt(
                 raise TaskResultEvidenceBlocked("REPORTED_SCOPE_CHANGED_FILES_INVALID") from exc
             if not added_scope.issubset(verified_changed_files):
                 raise TaskResultEvidenceBlocked("REPORTED_SCOPE_NOT_IN_COMMITTED_CHANGES")
+    if not controller_touched.issubset(set(reported_code_paths)):
+        raise TaskResultEvidenceBlocked("CONTROLLER_CHANGED_FILES_OUTSIDE_REPORTED_SCOPE")
     normalized = dict(value)
     normalized.update(
         {
@@ -13824,6 +14325,10 @@ def _bind_final_reproduction_receipt(
         }
     else:
         normalized.pop("controllerCodePathScope", None)
+    if tombstone_receipt is not None:
+        normalized["codePathTombstoneReceipt"] = tombstone_receipt
+    else:
+        normalized.pop("codePathTombstoneReceipt", None)
     result_digest = _unsigned_final_task_result_digest(normalized)
     current_receipt = normalized.get("reproductionReceipt") or normalized.get("probeReceipt")
     if isinstance(current_receipt, dict) and verify_probe_receipt(
@@ -14130,6 +14635,7 @@ def _backfill_authoritative_fix_ready_result(
     published_pr: dict[str, Any],
     restored_stage: str,
     controller_review: dict[str, Any] | None,
+    context: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Bind the exact submit-ready file to the PR that it already published.
 
@@ -14245,6 +14751,12 @@ def _backfill_authoritative_fix_ready_result(
         stage=restored_stage,
         task_id=task_id,
         thread_id=str(candidate["threadId"]),
+        **_recovered_task_result_tombstone_continuation_kwargs(
+            context,
+            value,
+            worktree=Path(str(candidate["worktreePath"])),
+            continuation_head=head_sha,
+        ),
     )
     return {"resultDigest": result_digest, "recorded": recorded}
 
@@ -14390,6 +14902,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     published_pr=published_pr,
                     restored_stage=restored_stage,
                     controller_review=_controller_review_result(args, value),
+                    context=refreshed_context,
                 )
                 managed_ledger.record_event(
                     event_type="MANAGED_PUBLISHED_PR_AUTHORITATIVE",
@@ -14595,6 +15108,23 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and not initial_review_recoverable
                 and not published_managed_backfill_required
             ):
+                existing_commit = str(value.get("commitSha") or "")
+                if context.get("codePathTombstoneReceipt") is not None and re.fullmatch(
+                    r"[0-9a-f]{40}", existing_commit
+                ):
+                    store.record_task_result_ingested(
+                        candidate["key"],
+                        digest=initial_digest,
+                        stage=str(value.get("stage") or candidate["stage"]),
+                        task_id=str(candidate.get("intentId") or candidate["threadId"]),
+                        thread_id=str(candidate["threadId"]),
+                        **_recovered_task_result_tombstone_continuation_kwargs(
+                            context,
+                            value,
+                            worktree=result_access.worktree,
+                            continuation_head=existing_commit,
+                        ),
+                    )
                 seen_followup = context.get("prFollowup")
                 seen_wake_digest = (
                     str(seen_followup.get("wakeDigest") or "")
@@ -15142,6 +15672,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         stage="VALIDATION_PENDING",
                         task_id=str(candidate.get("intentId") or candidate["threadId"]),
                         thread_id=str(candidate["threadId"]),
+                        **_task_result_tombstone_continuation_kwargs(context, value),
                     )
                     ingested.append(
                         {
@@ -15234,6 +15765,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     stage="FIX_READY",
                     task_id=str(candidate.get("intentId") or candidate["threadId"]),
                     thread_id=str(candidate["threadId"]),
+                    **_task_result_tombstone_continuation_kwargs(context, value),
                 )
                 if current_wake_digest:
                     store.record_followup_result(
@@ -15269,6 +15801,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     stage=stage,
                     task_id=str(candidate.get("intentId") or candidate["threadId"]),
                     thread_id=str(candidate["threadId"]),
+                    **_task_result_tombstone_continuation_kwargs(context, value),
                 )
                 if current_wake_digest:
                     store.record_followup_result(
@@ -17229,6 +17762,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
 
     pr_state = pr_followup_list(argparse.Namespace(ledger=args.ledger))
     deferred_followups: list[dict[str, Any]] = []
+    isolated_followups: list[dict[str, Any]] = []
     restored_followup_threads: set[str] = set()
     if pr_state.get("restoreRequired"):
         restore_candidate = pr_state["restoreRequired"][0]
@@ -17245,13 +17779,25 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             restore_failure = restore_target(candidate)
             if restore_failure:
                 return restore_failure
-        reserved = pr_followup_reserve(
-            argparse.Namespace(
-                ledger=args.ledger,
-                thread_id=candidate["threadId"],
-                wake_digest=candidate["wakeDigest"],
+        try:
+            reserved = pr_followup_reserve(
+                argparse.Namespace(
+                    ledger=args.ledger,
+                    thread_id=candidate["threadId"],
+                    wake_digest=candidate["wakeDigest"],
+                )
             )
-        )
+        except RuntimeError as exc:
+            path_error = _isolatable_pr_followup_path_error(exc)
+            if path_error is None:
+                raise
+            isolated_followups.append(
+                {
+                    "key": candidate.get("key"),
+                    "reason": path_error,
+                }
+            )
+            continue
         if reserved.get("deferred"):
             deferred_followups.append(
                 {
@@ -17274,6 +17820,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "threadId": candidate.get("threadId"),
             "delivery": delivered,
             "deferredFollowups": deferred_followups,
+            "isolatedFollowups": isolated_followups,
             "restored": restored_items,
             "rearmed": rearmed,
             "recoveryRetryExhausted": recovery_exhausted,
@@ -17421,8 +17968,10 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                     "reason": "higher_priority_followup_refresh_required",
                 }
                 for item in deferred_followups
-            ],
+            ]
+            + isolated_followups,
             "deferredFollowups": deferred_followups,
+            "isolatedFollowups": isolated_followups,
             "restored": restored_items,
             "rearmed": rearmed,
             "recoveryRetryExhausted": recovery_exhausted,
@@ -17430,7 +17979,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
 
     terminalized: list[dict[str, Any]] = []
     scanner_rechecks: list[dict[str, Any]] = []
-    held: list[dict[str, Any]] = []
+    held: list[dict[str, Any]] = list(isolated_followups)
     owner = str(getattr(args, "owner", None) or "local-event-drain")
     for intent in list_pending(args.ledger).get("pending") or []:
         claim = claim_intent(
@@ -17514,6 +18063,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             "scannerRechecks": scanner_rechecks,
             "held": held,
             "deferredFollowups": deferred_followups,
+            "isolatedFollowups": isolated_followups,
             "restored": restored_items,
             "rearmed": rearmed,
             "recoveryRetryExhausted": recovery_exhausted,
@@ -17526,6 +18076,7 @@ def _drain_once_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         "scannerRechecks": scanner_rechecks,
         "held": held,
         "deferredFollowups": deferred_followups,
+        "isolatedFollowups": isolated_followups,
         "restored": restored_items,
         "rearmed": rearmed,
         "recoveryRetryExhausted": recovery_exhausted,

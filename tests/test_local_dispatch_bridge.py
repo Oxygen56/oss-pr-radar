@@ -1137,6 +1137,61 @@ def test_event_drain_holds_new_issue_when_pr_snapshot_needs_refresh(monkeypatch,
     ]
 
 
+@pytest.mark.parametrize("path_error", ["CODE_PATH_MISSING", "CODE_PATH_SYMLINK"])
+def test_event_drain_isolates_pr_followup_path_error_and_dispatches_next_candidate(
+    monkeypatch, tmp_path, path_error
+):
+    bad = {"key": "a/b#1", "threadId": "thread-bad", "wakeDigest": "wake-bad"}
+    healthy = {
+        "key": "a/b#2",
+        "threadId": "thread-healthy",
+        "wakeDigest": "wake-healthy",
+    }
+    reserve_calls = []
+    delivered = []
+    monkeypatch.setattr(
+        MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_list",
+        lambda _args: {
+            "ok": True,
+            "candidates": [bad, healthy],
+            "restoreRequired": [],
+            "unresolved": [],
+        },
+    )
+
+    def reserve(args):
+        reserve_calls.append(args.thread_id)
+        if args.thread_id == bad["threadId"]:
+            raise RuntimeError(path_error)
+        return {"ok": True, "deferred": False}
+
+    def deliver(args):
+        delivered.append(args.thread_id)
+        return {"ok": True, "threadId": args.thread_id}
+
+    monkeypatch.setattr(MODULE, "pr_followup_reserve", reserve)
+    monkeypatch.setattr(MODULE, "pr_followup_deliver", deliver)
+
+    result = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            project_id="github-project",
+            owner="event-drain",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["action"] == "pr_followup_dispatched"
+    assert result["key"] == healthy["key"]
+    assert result["threadId"] == healthy["threadId"]
+    assert reserve_calls == [bad["threadId"], healthy["threadId"]]
+    assert delivered == [healthy["threadId"]]
+
+
 def test_event_drain_restores_an_archived_pr_task_before_followup(monkeypatch, tmp_path):
     restored = []
 
@@ -3368,6 +3423,54 @@ def test_shared_context_recovery_verifies_an_existing_dispatched_task(monkeypatc
             "resultReceiptRestored": False,
         }
     ]
+
+
+def test_superseded_shared_context_cannot_backfill_its_old_result(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    store, _worktree, _local_path, _shared_path = _context_digest_fixture(
+        tmp_path / "fixture",
+        stage="PR_OPEN",
+    )
+    backfill_attempted = False
+    quarantine_clear_attempted = False
+
+    def superseded_restore(_context, *, source_updated_at=None):
+        assert source_updated_at is not None
+        return {
+            "key": "a/b#1",
+            "stage": "PR_OPEN",
+            "intentRestored": False,
+            "publicationRestored": False,
+            "supersededContextMirror": True,
+        }
+
+    def stale_result_backfill(*_args, **_kwargs):
+        nonlocal backfill_attempted
+        backfill_attempted = True
+        return {"key": "a/b#1", "digest": "stale-result", "stage": "PR_OPEN"}
+
+    def stale_quarantine_clear(*_args, **_kwargs):
+        nonlocal quarantine_clear_attempted
+        quarantine_clear_attempted = True
+
+    monkeypatch.setattr(store, "restore_task_context", superseded_restore)
+    monkeypatch.setattr(MODULE, "_recoverable_published_result", stale_result_backfill)
+    monkeypatch.setattr(
+        MODULE,
+        "_clear_exact_published_validation_auth_quarantines",
+        stale_quarantine_clear,
+    )
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["errors"] == []
+    assert recovered["verified"] == 1
+    assert recovered["resultReceiptsRestored"] == 0
+    assert recovered["restored"][0]["supersededContextMirror"] is True
+    assert recovered["restored"][0]["resultReceiptRestored"] is False
+    assert backfill_attempted is False
+    assert quarantine_clear_attempted is False
 
 
 def _context_digest_fixture(tmp_path, *, stage="DISPATCHED"):
@@ -7227,6 +7330,51 @@ def test_pr_followup_reserve_failure_is_retryable_without_stuck_gate(
         "PR_FOLLOWUP_RESERVED": 1,
         "PR_FOLLOWUP_RESERVATION_REPAIRED": 1,
     }
+
+
+@pytest.mark.parametrize("path_error", ["CODE_PATH_MISSING", "CODE_PATH_SYMLINK"])
+def test_pr_followup_list_does_not_treat_path_error_repair_as_unresolved_delivery(
+    monkeypatch, tmp_path, path_error
+):
+    store, _worktree, head_sha, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    with sqlite3.connect(MODULE.THREAD_DB) as connection:
+        connection.execute(
+            "INSERT INTO threads (id,archived,updated_at,rollout_path) VALUES (?,?,?,?)",
+            (
+                candidate["threadId"],
+                0,
+                int((datetime.now(UTC) - timedelta(hours=2)).timestamp()),
+                None,
+            ),
+        )
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": head_sha},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "write_task_context",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(path_error)),
+    )
+
+    with pytest.raises(RuntimeError, match=path_error):
+        MODULE.pr_followup_reserve(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id=candidate["threadId"],
+                wake_digest=candidate["wakeDigest"],
+            )
+        )
+
+    assert store.active_task_quarantine(candidate["key"]) is not None
+    result = MODULE.pr_followup_list(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True
+    assert result["blocked"] == []
+    assert result["unresolved"] == []
+    assert [item["key"] for item in result["reprepareRequired"]] == [candidate["key"]]
 
 
 def test_pr_followup_reserve_serializes_concurrent_retries(monkeypatch, tmp_path):
@@ -11738,6 +11886,7 @@ def _controller_commit_result(
     worktree: Path | None = None,
     additional_changed_files: tuple[str, ...] = (),
     reported_code_paths: tuple[str, ...] | None = None,
+    probe_code_paths: tuple[str, ...] = ("runtime.py",),
 ) -> tuple[RadarLedger, Path, Path]:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
@@ -11745,6 +11894,7 @@ def _controller_commit_result(
     store, worktree = registered_store(tmp_path, worktree=worktree)
     run_git(worktree, "config", "user.name", "Test Contributor")
     run_git(worktree, "config", "user.email", "test@example.com")
+    receipt_code_paths = list(probe_code_paths)
     source = worktree / "runtime.py"
     source.write_text("value = 1\n", encoding="utf-8")
     for relative in additional_changed_files:
@@ -11786,7 +11936,7 @@ def _controller_commit_result(
         repo="a/b",
         default_branch="main",
         selected_base_sha=base_sha,
-        code_paths=["runtime.py"],
+        code_paths=receipt_code_paths,
         profile_id=profile_id,
         issue_url="https://github.com/a/b/issues/1",
         task_id="intent-1",
@@ -11810,9 +11960,9 @@ def _controller_commit_result(
                 "preTaskEvidence": {
                     "defaultBranch": "main",
                     "baseSha": base_sha,
-                    "codePathsPlan": ["runtime.py"],
+                    "codePathsPlan": receipt_code_paths,
                 },
-                "codePaths": ["runtime.py"],
+                "codePaths": receipt_code_paths,
                 "probeRequired": True,
                 "probeLevel": "REPRODUCED_VALIDATED",
                 "taskStage": "IMPLEMENTATION_READY",
@@ -11897,7 +12047,7 @@ def _controller_commit_result(
         "preTaskEvidence": {
             "defaultBranch": "main",
             "baseSha": base_sha,
-            "codePathsPlan": ["runtime.py"],
+            "codePathsPlan": receipt_code_paths,
         },
         "probeRequired": True,
         "probeLevel": "REPRODUCED_VALIDATED",
@@ -11956,7 +12106,7 @@ def _controller_commit_result(
         repo="a/b",
         default_branch="main",
         selected_base_sha=base_sha,
-        code_paths=["runtime.py"],
+        code_paths=receipt_code_paths,
         profile_id=profile_id,
         issue_url="https://github.com/a/b/issues/1",
         task_id="intent-1",
@@ -11978,7 +12128,7 @@ def _controller_commit_result(
         state="SYSTEM_PROCESSING",
         source="test-legal-fixture",
         provenance={"fixture": True},
-        metadata={"selectedBaseSha": base_sha, "codePaths": ["runtime.py"]},
+        metadata={"selectedBaseSha": base_sha, "codePaths": receipt_code_paths},
     )
     managed.bind_task(
         task_id="intent-1",
@@ -11987,7 +12137,7 @@ def _controller_commit_result(
         worktree_path=str(worktree),
         state="REPRODUCTION_REQUIRED",
         provenance={
-            "codePaths": ["runtime.py"],
+            "codePaths": receipt_code_paths,
             "selectedBaseSha": probe["baseSha"],
             "headSha": probe["headSha"],
             "commitSha": probe["commitSha"],
@@ -12197,6 +12347,1037 @@ def _bind_published_pr_authority_fixture(
         value["followupDigest"] = degraded_context["prFollowup"]["wakeDigest"]
     result_path.write_text(json.dumps(value), encoding="utf-8")
     return managed, degraded_context, pr_url
+
+
+def _durable_scope_fixture(
+    tmp_path: Path,
+    *,
+    tombstone_path: str = "deleted.py",
+    worktree: Path | None = None,
+) -> tuple[RadarLedger, Path, Path, list[str]]:
+    code_paths = [tombstone_path, "runtime.py"]
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=(tombstone_path,),
+        reported_code_paths=tuple(code_paths),
+        probe_code_paths=tuple(code_paths),
+        worktree=worktree,
+    )
+    context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert context["reproductionReceipt"]["codePaths"] == code_paths
+    return store, worktree, result_path, code_paths
+
+
+def _commit_durable_scope_mutation(
+    worktree: Path, *, replacement: str, tombstone_path: str = "deleted.py"
+) -> str:
+    path = worktree / tombstone_path
+    path.unlink()
+    if replacement == "symlink":
+        path.symlink_to("runtime.py")
+    run_git(worktree, "add", "-A", "--", tombstone_path)
+    run_git(worktree, "commit", "-m", f"test: {replacement} historical scope path")
+    return run_git(worktree, "rev-parse", "HEAD")
+
+
+def _reserve_durable_scope_tombstone(
+    monkeypatch,
+    tmp_path: Path,
+    *,
+    tombstone_path: str = "deleted.py",
+    managed_worktree: bool = False,
+) -> tuple[
+    RadarLedger,
+    Path,
+    Path,
+    list[str],
+    dict,
+    dict,
+    str,
+]:
+    requested_worktree = (
+        MODULE.managed_worktree_path("intent-1", "a/b") if managed_worktree else None
+    )
+    store, worktree, result_path, old_scope = _durable_scope_fixture(
+        tmp_path,
+        tombstone_path=tombstone_path,
+        worktree=requested_worktree,
+    )
+    _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+        degrade_stage=False,
+    )
+    prepared_head = _commit_durable_scope_mutation(
+        worktree,
+        replacement="missing",
+        tombstone_path=tombstone_path,
+    )
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": prepared_head},
+    )
+    reserved = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            wake_digest=candidate["wakeDigest"],
+        )
+    )
+    context = json.loads(Path(reserved["contextPath"]).read_text(encoding="utf-8"))
+    return (
+        store,
+        worktree,
+        result_path,
+        old_scope,
+        candidate,
+        context,
+        prepared_head,
+    )
+
+
+def _tombstone_followup_result(
+    *,
+    result_path: Path,
+    context: dict,
+    changed_files: list[str],
+    reported_code_paths: list[str] | None = None,
+) -> dict:
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "followupDigest": context["prFollowup"]["wakeDigest"],
+            "stage": "FIX_READY",
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "branch": value["branch"],
+            "commitMessage": "fix: preserve current PR scope",
+            "changedFiles": changed_files,
+            "codePaths": reported_code_paths or list(context["codePaths"]),
+        }
+    )
+    value.pop("controllerCommitChangedFiles", None)
+    value.pop("mergeResolutionFiles", None)
+    return value
+
+
+def _ingest_tombstone_followup_result(
+    monkeypatch,
+    tmp_path: Path,
+    *,
+    validation_deferred: bool,
+    managed_worktree: bool = False,
+) -> tuple[RadarLedger, Path, Path, dict, dict, dict]:
+    (
+        store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        _prepared_head,
+    ) = _reserve_durable_scope_tombstone(
+        monkeypatch,
+        tmp_path,
+        managed_worktree=managed_worktree,
+    )
+    runtime = worktree / "runtime.py"
+    runtime.write_text(runtime.read_text(encoding="utf-8") + "# follow-up\n", encoding="utf-8")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["runtime.py"],
+    )
+    value["quality"] = dict(value["quality"])
+    if validation_deferred:
+        value["quality"]["relevant_tests_green"] = False
+    else:
+        monkeypatch.setattr(
+            MODULE,
+            "controller_review_result",
+            lambda *_args, **_kwargs: {
+                "schemaVersion": REVIEW_SCHEMA,
+                "verdict": "PASS",
+                "summary": "The exact follow-up commit passed controller review.",
+            },
+        )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    return store, worktree, result_path, context, ingested, finalized
+
+
+def _materialize_tombstone_filesystem_hazard(
+    worktree: Path,
+    tmp_path: Path,
+    *,
+    tombstone_path: str,
+    hazard: str,
+) -> None:
+    path = worktree / tombstone_path
+    first_component = Path(tombstone_path).parts[0]
+    ignore_path = worktree / ".git" / "info" / "exclude"
+    ignore_rule = first_component if hazard == "symlink_parent" else tombstone_path
+    ignore_path.write_text(
+        ignore_path.read_text(encoding="utf-8") + f"/{ignore_rule}\n",
+        encoding="utf-8",
+    )
+    if hazard == "ignored_regular":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("ignored but materialized\n", encoding="utf-8")
+        return
+    if hazard == "dangling_symlink":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to("missing-target")
+        return
+    if hazard == "symlink_parent":
+        assert len(Path(tombstone_path).parts) > 1
+        outside = tmp_path / "tombstone-outside"
+        outside.mkdir()
+        parent = worktree / first_component
+        if parent.is_dir():
+            parent.rmdir()
+        parent.symlink_to(outside, target_is_directory=True)
+        return
+    raise AssertionError(f"unknown tombstone hazard: {hazard}")
+
+
+def _resign_code_path_tombstone_receipt(receipt: dict) -> dict:
+    from oss_pr_radar.managed_security import sign_current
+    from oss_pr_radar.repo_probe import CODE_PATH_TOMBSTONE_CONTEXT
+
+    unsigned = {
+        key: value
+        for key, value in receipt.items()
+        if key not in {"keyId", "signature", "receiptDigest"}
+    }
+    if "receiptDigest" in receipt:
+        unsigned["receiptDigest"] = sha256_json(unsigned)
+    return unsigned | sign_current(
+        unsigned,
+        context=CODE_PATH_TOMBSTONE_CONTEXT,
+    )
+
+
+def test_pr_followup_reserve_retains_durable_scope_when_old_path_is_deleted(monkeypatch, tmp_path):
+    from oss_pr_radar.managed_security import verify_current
+    from oss_pr_radar.repo_probe import CODE_PATH_TOMBSTONE_CONTEXT, thread_fingerprint
+
+    (
+        _store,
+        worktree,
+        _result_path,
+        old_scope,
+        candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    receipt = context["codePathTombstoneReceipt"]
+    unsigned = {key: value for key, value in receipt.items() if key not in {"keyId", "signature"}}
+
+    assert receipt["schemaVersion"] == "code-path-tombstone-v1"
+    assert receipt["sourceReceiptDigest"] == context["reproductionReceipt"]["receiptDigest"]
+    assert receipt["preparedHeadSha"] == prepared_head
+    assert receipt["wakeDigest"] == candidate["wakeDigest"]
+    assert receipt["intentId"] == context["intentId"]
+    assert receipt["threadFingerprint"] == thread_fingerprint(candidate["threadId"])
+    assert receipt["codePaths"] == old_scope
+    assert receipt["presentPaths"] == ["runtime.py"]
+    assert receipt["tombstonePaths"] == ["deleted.py"]
+    assert receipt["keyId"]
+    assert receipt["signature"]
+    assert verify_current(
+        unsigned,
+        context=CODE_PATH_TOMBSTONE_CONTEXT,
+        key_id=receipt["keyId"],
+        signature=receipt["signature"],
+    )
+    assert not (worktree / "deleted.py").exists()
+    assert context["prFollowup"]["preparedHeadSha"] == prepared_head
+    assert context["codePaths"] == old_scope
+    assert context["reproductionReceipt"]["codePaths"] == old_scope
+
+
+@pytest.mark.parametrize(
+    "hazard",
+    ["ignored_regular", "dangling_symlink", "symlink_parent"],
+)
+def test_pr_followup_reserve_rejects_tombstone_present_only_on_filesystem(
+    monkeypatch, tmp_path, hazard
+):
+    tombstone_path = "ghost/deleted.py"
+    store, worktree, result_path, _old_scope = _durable_scope_fixture(
+        tmp_path,
+        tombstone_path=tombstone_path,
+    )
+    _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+        degrade_stage=False,
+    )
+    prepared_head = _commit_durable_scope_mutation(
+        worktree,
+        replacement="missing",
+        tombstone_path=tombstone_path,
+    )
+    _materialize_tombstone_filesystem_hazard(
+        worktree,
+        tmp_path,
+        tombstone_path=tombstone_path,
+        hazard=hazard,
+    )
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": prepared_head},
+    )
+
+    with pytest.raises(RuntimeError, match="(?i)code.path|tombstone"):
+        MODULE.pr_followup_reserve(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id=candidate["threadId"],
+                wake_digest=candidate["wakeDigest"],
+            )
+        )
+
+    assert run_git(worktree, "rev-parse", "HEAD") == prepared_head
+
+
+@pytest.mark.parametrize(
+    "hazard",
+    ["ignored_regular", "dangling_symlink", "symlink_parent"],
+)
+def test_controller_finalize_rejects_tombstone_materialized_after_reserve(
+    monkeypatch, tmp_path, hazard
+):
+    tombstone_path = "ghost/deleted.py"
+    (
+        _store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(
+        monkeypatch,
+        tmp_path,
+        tombstone_path=tombstone_path,
+    )
+    _materialize_tombstone_filesystem_hazard(
+        worktree,
+        tmp_path,
+        tombstone_path=tombstone_path,
+        hazard=hazard,
+    )
+    runtime = worktree / "runtime.py"
+    runtime.write_text(runtime.read_text(encoding="utf-8") + "# follow-up\n", encoding="utf-8")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["runtime.py"],
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="(?i)code.path|tombstone"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=value,
+            result_path=result_path,
+        )
+
+    assert run_git(worktree, "rev-parse", "HEAD") == prepared_head
+
+
+def test_validation_followup_context_refresh_preserves_pr_tombstone(monkeypatch, tmp_path):
+    (
+        store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        _prepared_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    runtime = worktree / "runtime.py"
+    runtime.write_text(runtime.read_text(encoding="utf-8") + "# follow-up\n", encoding="utf-8")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["runtime.py"],
+    )
+    value["quality"] = dict(value["quality"])
+    value["quality"]["relevant_tests_green"] = False
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert ingested["ok"] is True, ingested["errors"]
+    assert ingested["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": ["relevant_tests_green", "independent_review_passed"],
+        }
+    ]
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key='a/b#1'
+                     AND event_type='PR_FOLLOWUP_RESULT_INGESTED'"""
+            ).fetchone()[0]
+            == 1
+        )
+    candidate = store.validation_followup_candidates()[0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+
+    assert reserved["ok"] is True
+    refreshed = json.loads(Path(reserved["contextPath"]).read_text(encoding="utf-8"))
+    assert refreshed["codePaths"] == ["deleted.py", "runtime.py"]
+    assert refreshed["codePathTombstoneReceipt"]["tombstonePaths"] == ["deleted.py"]
+    assert MODULE._verified_context_code_path_tombstone_receipt(refreshed) is not None
+
+
+def test_context_sync_rebinds_deferred_pr_tombstone_to_current_commit(monkeypatch, tmp_path):
+    (
+        store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        _prepared_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    runtime = worktree / "runtime.py"
+    runtime.write_text(runtime.read_text(encoding="utf-8") + "# follow-up\n", encoding="utf-8")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["runtime.py"],
+    )
+    value["quality"] = dict(value["quality"])
+    value["quality"]["relevant_tests_green"] = False
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert ingested["ok"] is True, ingested["errors"]
+    assert ingested["validationDeferred"]
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    current_commit = run_git(worktree, "rev-parse", "HEAD")
+    assert finalized["commitSha"] == current_commit
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True, synced["errors"]
+    assert [item["key"] for item in synced["written"]] == ["a/b#1"]
+    refreshed = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    receipt = refreshed["codePathTombstoneReceipt"]
+    assert refreshed["prFollowup"]["preparedHeadSha"] == current_commit
+    assert receipt["preparedHeadSha"] == current_commit
+    assert receipt["tombstonePaths"] == ["deleted.py"]
+    assert MODULE._verified_context_code_path_tombstone_receipt(refreshed) is not None
+
+
+def test_consecutive_validation_deferred_results_advance_tombstone_binding(monkeypatch, tmp_path):
+    store, worktree, result_path, initial_context, first_ingest, first_result = (
+        _ingest_tombstone_followup_result(
+            monkeypatch,
+            tmp_path,
+            validation_deferred=True,
+        )
+    )
+    assert first_ingest["ok"] is True, first_ingest["errors"]
+    c1 = first_result["commitSha"]
+    r0 = initial_context["codePathTombstoneReceipt"]
+
+    first_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert first_sync["ok"] is True, first_sync["errors"]
+    first_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    r1 = first_context["codePathTombstoneReceipt"]
+    assert r1["preparedHeadSha"] == c1
+    assert r1["receiptDigest"] != r0["receiptDigest"]
+
+    candidate = store.validation_followup_candidates()[0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+    MODULE.validation_followup_commit(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            reservation_digest=reserved["reservationDigest"],
+        )
+    )
+    runtime = worktree / "runtime.py"
+    runtime.write_text(
+        runtime.read_text(encoding="utf-8") + "# second follow-up\n", encoding="utf-8"
+    )
+    second_value = _tombstone_followup_result(
+        result_path=result_path,
+        context=first_context,
+        changed_files=["runtime.py"],
+    )
+    second_value["codePathTombstoneReceipt"] = r1
+    second_value.pop("previousCommitSha", None)
+    second_value.pop("independentReview", None)
+    second_value.pop("reproductionReceipt", None)
+    second_value.pop("probeReceipt", None)
+    second_value.pop("resultDigest", None)
+    result_path.write_text(json.dumps(second_value), encoding="utf-8")
+
+    second_ingest = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert second_ingest["ok"] is True, second_ingest["errors"]
+    second_result = json.loads(result_path.read_text(encoding="utf-8"))
+    c2 = second_result["commitSha"]
+    assert c2 != c1
+    assert second_result["codePathTombstoneReceipt"]["receiptDigest"] == r1["receiptDigest"]
+
+    second_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert second_sync["ok"] is True, second_sync["errors"]
+    second_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    r2 = second_context["codePathTombstoneReceipt"]
+    assert r2["preparedHeadSha"] == c2
+    assert r2["receiptDigest"] not in {r0["receiptDigest"], r1["receiptDigest"]}
+
+
+def test_pr_open_result_sync_keeps_tombstone_bound_to_current_commit(monkeypatch, tmp_path):
+    store, worktree, _result_path, _context, ingested, finalized = (
+        _ingest_tombstone_followup_result(
+            monkeypatch,
+            tmp_path,
+            validation_deferred=False,
+        )
+    )
+
+    assert ingested["ok"] is True, ingested["errors"]
+    assert ingested["validationDeferred"] == []
+    current_commit = finalized["commitSha"]
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "PR_OPEN"
+    )
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True, synced["errors"]
+    refreshed = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert refreshed["codePathTombstoneReceipt"]["preparedHeadSha"] == current_commit
+    assert refreshed["codePathTombstoneReceipt"]["tombstonePaths"] == ["deleted.py"]
+    assert MODULE._verified_context_code_path_tombstone_receipt(refreshed) is not None
+
+
+@pytest.mark.parametrize("terminal_stage", [None, "MERGED"], ids=["pr-open", "merged"])
+def test_shared_context_recovery_then_sync_preserves_pr_open_tombstone(
+    monkeypatch,
+    tmp_path,
+    terminal_stage,
+):
+    store, worktree, result_path, followup_context, ingested, finalized = (
+        _ingest_tombstone_followup_result(
+            monkeypatch,
+            tmp_path,
+            validation_deferred=False,
+            managed_worktree=True,
+        )
+    )
+    assert ingested["ok"] is True, ingested["errors"]
+    current_commit = finalized["commitSha"]
+    assert len(ingested["publicationRequests"]) == 1
+    request = store.publication_request(ingested["publicationRequests"][0]["requestId"])
+    assert request is not None
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url="https://github.com/a/b/issues/1",
+        commit_sha=current_commit,
+        branch=str(finalized["branch"]),
+        evidence={},
+    )
+    store.consume_publication_permit(
+        permit["permit_id"],
+        followup_context["prFollowup"]["prUrl"],
+    )
+    if terminal_stage is not None:
+        ManagedLedger(store.path, ensure_schema=True).upsert_pr(
+            pr_key="a/b#9",
+            owner="a",
+            repo="b",
+            number=9,
+            head_sha=current_commit,
+            pr_url=followup_context["prFollowup"]["prUrl"],
+            state=terminal_stage,
+            auto_created=True,
+            source_kind="MANAGED_PUBLICATION_RECEIPT",
+            source="test-terminal-shared-context-recovery",
+            observed_at=iso_z(datetime.now(UTC) + timedelta(minutes=1)),
+        )
+        store.record_stage(
+            "a/b#1",
+            terminal_stage,
+            evidence={"prUrl": followup_context["prFollowup"]["prUrl"]},
+        )
+
+    source_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert source_sync["ok"] is True, source_sync["errors"]
+    source_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    source_result = json.loads(result_path.read_text(encoding="utf-8"))
+    expected_stage = terminal_stage or "PR_OPEN"
+    assert source_context["stage"] == expected_stage
+    assert source_context["prFollowup"]["preparedHeadSha"] == current_commit
+    assert source_context["codePathTombstoneReceipt"]["preparedHeadSha"] == current_commit
+    assert source_result["codePathTombstoneReceipt"]["tombstonePaths"] == ["deleted.py"]
+
+    recovered_path = tmp_path / "empty-recovered.sqlite3"
+    recovered_store = RadarLedger(recovered_path)
+    with recovered_store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
+
+    recovery = MODULE.recover_shared_task_contexts(recovered_store)
+
+    assert recovery["errors"] == []
+    assert recovery["quarantined"] == []
+    assert recovery["verified"] == 1, recovery
+    assert recovery["resultReceiptsRestored"] == 1
+
+    recovered_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=recovered_path))
+
+    assert recovered_sync["ok"] is True, recovered_sync["errors"]
+    recovered_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert recovered_context["stage"] == expected_stage
+    assert (
+        recovered_context["publicationReceipt"]["prUrl"]
+        == source_context["publicationReceipt"]["prUrl"]
+    )
+    assert (
+        recovered_context["prFollowup"]["wakeDigest"] == source_context["prFollowup"]["wakeDigest"]
+    )
+    assert recovered_context["prFollowup"]["preparedHeadSha"] == current_commit
+    receipt = recovered_context["codePathTombstoneReceipt"]
+    assert receipt["preparedHeadSha"] == current_commit
+    assert receipt["tombstonePaths"] == ["deleted.py"]
+    assert MODULE._verified_context_code_path_tombstone_receipt(recovered_context) is not None
+
+
+@pytest.mark.parametrize("recovered_stage", ["VALIDATION_PENDING", "FIX_READY"])
+def test_shared_context_recovery_then_sync_preserves_unpublished_tombstone(
+    monkeypatch,
+    tmp_path,
+    recovered_stage,
+):
+    store, worktree, _result_path, _followup_context, ingested, finalized = (
+        _ingest_tombstone_followup_result(
+            monkeypatch,
+            tmp_path,
+            validation_deferred=True,
+            managed_worktree=True,
+        )
+    )
+    assert ingested["ok"] is True, ingested["errors"]
+    assert ingested["validationDeferred"]
+    current_commit = finalized["commitSha"]
+
+    source_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert source_sync["ok"] is True, source_sync["errors"]
+    source_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert source_context["stage"] == "PR_OPEN"
+    assert source_context["codePathTombstoneReceipt"]["preparedHeadSha"] == current_commit
+    source_context["stage"] = recovered_stage
+    serialized_context = json.dumps(source_context, sort_keys=True)
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        serialized_context,
+        encoding="utf-8",
+    )
+    Path(source_context["bootstrapContextPath"]).write_text(
+        serialized_context,
+        encoding="utf-8",
+    )
+
+    recovered_path = tmp_path / "empty-validation-recovered.sqlite3"
+    recovered_store = RadarLedger(recovered_path)
+    recovery = MODULE.recover_shared_task_contexts(recovered_store)
+
+    assert recovery["errors"] == []
+    assert recovery["quarantined"] == []
+    assert recovery["verified"] == 1, recovery
+    assert recovery["resultReceiptsRestored"] == 0
+
+    recovered_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=recovered_path))
+
+    assert recovered_sync["ok"] is True, recovered_sync["errors"]
+    recovered_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert recovered_context["stage"] == recovered_stage
+    assert (
+        recovered_context["prFollowup"]["wakeDigest"] == source_context["prFollowup"]["wakeDigest"]
+    )
+    assert recovered_context["prFollowup"]["preparedHeadSha"] == current_commit
+    receipt = recovered_context["codePathTombstoneReceipt"]
+    assert receipt["preparedHeadSha"] == current_commit
+    assert receipt["tombstonePaths"] == ["deleted.py"]
+    assert MODULE._verified_context_code_path_tombstone_receipt(recovered_context) is not None
+
+
+def test_latest_result_without_tombstone_does_not_reuse_older_binding(monkeypatch, tmp_path):
+    store, _worktree, _result_path, _context, ingested, _finalized = (
+        _ingest_tombstone_followup_result(
+            monkeypatch,
+            tmp_path,
+            validation_deferred=True,
+        )
+    )
+    assert ingested["ok"] is True, ingested["errors"]
+    first = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert first["codePathTombstoneReceipt"]["tombstonePaths"] == ["deleted.py"]
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="f" * 64,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+
+    latest = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert "codePathTombstoneReceipt" not in latest
+    assert "codePathTombstoneContinuationHeadSha" not in latest
+
+
+def test_active_pr_followup_preparation_overrides_older_result_tombstone(monkeypatch, tmp_path):
+    store, worktree, result_path, _context, ingested, finalized = _ingest_tombstone_followup_result(
+        monkeypatch,
+        tmp_path,
+        validation_deferred=True,
+    )
+    assert ingested["ok"] is True, ingested["errors"]
+    first_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    assert first_sync["ok"] is True, first_sync["errors"]
+    old_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    old_receipt = old_context["codePathTombstoneReceipt"]
+    current_commit = finalized["commitSha"]
+    checked_at = iso_z(datetime.now(UTC) + timedelta(minutes=1))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": checked_at,
+            "items": [
+                {
+                    "url": "https://github.com/a/b/pull/9",
+                    "headSha": current_commit,
+                    "actionDigest": "new-active-action",
+                    "taskActionDigest": "new-active-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["处理新的审查反馈"],
+                    "evidence": {
+                        "actionableCheckNames": ["New Review"],
+                        "baseRefName": "main",
+                        "baseSha": str(finalized["selectedBaseSha"]),
+                    },
+                    "checkedAt": checked_at,
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": current_commit},
+    )
+
+    reserved = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            wake_digest=candidate["wakeDigest"],
+        )
+    )
+
+    fresh = json.loads(Path(reserved["contextPath"]).read_text(encoding="utf-8"))
+    fresh_receipt = fresh["codePathTombstoneReceipt"]
+    assert fresh["prFollowup"]["wakeDigest"] == candidate["wakeDigest"]
+    assert fresh["prFollowup"]["preparedHeadSha"] == current_commit
+    assert fresh_receipt["wakeDigest"] == candidate["wakeDigest"]
+    assert fresh_receipt["preparedHeadSha"] == current_commit
+    assert fresh_receipt["receiptDigest"] != old_receipt["receiptDigest"]
+    assert json.loads(result_path.read_text(encoding="utf-8"))["commitSha"] == current_commit
+
+
+def test_controller_commit_required_rejects_recreated_tombstone_before_commit(
+    monkeypatch, tmp_path
+):
+    (
+        _store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    base_sha = context["reproductionReceipt"]["baseSha"]
+    base_content = run_git(worktree, "show", f"{base_sha}:deleted.py") + "\n"
+    (worktree / "deleted.py").write_text(base_content, encoding="utf-8")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["deleted.py"],
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="(?i)tombstone"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=value,
+            result_path=result_path,
+        )
+
+    assert run_git(worktree, "rev-parse", "HEAD") == prepared_head
+    assert run_git(worktree, "rev-list", "--count", f"{prepared_head}..HEAD") == "0"
+
+
+def test_controller_commit_complete_rejects_reintroduced_tombstone(monkeypatch, tmp_path):
+    (
+        _store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    base_sha = context["reproductionReceipt"]["baseSha"]
+    base_content = run_git(worktree, "show", f"{base_sha}:deleted.py") + "\n"
+    (worktree / "deleted.py").write_text(base_content, encoding="utf-8")
+    run_git(worktree, "add", "--", "deleted.py")
+    run_git(worktree, "commit", "-m", "fix: restore historical path")
+    recreated_head = run_git(worktree, "rev-parse", "HEAD")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["deleted.py"],
+    ) | {
+        "handoffMode": "controller_commit_complete",
+        "commitSha": recreated_head,
+        "controllerCommitChangedFiles": ["deleted.py"],
+        "previousCommitSha": prepared_head,
+    }
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="(?i)tombstone"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=value,
+            result_path=result_path,
+        )
+
+
+def test_controller_merge_complete_rejects_tombstone_reintroduced_from_base(monkeypatch, tmp_path):
+    (
+        _store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    branch = run_git(worktree, "symbolic-ref", "--short", "HEAD")
+    selected_base = context["reproductionReceipt"]["baseSha"]
+    run_git(worktree, "switch", "-c", "upstream/tombstone", selected_base)
+    (worktree / "deleted.py").write_text("value = 'upstream'\n", encoding="utf-8")
+    run_git(worktree, "add", "--", "deleted.py")
+    run_git(worktree, "commit", "-m", "refactor: update historical path")
+    merge_base = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", branch)
+    completed = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", merge_base],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 1
+    assert run_git(worktree, "diff", "--name-only", "--diff-filter=U") == "deleted.py"
+    run_git(worktree, "checkout", merge_base, "--", "deleted.py")
+    run_git(worktree, "add", "--", "deleted.py")
+    merge_message = "merge: reintroduce historical path"
+    run_git(worktree, "commit", "-m", merge_message)
+    merge_head = run_git(worktree, "rev-parse", "HEAD")
+    context = json.loads(json.dumps(context))
+    context["prFollowup"]["headSha"] = prepared_head
+    context["prFollowup"]["preparedHeadSha"] = prepared_head
+    context["prFollowup"]["evidence"].update(
+        {
+            "mergeConflict": True,
+            "baseSha": merge_base,
+            "mergeConflictFiles": ["deleted.py"],
+        }
+    )
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["deleted.py"],
+    ) | {
+        "handoffMode": "controller_merge_complete",
+        "commitSha": merge_head,
+        "branch": branch,
+        "commitMessage": merge_message,
+        "controllerCommitChangedFiles": ["deleted.py"],
+        "mergeResolutionFiles": ["deleted.py"],
+        "mergeBaseSha": merge_base,
+        "previousCommitSha": prepared_head,
+    }
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="(?i)tombstone"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=value,
+            result_path=result_path,
+        )
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["signature", "preparedHeadSha", "sourceReceiptDigest"],
+)
+def test_controller_rejects_tampered_code_path_tombstone_receipt(monkeypatch, tmp_path, tamper):
+    (
+        _store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    context = json.loads(json.dumps(context))
+    receipt = dict(context["codePathTombstoneReceipt"])
+    if tamper == "signature":
+        receipt["signature"] = "0" * 64
+    else:
+        receipt[tamper] = ("f" if tamper == "preparedHeadSha" else "0") * (
+            40 if tamper == "preparedHeadSha" else 64
+        )
+        receipt = _resign_code_path_tombstone_receipt(receipt)
+    context["codePathTombstoneReceipt"] = receipt
+    runtime = worktree / "runtime.py"
+    runtime.write_text(runtime.read_text(encoding="utf-8") + "# follow-up\n", encoding="utf-8")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["runtime.py"],
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="(?i)tombstone"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=value,
+            result_path=result_path,
+        )
+
+    assert run_git(worktree, "rev-parse", "HEAD") == prepared_head
+
+
+def test_non_followup_implementation_context_rejects_missing_durable_scope_path(tmp_path):
+    store, worktree, _result_path, _old_scope = _durable_scope_fixture(tmp_path)
+    _commit_durable_scope_mutation(worktree, replacement="missing")
+
+    with pytest.raises(RuntimeError, match="CODE_PATH_MISSING"):
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        )
+
+
+def test_pr_followup_reserve_rejects_durable_scope_path_replaced_by_symlink(monkeypatch, tmp_path):
+    store, worktree, result_path, _old_scope = _durable_scope_fixture(tmp_path)
+    _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+        degrade_stage=False,
+    )
+    prepared_head = _commit_durable_scope_mutation(worktree, replacement="symlink")
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": prepared_head},
+    )
+
+    with pytest.raises(RuntimeError, match="CODE_PATH_SYMLINK"):
+        MODULE.pr_followup_reserve(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id=candidate["threadId"],
+                wake_digest=candidate["wakeDigest"],
+            )
+        )
 
 
 @pytest.mark.parametrize(
@@ -13517,6 +14698,12 @@ def _sign_reproduction_certificate(
 ) -> str:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
+    prior_receipt = value.get("reproductionReceipt")
+    receipt_code_paths = (
+        list(prior_receipt.get("codePaths") or [])
+        if isinstance(prior_receipt, dict)
+        else ["runtime.py"]
+    )
     unsigned = dict(value)
     unsigned.pop("reproductionReceipt", None)
     unsigned.pop("probeReceipt", None)
@@ -13543,7 +14730,7 @@ def _sign_reproduction_certificate(
         repo="a/b",
         default_branch="main",
         selected_base_sha=base_sha,
-        code_paths=["runtime.py"],
+        code_paths=receipt_code_paths,
         profile_id=profile_id,
         issue_url="https://github.com/a/b/issues/1",
         task_id="intent-1",
@@ -13577,7 +14764,7 @@ def _sign_reproduction_certificate(
             state="SYSTEM_PROCESSING",
             source="test-legal-fixture",
             provenance={"fixture": True},
-            metadata={"selectedBaseSha": base_sha, "codePaths": ["runtime.py"]},
+            metadata={"selectedBaseSha": base_sha, "codePaths": receipt_code_paths},
         )
         managed.bind_task(
             task_id=task_id,
@@ -13586,7 +14773,7 @@ def _sign_reproduction_certificate(
             worktree_path=str(worktree),
             state="REPRODUCTION_REQUIRED",
             provenance={
-                "codePaths": list(receipt.get("codePaths") or ["runtime.py"]),
+                "codePaths": list(receipt.get("codePaths") or receipt_code_paths),
                 "selectedBaseSha": receipt.get("baseSha"),
                 "headSha": receipt.get("headSha"),
                 "commitSha": receipt.get("commitSha"),
@@ -13750,6 +14937,50 @@ def test_implementation_context_survives_missing_opportunity_code_paths(tmp_path
     assert context["childMayEditFiles"] is True
     assert context["codePaths"] == ["runtime.py"]
     assert context["reproductionReceipt"]["receiptDigest"] == context["probeReceiptDigest"]
+
+
+@pytest.mark.parametrize(
+    ("intent_status", "opportunity_stage"),
+    [
+        ("REJECTED", None),
+        ("SUPERSEDED", None),
+        ("COMPLETED", "AUDIT_NO_GO"),
+    ],
+)
+def test_inactive_context_cannot_be_reauthorized_from_managed_probe_receipt(
+    tmp_path,
+    intent_status,
+    opportunity_stage,
+):
+    store, worktree, _result_path = _controller_commit_result(tmp_path)
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    assert managed.read_task("intent-1")["state"] == "IMPLEMENTATION_READY"
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE intents SET status=? WHERE intent_id='intent-1'", (intent_status,)
+        )
+        if opportunity_stage is not None:
+            connection.execute(
+                "UPDATE opportunities SET stage=? WHERE key='a/b#1'",
+                (opportunity_stage,),
+            )
+
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+
+    assert context["intentStatus"] == intent_status
+    assert context["stage"] == (opportunity_stage or "DISPATCHED")
+    assert context["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert context["childMayEditFiles"] is False
+    assert "edit_files" not in context["allowedActions"]
+    assert "reproductionReceipt" not in context
+    assert "codePathTombstoneReceipt" not in context
 
 
 def test_implementation_context_prefers_durable_receipt_paths(monkeypatch, tmp_path):
@@ -14089,6 +15320,32 @@ def test_controller_accepts_verified_changed_files_beyond_reproduction_scope(tmp
     assert finalized["reproductionReceipt"]["codePaths"] == ["runtime.py"]
 
 
+def test_controller_rejects_actual_commit_file_missing_from_reported_code_paths(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("integration.py",),
+        reported_code_paths=("runtime.py",),
+    )
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+
+    assert value["controllerCommitChangedFiles"] == ["integration.py", "runtime.py"]
+    assert value["codePaths"] == ["runtime.py"]
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        with pytest.raises(
+            MODULE.TaskResultEvidenceBlocked,
+            match="SCOPE.*REPORTED|REPORTED.*SCOPE",
+        ):
+            MODULE._bind_final_reproduction_receipt(
+                candidate=candidate,
+                context=context,
+                value=value,
+                result_access=result_access,
+                managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+            )
+
+
 def test_child_cannot_self_attest_independent_review(monkeypatch, tmp_path):
     store, _worktree, result_path = _controller_commit_result(tmp_path, authenticated=False)
     monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: None)
@@ -14190,6 +15447,45 @@ def test_final_receipt_keeps_managed_reproduction_scope_when_child_reports_more_
         )
 
     assert finalized_again == finalized
+
+
+def test_expanded_controller_code_path_scope_is_idempotent_across_second_rebind(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("integration.py",),
+        reported_code_paths=("runtime.py", "integration.py"),
+    )
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+
+    assert value["controllerCommitChangedFiles"] == ["integration.py", "runtime.py"]
+    assert value["codePaths"] == ["runtime.py", "integration.py"]
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        finalized, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=result_access,
+            managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+        )
+
+    assert finalized["controllerCodePathScope"]["authorized"] == ["runtime.py"]
+    assert finalized["controllerCodePathScope"]["reported"] == [
+        "integration.py",
+        "runtime.py",
+    ]
+    assert finalized["controllerCodePathScope"]["added"] == ["integration.py"]
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        rebound, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=finalized,
+            result_access=result_access,
+            managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+        )
+
+    assert rebound == finalized
 
 
 def test_final_receipt_never_falls_back_when_managed_durable_binding_disagrees(
@@ -18445,6 +19741,7 @@ def test_validation_followup_uses_cumulative_files_for_first_publication(tmp_pat
             "controllerCommitChangedFiles": ["test_runtime.py"],
             "commitMessage": "test: cover runtime boundary",
             "changedFiles": ["runtime.py", "test_runtime.py"],
+            "codePaths": ["runtime.py", "test_runtime.py"],
             "quality": {field: True for field in QUALITY_FIELDS},
         }
     )
@@ -18506,6 +19803,7 @@ def test_validation_followup_accepts_cumulative_files_with_local_correction(tmp_
             "controllerCommitChangedFiles": ["test_runtime.py"],
             "commitMessage": "test: cover runtime boundary",
             "changedFiles": ["runtime.py", "test_runtime.py"],
+            "codePaths": ["runtime.py", "test_runtime.py"],
             "quality": {field: True for field in QUALITY_FIELDS},
         }
     )
@@ -18777,7 +20075,7 @@ def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path, monkeypat
         "probeLevel": "REPRODUCED_VALIDATED",
         "selectedBaseSha": previous_head,
         "headSha": run_git(worktree, "rev-parse", "HEAD"),
-        "codePaths": ["runtime.py"],
+        "codePaths": ["runtime.py", "test_runtime.py"],
         "preTaskEvidence": {
             "defaultBranch": "main",
             "baseSha": previous_head,
