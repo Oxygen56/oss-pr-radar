@@ -2481,6 +2481,34 @@
     ],
     "why": "Issue reports a tool call error when switching moe-runner-backend from marlin to flashinfer_mxfp4, but lacks a minimal reproduction and root cause analysis. Open PR lookup timed out, and related PRs may overlap. Maintainer input needed."
   },
+  "0b43e6517ad85abd05efeaeeb923506390fc5fbe5de371ad9d2b0573f9d165c2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "sglang/srt/models/glm5_next.py",
+      "sglang/srt/model_executor/runner/base_runner.py"
+    ],
+    "risks": [
+      "The fix may affect other mHC models or PP configurations; need to verify no regression in single-GPU or TP-only scenarios."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided docker reproduction with --pp-size 3 and verify no KeyError during warmup.",
+      "Add a unit test for PP proxy tensor handling in glm5_next, comparing residual folding behavior with deepseek_v4."
+    ],
+    "unknowns": [
+      "Whether the proposed fix has been merged or is still pending; the comment references PR #36507 but no open PR status is confirmed."
+    ],
+    "why": "The issue provides a clear root cause: a KeyError 'residual' in glm5_next forward under pipeline parallelism, caused by a mismatch in whether mHC models fold residual into hidden_states. The reproduction steps and traceback are concrete, and the commenter proposes a specific fix (conforming the model to fold residual, matching deepseek_v4.py). This is a valid LLM algorithm mechanism (distributed training, model architecture) with a clear validation path."
+  },
   "0b57be0d821b6ce7495694c22f19b3608a7589e500f2271afa56a705de285b91": {
     "confidence": 0.85,
     "contradictions": [
