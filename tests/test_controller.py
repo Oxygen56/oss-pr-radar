@@ -1159,6 +1159,23 @@ def test_pending_title_update_and_quarantine_are_not_controller_blockers():
     assert blockers == []
 
 
+def test_controller_keeps_unresolved_pr_delivery_as_a_business_blocker():
+    from oss_pr_radar.controller import _final_blockers
+
+    blockers = _final_blockers(
+        {
+            "finalPrFollowups": {
+                "ok": True,
+                "blocked": [],
+                "unresolved": [{"key": "a/b#1", "commitReady": False}],
+                "restoreRequired": [],
+            }
+        }
+    )
+
+    assert blockers == [{"stage": "finalPrFollowups", "queue": "unresolved", "count": 1}]
+
+
 def test_controller_blockers_include_execution_failures_and_exhausted_recovery():
     from oss_pr_radar.controller import _final_blockers
 

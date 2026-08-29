@@ -1409,6 +1409,7 @@ def test_slow_worker_reconciles_stale_inflight_owner(monkeypatch, tmp_path, pid_
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     now = time.time()
+    retry_at = now + 60
     operation_id = "26274-1787947635379277000"
     runtime_health_path = state_dir / "runtime-health.json"
     runtime_health_path.write_text(
@@ -1436,8 +1437,8 @@ def test_slow_worker_reconciles_stale_inflight_owner(monkeypatch, tmp_path, pid_
                 "schemaVersion": "slow_backoff_v1",
                 "failureCount": 0,
                 "backoffSeconds": 60,
-                "nextAttemptAt": now + 60,
-                "retryAfter": now + 60,
+                "nextAttemptAt": retry_at,
+                "retryAfter": retry_at,
                 "attemptStartedAt": "2026-08-28T20:07:15.379278Z",
                 "inFlight": True,
                 "operationId": operation_id,
@@ -1462,12 +1463,126 @@ def test_slow_worker_reconciles_stale_inflight_owner(monkeypatch, tmp_path, pid_
     assert backoff["inFlight"] is False
     assert backoff["attemptStartedAt"] is None
     assert backoff["failureCount"] == 1
+    assert backoff["backoffSeconds"] == 60
+    assert backoff["nextAttemptAt"] == retry_at
+    assert backoff["retryAfter"] == retry_at
     health = json.loads((state_dir / "runtime-health.json").read_text())
     slow = health["workers"]["slow"]
     assert slow["inFlight"] is False
     assert slow["workerPid"] is None
     assert slow["workerPidAlive"] is False
     assert slow["lastExitCode"] == 1
+
+
+def test_slow_worker_retries_stale_owner_when_persisted_retry_elapsed(monkeypatch, tmp_path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    now = time.time()
+    operation_id = "26274-1787947635379277000"
+    runtime_health_path = state_dir / "runtime-health.json"
+    runtime_health_path.write_text(
+        json.dumps(
+            {
+                "workers": {
+                    "slow": {
+                        "inFlight": True,
+                        "workerPid": 26274,
+                        "workerPidAlive": True,
+                        "attemptStartedAt": now - 1200,
+                        "lastSuccessAt": now - 1800,
+                        "lastExitCode": 1,
+                        "consecutiveFailures": 4,
+                    }
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runtime_health_path.chmod(0o600)
+    (state_dir / "slow-worker-backoff.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": "slow_backoff_v1",
+                "failureCount": 4,
+                "backoffSeconds": 960,
+                "nextAttemptAt": now - 60,
+                "retryAfter": now - 60,
+                "attemptStartedAt": "2026-08-28T20:07:15.379278Z",
+                "inFlight": True,
+                "operationId": operation_id,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.pid_probe",
+        lambda *_args, **_kwargs: {"alive": False, "versionMatched": False, "error": "ESRCH"},
+    )
+    calls = []
+    observed_backoff = {}
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "reproduction-probe":
+            observed_backoff.update(
+                json.loads((state_dir / "slow-worker-backoff.json").read_text(encoding="utf-8"))
+            )
+            return {"ok": True, "errors": []}
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "unavailable": [], "quarantined": [], "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [],
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "ignored": [],
+                "errors": [],
+            }
+        if operation == "independent-review-run":
+            return {"ok": True, "updated": [], "errors": []}
+        if operation == "title-reconcile":
+            return {"ok": True, "renamed": [], "errors": []}
+        if operation == "cleanup-reconcile":
+            return {"ok": True, "archived": [], "errors": []}
+        if operation == "publication-run":
+            return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+        if operation == "sync":
+            return {"ok": True, "verified": 0, "inserted": 0, "superseded": 0}
+        if operation == "list":
+            return {"ok": True, "pending": []}
+        if operation == "publication-feedback-list":
+            return {"ok": True, "candidates": [], "unresolved": [], "reconciled": []}
+        if operation == "recovery-list":
+            return {"ok": True, "recoverable": []}
+        raise AssertionError(operation)
+
+    result = slow_advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert calls[0] == "reproduction-probe"
+    assert observed_backoff["inFlight"] is True
+    assert observed_backoff["failureCount"] == 5
+    assert observed_backoff["backoffSeconds"] == 1920
+    backoff = json.loads((state_dir / "slow-worker-backoff.json").read_text())
+    assert backoff["failureCount"] == 0
+    operations = [
+        json.loads(line)
+        for line in (state_dir / "runtime-operations" / "operations.ndjson")
+        .read_text()
+        .splitlines()
+    ]
+    assert [item["status"] for item in operations if item["operation"] == "slow-cycle"] == [
+        "failure",
+        "started",
+        "success",
+    ]
+    health = json.loads((state_dir / "runtime-health.json").read_text())
+    assert health["workers"]["slow"]["lastExitCode"] == 0
+    assert health["workers"]["slow"]["consecutiveFailures"] == 0
 
 
 def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(monkeypatch, tmp_path):
@@ -1833,6 +1948,100 @@ def test_synced_actionable_pr_followup_is_exposed_to_the_serial_drain(tmp_path):
     assert result["queueSync"]["prFollowupCandidates"] == [{"key": "ai-dynamo/dynamo#13691"}]
     assert result["drain"]["action"] == "pr_followup_dispatched"
     assert calls.index("pr-followup-list") < calls.index("drain-once")
+
+
+def test_unresolved_pr_followup_delivery_does_not_fail_queue_sync(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "sync":
+            return {
+                "ok": True,
+                "verified": 1,
+                "inserted": 0,
+                "prFollowup": {"status": "imported"},
+            }
+        if operation == "list":
+            return {"ok": True, "pending": []}
+        if operation == "pr-followup-list":
+            return {
+                "ok": True,
+                "candidates": [],
+                "unresolved": [{"key": "a/b#1", "commitReady": False}],
+                "blocked": [],
+            }
+        raise AssertionError(operation)
+
+    result = sync_cloud_queue_if_due(
+        tmp_path,
+        runner=runner,
+        interval_seconds=300,
+        now=1_000,
+    )
+
+    assert calls == ["sync", "list", "pr-followup-list"]
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["prFollowupUnresolved"] == [{"key": "a/b#1", "commitReady": False}]
+
+
+def test_blocked_pr_followup_list_remains_a_queue_sync_failure(tmp_path):
+    def runner(_root: Path, operation: str):
+        if operation == "sync":
+            return {
+                "ok": True,
+                "verified": 1,
+                "inserted": 0,
+                "prFollowup": {"status": "imported"},
+            }
+        if operation == "list":
+            return {"ok": True, "pending": []}
+        if operation == "pr-followup-list":
+            return {
+                "ok": False,
+                "candidates": [],
+                "unresolved": [],
+                "blocked": [{"key": "a/b#1", "reason": "thread_missing"}],
+            }
+        raise AssertionError(operation)
+
+    result = sync_cloud_queue_if_due(
+        tmp_path,
+        runner=runner,
+        interval_seconds=300,
+        now=1_000,
+    )
+
+    assert result["ok"] is False
+    assert result["errors"] == [{"error": "PR follow-up list blocked: 1"}]
+    assert result["prFollowupBlocked"] == [{"key": "a/b#1", "reason": "thread_missing"}]
+
+
+def test_unknown_failed_pr_followup_list_fails_closed(tmp_path):
+    def runner(_root: Path, operation: str):
+        if operation == "sync":
+            return {
+                "ok": True,
+                "verified": 1,
+                "inserted": 0,
+                "prFollowup": {"status": "imported"},
+            }
+        if operation == "list":
+            return {"ok": True, "pending": []}
+        if operation == "pr-followup-list":
+            return {"ok": False}
+        raise AssertionError(operation)
+
+    result = sync_cloud_queue_if_due(
+        tmp_path,
+        runner=runner,
+        interval_seconds=300,
+        now=1_000,
+    )
+
+    assert result["ok"] is False
+    assert result["errors"] == [{"error": "PR follow-up list failed"}]
 
 
 def test_replayed_pr_followup_without_a_candidate_does_not_retrigger_drain(tmp_path):

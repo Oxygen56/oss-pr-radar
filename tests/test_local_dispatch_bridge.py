@@ -7532,6 +7532,7 @@ def test_pr_followup_never_abandons_an_unreceipted_delivery(monkeypatch, tmp_pat
     probe = MODULE.pr_followup_list(args)
     unresolved = probe["unresolved"][0]
 
+    assert probe["ok"] is True
     assert unresolved["abandonable"] is False
     assert unresolved["commitReady"] is False
     assert "abandonNonce" not in unresolved

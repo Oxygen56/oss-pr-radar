@@ -12375,7 +12375,7 @@ def pr_followup_list(args: argparse.Namespace) -> dict[str, Any]:
                     )
         unresolved_with_recovery.append(value)
     return {
-        "ok": not unresolved_with_recovery and not blocked,
+        "ok": not blocked,
         "candidates": ready,
         "activeDeferred": active_deferred,
         "queuedDeferred": queued_deferred,

@@ -27,7 +27,7 @@ FIXED_WORKER_LABELS = (
 )
 
 from oss_pr_radar.launch_config import parse_launchctl_config  # noqa: E402
-from oss_pr_radar.local_publication import worker_specs  # noqa: E402
+from oss_pr_radar.local_publication import SLOW_WORK_LOCK, worker_specs  # noqa: E402
 from oss_pr_radar.operational_auth import (  # noqa: E402
     authorization_path,
     consume_worker_staging_authorization,
@@ -42,8 +42,10 @@ from oss_pr_radar.operational_auth import (  # noqa: E402
 from oss_pr_radar.release_binding import runtime_ledger_path  # noqa: E402
 from oss_pr_radar.runtime import (  # noqa: E402
     REQUIRED_WORKERS,
+    RuntimeLockBusy,
     disk_snapshot,
     evaluate_health,
+    exclusive_lock,
     pending_publication_effects,
     pid_probe,
     read_disk_pressure_gate_health,
@@ -587,41 +589,130 @@ def ensure_workers(
     )
 
 
-def _uninstall_labels(labels: tuple[str, ...], *, home: Path, domain: str) -> dict[str, object]:
+def _snapshot_file_matches(snapshot: PlistSnapshot) -> bool:
+    if not snapshot.exists:
+        return not snapshot.path.exists() and not snapshot.path.is_symlink()
+    try:
+        metadata = snapshot.path.lstat()
+        return (
+            stat.S_ISREG(metadata.st_mode)
+            and not stat.S_ISLNK(metadata.st_mode)
+            and stat.S_IMODE(metadata.st_mode) == snapshot.mode
+            and snapshot.path.read_bytes() == snapshot.data
+        )
+    except OSError:
+        return False
+
+
+def _rollback_uninstall(snapshots: list[PlistSnapshot], *, domain: str) -> list[str]:
     errors: list[str] = []
-    for label in labels:
-        service = f"{domain}/{label}"
-        path = home / "Library" / "LaunchAgents" / f"{label}.plist"
+    for snapshot in snapshots:
         try:
-            launchctl("bootout", service, check=False)
+            _restore_snapshot(snapshot)
         except Exception as exc:
-            errors.append(f"bootout {service}: {type(exc).__name__}:{exc}")
-            continue
+            errors.append(f"restore {snapshot.path}: {type(exc).__name__}:{exc}")
+    for snapshot in snapshots:
         try:
-            if _loaded(service):
-                errors.append(f"bootout {service}: service remained loaded")
-                continue
+            loaded = _loaded(snapshot.service)
+            if snapshot.loaded and not loaded:
+                _checked_launchctl("bootstrap", domain, str(snapshot.path))
+            elif not snapshot.loaded and loaded:
+                _checked_launchctl("bootout", snapshot.service)
         except Exception as exc:
-            errors.append(f"verify {service}: {type(exc).__name__}:{exc}")
-            continue
+            errors.append(f"restore {snapshot.service}: {type(exc).__name__}:{exc}")
+    for snapshot in snapshots:
+        if not _snapshot_file_matches(snapshot):
+            errors.append(f"verify {snapshot.path}: plist state mismatch")
         try:
-            path.unlink(missing_ok=True)
-        except OSError as exc:
-            errors.append(f"remove {path}: {type(exc).__name__}:{exc}")
+            if _loaded(snapshot.service) != snapshot.loaded:
+                expected = "loaded" if snapshot.loaded else "unloaded"
+                errors.append(f"verify {snapshot.service}: service not {expected}")
+        except Exception as exc:
+            errors.append(f"verify {snapshot.service}: {type(exc).__name__}:{exc}")
+    return errors
+
+
+def _uninstall_snapshots(snapshots: list[PlistSnapshot], *, domain: str) -> dict[str, object]:
+    try:
+        # First quiesce and verify the complete worker set.  Deleting even one
+        # plist before all three services are down would invalidate the active
+        # authorization and make an ordinary retry impossible.
+        for snapshot in snapshots:
+            if snapshot.loaded:
+                _checked_launchctl("bootout", snapshot.service)
+            if _loaded(snapshot.service):
+                raise RuntimeError(f"worker remained loaded: {snapshot.service}")
+        for snapshot in snapshots:
+            snapshot.path.unlink(missing_ok=True)
+        for snapshot in snapshots:
+            if snapshot.path.exists() or snapshot.path.is_symlink():
+                raise RuntimeError(f"worker plist remained installed: {snapshot.path}")
+            if _loaded(snapshot.service):
+                raise RuntimeError(f"worker reloaded during uninstall: {snapshot.service}")
+    except Exception as exc:
+        rollback_errors = _rollback_uninstall(snapshots, domain=domain)
+        detail = f"{type(exc).__name__}:{exc}"
+        if rollback_errors:
+            raise RuntimeError(
+                "worker uninstall rollback incomplete: "
+                + detail
+                + "; rollback="
+                + ", ".join(rollback_errors)
+            ) from exc
+        raise RuntimeError(f"worker uninstall rolled back: {detail}") from exc
+
     return {
-        "ok": not errors,
-        "workers": [{"label": label, "installed": False} for label in labels],
-        "errors": errors,
+        "ok": True,
+        "workers": [{"label": snapshot.path.stem, "installed": False} for snapshot in snapshots],
+        "errors": [],
     }
 
 
+def _require_slow_worker_quiescent(*, runtime_root: Path, domain: str) -> None:
+    """Refuse to stop services while the durable slow cycle may still be running."""
+
+    runtime = read_json(runtime_root / "state" / "runtime-health.json", {})
+    workers = runtime.get("workers") if isinstance(runtime, dict) else None
+    slow_health = workers.get("slow") if isinstance(workers, dict) else None
+    backoff = read_json(runtime_root / "state" / "slow-worker-backoff.json", {})
+    in_flight = (isinstance(slow_health, dict) and slow_health.get("inFlight") is True) or (
+        isinstance(backoff, dict) and backoff.get("inFlight") is True
+    )
+    if in_flight:
+        raise RuntimeError("worker uninstall refused: slow worker is in flight")
+
+    service = f"{domain}/{FIXED_WORKER_LABELS[1]}"
+    observation = launchctl("print", service, check=False)
+    if observation.returncode != 0:
+        return
+    output = "\n".join(part for part in (observation.stdout, observation.stderr) if part)
+    match = re.search(r"\bpid = (\d+)", output)
+    if match is None:
+        return
+    pid = int(match.group(1))
+    process = pid_probe(pid)
+    if process.get("alive") is True:
+        raise RuntimeError(f"worker uninstall refused: slow worker process is alive: {pid}")
+    if process.get("error") not in {None, "ESRCH"}:
+        raise RuntimeError(
+            f"worker uninstall refused: slow worker process state is uncertain: {pid}"
+        )
+
+
 def uninstall_workers(
-    specs: list[dict[str, object]], *, home: Path, domain: str
+    specs: list[dict[str, object]], *, home: Path, domain: str, runtime_root: Path
 ) -> dict[str, object]:
-    """Remove every worker, continuing through individual bootout failures."""
+    """Remove all workers transactionally after proving the slow lane is idle."""
 
     _validate_specs(specs)
-    return _uninstall_labels(tuple(str(spec["Label"]) for spec in specs), home=home, domain=domain)
+    runtime_root = runtime_root.resolve()
+    try:
+        with exclusive_lock(runtime_root / "state" / SLOW_WORK_LOCK):
+            _require_slow_worker_quiescent(runtime_root=runtime_root, domain=domain)
+            snapshots = _snapshot_workers(specs, home=home, domain=domain)
+            return _uninstall_snapshots(snapshots, domain=domain)
+    except RuntimeLockBusy as exc:
+        raise RuntimeError("worker uninstall refused: slow worker lock is busy") from exc
 
 
 def main() -> int:
@@ -688,7 +779,7 @@ def main() -> int:
             return 0
         if args.uninstall:
             require_operational_authorization(runtime_root)
-            result = uninstall_workers(specs, home=home, domain=domain)
+            result = uninstall_workers(specs, home=home, domain=domain, runtime_root=runtime_root)
         elif args.stage:
             if (
                 authorization_path(runtime_root).exists()

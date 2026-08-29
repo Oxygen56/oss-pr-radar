@@ -567,6 +567,7 @@ def sync_cloud_queue_if_due(
         "ok": True,
         "candidates": [],
         "unresolved": [],
+        "blocked": [],
     }
     followup_import = sync.get("prFollowup")
     if (
@@ -581,12 +582,18 @@ def sync_cloud_queue_if_due(
                 "ok": False,
                 "error": f"{type(exc).__name__}:{str(exc)[:400]}",
             }
+        followup_error = followup_listing.get("error") or followup_listing.get("errors")
+        followup_blocked = list(followup_listing.get("blocked") or [])
         if followup_listing.get("ok") is not True:
             errors.append(
                 {
                     "error": str(
-                        followup_listing.get("error")
-                        or followup_listing.get("errors")
+                        followup_error
+                        or (
+                            f"PR follow-up list blocked: {len(followup_blocked)}"
+                            if followup_blocked
+                            else None
+                        )
                         or "PR follow-up list failed"
                     )[:400]
                 }
@@ -602,6 +609,7 @@ def sync_cloud_queue_if_due(
         "prFollowup": followup_import if isinstance(followup_import, dict) else {},
         "prFollowupCandidates": list(followup_listing.get("candidates") or []),
         "prFollowupUnresolved": list(followup_listing.get("unresolved") or []),
+        "prFollowupBlocked": list(followup_listing.get("blocked") or []),
         "errors": errors,
     }
     _write_queue_sync_state(
@@ -909,26 +917,36 @@ def slow_advance_once(
                     failures = max(0, int(backoff.get("failureCount") or 0))
                 except (TypeError, ValueError):
                     failures = 0
-                delay = min(3600, 60 * (2 ** min(failures, 5)))
-                failure_retry = now + delay
+                try:
+                    persisted_retry = float(
+                        backoff.get("retryAfter") or backoff.get("nextAttemptAt") or 0
+                    )
+                except (TypeError, ValueError):
+                    persisted_retry = 0
+                # The interrupted attempt already owned this retry deadline.
+                # Reconciliation must not start the same backoff again from
+                # the later moment when its missing owner is observed.
+                failure_retry = max(now, persisted_retry)
+                try:
+                    persisted_delay = max(0, int(backoff.get("backoffSeconds") or 0))
+                except (TypeError, ValueError):
+                    persisted_delay = 0
                 operation_id = str(
                     backoff.get("operationId") or f"stale-{os.getpid()}-{time.time_ns()}"
                 )
-                write_json(
-                    backoff_path,
-                    {
-                        "schemaVersion": "slow_backoff_v1",
-                        "failureCount": failures + 1,
-                        "backoffSeconds": delay,
-                        "nextAttemptAt": failure_retry,
-                        "retryAfter": failure_retry,
-                        "attemptStartedAt": None,
-                        "lastAttemptAt": utc_now(),
-                        "inFlight": False,
-                        "lastError": stale_error,
-                        "operationId": operation_id,
-                    },
-                )
+                backoff = {
+                    "schemaVersion": "slow_backoff_v1",
+                    "failureCount": failures + 1,
+                    "backoffSeconds": persisted_delay if persisted_retry > now else 0,
+                    "nextAttemptAt": failure_retry,
+                    "retryAfter": failure_retry,
+                    "attemptStartedAt": None,
+                    "lastAttemptAt": utc_now(),
+                    "inFlight": False,
+                    "lastError": stale_error,
+                    "operationId": operation_id,
+                }
+                write_json(backoff_path, backoff)
                 append_operation(
                     root,
                     {
@@ -949,11 +967,12 @@ def slow_advance_once(
                     error_code="SLOW_WORKER_STALE_PID",
                     disk=disk,
                 )
-                return {
-                    "ok": False,
-                    "errors": [{"error": stale_error}],
-                    "slowWorkerDiagnostic": _slow_worker_diagnostic(root),
-                }
+                if persisted_retry > now:
+                    return {
+                        "ok": False,
+                        "errors": [{"error": stale_error}],
+                        "slowWorkerDiagnostic": _slow_worker_diagnostic(root),
+                    }
             retry_at = float(backoff.get("retryAfter") or backoff.get("nextAttemptAt") or 0)
             if backoff.get("inFlight") and now < retry_at:
                 return {

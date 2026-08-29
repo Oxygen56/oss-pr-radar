@@ -317,29 +317,190 @@ def test_first_worker_failure_does_not_touch_later_loaded_workers(
     assert not list(launch_dir.glob(".*.tmp"))
 
 
-def test_uninstall_keeps_plist_when_bootout_leaves_service_loaded(
+@pytest.mark.parametrize("failure_index", [0, 1])
+def test_uninstall_bootout_failure_restores_all_three_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_index: int
+) -> None:
+    home = tmp_path / "home"
+    launch_dir = home / "Library" / "LaunchAgents"
+    launch_dir.mkdir(parents=True)
+    worker_specs = specs(tmp_path)
+    before: dict[Path, bytes] = {}
+    modes: dict[Path, int] = {}
+    for index, spec in enumerate(worker_specs):
+        path = plist_path(home, str(spec["Label"]))
+        before[path] = f"keep-{index}".encode()
+        modes[path] = 0o640 + index
+        path.write_bytes(before[path])
+        path.chmod(modes[path])
+
+    domain = "gui/4242"
+    services = [f"{domain}/{spec['Label']}" for spec in worker_specs]
+    fake = FakeLaunchctl(
+        domain,
+        set(services),
+        bootout_failures={services[failure_index]},
+    )
+    monkeypatch.setattr(INSTALL, "launchctl", fake)
+
+    with pytest.raises(RuntimeError, match="worker uninstall rolled back"):
+        INSTALL.uninstall_workers(worker_specs, home=home, domain=domain, runtime_root=tmp_path)
+
+    assert {path: path.read_bytes() for path in before} == before
+    assert {path: path.stat().st_mode & 0o777 for path in before} == modes
+    assert fake.loaded == set(services)
+    assert not list(launch_dir.glob(".*.tmp"))
+
+
+def test_uninstall_unlink_failure_restores_all_three_workers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "home"
     launch_dir = home / "Library" / "LaunchAgents"
     launch_dir.mkdir(parents=True)
     worker_specs = specs(tmp_path)
-    for spec in worker_specs:
-        plist_path(home, str(spec["Label"])).write_bytes(b"keep-or-remove")
+    before: dict[Path, bytes] = {}
+    modes: dict[Path, int] = {}
+    for index, spec in enumerate(worker_specs):
+        path = plist_path(home, str(spec["Label"]))
+        before[path] = plistlib.dumps({"worker": index}, fmt=plistlib.FMT_XML)
+        modes[path] = 0o640 + index
+        path.write_bytes(before[path])
+        path.chmod(modes[path])
 
     domain = "gui/4242"
-    services = [f"{domain}/{spec['Label']}" for spec in worker_specs]
-    fake = FakeLaunchctl(domain, set(services), bootout_failures={services[0]})
+    services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
+    fake = FakeLaunchctl(domain, services)
+    monkeypatch.setattr(INSTALL, "launchctl", fake)
+    failed_path = plist_path(home, str(worker_specs[1]["Label"]))
+    original_unlink = Path.unlink
+    failure_injected = False
+
+    def fail_second_unlink(path: Path, missing_ok: bool = False) -> None:
+        nonlocal failure_injected
+        if path == failed_path and not failure_injected:
+            failure_injected = True
+            raise OSError("injected unlink failure")
+        original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_second_unlink)
+
+    with pytest.raises(RuntimeError, match="worker uninstall rolled back"):
+        INSTALL.uninstall_workers(worker_specs, home=home, domain=domain, runtime_root=tmp_path)
+
+    assert failure_injected is True
+    assert {path: path.read_bytes() for path in before} == before
+    assert {path: path.stat().st_mode & 0o777 for path in before} == modes
+    assert fake.loaded == services
+    assert not list(launch_dir.glob(".*.tmp"))
+
+
+@pytest.mark.parametrize(
+    ("state_file", "state_value"),
+    [
+        ("slow-worker-backoff.json", {"inFlight": True, "operationId": "slow-1"}),
+        ("runtime-health.json", {"workers": {"slow": {"inFlight": True}}}),
+    ],
+)
+def test_uninstall_refuses_persisted_slow_inflight_before_any_worker_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state_file: str,
+    state_value: dict[str, object],
+) -> None:
+    home = tmp_path / "home"
+    worker_specs = specs(tmp_path)
+    _write_staged_plists(home, worker_specs)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / state_file).write_text(
+        json.dumps(state_value) + "\n",
+        encoding="utf-8",
+    )
+    domain = "gui/4242"
+    services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
+    fake = FakeLaunchctl(domain, services)
     monkeypatch.setattr(INSTALL, "launchctl", fake)
 
-    result = INSTALL.uninstall_workers(worker_specs, home=home, domain=domain)
+    with pytest.raises(RuntimeError, match="slow worker is in flight"):
+        INSTALL.uninstall_workers(worker_specs, home=home, domain=domain, runtime_root=tmp_path)
 
-    assert result["ok"] is False
-    assert plist_path(home, str(worker_specs[0]["Label"])).exists()
-    assert not plist_path(home, str(worker_specs[1]["Label"])).exists()
-    assert not plist_path(home, str(worker_specs[2]["Label"])).exists()
-    assert fake.loaded == {services[0]}
-    assert not list(launch_dir.glob(".*.tmp"))
+    assert fake.calls == []
+    assert fake.loaded == services
+    assert all(plist_path(home, str(spec["Label"])).exists() for spec in worker_specs)
+
+
+def test_uninstall_refuses_live_launchctl_slow_pid_before_any_worker_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    worker_specs = specs(tmp_path)
+    _write_staged_plists(home, worker_specs)
+    (tmp_path / "state").mkdir()
+    domain = "gui/4242"
+    services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
+    slow_service = f"{domain}/{worker_specs[1]['Label']}"
+    fake = FakeLaunchctl(
+        domain,
+        services,
+        print_outputs={slow_service: "state = running\npid = 4242\n"},
+    )
+    monkeypatch.setattr(INSTALL, "launchctl", fake)
+    monkeypatch.setattr(
+        INSTALL,
+        "pid_probe",
+        lambda pid: {"pid": pid, "alive": True, "versionMatched": True},
+    )
+
+    with pytest.raises(RuntimeError, match="slow worker process is alive"):
+        INSTALL.uninstall_workers(worker_specs, home=home, domain=domain, runtime_root=tmp_path)
+
+    assert fake.calls == [("print", slow_service)]
+    assert fake.loaded == services
+    assert all(plist_path(home, str(spec["Label"])).exists() for spec in worker_specs)
+
+
+def test_uninstall_refuses_busy_slow_worker_lock_before_any_worker_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    worker_specs = specs(tmp_path)
+    _write_staged_plists(home, worker_specs)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    domain = "gui/4242"
+    services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
+    fake = FakeLaunchctl(domain, services)
+    monkeypatch.setattr(INSTALL, "launchctl", fake)
+
+    with INSTALL.exclusive_lock(state_dir / INSTALL.SLOW_WORK_LOCK):
+        with pytest.raises(RuntimeError, match="slow worker lock is busy"):
+            INSTALL.uninstall_workers(worker_specs, home=home, domain=domain, runtime_root=tmp_path)
+
+    assert fake.calls == []
+    assert fake.loaded == services
+    assert all(plist_path(home, str(spec["Label"])).exists() for spec in worker_specs)
+
+
+def test_uninstall_removes_all_workers_when_slow_worker_is_quiescent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    worker_specs = specs(tmp_path)
+    _write_staged_plists(home, worker_specs)
+    (tmp_path / "state").mkdir()
+    domain = "gui/4242"
+    services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
+    fake = FakeLaunchctl(domain, services)
+    monkeypatch.setattr(INSTALL, "launchctl", fake)
+
+    result = INSTALL.uninstall_workers(
+        worker_specs, home=home, domain=domain, runtime_root=tmp_path
+    )
+
+    assert result["ok"] is True
+    assert fake.loaded == set()
+    assert all(not plist_path(home, str(spec["Label"])).exists() for spec in worker_specs)
 
 
 def test_uninstall_requires_runtime_binding_and_authorization_before_launchctl(
