@@ -6312,6 +6312,176 @@ def test_active_task_quarantines_returns_every_payload_bound_gate(tmp_path):
     ]
 
 
+def test_exact_task_quarantine_member_clear_preserves_unrelated_active_gate(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    _record_batch_task_quarantines(store, now=now)
+    payload_digest = sha256_json({"error": "published task result authentication is invalid"})
+
+    store.clear_task_quarantine_member_exact(
+        "a/b#1",
+        reason="SHARED_CONTEXT_INVALID",
+        dedupe_key="invalid-1",
+        payload_digest=payload_digest,
+        evidence={"revalidated": True, "repair": "exact-member-test"},
+    )
+
+    assert store.active_task_quarantines("a/b#1") == [
+        {
+            "reason": "PR_FOLLOWUP_REBIND_REQUIRED",
+            "dedupeKey": "rebind-1",
+            "payload": {"requiresRebind": True},
+            "payloadDigest": sha256_json({"requiresRebind": True}),
+            "createdAt": now,
+        }
+    ]
+    with store.connect() as connection:
+        cleared = connection.execute(
+            """SELECT status,clear_payload_json FROM task_quarantines
+               WHERE opportunity_key='a/b#1' AND dedupe_key='invalid-1'"""
+        ).fetchone()
+    assert cleared["status"] == "CLEARED"
+    assert json.loads(cleared["clear_payload_json"]) == {
+        "repair": "exact-member-test",
+        "revalidated": True,
+    }
+
+
+def test_exact_task_quarantine_member_clear_rejects_payload_drift(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    _record_batch_task_quarantines(store, now=now)
+
+    with pytest.raises(LedgerError, match="member changed"):
+        store.clear_task_quarantine_member_exact(
+            "a/b#1",
+            reason="SHARED_CONTEXT_INVALID",
+            dedupe_key="invalid-1",
+            payload_digest="f" * 64,
+            evidence={"revalidated": True},
+        )
+
+    assert len(store.active_task_quarantines("a/b#1")) == 2
+
+
+def test_radar_event_backfill_replays_only_the_exact_cleared_gate(tmp_path):
+    from oss_pr_radar.task_quarantine import backfill_from_radar_events
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_FOLLOWUP_REBIND_REQUIRED",
+            "rebind-1",
+            {"slot": 1},
+            now,
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_FOLLOWUP_REBIND_REQUIRED",
+            "rebind-2",
+            {"slot": 2},
+            now,
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "LEGACY_RESULT_REQUIRES_MIGRATION",
+            "legacy-1",
+            {"legacy": True},
+            now,
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "TASK_QUARANTINE_CLEARED",
+            "clear-rebind-1",
+            {
+                "reason": "PR_FOLLOWUP_REBIND_REQUIRED",
+                "dedupeKey": "rebind-1",
+                "revalidated": True,
+            },
+            now,
+        )
+        connection.execute("DELETE FROM task_quarantines")
+    guard_root = tmp_path / "radar-action-guards"
+    guard_root.mkdir(mode=0o700)
+    with store.connect() as connection:
+        backfill_from_radar_events(
+            connection,
+            action_guard_root=guard_root,
+        )
+
+    assert {
+        (gate["reason"], gate["dedupeKey"]) for gate in store.active_task_quarantines("a/b#1")
+    } == {
+        ("PR_FOLLOWUP_REBIND_REQUIRED", "rebind-2"),
+        ("LEGACY_RESULT_REQUIRES_MIGRATION", "legacy-1"),
+    }
+
+
+def test_managed_event_backfill_replays_only_the_exact_cleared_gate(tmp_path):
+    from oss_pr_radar.managed_lifecycle import ManagedLedger
+    from oss_pr_radar.task_quarantine import backfill_from_managed_events
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    ManagedLedger(store.path, ensure_schema=True)
+    now = iso_z(datetime.now(UTC))
+    events = [
+        ("PR_FOLLOWUP_REBIND_REQUIRED", "rebind-1", {"slot": 1}),
+        ("PR_FOLLOWUP_REBIND_REQUIRED", "rebind-2", {"slot": 2}),
+        ("LEGACY_RESULT_REQUIRES_MIGRATION", "legacy-1", {"legacy": True}),
+        (
+            "TASK_QUARANTINE_CLEARED",
+            "clear-rebind-1",
+            {
+                "reason": "PR_FOLLOWUP_REBIND_REQUIRED",
+                "dedupeKey": "rebind-1",
+                "revalidated": True,
+            },
+        ),
+    ]
+    guard_root = tmp_path / "managed-action-guards"
+    guard_root.mkdir(mode=0o700)
+    with store.connect() as connection:
+        for event_type, idempotency_key, payload in events:
+            connection.execute(
+                """INSERT INTO managed_lifecycle_events
+                   (opportunity_key,event_type,state,idempotency_key,
+                    idempotency_fingerprint,source,provenance_json,observed_at,payload_json)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (
+                    "a/b#1",
+                    event_type,
+                    "READY",
+                    idempotency_key,
+                    sha256_text(idempotency_key),
+                    "test",
+                    "{}",
+                    now,
+                    json.dumps(payload, sort_keys=True),
+                ),
+            )
+        connection.execute("DELETE FROM task_quarantines")
+        backfill_from_managed_events(
+            connection,
+            action_guard_root=guard_root,
+        )
+
+    assert {
+        (gate["reason"], gate["dedupeKey"]) for gate in store.active_task_quarantines("a/b#1")
+    } == {
+        ("PR_FOLLOWUP_REBIND_REQUIRED", "rebind-2"),
+        ("LEGACY_RESULT_REQUIRES_MIGRATION", "legacy-1"),
+    }
+
+
 def test_exact_task_quarantine_batch_clear_keeps_blocked_publications_unchanged(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())

@@ -84,6 +84,11 @@ def backfill_from_radar_events(connection: sqlite3.Connection, *, action_guard_r
                SELECT 1 FROM events c
                WHERE c.opportunity_key=q.opportunity_key
                  AND c.event_type='TASK_QUARANTINE_CLEARED'
+                 AND json_extract(c.payload_json,'$.reason')=q.event_type
+                 AND (
+                   json_type(c.payload_json,'$.dedupeKey') IS NULL
+                   OR json_extract(c.payload_json,'$.dedupeKey')=q.dedupe_key
+                 )
                  AND c.id>q.id
              )"""
         )
@@ -128,6 +133,11 @@ def backfill_from_managed_events(
                SELECT 1 FROM managed_lifecycle_events c
                WHERE c.opportunity_key=q.opportunity_key
                  AND c.event_type='TASK_QUARANTINE_CLEARED'
+                 AND json_extract(c.payload_json,'$.reason')=q.event_type
+                 AND (
+                   json_type(c.payload_json,'$.dedupeKey') IS NULL
+                   OR json_extract(c.payload_json,'$.dedupeKey')=q.idempotency_key
+                 )
                  AND c.event_id>q.event_id
              )"""
         )

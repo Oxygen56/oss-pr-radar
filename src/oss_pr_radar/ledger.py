@@ -6338,6 +6338,12 @@ class RadarLedger:
                                 AND json_extract(x.payload_json,'$.threadId')=
                                     json_extract(b.payload_json,'$.threadId')
                                 AND x.dedupe_key=?)
+                               OR
+                               (x.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                                AND json_extract(x.payload_json,'$.wakeDigest')=
+                                    b.dedupe_key
+                                AND json_extract(x.payload_json,'$.threadId')=
+                                    json_extract(b.payload_json,'$.threadId'))
                              )
                          )""",
                     (
@@ -8203,6 +8209,379 @@ class RadarLedger:
                     },
                     now,
                 )
+
+    def clear_task_quarantine_member_exact(
+        self,
+        key: str,
+        *,
+        reason: str,
+        dedupe_key: str,
+        payload_digest: str,
+        evidence: dict[str, Any],
+    ) -> None:
+        """Clear one exact gate while preserving every unrelated active gate."""
+
+        if (
+            not reason
+            or not dedupe_key
+            or re.fullmatch(r"[0-9a-f]{64}", payload_digest) is None
+            or not isinstance(evidence, dict)
+            or evidence.get("revalidated") is not True
+        ):
+            raise LedgerError("exact task quarantine member clear evidence is incomplete")
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            ensure_quarantine_schema(connection)
+            row = connection.execute(
+                """SELECT * FROM task_quarantines
+                   WHERE opportunity_key=? AND reason=? AND dedupe_key=? AND status='ACTIVE'""",
+                (key, reason, dedupe_key),
+            ).fetchone()
+            if row is None or sha256_json(quarantine_payload(row)) != payload_digest:
+                raise LedgerError("exact task quarantine member changed")
+            cleared = clear_quarantine_exact(
+                connection,
+                opportunity_key=key,
+                reason=reason,
+                dedupe_key=dedupe_key,
+                evidence=evidence,
+                cleared_at=now,
+            )
+            if cleared != 1:
+                raise LedgerError("exact task quarantine member was not cleared")
+            if active_quarantine(connection, opportunity_key=key) is None:
+                connection.execute(
+                    """UPDATE publication_requests
+                       SET status='PENDING',reason='TASK_QUARANTINE_CLEARED',updated_at=?
+                       WHERE opportunity_key=? AND status='BLOCKED'
+                         AND reason='BLOCKED_REPRODUCTION_REQUIRED'""",
+                    (now, key),
+                )
+            self._event(
+                connection,
+                key,
+                "TASK_QUARANTINE_CLEARED",
+                sha256_text(
+                    f"{key}|{reason}|{dedupe_key}|{payload_digest}|{canonical_json(evidence)}"
+                ),
+                {
+                    "reason": reason,
+                    "dedupeKey": dedupe_key,
+                    "payloadDigest": payload_digest,
+                    **evidence,
+                },
+                now,
+            )
+
+    def supersede_pr_followup_reservation_repair_exact(
+        self,
+        key: str,
+        *,
+        task_id: str,
+        thread_id: str,
+        context_digest: str,
+        wake_digest: str,
+        replacement_wake_digest: str,
+        quarantine_dedupe_key: str,
+        quarantine_payload_digest: str,
+        context_quarantine_dedupe_key: str,
+        context_quarantine_payload_digest: str,
+        evidence: dict[str, Any],
+    ) -> None:
+        """Retire one failed reservation after a newer follow-up supersedes it."""
+
+        hashes = (
+            context_digest,
+            wake_digest,
+            replacement_wake_digest,
+            quarantine_payload_digest,
+            context_quarantine_payload_digest,
+        )
+        if (
+            not task_id
+            or not thread_id
+            or any(re.fullmatch(r"[0-9a-f]{64}", value) is None for value in hashes)
+            or wake_digest == replacement_wake_digest
+            or not quarantine_dedupe_key
+            or not context_quarantine_dedupe_key
+            or not isinstance(evidence, dict)
+            or evidence.get("revalidated") is not True
+        ):
+            raise LedgerError("superseded PR follow-up repair evidence is incomplete")
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            ensure_quarantine_schema(connection)
+            gate = connection.execute(
+                """SELECT * FROM task_quarantines
+                   WHERE opportunity_key=? AND reason='PR_FOLLOWUP_REBIND_REQUIRED'
+                     AND dedupe_key=? AND status='ACTIVE'""",
+                (key, quarantine_dedupe_key),
+            ).fetchone()
+            if gate is None or sha256_json(quarantine_payload(gate)) != quarantine_payload_digest:
+                raise LedgerError("superseded PR follow-up quarantine changed")
+            context_gate = connection.execute(
+                """SELECT * FROM task_quarantines
+                   WHERE opportunity_key=? AND reason='SHARED_CONTEXT_INVALID'
+                     AND dedupe_key=? AND status='ACTIVE'""",
+                (key, context_quarantine_dedupe_key),
+            ).fetchone()
+            if (
+                context_gate is None
+                or sha256_json(quarantine_payload(context_gate))
+                != context_quarantine_payload_digest
+            ):
+                raise LedgerError("superseded PR follow-up context quarantine changed")
+            gate_payload = quarantine_payload(gate)
+            if (
+                gate_payload.get("threadId") != thread_id
+                or gate_payload.get("wakeDigest") != wake_digest
+                or gate_payload.get("reservationPending") is not True
+            ):
+                raise LedgerError("superseded PR follow-up quarantine binding is invalid")
+            current = connection.execute(
+                """SELECT pr_url,head_sha,wake_digest,checked_at FROM pr_followups
+                   WHERE opportunity_key=? AND followup_required=1""",
+                (key,),
+            ).fetchone()
+            if current is None or current["wake_digest"] != replacement_wake_digest:
+                raise LedgerError("replacement PR follow-up changed")
+            reserved = connection.execute(
+                """SELECT id,created_at,payload_json FROM events
+                   WHERE opportunity_key=? AND event_type='PR_FOLLOWUP_RESERVED'
+                     AND dedupe_key=?
+                     AND json_extract(payload_json,'$.threadId')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (key, wake_digest, thread_id),
+            ).fetchone()
+            preparation = connection.execute(
+                """SELECT id,payload_json FROM events
+                   WHERE opportunity_key=? AND event_type='PR_FOLLOWUP_PREPARATION_BOUND'
+                     AND dedupe_key=?
+                     AND json_extract(payload_json,'$.threadId')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (key, wake_digest, thread_id),
+            ).fetchone()
+            repair = connection.execute(
+                """SELECT id FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='PR_FOLLOWUP_RESERVATION_REPAIR_REQUIRED'
+                     AND dedupe_key=?
+                     AND json_extract(payload_json,'$.threadId')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (key, wake_digest, thread_id),
+            ).fetchone()
+            if (
+                reserved is None
+                or preparation is None
+                or repair is None
+                or int(preparation["id"]) < int(reserved["id"])
+                or int(repair["id"]) < int(reserved["id"])
+            ):
+                raise LedgerError("superseded PR follow-up reservation proof is incomplete")
+            try:
+                reserved_payload = json.loads(reserved["payload_json"])
+                preparation_payload = json.loads(preparation["payload_json"])
+                preparation_snapshot = preparation_payload.get("snapshot")
+                prepared_checked_at = parse_time(str(preparation_snapshot.get("checkedAt") or ""))
+                replacement_checked_at = parse_time(str(current["checked_at"] or ""))
+            except (AttributeError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise LedgerError(
+                    "superseded PR follow-up reservation snapshot is invalid"
+                ) from exc
+            prepared_pr_url = str(preparation_snapshot.get("prUrl") or "")
+            prepared_head_sha = str(preparation_snapshot.get("preparedHeadSha") or "")
+            if (
+                not isinstance(reserved_payload, dict)
+                or not isinstance(preparation_payload, dict)
+                or not isinstance(preparation_snapshot, dict)
+                or reserved_payload.get("threadId") != thread_id
+                or reserved_payload.get("prUrl") != prepared_pr_url
+                or preparation_payload.get("threadId") != thread_id
+                or preparation_snapshot.get("wakeDigest") != wake_digest
+                or not PR_URL_RE.fullmatch(prepared_pr_url)
+                or re.fullmatch(r"[0-9a-f]{40}", prepared_head_sha) is None
+                or current["pr_url"] != prepared_pr_url
+                or current["head_sha"] != prepared_head_sha
+                or replacement_checked_at <= prepared_checked_at
+            ):
+                raise LedgerError("replacement PR follow-up changed")
+            terminal = connection.execute(
+                """SELECT 1 FROM events
+                   WHERE opportunity_key=? AND id>?
+                     AND (
+                       (event_type IN ('PR_FOLLOWUP_SENT','PR_FOLLOWUP_RESULT_INGESTED',
+                                       'PR_FOLLOWUP_RESERVATION_REPAIRED')
+                        AND dedupe_key=?)
+                       OR
+                       (event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                        AND json_extract(payload_json,'$.wakeDigest')=?)
+                     ) LIMIT 1""",
+                (key, reserved["id"], wake_digest, wake_digest),
+            ).fetchone()
+            if terminal is not None:
+                raise LedgerError("superseded PR follow-up reservation is already terminal")
+            authority_row = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=? AND event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+                     AND json_extract(payload_json,'$.taskId')=?
+                     AND json_extract(payload_json,'$.threadId')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (key, task_id, thread_id),
+            ).fetchone()
+            if authority_row is None:
+                raise LedgerError("superseded PR follow-up context authority is missing")
+            try:
+                authority = json.loads(authority_row["payload_json"])
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise LedgerError("superseded PR follow-up context authority is invalid") from exc
+            authority_state = {
+                field: authority.get(field)
+                for field in (
+                    "taskId",
+                    "threadId",
+                    "contextDigest",
+                    "hasContinuation",
+                    "continuationDedupeKey",
+                    "probeReceiptDigest",
+                    "tombstoneReceiptDigest",
+                    "implementationClaimed",
+                )
+            }
+            continuation_ref = str(authority_state["continuationDedupeKey"] or "")
+            tombstone_digest = str(authority_state["tombstoneReceiptDigest"] or "")
+            if (
+                authority_state["taskId"] != task_id
+                or authority_state["threadId"] != thread_id
+                or authority_state["contextDigest"] != context_digest
+                or authority_state["hasContinuation"] is not True
+                or re.fullmatch(r"[0-9a-f]{64}", continuation_ref) is None
+                or re.fullmatch(r"[0-9a-f]{64}", tombstone_digest) is None
+                or authority.get("authorityStateDigest") != sha256_json(authority_state)
+            ):
+                raise LedgerError("superseded PR follow-up context authority is invalid")
+            continuation_row = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND'
+                     AND dedupe_key=?
+                     AND json_extract(payload_json,'$.taskId')=?
+                     AND json_extract(payload_json,'$.threadId')=?
+                     AND json_extract(payload_json,'$.contextDigest')=?
+                     AND json_extract(payload_json,'$.followupWakeDigest')=?
+                   LIMIT 1""",
+                (key, continuation_ref, task_id, thread_id, context_digest, wake_digest),
+            ).fetchone()
+            if continuation_row is None:
+                raise LedgerError("superseded PR follow-up continuation is missing")
+            continuation = json.loads(continuation_row["payload_json"])
+            continuation_tombstone = continuation.get("codePathTombstoneReceipt")
+            if (
+                not isinstance(continuation_tombstone, dict)
+                or sha256_json(continuation_tombstone) != tombstone_digest
+            ):
+                raise LedgerError("superseded PR follow-up continuation is invalid")
+            cleared = clear_quarantine_exact(
+                connection,
+                opportunity_key=key,
+                reason="PR_FOLLOWUP_REBIND_REQUIRED",
+                dedupe_key=quarantine_dedupe_key,
+                evidence=evidence,
+                cleared_at=now,
+            )
+            if cleared != 1:
+                raise LedgerError("superseded PR follow-up quarantine was not cleared")
+            self._event(
+                connection,
+                key,
+                "TASK_QUARANTINE_CLEARED",
+                sha256_text(
+                    f"{key}|PR_FOLLOWUP_REBIND_REQUIRED|{quarantine_dedupe_key}|"
+                    f"{quarantine_payload_digest}|{canonical_json(evidence)}"
+                ),
+                {
+                    "reason": "PR_FOLLOWUP_REBIND_REQUIRED",
+                    "dedupeKey": quarantine_dedupe_key,
+                    "payloadDigest": quarantine_payload_digest,
+                    **evidence,
+                },
+                now,
+            )
+            context_cleared = clear_quarantine_exact(
+                connection,
+                opportunity_key=key,
+                reason="SHARED_CONTEXT_INVALID",
+                dedupe_key=context_quarantine_dedupe_key,
+                evidence=evidence,
+                cleared_at=now,
+            )
+            if context_cleared != 1:
+                raise LedgerError("superseded PR follow-up context quarantine was not cleared")
+            self._event(
+                connection,
+                key,
+                "TASK_QUARANTINE_CLEARED",
+                sha256_text(
+                    f"{key}|SHARED_CONTEXT_INVALID|{context_quarantine_dedupe_key}|"
+                    f"{context_quarantine_payload_digest}|{canonical_json(evidence)}"
+                ),
+                {
+                    "reason": "SHARED_CONTEXT_INVALID",
+                    "dedupeKey": context_quarantine_dedupe_key,
+                    "payloadDigest": context_quarantine_payload_digest,
+                    **evidence,
+                },
+                now,
+            )
+            if active_quarantine(connection, opportunity_key=key) is None:
+                connection.execute(
+                    """UPDATE publication_requests
+                       SET status='PENDING',reason='TASK_QUARANTINE_CLEARED',updated_at=?
+                       WHERE opportunity_key=? AND status='BLOCKED'
+                         AND reason='BLOCKED_REPRODUCTION_REQUIRED'""",
+                    (now, key),
+                )
+            self._event(
+                connection,
+                key,
+                "PR_FOLLOWUP_DELIVERY_ABANDONED",
+                sha256_text(f"{thread_id}|{wake_digest}|{reserved['created_at']}"),
+                {
+                    "threadId": thread_id,
+                    "wakeDigest": wake_digest,
+                    "reservedAt": reserved["created_at"],
+                    "reason": "SUPERSEDED_BY_NEWER_FOLLOWUP",
+                    "replacementWakeDigest": replacement_wake_digest,
+                    "recoveredFromTaskContext": True,
+                },
+                now,
+            )
+            revoked_state = {
+                "taskId": task_id,
+                "threadId": thread_id,
+                "contextDigest": context_digest,
+                "hasContinuation": False,
+                "continuationDedupeKey": None,
+                "probeReceiptDigest": authority_state["probeReceiptDigest"],
+                "tombstoneReceiptDigest": None,
+                "implementationClaimed": False,
+            }
+            revoked_marker = revoked_state | {
+                "authorityObservedAt": now,
+                "authorityStateDigest": sha256_json(revoked_state),
+                "authorityTransition": True,
+                "revokedContinuationDedupeKey": continuation_ref,
+                "revokedTombstoneReceiptDigest": tombstone_digest,
+                "revocationObservedAt": now,
+                "replacementWakeDigest": replacement_wake_digest,
+            }
+            self._event(
+                connection,
+                key,
+                "TASK_CONTEXT_AUTHORITY_BOUND",
+                sha256_json(revoked_marker),
+                revoked_marker,
+                now,
+            )
 
     def record_shared_context_quarantine(
         self,

@@ -2678,6 +2678,11 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
             result_receipt = None
             if not superseded_mirror:
                 result_receipt = _recoverable_published_result(context, store=store)
+                _clear_exact_tombstone_authority_quarantine(
+                    store,
+                    path=path,
+                    context=context,
+                )
                 _clear_exact_published_validation_auth_quarantines(
                     store,
                     path=path,
@@ -5185,6 +5190,296 @@ def _clear_exact_published_validation_auth_quarantines(
         return len(verified_gates)
 
 
+def _clear_exact_tombstone_authority_quarantine(
+    store: RadarLedger,
+    *,
+    path: Path,
+    context: dict[str, Any],
+) -> int:
+    """Clear only the historical prepared-head mismatch proven by a valid receipt."""
+
+    key = str(context.get("key") or "")
+    issue_url = str(context.get("issueUrl") or "")
+    try:
+        receipt = _verified_context_code_path_tombstone_receipt(context)
+    except (RuntimeError, ValueError, TypeError):
+        return 0
+    if not key or not issue_url or receipt is None:
+        return 0
+    prepared_head = str(receipt.get("preparedHeadSha") or "")
+    receipt_digest = str(receipt.get("receiptDigest") or "")
+    if (
+        re.fullmatch(r"[0-9a-f]{40}", prepared_head) is None
+        or re.fullmatch(r"[0-9a-f]{64}", receipt_digest) is None
+        or context.get("headSha") != prepared_head
+        or context.get("commitSha") != prepared_head
+    ):
+        return 0
+    with opportunity_action_guard(ledger_action_guard_root(store.path), key):
+        worktree = Path(str(context.get("worktreePath") or "")).resolve()
+        try:
+            if command(["git", "rev-parse", "HEAD"], cwd=worktree) != prepared_head or command(
+                ["git", "status", "--porcelain"], cwd=worktree
+            ):
+                return 0
+            _enforce_code_path_tombstones(
+                context=context,
+                worktree=worktree,
+                final_commit=prepared_head,
+            )
+        except (OSError, RuntimeError, ValueError, TypeError):
+            return 0
+        try:
+            current_raw, _current_stat, current_path = _read_shared_context_file(path)
+            current_value = json.loads(current_raw)
+        except (OSError, RuntimeError, UnicodeDecodeError, json.JSONDecodeError):
+            return 0
+        if current_path != path or current_value != context:
+            return 0
+        current_digest = hashlib.sha256(current_raw).hexdigest()
+        gates = store.active_task_quarantines(key)
+        matching = []
+        rebind_gates = []
+        superseded_rebind: dict[str, str] | None = None
+        for gate in gates:
+            payload = gate.get("payload")
+            if (
+                gate.get("reason") == "SHARED_CONTEXT_INVALID"
+                and isinstance(payload, dict)
+                and payload.get("error") == "task context tombstone authority is invalid"
+            ):
+                matching.append(gate)
+            elif gate.get("reason") == PR_FOLLOWUP_REBIND_REQUIRED:
+                rebind_gates.append(gate)
+        if len(matching) != 1 or len(gates) != 1 + len(rebind_gates) or len(rebind_gates) > 1:
+            return 0
+        if rebind_gates:
+            rebind_gate = rebind_gates[0]
+            rebind_payload = rebind_gate.get("payload")
+            followup = context.get("prFollowup")
+            thread_id = str(context.get("threadId") or "")
+            wake_digest = (
+                str(followup.get("wakeDigest") or "") if isinstance(followup, dict) else ""
+            )
+            if (
+                not isinstance(rebind_payload, dict)
+                or set(rebind_payload) != {"threadId", "wakeDigest", "reason", "reservationPending"}
+                or rebind_payload.get("threadId") != thread_id
+                or rebind_payload.get("wakeDigest") != wake_digest
+                or rebind_payload.get("reservationPending") is not True
+                or not str(rebind_payload.get("reason") or "").endswith("CODE_PATH_MISSING")
+                or rebind_gate.get("dedupeKey")
+                != hashlib.sha256(
+                    f"{key}|{wake_digest}|{rebind_payload.get('reason')}".encode("utf-8")
+                ).hexdigest()
+                or rebind_gate.get("payloadDigest") != sha256_json(rebind_payload)
+            ):
+                return 0
+            preparation = store.active_pr_followup_preparation(key, thread_id=thread_id)
+            snapshot = preparation.get("snapshot") if isinstance(preparation, dict) else None
+            if (
+                not isinstance(snapshot, dict)
+                or snapshot.get("wakeDigest") != wake_digest
+                or snapshot.get("preparedHeadSha") != prepared_head
+                or snapshot.get("prUrl") != followup.get("prUrl")
+            ):
+                return 0
+            active_followup = store.active_pr_followup(key)
+            active_wake_digest = (
+                str(active_followup.get("wake_digest") or "")
+                if isinstance(active_followup, dict)
+                else ""
+            )
+            if active_wake_digest != wake_digest:
+                if not isinstance(active_followup, dict):
+                    return 0
+                active_checked_at = str(active_followup.get("checked_at") or "")
+                try:
+                    replacement_is_newer = parse_time(active_checked_at) > parse_time(
+                        str(followup.get("checkedAt") or "")
+                    )
+                except (TypeError, ValueError):
+                    return 0
+                if (
+                    re.fullmatch(r"[0-9a-f]{64}", active_wake_digest) is None
+                    or not replacement_is_newer
+                    or active_followup.get("pr_url") != followup.get("prUrl")
+                    or active_followup.get("head_sha") != prepared_head
+                ):
+                    return 0
+                superseded_rebind = {
+                    "wakeDigest": wake_digest,
+                    "replacementWakeDigest": active_wake_digest,
+                    "dedupeKey": str(rebind_gate.get("dedupeKey") or ""),
+                    "payloadDigest": str(rebind_gate.get("payloadDigest") or ""),
+                }
+        gate = matching[0]
+        payload = gate.get("payload")
+        assert isinstance(payload, dict)
+        if set(payload) != {
+            "issueUrl",
+            "originalPath",
+            "originalBytesSha256",
+            "artifactPath",
+            "error",
+        }:
+            return 0
+        original_digest = str(payload.get("originalBytesSha256") or "")
+        if (
+            payload.get("issueUrl") != issue_url
+            or payload.get("originalPath") != str(path)
+            or re.fullmatch(r"[0-9a-f]{64}", original_digest) is None
+            or original_digest == current_digest
+            or gate.get("payloadDigest") != sha256_json(payload)
+        ):
+            return 0
+        base_dedupe = hashlib.sha256(
+            f"shared-context|{path}|{original_digest}|SHARED_CONTEXT_INVALID".encode("utf-8")
+        ).hexdigest()
+        dedupe_key = str(gate.get("dedupeKey") or "")
+        if (
+            dedupe_key != base_dedupe
+            and re.fullmatch(rf"{re.escape(base_dedupe)}\|generation=[2-9][0-9]*", dedupe_key)
+            is None
+        ):
+            return 0
+        artifact_identity = sha256_json(
+            {
+                "key": key,
+                "reason": "SHARED_CONTEXT_INVALID",
+                "originalPath": str(path),
+                "originalBytesSha256": original_digest,
+            }
+        )
+        expected_artifact_path = shared_context_quarantine_root() / f"q-{artifact_identity}.json"
+        if payload.get("artifactPath") != str(expected_artifact_path):
+            return 0
+        try:
+            quarantine_fd, _quarantine_path, handles = _open_shared_context_quarantine_directory(
+                create=False
+            )
+        except (OSError, RuntimeError):
+            return 0
+        try:
+            artifact, _artifact_raw = _read_context_quarantine_artifact_at(
+                quarantine_fd,
+                expected_artifact_path,
+            )
+            if set(artifact) != {
+                "schemaVersion",
+                "key",
+                "issueUrl",
+                "reason",
+                "error",
+                "originalPath",
+                "originalMode",
+                "originalBytesSha256",
+                "originalBytesBase64",
+                "observedAt",
+            }:
+                return 0
+            expected_artifact = {
+                "schemaVersion": "shared-context-quarantine-v1",
+                "key": key,
+                "issueUrl": issue_url,
+                "reason": "SHARED_CONTEXT_INVALID",
+                "error": "task context tombstone authority is invalid",
+                "originalPath": str(path),
+                "originalMode": 0o600,
+                "originalBytesSha256": original_digest,
+                "observedAt": gate.get("createdAt"),
+            }
+            if any(
+                artifact.get(name) != expected_value
+                for name, expected_value in expected_artifact.items()
+            ):
+                return 0
+            historical_raw = base64.b64decode(
+                str(artifact.get("originalBytesBase64") or ""), validate=True
+            )
+            historical = json.loads(historical_raw)
+        except (
+            OSError,
+            RuntimeError,
+            ValueError,
+            TypeError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+        ):
+            return 0
+        finally:
+            for descriptor in reversed(handles):
+                os.close(descriptor)
+        if (
+            hashlib.sha256(historical_raw).hexdigest() != original_digest
+            or not isinstance(historical, dict)
+            or _shared_context_identity_from_filename(path, historical_raw) != (key, issue_url)
+        ):
+            return 0
+        try:
+            historical_receipt = _verified_context_code_path_tombstone_receipt(historical)
+            historical_followup = historical.get("prFollowup")
+            historical_prepared_head = (
+                str(historical_followup.get("preparedHeadSha") or "")
+                if isinstance(historical_followup, dict)
+                else ""
+            )
+            historical_digest_valid = historical.get("contextDigest") in (
+                _task_context_digest_candidates(historical, historical_prepared_head)
+            )
+        except (RuntimeError, ValueError, TypeError):
+            return 0
+        historical_head = str(historical.get("headSha") or "")
+        historical_commit = str(historical.get("commitSha") or "")
+        ignored = {"headSha", "commitSha"}
+        if (
+            historical_receipt != receipt
+            or historical_prepared_head != prepared_head
+            or not historical_digest_valid
+            or re.fullmatch(r"[0-9a-f]{40}", historical_head) is None
+            or historical_commit != historical_head
+            or historical_head == prepared_head
+            or {name: value for name, value in historical.items() if name not in ignored}
+            != {name: value for name, value in context.items() if name not in ignored}
+        ):
+            return 0
+        evidence = {
+            "revalidated": True,
+            "repair": "CODE_PATH_TOMBSTONE_PREPARED_HEAD_REBOUND",
+            "receiptDigest": receipt_digest,
+            "previousHeadSha": historical_head,
+            "preparedHeadSha": prepared_head,
+            "contextDigest": str(context.get("contextDigest") or ""),
+        }
+        try:
+            if superseded_rebind is not None:
+                store.supersede_pr_followup_reservation_repair_exact(
+                    key,
+                    task_id=str(context.get("intentId") or ""),
+                    thread_id=str(context.get("threadId") or ""),
+                    context_digest=str(context.get("contextDigest") or ""),
+                    wake_digest=superseded_rebind["wakeDigest"],
+                    replacement_wake_digest=superseded_rebind["replacementWakeDigest"],
+                    quarantine_dedupe_key=superseded_rebind["dedupeKey"],
+                    quarantine_payload_digest=superseded_rebind["payloadDigest"],
+                    context_quarantine_dedupe_key=dedupe_key,
+                    context_quarantine_payload_digest=str(gate["payloadDigest"]),
+                    evidence=evidence
+                    | {"replacementWakeDigest": superseded_rebind["replacementWakeDigest"]},
+                )
+                return 2
+            store.clear_task_quarantine_member_exact(
+                key,
+                reason="SHARED_CONTEXT_INVALID",
+                dedupe_key=dedupe_key,
+                payload_digest=str(gate["payloadDigest"]),
+                evidence=evidence,
+            )
+        except (sqlite3.Error, RuntimeError, ValueError, TypeError):
+            return 0
+        return 1
+
+
 def _exclude_private_task_dir(worktree: Path) -> None:
     raw = command(["git", "rev-parse", "--git-path", "info/exclude"], cwd=worktree)
     exclude = Path(raw)
@@ -5376,6 +5671,8 @@ def write_task_context(
             final_commit=current_head,
         )
         effective_prepared_head = current_head
+        context["headSha"] = effective_prepared_head
+        context["commitSha"] = effective_prepared_head
         context["prFollowup"] = dict(followup) | {
             "preparedHeadSha": effective_prepared_head,
         }
@@ -5426,6 +5723,8 @@ def write_task_context(
                 except ProbeUnavailable as exc:
                     raise RuntimeError(f"code path tombstone attestation failed: {exc}") from exc
                 _verified_context_code_path_tombstone_receipt(context)
+                context["headSha"] = effective_prepared_head
+                context["commitSha"] = effective_prepared_head
             else:
                 context.pop("codePathTombstoneReceipt", None)
         else:
@@ -11626,12 +11925,17 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     written: list[dict[str, str]] = []
     refreshed: list[dict[str, str]] = []
+    pr_followups_pending_preparation: list[dict[str, Any]] = []
     no_go: list[dict[str, str]] = []
     unavailable: list[dict[str, str]] = []
     revalidation_errors: list[dict[str, str]] = []
     superseded = store.reconcile_superseded_pr_followups()
     prepared_recovered, errors = _recover_unbound_pr_followup_preparations(store)
     preparation_error_keys = {item["key"] for item in errors}
+    current_pr_followups = {
+        (str(item.get("key") or ""), str(item.get("wakeDigest") or ""))
+        for item in store.pr_followup_candidates()
+    }
     for candidate in store.task_context_candidates():
         if candidate["key"] in preparation_error_keys:
             continue
@@ -11688,6 +11992,36 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
             )
             if current is None:
                 raise RuntimeError("registered task context is unavailable")
+            current_followup = current.get("prFollowup")
+            current_code_paths = current.get("codePaths")
+            if (
+                isinstance(current_followup, dict)
+                and not current_followup.get("preparedHeadSha")
+                and (
+                    candidate["key"],
+                    str(current_followup.get("wakeDigest") or ""),
+                )
+                in current_pr_followups
+                and isinstance(current_code_paths, list)
+                and current_code_paths
+            ):
+                checkout_head = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+                _, _, tombstone_paths = _git_tree_code_path_partition(
+                    worktree,
+                    checkout_head,
+                    current_code_paths,
+                    require_checkout_head=True,
+                )
+                if tombstone_paths:
+                    pr_followups_pending_preparation.append(
+                        {
+                            "key": candidate["key"],
+                            "threadId": candidate["threadId"],
+                            "wakeDigest": str(current_followup["wakeDigest"]),
+                            "tombstonePaths": tombstone_paths,
+                        }
+                    )
+                    continue
             current_audit = current.get("liveAudit")
             if not isinstance(current_audit, dict) or not isinstance(
                 current_audit.get("evidence"), dict
@@ -11730,6 +12064,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
         "refreshed": refreshed,
         "prFollowupsSuperseded": superseded,
         "preparedFollowupsRecovered": prepared_recovered,
+        "prFollowupsPendingPreparation": pr_followups_pending_preparation,
         "noGo": no_go,
         "unavailable": unavailable,
         "revalidationErrors": revalidation_errors,

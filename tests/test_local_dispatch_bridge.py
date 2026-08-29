@@ -12600,9 +12600,372 @@ def test_pr_followup_reserve_retains_durable_scope_when_old_path_is_deleted(monk
         signature=receipt["signature"],
     )
     assert not (worktree / "deleted.py").exists()
+    assert context["headSha"] == prepared_head
+    assert context["commitSha"] == prepared_head
     assert context["prFollowup"]["preparedHeadSha"] == prepared_head
     assert context["codePaths"] == old_scope
     assert context["reproductionReceipt"]["codePaths"] == old_scope
+    recovered = RadarLedger(tmp_path / "recovered-tombstone.sqlite3")
+    restored = recovered.restore_task_context(context)
+    assert restored["intentRestored"] is True
+    with recovered.connect() as connection:
+        event_types = {
+            row[0]
+            for row in connection.execute(
+                "SELECT event_type FROM events WHERE opportunity_key='a/b#1'"
+            )
+        }
+    assert "TASK_CONTEXT_AUTHORITY_BOUND" in event_types
+    assert "TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND" in event_types
+
+
+def test_context_recovery_clears_only_exact_repaired_tombstone_head_gate(monkeypatch, tmp_path):
+    (
+        store,
+        worktree,
+        result_path,
+        _old_scope,
+        candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(
+        monkeypatch,
+        tmp_path,
+        managed_worktree=True,
+    )
+    result_path.unlink()
+    shared_path = MODULE.shared_context_path(context["issueUrl"])
+    historical = dict(context) | {
+        "headSha": context["reproductionReceipt"]["headSha"],
+        "commitSha": context["reproductionReceipt"]["commitSha"],
+    }
+    assert historical["headSha"] != prepared_head
+    assert historical["contextDigest"] == context["contextDigest"]
+    historical_raw = (
+        json.dumps(historical, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode()
+    MODULE._quarantine_shared_context(
+        store,
+        shared_path,
+        RuntimeError("task context tombstone authority is invalid"),
+        raw=historical_raw,
+        source_stat=shared_path.stat(),
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """DELETE FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
+                 AND dedupe_key=?""",
+            (candidate["wakeDigest"],),
+        )
+    store.mark_pr_followup_reservation_repair_required(
+        thread_id=candidate["threadId"],
+        wake_digest=candidate["wakeDigest"],
+        reason="task code paths are not indexable: CODE_PATH_MISSING",
+    )
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+        payload["probeReceiptDigest"] = context["probeReceiptDigest"]
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
+            (json.dumps(payload, sort_keys=True),),
+        )
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    assert recovered["restored"][0]["key"] == "a/b#1"
+    gates = store.active_task_quarantines("a/b#1")
+    assert len(gates) == 1
+    assert gates[0]["reason"] == MODULE.PR_FOLLOWUP_REBIND_REQUIRED
+    assert gates[0]["payload"]["reservationPending"] is True
+    assert run_git(worktree, "rev-parse", "HEAD") == prepared_head
+    with store.connect() as connection:
+        cleared = connection.execute(
+            """SELECT clear_payload_json FROM task_quarantines
+               WHERE opportunity_key='a/b#1' AND reason='SHARED_CONTEXT_INVALID'"""
+        ).fetchone()
+    evidence = json.loads(cleared["clear_payload_json"])
+    assert evidence["repair"] == "CODE_PATH_TOMBSTONE_PREPARED_HEAD_REBOUND"
+    assert evidence["previousHeadSha"] == historical["headSha"]
+    assert evidence["preparedHeadSha"] == prepared_head
+
+
+@pytest.mark.parametrize(
+    "replacement_race",
+    [None, "newer_refresh", "older_checked_at", "different_head", "different_pr"],
+)
+def test_context_recovery_supersedes_old_repair_and_releases_newer_followup(
+    monkeypatch, tmp_path, replacement_race
+):
+    (
+        store,
+        worktree,
+        result_path,
+        _old_scope,
+        old_candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(
+        monkeypatch,
+        tmp_path,
+        managed_worktree=True,
+    )
+    result_path.unlink()
+    shared_path = MODULE.shared_context_path(context["issueUrl"])
+    historical = dict(context) | {
+        "headSha": context["reproductionReceipt"]["headSha"],
+        "commitSha": context["reproductionReceipt"]["commitSha"],
+    }
+    historical_raw = (
+        json.dumps(historical, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode()
+    MODULE._quarantine_shared_context(
+        store,
+        shared_path,
+        RuntimeError("task context tombstone authority is invalid"),
+        raw=historical_raw,
+        source_stat=shared_path.stat(),
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """DELETE FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
+                 AND dedupe_key=?""",
+            (old_candidate["wakeDigest"],),
+        )
+    store.mark_pr_followup_reservation_repair_required(
+        thread_id=old_candidate["threadId"],
+        wake_digest=old_candidate["wakeDigest"],
+        reason="task code paths are not indexable: CODE_PATH_MISSING",
+    )
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+        payload["probeReceiptDigest"] = context["probeReceiptDigest"]
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
+            (json.dumps(payload, sort_keys=True),),
+        )
+    checked_at = iso_z(parse_time(context["prFollowup"]["checkedAt"]) + timedelta(minutes=2))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": checked_at,
+            "items": [
+                {
+                    "url": context["prFollowup"]["prUrl"],
+                    "headSha": prepared_head,
+                    "actionDigest": "newer-action-digest",
+                    "taskActionDigest": "newer-task-action-digest",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["处理更新后的合并冲突"],
+                    "evidence": {
+                        "actionableCheckNames": [],
+                        "baseRefName": "main",
+                        "baseSha": context["selectedBaseSha"],
+                    },
+                    "checkedAt": checked_at,
+                }
+            ],
+        }
+    )
+    active = store.active_pr_followup(context["key"])
+    replacement_wake = active["wake_digest"]
+    assert replacement_wake != old_candidate["wakeDigest"]
+
+    if replacement_race is not None:
+        original_supersede = store.supersede_pr_followup_reservation_repair_exact
+
+        def supersede_after_replacement_race(*args, **kwargs):
+            updates = {
+                "newer_refresh": {
+                    "checked_at": iso_z(parse_time(checked_at) + timedelta(minutes=1)),
+                    "action_digest": "newer-refreshed-action-digest",
+                    "evidence_json": json.dumps({"refreshed": True}, sort_keys=True),
+                },
+                "older_checked_at": {
+                    "checked_at": iso_z(
+                        parse_time(context["prFollowup"]["checkedAt"]) - timedelta(minutes=1)
+                    ),
+                },
+                "different_head": {
+                    "checked_at": iso_z(parse_time(checked_at) + timedelta(minutes=1)),
+                    "head_sha": "f" * 40,
+                },
+                "different_pr": {
+                    "checked_at": iso_z(parse_time(checked_at) + timedelta(minutes=1)),
+                    "pr_url": "https://github.com/a/b/pull/2",
+                },
+            }[replacement_race]
+            assignments = ",".join(f"{field}=?" for field in updates)
+            with store.connect() as connection:
+                connection.execute(
+                    f"UPDATE pr_followups SET {assignments} WHERE opportunity_key=?",
+                    (*updates.values(), context["key"]),
+                )
+            return original_supersede(*args, **kwargs)
+
+        monkeypatch.setattr(
+            store,
+            "supersede_pr_followup_reservation_repair_exact",
+            supersede_after_replacement_race,
+        )
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    if replacement_race in {"older_checked_at", "different_head", "different_pr"}:
+        assert {gate["reason"] for gate in store.active_task_quarantines(context["key"])} == {
+            "SHARED_CONTEXT_INVALID",
+            MODULE.PR_FOLLOWUP_REBIND_REQUIRED,
+        }
+        with store.connect() as connection:
+            clear_count = connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key=? AND event_type='TASK_QUARANTINE_CLEARED'""",
+                (context["key"],),
+            ).fetchone()[0]
+            abandoned_count = connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key=? AND event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'""",
+                (context["key"],),
+            ).fetchone()[0]
+            authority = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=? AND event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+                   ORDER BY id DESC LIMIT 1""",
+                (context["key"],),
+            ).fetchone()
+        assert clear_count == 0
+        assert abandoned_count == 0
+        assert json.loads(authority["payload_json"])["hasContinuation"] is True
+        return
+    assert store.active_task_quarantines(context["key"]) == []
+    assert {item["wakeDigest"] for item in store.pr_followup_candidates()} == {replacement_wake}
+    assert old_candidate["wakeDigest"] not in {
+        item["wake_digest"] for item in store.unresolved_pr_followups()
+    }
+    refreshed = store.task_context(
+        issue_url=context["issueUrl"],
+        thread_id=context["threadId"],
+    )
+    assert refreshed["prFollowup"]["wakeDigest"] == replacement_wake
+    assert "codePathTombstoneReceipt" not in refreshed
+    with store.connect() as connection:
+        abandoned = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+               ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+        authority = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+               ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+    assert json.loads(abandoned["payload_json"])["replacementWakeDigest"] == replacement_wake
+    assert json.loads(authority["payload_json"])["hasContinuation"] is False
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["errors"] == []
+    assert synced["written"] == []
+    assert synced["prFollowupsPendingPreparation"] == [
+        {
+            "key": context["key"],
+            "threadId": context["threadId"],
+            "wakeDigest": replacement_wake,
+            "tombstonePaths": context["codePathTombstoneReceipt"]["tombstonePaths"],
+        }
+    ]
+    assert run_git(worktree, "rev-parse", "HEAD") == prepared_head
+
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": prepared_head},
+    )
+    reserved = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=context["threadId"],
+            wake_digest=replacement_wake,
+        )
+    )
+    rebound = json.loads(Path(reserved["contextPath"]).read_text(encoding="utf-8"))
+    assert rebound["prFollowup"]["wakeDigest"] == replacement_wake
+    assert rebound["codePathTombstoneReceipt"]["wakeDigest"] == replacement_wake
+    assert rebound["headSha"] == prepared_head
+    assert rebound["commitSha"] == prepared_head
+
+
+@pytest.mark.parametrize("tamper", ["historical-context", "extra-gate"])
+def test_tombstone_head_repair_preserves_gate_on_any_unrelated_change(
+    monkeypatch, tmp_path, tamper
+):
+    (
+        store,
+        _worktree,
+        _result_path,
+        _old_scope,
+        _candidate,
+        context,
+        _prepared_head,
+    ) = _reserve_durable_scope_tombstone(
+        monkeypatch,
+        tmp_path,
+        managed_worktree=True,
+    )
+    shared_path = MODULE.shared_context_path(context["issueUrl"])
+    historical = dict(context) | {
+        "headSha": context["reproductionReceipt"]["headSha"],
+        "commitSha": context["reproductionReceipt"]["commitSha"],
+    }
+    if tamper == "historical-context":
+        historical["title"] = "unrelated historical change"
+    historical_raw = (
+        json.dumps(historical, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode()
+    MODULE._quarantine_shared_context(
+        store,
+        shared_path,
+        RuntimeError("task context tombstone authority is invalid"),
+        raw=historical_raw,
+        source_stat=shared_path.stat(),
+    )
+    if tamper == "extra-gate":
+        store.record_shared_context_quarantine(
+            key=context["key"],
+            reason="OTHER_ACTIVE_GATE",
+            dedupe_key="other-active-gate",
+            payload={"unexpected": True},
+            created_at=iso_z(datetime.now(UTC)),
+        )
+
+    assert (
+        MODULE._clear_exact_tombstone_authority_quarantine(
+            store,
+            path=shared_path,
+            context=context,
+        )
+        == 0
+    )
+    assert any(
+        gate["reason"] == "SHARED_CONTEXT_INVALID"
+        for gate in store.active_task_quarantines(context["key"])
+    )
 
 
 @pytest.mark.parametrize(
@@ -12965,6 +13328,8 @@ def test_shared_context_recovery_then_sync_preserves_pr_open_tombstone(
     source_result = json.loads(result_path.read_text(encoding="utf-8"))
     expected_stage = terminal_stage or "PR_OPEN"
     assert source_context["stage"] == expected_stage
+    assert source_context["headSha"] == current_commit
+    assert source_context["commitSha"] == current_commit
     assert source_context["prFollowup"]["preparedHeadSha"] == current_commit
     assert source_context["codePathTombstoneReceipt"]["preparedHeadSha"] == current_commit
     assert source_result["codePathTombstoneReceipt"]["tombstonePaths"] == ["deleted.py"]
@@ -12995,6 +13360,8 @@ def test_shared_context_recovery_then_sync_preserves_pr_open_tombstone(
     assert (
         recovered_context["prFollowup"]["wakeDigest"] == source_context["prFollowup"]["wakeDigest"]
     )
+    assert recovered_context["headSha"] == current_commit
+    assert recovered_context["commitSha"] == current_commit
     assert recovered_context["prFollowup"]["preparedHeadSha"] == current_commit
     receipt = recovered_context["codePathTombstoneReceipt"]
     assert receipt["preparedHeadSha"] == current_commit
@@ -13027,6 +13394,8 @@ def test_shared_context_recovery_then_sync_preserves_unpublished_tombstone(
         (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
     )
     assert source_context["stage"] == "PR_OPEN"
+    assert source_context["headSha"] == current_commit
+    assert source_context["commitSha"] == current_commit
     assert source_context["codePathTombstoneReceipt"]["preparedHeadSha"] == current_commit
     source_context["stage"] = recovered_stage
     serialized_context = json.dumps(source_context, sort_keys=True)
@@ -13058,6 +13427,8 @@ def test_shared_context_recovery_then_sync_preserves_unpublished_tombstone(
     assert (
         recovered_context["prFollowup"]["wakeDigest"] == source_context["prFollowup"]["wakeDigest"]
     )
+    assert recovered_context["headSha"] == current_commit
+    assert recovered_context["commitSha"] == current_commit
     assert recovered_context["prFollowup"]["preparedHeadSha"] == current_commit
     receipt = recovered_context["codePathTombstoneReceipt"]
     assert receipt["preparedHeadSha"] == current_commit
