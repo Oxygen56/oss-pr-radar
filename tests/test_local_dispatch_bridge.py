@@ -10085,6 +10085,128 @@ def test_controller_ingests_workspace_no_go_without_child_ledger_access(tmp_path
     assert task["autoSubmitAuthorized"] is False
 
 
+def test_ingestion_defers_result_until_active_task_turn_is_terminal(tmp_path):
+    store, worktree = registered_store(tmp_path)
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    result_path = Path(context["resultPath"])
+    # An active turn may leave the previous result file in place (or a
+    # partially written replacement).  The guard must defer before parsing it.
+    result_path.write_text("{not-yet-a-result", encoding="utf-8")
+
+    rollout = tmp_path / "rollout.jsonl"
+    started_at = iso_z(datetime.now(UTC))
+    rollout.write_text(
+        json.dumps(
+            {
+                "timestamp": started_at,
+                "type": "turn_context",
+                "payload": {"turn_id": "turn-active"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with sqlite3.connect(MODULE.THREAD_DB) as connection:
+        connection.execute(
+            "INSERT INTO threads (id,title,archived,updated_at,rollout_path,"
+            "first_user_message,cwd,git_origin_url) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-1",
+                "task",
+                0,
+                int(datetime.now(UTC).timestamp()),
+                str(rollout),
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(worktree),
+                None,
+            ),
+        )
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True, first
+    assert first["ingested"] == []
+    assert first["errors"] == []
+    assert first["activeTurnDeferred"] == [
+        {
+            "key": "a/b#1",
+            "threadId": "thread-1",
+            "reason": "ACTIVE_TASK_TURN",
+            "source": "rollout",
+            "turnId": "turn-active",
+            "startedAt": started_at,
+        }
+    ]
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "DISPATCHED"
+    )
+
+    with rollout.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "timestamp": iso_z(datetime.now(UTC)),
+                    "type": "event_msg",
+                    "payload": {"type": "task_complete", "turn_id": "turn-active"},
+                }
+            )
+            + "\n"
+        )
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": context["contextDigest"],
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "AUDIT_NO_GO",
+                "reason": "STRONG_EXISTING_PR",
+                "evidence": {"existingPr": "https://github.com/a/b/pull/2"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    second = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert second["ok"] is True, second
+    assert second["ingested"] == [
+        {"key": "a/b#1", "stage": "AUDIT_NO_GO", "reason": "STRONG_EXISTING_PR"}
+    ]
+    assert "activeTurnDeferred" not in second
+
+
+def test_latest_active_thread_turn_ignores_stale_unclosed_marker(tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    stale_started_at = iso_z(
+        datetime.now(UTC) - timedelta(seconds=MODULE.APP_SERVER_TASK_TURN_MAX_SECONDS + 60)
+    )
+    rollout.write_text(
+        json.dumps(
+            {
+                "timestamp": stale_started_at,
+                "type": "turn_context",
+                "payload": {"turn_id": "turn-stale"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert MODULE._latest_active_thread_turn(str(rollout)) is None
+
+
 def test_ingestion_ignores_stale_result_after_published_context_moves_on(tmp_path):
     store, worktree = registered_store(tmp_path)
     context_path = MODULE.write_task_context(

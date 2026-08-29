@@ -7572,6 +7572,108 @@ def active_root_task_worker(thread_id: str) -> dict[str, Any] | None:
     return None
 
 
+def _latest_active_thread_turn(rollout_path: str | None) -> dict[str, Any] | None:
+    """Return the latest turn when its rollout has no terminal marker yet.
+
+    A task can write ``.oss-pr-radar/result.json`` before it emits its final
+    turn marker.  The result is not safe to ingest while that turn is still
+    running because it may be the previous turn's file.  Keep this probe
+    deliberately conservative: an unclosed ``turn_context`` in the tail is
+    treated as active; a terminal marker is treated as complete.  An absent or
+    unreadable rollout provides no positive activity evidence and is left to
+    the existing recovery paths.
+    """
+
+    if not rollout_path:
+        return None
+    path = Path(rollout_path)
+    try:
+        with path.open("rb") as handle:
+            size = handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, size - 8 * 1024 * 1024))
+            data = handle.read().decode("utf-8", errors="ignore")
+    except OSError:
+        return None
+
+    for raw_line in reversed(data.splitlines()):
+        if not any(
+            marker in raw_line for marker in ('"turn_context"', '"task_complete"', '"turn_aborted"')
+        ):
+            continue
+        try:
+            record = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+        if record.get("type") == "turn_context":
+            turn_id = str(payload.get("turn_id") or record.get("turn_id") or "")
+            started_at = record.get("timestamp")
+            if started_at:
+                try:
+                    age_seconds = (datetime.now(UTC) - parse_time(str(started_at))).total_seconds()
+                except (TypeError, ValueError, OverflowError):
+                    age_seconds = None
+                if age_seconds is not None and age_seconds > APP_SERVER_TASK_TURN_MAX_SECONDS:
+                    # A worker is hard-limited to this duration.  If its
+                    # process receipt is gone, an old unclosed marker is
+                    # crash residue rather than proof of a live turn.
+                    return None
+            return {
+                "turnId": turn_id or None,
+                "startedAt": started_at,
+            }
+        if record.get("type") == "event_msg" and payload.get("type") in {
+            "task_complete",
+            "turn_aborted",
+        }:
+            return None
+    return None
+
+
+def _active_task_turn_for_result(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    """Return positive evidence that a candidate's task turn is still active."""
+
+    thread_id = str(candidate.get("threadId") or "")
+    if not thread_id:
+        return None
+
+    worker = active_task_turn_worker(thread_id)
+    if worker is not None:
+        return {
+            "source": "worker_receipt",
+            "turnId": None,
+            "worker": worker,
+        }
+
+    if not THREAD_DB.is_file():
+        return None
+    try:
+        connection = sqlite3.connect(THREAD_DB)
+        row = connection.execute(
+            "SELECT archived,rollout_path FROM threads WHERE id=?",
+            (thread_id,),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        if "connection" in locals():
+            connection.close()
+    if row is None or int(row[0] or 0) != 0:
+        return None
+    active = _latest_active_thread_turn(row[1])
+    if active is None:
+        return None
+    return {
+        "source": "rollout",
+        "turnId": active.get("turnId"),
+        "startedAt": active.get("startedAt"),
+    }
+
+
 def _proved_no_turn_started_receipt(receipt: dict[str, Any]) -> bool:
     return bool(
         receipt.get("ok") is False
@@ -14158,6 +14260,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     quarantined: list[dict[str, Any]] = []
     quarantined_already_recorded: list[dict[str, Any]] = []
     work_blocked: list[dict[str, Any]] = []
+    active_turn_deferred: list[dict[str, Any]] = []
     ignored: list[dict[str, str]] = []
     errors: list[dict[str, str]] = []
     for candidate in store.task_result_candidates():
@@ -14167,6 +14270,17 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
         candidate_failed = False
         evidence_block_idempotency_key = ""
         try:
+            active_turn = _active_task_turn_for_result(candidate)
+            if active_turn is not None:
+                active_turn_deferred.append(
+                    {
+                        "key": str(candidate["key"]),
+                        "threadId": str(candidate["threadId"]),
+                        "reason": "ACTIVE_TASK_TURN",
+                        **active_turn,
+                    }
+                )
+                continue
             if _terminal_published_result_missing_worktree(store, candidate):
                 ignored.append(
                     {
@@ -15219,6 +15333,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
         result["legacyContextDigestMigrations"] = legacy_context_digest_migrations
     if work_blocked:
         result["workBlocked"] = work_blocked
+    if active_turn_deferred:
+        result["activeTurnDeferred"] = active_turn_deferred
     return result
 
 

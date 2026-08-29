@@ -62,6 +62,7 @@ SLOW_CLOUD_SYNC_INTERVAL_SECONDS = 300
 # enough time for that cold start.
 MAX_FAST_OPERATION_SECONDS = 60
 TERMINAL_FEEDBACK_STAGES = {"AUDIT_NO_GO", "MERGED", "CLOSED"}
+PR_FOLLOWUP_REBIND_REQUIRED = "PR_FOLLOWUP_REBIND_REQUIRED"
 
 
 def _record_identity(value: Any) -> str:
@@ -124,6 +125,31 @@ def _merge_unique_records(*groups: list[Any]) -> list[Any]:
             else:
                 merged[position] = value
     return merged
+
+
+def _has_rebind_recovery(*groups: list[Any]) -> bool:
+    """Return whether result ingestion produced an actionable PR rebind.
+
+    A rebind quarantine is actionable only after the bridge has successfully
+    rearmed the follow-up and supplied a replacement wake digest.  Invalid
+    rebind evidence is deliberately excluded, as are unrelated and already
+    settled quarantines.  The bridge reports a repeated durable quarantine in
+    ``quarantinedAlreadyRecorded``; callers pass both forms here so a failed
+    drain is retried on the next slow cycle as well.
+    """
+
+    for group in groups:
+        for item in group:
+            if not isinstance(item, dict):
+                continue
+            if item.get("reason") != PR_FOLLOWUP_REBIND_REQUIRED:
+                continue
+            if item.get("rebindEligible", True) is False:
+                continue
+            replacement_digest = item.get("replacementWakeDigest")
+            if isinstance(replacement_digest, str) and replacement_digest:
+                return True
+    return False
 
 
 def _disk_gate(
@@ -1089,6 +1115,7 @@ def advance_once(
         }
     ingestion = runner(root, "ingest-results")
     ingestion_quarantined = list(ingestion.get("quarantined") or [])
+    ingestion_quarantined_already_recorded = list(ingestion.get("quarantinedAlreadyRecorded") or [])
     ingestion_work_blocked = list(ingestion.get("workBlocked") or [])
     ingestion_errors = list(ingestion.get("errors") or [])
     if ingestion.get("ok") is not True or ingestion_errors:
@@ -1182,6 +1209,9 @@ def advance_once(
     )
     post_review_errors = list(post_review_ingestion.get("errors") or [])
     post_review_quarantined = list(post_review_ingestion.get("quarantined") or [])
+    post_review_quarantined_already_recorded = list(
+        post_review_ingestion.get("quarantinedAlreadyRecorded") or []
+    )
     post_review_work_blocked = list(post_review_ingestion.get("workBlocked") or [])
     if post_review_ingestion.get("ok") is not True or post_review_errors:
         return {
@@ -1264,6 +1294,12 @@ def advance_once(
         post_review_work_blocked,
     )
     quarantined = _merge_unique_records(ingestion_quarantined, post_review_quarantined)
+    rebind_recovery = _has_rebind_recovery(
+        ingestion_quarantined,
+        ingestion_quarantined_already_recorded,
+        post_review_quarantined,
+        post_review_quarantined_already_recorded,
+    )
     blocked = list(publication.get("blocked") or [])
     pending = list(publication.get("pending") or [])
     renamed = list(title_reconciliation.get("renamed") or [])
@@ -1294,6 +1330,7 @@ def advance_once(
         or queue_sync.get("pending")
         or queue_sync.get("prFollowupCandidates")
         or queue_sync.get("prFollowupUnresolved")
+        or rebind_recovery
     )
     if should_drain and lifecycle_healthy:
         drain = runner(root, "drain-once")
@@ -1323,6 +1360,7 @@ def advance_once(
         or queue_sync.get("superseded")
         or queue_sync.get("prFollowupCandidates")
         or queue_sync.get("prFollowupUnresolved")
+        or rebind_recovery
         or drain.get("scannerRechecks")
         or queue_sync.get("errors")
     )

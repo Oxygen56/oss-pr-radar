@@ -74,6 +74,33 @@ def _write_authorization_records(
     return before
 
 
+def _write_bound_authorization_records(target: Path, manifest: dict[str, object]) -> None:
+    state = target / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    records = {
+        "operational": (
+            operational_auth_module.authorization_path(target),
+            operational_auth_module.OPERATIONAL_AUTH_SCHEMA,
+        ),
+        "staging": (
+            operational_auth_module.worker_staging_authorization_path(target),
+            operational_auth_module.WORKER_STAGING_AUTH_SCHEMA,
+        ),
+        "receipt": (
+            operational_auth_module.staged_worker_receipt_path(target),
+            operational_auth_module.STAGED_WORKER_RECEIPT_SCHEMA,
+        ),
+    }
+    value = {
+        "releaseId": manifest["releaseId"],
+        "releaseHead": manifest["commit"],
+        "releaseManifestSha256": manifest["manifestSha256"],
+    }
+    for path, schema in records.values():
+        path.write_text(json.dumps({"schema": schema, **value}) + "\n", encoding="utf-8")
+        path.chmod(0o600)
+
+
 def _staging_counts(target: Path, release_id: str, counts_path: Path) -> Path:
     state = target / "state"
     ledger_releases = state / "ledger-releases"
@@ -228,7 +255,13 @@ def test_release_switch_frees_staging_permit_for_new_release(tmp_path, monkeypat
 def test_same_release_redeploy_preserves_authorization_records(tmp_path):
     source, target = make_repositories(tmp_path)
     first = MODULE.deploy(source, target)
-    before = _write_authorization_records(target)
+    manifest = MODULE.verify_release(Path(first["releasePath"]))
+    _write_bound_authorization_records(target, manifest)
+    before = {
+        "operational": operational_auth_module.authorization_path(target).read_bytes(),
+        "staging": operational_auth_module.worker_staging_authorization_path(target).read_bytes(),
+        "receipt": operational_auth_module.staged_worker_receipt_path(target).read_bytes(),
+    }
 
     result = MODULE.deploy(source, target)
 
@@ -239,6 +272,40 @@ def test_same_release_redeploy_preserves_authorization_records(tmp_path):
         "receipt": operational_auth_module.staged_worker_receipt_path(target),
     }.items():
         assert path.read_bytes() == before[key]
+
+
+def test_pre_switched_release_reconciles_old_authorization_records(tmp_path):
+    source, target = make_repositories(tmp_path)
+    first = MODULE.deploy(source, target)
+    first_manifest = MODULE.verify_release(Path(first["releasePath"]))
+
+    (source / "scripts" / "runner.py").write_text("VERSION = 3\n", encoding="utf-8")
+    git(source, "add", "scripts/runner.py")
+    git(
+        source,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-m",
+        "source-v3",
+    )
+    second = MODULE.deploy(source, target)
+    second_manifest = MODULE.verify_release(Path(second["releasePath"]))
+
+    # Reproduce the observed partial transition: the release pointer already
+    # names the new release while all private authorization records still name
+    # the previous release.
+    assert (target / MODULE.RELEASE_POINTER).resolve().name == second["releaseId"]
+    _write_bound_authorization_records(target, first_manifest)
+
+    MODULE.activate_release(target, str(second["releaseId"]))
+
+    assert (target / MODULE.RELEASE_POINTER).resolve().name == second_manifest["releaseId"]
+    assert not operational_auth_module.authorization_path(target).exists()
+    assert not operational_auth_module.worker_staging_authorization_path(target).exists()
+    assert not operational_auth_module.staged_worker_receipt_path(target).exists()
 
 
 def test_release_rollback_revokes_authorization_records(tmp_path):

@@ -12,6 +12,7 @@ from test_ledger import insert_publication_preflight, legal_publication_probe
 
 from oss_pr_radar.ledger import RadarLedger
 from oss_pr_radar.local_publication import (
+    PR_FOLLOWUP_REBIND_REQUIRED,
     advance_once,
     compact_advance_result,
     fast_advance_once,
@@ -309,6 +310,97 @@ def test_advance_once_does_not_report_recorded_quarantine_as_activity(monkeypatc
     assert result["ok"] is True
     assert result["activity"] is False
     assert result["quarantined"][0]["new"] is False
+
+
+@pytest.mark.parametrize(
+    ("result_field", "entry", "expected_drain", "expected_activity"),
+    [
+        (
+            "quarantined",
+            {
+                "key": "a/b#1",
+                "reason": PR_FOLLOWUP_REBIND_REQUIRED,
+                "replacementWakeDigest": "w" * 64,
+            },
+            True,
+            True,
+        ),
+        (
+            "quarantinedAlreadyRecorded",
+            {
+                "key": "a/b#1",
+                "reason": PR_FOLLOWUP_REBIND_REQUIRED,
+                "replacementWakeDigest": "w" * 64,
+            },
+            True,
+            True,
+        ),
+        (
+            "quarantined",
+            {
+                "key": "a/b#1",
+                "reason": PR_FOLLOWUP_REBIND_REQUIRED,
+                "replacementWakeDigest": "w" * 64,
+                "rebindEligible": False,
+            },
+            False,
+            False,
+        ),
+    ],
+)
+def test_advance_once_rebind_quarantine_only_drains_actionable_recovery(
+    monkeypatch,
+    tmp_path,
+    result_field,
+    entry,
+    expected_drain,
+    expected_activity,
+):
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.sync_cloud_queue_if_due",
+        lambda *args, **kwargs: {"ok": True, "errors": [], "pending": []},
+    )
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "unavailable": [], "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [],
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "quarantined": [entry] if result_field == "quarantined" else [],
+                "quarantinedAlreadyRecorded": (
+                    [entry] if result_field == "quarantinedAlreadyRecorded" else []
+                ),
+                "errors": [],
+            }
+        if operation == "independent-review-run":
+            return {"ok": True, "updated": [], "errors": []}
+        if operation == "publication-feedback-list":
+            return {"ok": True, "candidates": [], "unresolved": [], "errors": []}
+        if operation == "recovery-list":
+            return {"ok": True, "recoverable": [], "errors": []}
+        if operation == "drain-once":
+            return {"ok": True, "action": "implementation_followup_dispatched"}
+        return {
+            "ok": True,
+            "renamed": [],
+            "archived": [],
+            "published": [],
+            "pending": [],
+            "blocked": [],
+            "errors": [],
+        }
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert result["activity"] is expected_activity
+    assert calls.count("drain-once") == int(expected_drain)
 
 
 def test_slow_cycle_is_successful_with_task_local_context_quarantine(monkeypatch, tmp_path):

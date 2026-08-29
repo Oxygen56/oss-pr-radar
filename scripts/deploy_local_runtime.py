@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from oss_pr_radar.independent_review import migrate_legacy_review_state  # noqa: E402
 from oss_pr_radar.operational_auth import (  # noqa: E402
+    authorization_records_bound_to_release,
     revoke_operational_authorization,
     worker_staging_transaction_lock,
 )
@@ -224,7 +225,15 @@ def activate_release(target: Path, release_id: str) -> dict[str, object]:
     # Revoke before changing the pointer so a failed activation cannot expose a
     # new release alongside credentials bound to the previous release.
     with worker_staging_transaction_lock(target):
-        if _active_release_identity(target) != _release_identity(manifest):
+        target_identity = _release_identity(manifest)
+        if _active_release_identity(
+            target
+        ) != target_identity or not authorization_records_bound_to_release(
+            target,
+            release_id=manifest.get("releaseId"),
+            release_head=manifest.get("commit"),
+            release_manifest_sha256=manifest.get("manifestSha256"),
+        ):
             revoke_operational_authorization(target, _lock_held=True)
         activate_release_pointer(
             target,

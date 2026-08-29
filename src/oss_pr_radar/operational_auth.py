@@ -77,6 +77,53 @@ def worker_staging_transaction_lock(runtime_root: Path) -> _WorkerStagingLock:
     return _WorkerStagingLock(runtime_root)
 
 
+def authorization_records_bound_to_release(
+    runtime_root: Path, *, release_id: object, release_head: object, release_manifest_sha256: object
+) -> bool:
+    """Return whether every present authorization record names one release.
+
+    Deployment must be able to distinguish a valid same-release redeploy from a
+    pointer that was switched out of band while old credentials remained on
+    disk.  This deliberately checks only the immutable release binding shared
+    by all three records; the normal Stage 7 gates continue to verify
+    signatures, timestamps, ledger state, and worker evidence before use.
+    Any present record that is missing, malformed, unsafe, or bound to another
+    release is treated as unprovable so the caller can revoke the complete set.
+    """
+
+    expected = {
+        "releaseId": release_id,
+        "releaseHead": release_head,
+        "releaseManifestSha256": release_manifest_sha256,
+    }
+    if any(not isinstance(value, str) or not value for value in expected.values()):
+        return False
+    records = (
+        (authorization_path(runtime_root), OPERATIONAL_AUTH_SCHEMA),
+        (worker_staging_authorization_path(runtime_root), WORKER_STAGING_AUTH_SCHEMA),
+        (staged_worker_receipt_path(runtime_root), STAGED_WORKER_RECEIPT_SCHEMA),
+    )
+    for path, schema in records:
+        if not path.exists() and not path.is_symlink():
+            continue
+        try:
+            metadata = path.lstat()
+            if (
+                stat.S_ISLNK(metadata.st_mode)
+                or not stat.S_ISREG(metadata.st_mode)
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+            ):
+                return False
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeError):
+            return False
+        if not isinstance(value, dict) or value.get("schema") != schema:
+            return False
+        if any(value.get(key) != expected_value for key, expected_value in expected.items()):
+            return False
+    return True
+
+
 def _write_private(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(path.parent, 0o700)
