@@ -17,7 +17,10 @@ AUTOMATION_STATUS = "ACTIVE"
 HEARTBEAT_RRULE = "FREQ=HOURLY;BYMINUTE=30"
 DAILY_WAR_ROOM_RRULE = "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0"
 HEARTBEAT_TARGET_THREAD_ID = "019f71c3-4f26-7030-b126-25f8cfbac4c4"
-DAILY_WAR_ROOM_TARGET_THREAD_ID = "01a03bf2-e310-7f63-8db6-a9ec0a39f4aa"
+# Keep the daily heartbeat on its own durable, normally idle thread.  Binding
+# it to a long-running user conversation lets each scheduler tick postpone the
+# next tick indefinitely.
+DAILY_WAR_ROOM_TARGET_THREAD_ID = "01a047a5-88da-7113-8355-218215cd037a"
 HEARTBEAT_NAME = "OSS PR Radar 控制器（单会话）"
 DAILY_WAR_ROOM_NAME = "Daily GitHub open PR status review"
 AUTOMATION_PROMPT_POLICY = "oss-pr-radar.prompt-bound.v1"

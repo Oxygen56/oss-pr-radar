@@ -112,7 +112,7 @@ def canonical_prompt(role: str, runtime_root: Path, release_command: list[str]) 
     )
     if role == "heartbeat":
         action = (
-            "execute only the release-command; it may take several minutes; inspect its final JSON; "
+            "execute only the release-command exactly as written, including its first interpreter token; never drop the interpreter or substitute a different path; it may take several minutes; inspect its final JSON; "
             "if context compaction or a missing tool result happens after the command starts, never reply from uncertainty and execute the identical release-command once more, which safely joins the already-running controller, then inspect that final JSON; "
             "if it contains desktopHandoff, send desktopHandoff.prompt unchanged exactly once to desktopHandoff.threadId even when command exit is nonzero or final JSON ok=false, because this handoff is the prescribed recovery action; "
             "only after that message-tool send succeeds reply '已开始或继续处理；你无需操作。'; "
@@ -123,7 +123,7 @@ def canonical_prompt(role: str, runtime_root: Path, release_command: list[str]) 
         )
     else:
         action = (
-            "execute only the release-command; the command must include --send and is the only daily action; "
+            "execute only the release-command exactly as written, including its first interpreter token; never drop the interpreter or substitute a different path; the command must include --send and is the only daily action; "
             "if context compaction or a missing tool result happens after the command starts, never reply from uncertainty and execute the identical release-command once more, which safely replays the daily cycle through its durable delivery deduplication, then inspect that final JSON; "
             "check command exit and final JSON ok; if the command fails or final JSON ok=false, reply with one plain-Chinese sentence naming only the real user-visible blocker; "
             "only when it succeeds, reply exactly '检查已完成；当前没有需要你处理的事情。'; "

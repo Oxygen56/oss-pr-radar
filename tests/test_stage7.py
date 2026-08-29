@@ -4,6 +4,7 @@ import hashlib
 import json
 import plistlib
 import shutil
+import stat
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -1205,7 +1206,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     assert automation["generator"] == "stage7-automation-toml-v3"
     assert automation["dailyWarRoom"]["kind"] == "heartbeat"
     assert automation["heartbeat"]["targetThreadId"] == "019f71c3-4f26-7030-b126-25f8cfbac4c4"
-    assert automation["dailyWarRoom"]["targetThreadId"] == ("01a03bf2-e310-7f63-8db6-a9ec0a39f4aa")
+    assert automation["dailyWarRoom"]["targetThreadId"] == ("01a047a5-88da-7113-8355-218215cd037a")
     assert automation["dailyWarRoom"]["targetThreadId"] != automation["heartbeat"]["targetThreadId"]
     assert {
         "model",
@@ -1399,7 +1400,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     daily_toml.write_text(daily_text, encoding="utf-8")
     daily_toml.write_text(
         daily_text.replace(
-            'target_thread_id = "01a03bf2-e310-7f63-8db6-a9ec0a39f4aa"',
+            'target_thread_id = "01a047a5-88da-7113-8355-218215cd037a"',
             'target_thread_id = "wrong-thread"',
         ),
         encoding="utf-8",
@@ -1410,7 +1411,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     heartbeat_toml.write_text(
         heartbeat_text.replace(
             'target_thread_id = "019f71c3-4f26-7030-b126-25f8cfbac4c4"',
-            'target_thread_id = "01a03bf2-e310-7f63-8db6-a9ec0a39f4aa"',
+            'target_thread_id = "01a047a5-88da-7113-8355-218215cd037a"',
         ),
         encoding="utf-8",
     )
@@ -1419,7 +1420,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     heartbeat_toml.write_text(heartbeat_text, encoding="utf-8")
     daily_toml.write_text(
         daily_text.replace(
-            'target_thread_id = "01a03bf2-e310-7f63-8db6-a9ec0a39f4aa"',
+            'target_thread_id = "01a047a5-88da-7113-8355-218215cd037a"',
             'target_thread_id = "019f71c3-4f26-7030-b126-25f8cfbac4c4"',
         ),
         encoding="utf-8",
@@ -1733,7 +1734,7 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     assert contracts["heartbeat"]["kind"] == "heartbeat"
     assert contracts["dailyWarRoom"]["kind"] == "heartbeat"
     assert contracts["heartbeat"]["targetThreadId"] == ("019f71c3-4f26-7030-b126-25f8cfbac4c4")
-    assert contracts["dailyWarRoom"]["targetThreadId"] == ("01a03bf2-e310-7f63-8db6-a9ec0a39f4aa")
+    assert contracts["dailyWarRoom"]["targetThreadId"] == ("01a047a5-88da-7113-8355-218215cd037a")
     assert contracts["dailyWarRoom"]["targetThreadId"] != contracts["heartbeat"]["targetThreadId"]
     assert contracts["dailyWarRoom"]["rrule"] == ("FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0")
     assert {
@@ -1761,6 +1762,7 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     assert "even when command exit is nonzero or final JSON ok=false" in heartbeat_prompt
     assert "execute the identical release-command once more" in heartbeat_prompt
     assert "safely joins the already-running controller" in heartbeat_prompt
+    assert "including its first interpreter token" in heartbeat_prompt
     assert heartbeat_prompt.index("if it contains desktopHandoff") < heartbeat_prompt.index(
         "if the command fails or final JSON ok=false"
     )
@@ -1770,6 +1772,7 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     )
     assert "检查已完成；当前没有需要你处理的事情。" in daily_prompt
     assert "--send" in daily_prompt
+    assert "including its first interpreter token" in daily_prompt
     assert daily_prompt.index("if the command fails or final JSON ok=false") < daily_prompt.index(
         "only when it succeeds"
     )
@@ -1848,6 +1851,14 @@ def test_deployed_action_clis_have_no_auth_bypass_option(script_name):
     help_text = result.stdout + result.stderr
     assert "--skip-auth" not in help_text
     assert "--allow-unreleased-code" not in help_text
+
+
+@pytest.mark.parametrize("script_name", ["controller_cycle.py", "daily_war_room_cycle.py"])
+def test_automation_entrypoints_are_directly_executable(script_name):
+    """A heartbeat must survive a runner that invokes the shebang path verbatim."""
+
+    script = Path(__file__).parents[1] / "scripts" / script_name
+    assert stat.S_IMODE(script.stat().st_mode) & 0o111 == 0o111
 
 
 def test_daily_cycle_does_not_resend_unchanged_actionable_item(tmp_path, monkeypatch):
