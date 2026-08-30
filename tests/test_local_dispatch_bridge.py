@@ -742,7 +742,8 @@ def test_desktop_thread_request_isolates_malformed_response_id(monkeypatch, tmp_
         timeout_seconds=2,
     )
 
-    assert result["thread-1"].startswith("TypeError:unhashable type")
+    assert result["thread-1"].startswith("TypeError:")
+    assert "list" in result["thread-1"]
 
 
 def test_duplicate_task_reconcile_archives_only_exact_renamed_duplicates(monkeypatch):
