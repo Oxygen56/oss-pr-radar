@@ -146,6 +146,146 @@ def test_review_receipt_survives_controller_result_receipt_rebinding(tmp_path, m
     assert module.controller_review_passed(control, value) is True
 
 
+def test_source_digest_preserves_historical_code_path_order_and_binds_scope():
+    reported = ["runtime.py", "runtime/new.py"]
+    authorized = ["runtime.py"]
+    pre_bind = {
+        "schemaVersion": "radar-task-result-v1",
+        "key": "owner/repo#1",
+        "handoffMode": "controller_merge_complete",
+        "commitSha": "a" * 40,
+        "changedFiles": reported,
+        "codePaths": reported,
+        "quality": {field: field != "independent_review_passed" for field in QUALITY_FIELDS},
+    }
+    scope = {
+        "schemaVersion": "controller-code-path-scope-v1",
+        "authority": "managed-reproduction-receipt",
+        "authorized": authorized,
+        "reported": reported,
+        "added": ["runtime/new.py"],
+        "omitted": [],
+        "sourceReceiptDigest": "b" * 64,
+    }
+    post_bind = pre_bind | {
+        "codePaths": authorized,
+        "controllerCodePathScope": scope,
+    }
+    reordered = pre_bind | {"codePaths": list(reversed(reported))}
+    expected = module._source_digest(pre_bind)
+    assert module._source_digest(reordered) != expected
+    assert module._source_digest(post_bind) != expected
+
+    self_reported_scope = post_bind | {
+        "controllerCodePathScope": scope | {"sourceReceiptDigest": "f" * 64}
+    }
+    assert module._source_digest(self_reported_scope) != expected
+
+
+def _prepared_review_receipt_migration(tmp_path, monkeypatch):
+    control, worktree, result_path, candidate, base, _head = prepared_task(tmp_path)
+    (worktree / "alpha.py").write_text("VALUE = 1\n", encoding="utf-8")
+    git(worktree, "add", "alpha.py")
+    git(worktree, "commit", "--amend", "--no-edit")
+    head = git(worktree, "rev-parse", "HEAD")
+
+    source = json.loads(result_path.read_text(encoding="utf-8"))
+    source["commitSha"] = head
+    source["changedFiles"] = ["alpha.py", "service.py"]
+    source["codePaths"] = ["service.py", "alpha.py"]
+    result_path.write_text(json.dumps(source), encoding="utf-8")
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+    outcome = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: {
+            "verdict": "PASS",
+            "summary": "The exact committed diff has no blocking finding.",
+            "findings": [],
+            "evidence": ["alpha.py and service.py are the complete committed diff."],
+        },
+    )
+    assert outcome["updated"][0]["commitSha"] == head
+    source = json.loads(result_path.read_text(encoding="utf-8"))
+    source_review = module.controller_review_result(control, source)
+    assert source_review is not None
+
+    target = dict(source)
+    target.update(
+        {
+            "headSha": head,
+            "selectedBaseSha": base,
+            "taskId": "intent-1",
+            "codePaths": ["service.py"],
+            "controllerCodePathScope": {
+                "schemaVersion": "controller-code-path-scope-v1",
+                "authority": "managed-reproduction-receipt",
+                "authorized": ["service.py"],
+                "reported": ["alpha.py", "service.py"],
+                "added": ["alpha.py"],
+                "omitted": [],
+                "sourceReceiptDigest": "b" * 64,
+            },
+        }
+    )
+    return control, worktree, source, target, source_review, base, head
+
+
+def test_migrate_controller_review_receipt_preserves_old_unsorted_source(tmp_path, monkeypatch):
+    control, _worktree, source, target, source_review, _base, head = (
+        _prepared_review_receipt_migration(tmp_path, monkeypatch)
+    )
+    sorted_source = source | {"codePaths": sorted(source["codePaths"])}
+    assert module._source_digest(source) != module._source_digest(sorted_source)
+
+    migrated = module.migrate_controller_review_receipt(control, source, target)
+    target_digest = module._source_digest(target)
+
+    assert migrated["verdict"] == "PASS"
+    assert migrated["commitSha"] == head
+    assert migrated["sourceDigest"] == target_digest
+    assert migrated | {"sourceDigest": source_review["sourceDigest"]} == source_review
+    assert module.controller_review_result(control, source) == source_review
+    assert module.controller_review_result(control, target) == migrated
+    assert module.migrate_controller_review_receipt(control, source, target) == migrated
+
+
+def test_migrate_controller_review_receipt_rejects_existing_invalid_target(tmp_path, monkeypatch):
+    control, _worktree, source, target, _source_review, _base, head = (
+        _prepared_review_receipt_migration(tmp_path, monkeypatch)
+    )
+    target_digest = module._source_digest(target)
+    target_path = module._receipt_path(
+        control,
+        key=str(target["key"]),
+        commit_sha=head,
+        source_digest=target_digest,
+    )
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text('{"invalid":true}\n', encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="canonical independent review receipt conflicts"):
+        module.migrate_controller_review_receipt(control, source, target)
+
+    assert json.loads(target_path.read_text(encoding="utf-8")) == {"invalid": True}
+
+
+def test_migrate_controller_review_receipt_rejects_changed_review_scope(tmp_path, monkeypatch):
+    control, _worktree, source, target, _source_review, base, _head = (
+        _prepared_review_receipt_migration(tmp_path, monkeypatch)
+    )
+    target["previousCommitSha"] = base
+    target["controllerCommitChangedFiles"] = ["alpha.py", "service.py"]
+
+    with pytest.raises(RuntimeError, match="receipt migration scope mismatch"):
+        module.migrate_controller_review_receipt(control, source, target)
+
+
 def test_review_once_does_not_repeat_unchanged_hold(tmp_path, monkeypatch):
     control, _worktree, _result_path, candidate, _base, _head = prepared_task(tmp_path)
 

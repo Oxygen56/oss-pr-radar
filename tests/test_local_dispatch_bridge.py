@@ -16960,6 +16960,72 @@ def test_controller_accepts_verified_changed_files_beyond_reproduction_scope(tmp
     assert finalized["reproductionReceipt"]["codePaths"] == ["runtime.py"]
 
 
+def test_controller_recovers_prebind_review_after_receipt_binding_crash(monkeypatch, tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("integration.py",),
+        reported_code_paths=("runtime.py", "integration.py"),
+    )
+    candidate = store.task_result_candidates()[0]
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    original_write = MODULE._write_task_result_json_to_private
+
+    def crash_before_final_result_write(result_access, value):
+        if (
+            "controllerCodePathScope" in value
+            and value.get("quality", {}).get("independent_review_passed") is True
+        ):
+            raise OSError("simulated crash before canonical result write")
+        return original_write(result_access, value)
+
+    monkeypatch.setattr(
+        MODULE, "_write_task_result_json_to_private", crash_before_final_result_write
+    )
+    interrupted = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert interrupted["ok"] is False
+    assert interrupted["publicationRequests"] == []
+
+    prebind_after_crash = json.loads(result_path.read_text(encoding="utf-8"))
+    assert "controllerCodePathScope" not in prebind_after_crash
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        canonical_preview, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=prebind_after_crash,
+            result_access=result_access,
+            managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+            write_result=False,
+        )
+    assert canonical_preview["codePaths"] == ["runtime.py"]
+    assert canonical_preview["controllerCodePathScope"]["reported"] == [
+        "integration.py",
+        "runtime.py",
+    ]
+    assert (
+        MODULE._controller_review_result(SimpleNamespace(ledger=store.path), canonical_preview)
+        is not None
+    )
+
+    monkeypatch.setattr(MODULE, "_write_task_result_json_to_private", original_write)
+    recovered = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+
+    assert recovered["ok"] is True, recovered
+    assert recovered["errors"] == []
+    assert recovered["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(recovered["publicationRequests"]) == 1
+    assert recovered["publicationRequests"][0]["status"] == "PENDING"
+    assert finalized["quality"]["independent_review_passed"] is True
+    assert finalized["independentReview"]["verdict"] == "PASS"
+    assert (
+        MODULE._controller_review_result(SimpleNamespace(ledger=store.path), finalized) is not None
+    )
+    request = store.publication_request(recovered["publicationRequests"][0]["requestId"])
+    assert request is not None
+    assert request["status"] == "PENDING"
+    assert request["reason"] is None
+
+
 def test_controller_rejects_actual_commit_file_missing_from_reported_code_paths(tmp_path):
     store, _worktree, result_path = _controller_commit_result(
         tmp_path,
@@ -17804,13 +17870,39 @@ def test_ingest_authorizes_base_only_merge_resolution_scope_and_finalizer_consum
     (worktree / "runtime.py").write_text("value = 4\n", encoding="utf-8")
     (worktree / "runtime").mkdir(exist_ok=True)
     (worktree / "runtime" / "new.py").write_text("value = 4\n", encoding="utf-8")
+    quality = {field: True for field in QUALITY_FIELDS}
+    quality["independent_review_passed"] = False
+    body_path = worktree / ".oss-pr-radar" / "pr-body.md"
     merge_value = {
+        "schemaVersion": "radar-task-result-v1",
+        "contextDigest": next_context["contextDigest"],
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "stage": "FIX_READY",
+        "reason": "MERGE_CONFLICT_RESOLVED",
+        "followupDigest": replacement["wakeDigest"],
         "handoffMode": "controller_merge_required",
+        "commitSha": None,
+        "headSha": head_sha,
         "branch": "fix/1-runtime-boundary",
         "commitMessage": "merge: refresh split runtime implementation",
         "changedFiles": ["runtime.py", "runtime/new.py"],
         "mergeBaseSha": base_sha,
-        "publication": {"baseBranch": "main"},
+        "selectedBaseSha": next_context["selectedBaseSha"],
+        "taskId": "intent-1",
+        "codePaths": list(next_context["codePaths"]),
+        "probeRequired": True,
+        "probeLevel": "REPRODUCED_VALIDATED",
+        "tests": [{"command": "pytest tests/runtime", "exitCode": 0}],
+        "quality": quality,
+        "publication": {
+            "headOwner": "Oxygen56",
+            "baseBranch": "main",
+            "title": "fix: refresh split runtime implementation",
+            "bodyFile": str(body_path.resolve()),
+        },
     }
     result_path.write_text(json.dumps(merge_value), encoding="utf-8")
     finalized, _raw = _finalize_controller_commit_for_test(
@@ -17833,6 +17925,92 @@ def test_ingest_authorizes_base_only_merge_resolution_scope_and_finalizer_consum
         "runtime.py",
         "runtime/new.py",
     ]
+
+    with store.connect() as connection:
+        requests_before = connection.execute(
+            "SELECT COUNT(*) FROM publication_requests"
+        ).fetchone()[0]
+        followup_event_id_before = connection.execute(
+            """SELECT COALESCE(MAX(id), 0) FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PR_FOLLOWUP_RESULT_INGESTED'"""
+        ).fetchone()[0]
+        task_result_event_id_before = connection.execute(
+            """SELECT COALESCE(MAX(id), 0) FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='TASK_RESULT_INGESTED'"""
+        ).fetchone()[0]
+
+    before_review = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    normalized_before_review = json.loads(result_path.read_text(encoding="utf-8"))
+    _write_explicit_controller_review(tmp_path, normalized_before_review)
+    assert (
+        MODULE._controller_review_result(
+            SimpleNamespace(ledger=store.path), normalized_before_review
+        )
+        is not None
+    )
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    receipt_bound_raw = result_path.read_bytes()
+    receipt_bound = json.loads(receipt_bound_raw)
+    receipt_bound_ingest_digest = MODULE._task_result_digest(receipt_bound, receipt_bound_raw)
+    repeated_ingest = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert before_review["ok"] is True, before_review
+    assert before_review["errors"] == []
+    assert before_review["publicationRequests"] == []
+    assert normalized_before_review["handoffMode"] == "controller_merge_complete"
+    assert normalized_before_review["quality"]["independent_review_passed"] is False
+    assert ingested["ok"] is True, ingested
+    assert ingested["errors"] == []
+    assert ingested["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(ingested["publicationRequests"]) == 1
+    assert receipt_bound["handoffMode"] == "controller_merge_complete"
+    assert receipt_bound["commitSha"] == finalized["commitSha"]
+    assert receipt_bound["headSha"] == receipt_bound["commitSha"]
+    assert receipt_bound["previousCommitSha"] == head_sha
+    assert receipt_bound["mergeBaseSha"] == base_sha
+    assert receipt_bound["resultDigest"]
+    assert receipt_bound["reproductionReceipt"]["bindingPurpose"] == ("implementation-result-v1")
+    assert receipt_bound["reproductionReceipt"]["headSha"] == receipt_bound["commitSha"]
+    assert receipt_bound["reproductionReceipt"]["commitSha"] == receipt_bound["commitSha"]
+    assert receipt_bound["reproductionReceipt"]["resultDigest"] == receipt_bound["resultDigest"]
+    assert receipt_bound["quality"]["independent_review_passed"] is True
+    assert receipt_bound["independentReview"]["verdict"] == "PASS"
+    assert repeated_ingest["ok"] is True, repeated_ingest
+    assert repeated_ingest["errors"] == []
+    assert repeated_ingest["ingested"] == []
+    assert repeated_ingest["publicationRequests"] == []
+    with store.connect() as connection:
+        requests_after = connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[
+            0
+        ]
+        followup_events = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                 AND id>?""",
+            (followup_event_id_before,),
+        ).fetchall()
+        task_result_events = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='TASK_RESULT_INGESTED'
+                 AND id>?""",
+            (task_result_event_id_before,),
+        ).fetchall()
+    assert requests_after == requests_before + 1
+    assert len(followup_events) == 1
+    assert json.loads(followup_events[0]["payload_json"])["stage"] == "VALIDATION_PENDING"
+    assert len(task_result_events) == 2
+    assert (
+        sum(
+            json.loads(event["payload_json"])["resultDigest"] == receipt_bound_ingest_digest
+            and json.loads(event["payload_json"])["stage"] == "FIX_READY"
+            for event in task_result_events
+        )
+        == 1
+    )
 
     run_git(worktree, "switch", "--detach", head_sha)
     forged_merge = subprocess.run(
@@ -17861,6 +18039,18 @@ def test_ingest_authorizes_base_only_merge_resolution_scope_and_finalizer_consum
             value=forged_complete,
             result_path=result_path,
         )
+
+
+@pytest.mark.parametrize(
+    "handoff_mode",
+    [None, "controller_commit_required", "controller_merge_required", "unknown"],
+)
+def test_final_receipt_digest_rejects_unfinished_or_unknown_handoff_mode(handoff_mode):
+    with pytest.raises(
+        RuntimeError,
+        match="task result must be controller-finalized before receipt binding",
+    ):
+        MODULE._unsigned_final_task_result_digest({"handoffMode": handoff_mode})
 
 
 def test_ingest_rejects_unrelated_base_file_in_merge_resolution_scope(tmp_path):

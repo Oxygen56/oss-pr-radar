@@ -53,6 +53,7 @@ from oss_pr_radar.independent_review import (  # noqa: E402
     controller_merge_conflict_scope,
     controller_merge_resolution_scope,
     controller_review_result,
+    migrate_controller_review_receipt,
     review_once,
     verify_controller_merge_tree_scope,
 )
@@ -14200,7 +14201,10 @@ def _task_result_digest(value: dict[str, Any], raw: bytes) -> str:
 def _unsigned_final_task_result_digest(value: dict[str, Any]) -> str:
     """Hash a controller-finalized result before attaching its probe receipt."""
 
-    if value.get("handoffMode") != "controller_commit_complete":
+    if value.get("handoffMode") not in {
+        "controller_commit_complete",
+        "controller_merge_complete",
+    }:
         raise RuntimeError("task result must be controller-finalized before receipt binding")
     unsigned = dict(value)
     unsigned.pop("reproductionReceipt", None)
@@ -14609,6 +14613,7 @@ def _bind_final_reproduction_receipt(
     value: dict[str, Any],
     result_access: _ValidationWorktreeDirectory,
     managed_ledger: ManagedLedger | None = None,
+    write_result: bool = True,
 ) -> tuple[dict[str, Any], bytes]:
     """Inherit verified reproduction evidence into a controller-finalized fix."""
 
@@ -14833,7 +14838,12 @@ def _bind_final_reproduction_receipt(
     normalized["resultDigest"] = result_digest
     normalized["reproductionReceipt"] = rebound
     normalized.pop("probeReceipt", None)
-    return normalized, _write_task_result_json_to_private(result_access, normalized)
+    if write_result:
+        return normalized, _write_task_result_json_to_private(result_access, normalized)
+    raw = (json.dumps(normalized, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
+        "utf-8"
+    )
+    return normalized, raw
 
 
 def _reproduction_result_digest(value: dict[str, Any]) -> str:
@@ -16407,9 +16417,57 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     value=value,
                     result_access=result_access,
                 )
+                reported_review_value = dict(value)
+                value, raw = _bind_final_reproduction_receipt(
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    result_access=result_access,
+                    managed_ledger=managed_adapter.ledger,
+                    write_result=False,
+                )
+                controller_scope = value.get("controllerCodePathScope")
+                reviewed_code_paths = _validated_changed_files(
+                    controller_scope.get("reported")
+                    if isinstance(controller_scope, dict)
+                    else value.get("codePaths")
+                )
+                try:
+                    legacy_reported_code_paths = _validated_changed_files(
+                        reported_review_value.get("codePaths")
+                    )
+                except RuntimeError:
+                    legacy_reported_code_paths = []
                 quality = value.get("quality")
                 assert isinstance(quality, dict)
                 controller_review = _controller_review_result(args, value)
+                if (
+                    controller_review is None
+                    and "controllerCodePathScope" not in reported_review_value
+                    and legacy_reported_code_paths == reviewed_code_paths
+                ):
+                    legacy_controller_review = _controller_review_result(
+                        args, reported_review_value
+                    )
+                    if legacy_controller_review is not None:
+                        controller_review = migrate_controller_review_receipt(
+                            ROOT,
+                            reported_review_value,
+                            value,
+                            state_root=_review_state_root(args),
+                        )
+                if controller_review is None and isinstance(controller_scope, dict):
+                    legacy_review_value = dict(value)
+                    legacy_review_value["codePaths"] = reviewed_code_paths
+                    legacy_review_value.pop("controllerCodePathScope", None)
+                    legacy_controller_review = _controller_review_result(args, legacy_review_value)
+                    if legacy_controller_review is not None:
+                        controller_review = migrate_controller_review_receipt(
+                            ROOT,
+                            legacy_review_value,
+                            value,
+                            state_root=_review_state_root(args),
+                        )
                 controller_review_verified = bool(
                     controller_review and controller_review.get("verdict") == "PASS"
                 )
@@ -16425,14 +16483,17 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         value.pop("independentReview", None)
                     else:
                         value["independentReview"] = controller_review
-                    raw = _write_task_result_json_to_private(result_access, value)
-                value, raw = _bind_final_reproduction_receipt(
-                    candidate=candidate,
-                    context=context,
-                    value=value,
-                    result_access=result_access,
-                    managed_ledger=managed_adapter.ledger,
-                )
+                    value["codePaths"] = reviewed_code_paths
+                    value.pop("controllerCodePathScope", None)
+                    value, raw = _bind_final_reproduction_receipt(
+                        candidate=candidate,
+                        context=context,
+                        value=value,
+                        result_access=result_access,
+                        managed_ledger=managed_adapter.ledger,
+                        write_result=False,
+                    )
+                raw = _write_task_result_json_to_private(result_access, value)
                 quality = value.get("quality")
                 assert isinstance(quality, dict)
                 digest = _task_result_digest(value, raw)

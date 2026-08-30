@@ -1205,6 +1205,92 @@ def _review_scope(worktree: Path, value: dict[str, Any]) -> tuple[str, str, str 
     return "full_change", base_revision, None, changed_files
 
 
+def migrate_controller_review_receipt(
+    root: Path,
+    source_value: dict[str, Any],
+    target_value: dict[str, Any],
+    *,
+    state_root: Path | None = None,
+) -> dict[str, Any]:
+    """Rebind one verified review to an equivalent controller-owned result shape."""
+
+    receipt_root = (state_root or root).resolve()
+    source_review = _load_review_receipt(receipt_root, source_value)
+    if source_review is None:
+        raise RuntimeError("source independent review receipt is invalid")
+
+    source_key = str(source_value.get("key") or "")
+    target_key = str(target_value.get("key") or "")
+    source_commit = str(source_value.get("commitSha") or "")
+    target_commit = str(target_value.get("commitSha") or "")
+    source_worktree = Path(str(source_value.get("worktreePath") or "")).resolve()
+    target_worktree = Path(str(target_value.get("worktreePath") or "")).resolve()
+    if source_key != target_key:
+        raise RuntimeError("independent review receipt migration key mismatch")
+    if source_commit != target_commit:
+        raise RuntimeError("independent review receipt migration commit mismatch")
+    if source_worktree != target_worktree:
+        raise RuntimeError("independent review receipt migration worktree mismatch")
+    if _review_scope(source_worktree, source_value) != _review_scope(target_worktree, target_value):
+        raise RuntimeError("independent review receipt migration scope mismatch")
+
+    target_digest = _source_digest(target_value)
+    target_path = _receipt_path(
+        receipt_root,
+        key=target_key,
+        commit_sha=target_commit,
+        source_digest=target_digest,
+    )
+    state_dir = receipt_root / "state"
+    if state_dir.exists() and (state_dir.is_symlink() or not state_dir.is_dir()):
+        raise RuntimeError("independent review durable state directory is unsafe")
+    state_dir.mkdir(parents=True, exist_ok=True)
+    receipt_dir = target_path.parent
+    if receipt_dir.exists() and (receipt_dir.is_symlink() or not receipt_dir.is_dir()):
+        raise RuntimeError("independent review receipt directory is unsafe")
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = state_dir / "independent_review.lock"
+    if lock_path.is_symlink():
+        raise RuntimeError("independent review durable lock is unsafe")
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("independent review is active; retry receipt migration") from exc
+
+        verified_source = _load_review_receipt(receipt_root, source_value)
+        if verified_source != source_review:
+            raise RuntimeError("source independent review receipt changed during migration")
+        canonical_review = _load_review_receipt(receipt_root, target_value)
+        if canonical_review is not None:
+            return canonical_review
+        try:
+            target_path.lstat()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise RuntimeError("canonical independent review receipt is unavailable") from exc
+        else:
+            raise RuntimeError("canonical independent review receipt conflicts")
+
+        migrated_review = dict(source_review)
+        migrated_review["sourceDigest"] = target_digest
+        atomic_write_json(
+            target_path,
+            {
+                "schemaVersion": REVIEW_SCHEMA,
+                "key": target_key,
+                "commitSha": target_commit,
+                "sourceDigest": target_digest,
+                "review": migrated_review,
+            },
+        )
+        verified_target = _load_review_receipt(receipt_root, target_value)
+        if verified_target is None:
+            raise RuntimeError("migrated independent review receipt failed verification")
+        return verified_target
+
+
 def review_once(
     root: Path,
     ledger_path: Path,
