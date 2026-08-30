@@ -51,6 +51,7 @@ SENSITIVE_ENVIRONMENT_KEYS = {
     "OPENAI_API_KEY",
 }
 QUEUE_SYNC_STATE = "local_queue_sync.json"
+QUEUE_IMPORT_LOCK = "queue-import.lock"
 FAST_WORK_LOCK = "fast-worker.lock"
 SLOW_WORK_LOCK = "slow-worker.lock"
 SLOW_REQUEST_STATE = "slow-work-request.json"
@@ -796,7 +797,7 @@ def queue_import_once(
     root = root.resolve()
     started = time.time()
     try:
-        with exclusive_lock(root / "state" / "queue-import.lock"):
+        with exclusive_lock(root / "state" / QUEUE_IMPORT_LOCK):
             gate = _disk_gate(root, worker="queue-importer")
             if gate.get("allowed") is not True:
                 return _disk_gate_failure(

@@ -9,6 +9,7 @@ import pytest
 
 import oss_pr_radar.independent_review as module
 from oss_pr_radar.metrics import QUALITY_FIELDS
+from oss_pr_radar.repo_probe import attest_merge_resolution_scope
 
 
 def git(repo: Path, *args: str) -> str:
@@ -1092,6 +1093,116 @@ def test_review_supports_controller_merge_resolution(tmp_path, monkeypatch):
     )
 
     assert module.controller_review_passed(control, forged) is False
+
+
+def test_review_binds_conflict_and_authorized_resolution_scopes_separately(
+    tmp_path, current_signing_key
+):
+    _control, worktree, result_path, _candidate, _base, previous_head = prepared_task(tmp_path)
+    git(worktree, "switch", "main")
+    (worktree / "service.py").write_text("def value():\n    return 4\n", encoding="utf-8")
+    (worktree / "service").mkdir()
+    (worktree / "service" / "new.py").write_text("VALUE = 4\n", encoding="utf-8")
+    git(worktree, "add", "service.py", "service/new.py")
+    git(worktree, "commit", "-m", "refactor: split service implementation")
+    merge_base = git(worktree, "rev-parse", "HEAD")
+    git(worktree, "switch", "fix/1")
+    completed = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", "main"],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 1
+    (worktree / "service.py").write_text("def value():\n    return 5\n", encoding="utf-8")
+    (worktree / "service" / "new.py").write_text("VALUE = 5\n", encoding="utf-8")
+    git(worktree, "add", "service.py", "service/new.py")
+    git(worktree, "commit", "-m", "merge: resolve split service")
+    head = git(worktree, "rev-parse", "HEAD")
+    source_wake = "a" * 64
+    receipt = attest_merge_resolution_scope(
+        key="owner/repo#1",
+        issue_url="https://github.com/owner/repo/issues/1",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path_fingerprint=module.hashlib.sha256(
+            str(worktree.resolve()).encode("utf-8")
+        ).hexdigest(),
+        pr_url="https://github.com/owner/repo/pull/7",
+        source_wake_digest=source_wake,
+        request_result_digest="b" * 64,
+        head_sha=previous_head,
+        prepared_head_sha=previous_head,
+        base_sha=merge_base,
+        merge_conflict_files=["service.py"],
+        authorized_resolution_files=["service.py", "service/new.py"],
+    )
+    context = {
+        "key": "owner/repo#1",
+        "issueUrl": "https://github.com/owner/repo/issues/1",
+        "intentId": "intent-1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "prFollowup": {
+            "prUrl": "https://github.com/owner/repo/pull/7",
+            "headSha": previous_head,
+            "preparedHeadSha": previous_head,
+            "wakeDigest": receipt["authorizedWakeDigest"],
+            "evidence": {
+                "mergeConflict": True,
+                "baseSha": merge_base,
+                "mergeConflictFiles": ["service.py"],
+                "authorizedResolutionFiles": ["service.py", "service/new.py"],
+                "mergeResolutionScopeReceipt": receipt,
+            },
+        },
+    }
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        json.dumps(context), encoding="utf-8"
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "commitSha": head,
+            "handoffMode": "controller_merge_complete",
+            "previousCommitSha": previous_head,
+            "mergeBaseSha": merge_base,
+            "controllerCommitChangedFiles": ["service.py", "service/new.py"],
+            "mergeResolutionFiles": ["service.py", "service/new.py"],
+        }
+    )
+
+    assert module._bound_merge_resolution_scope(worktree, value) == [
+        "service.py",
+        "service/new.py",
+    ]
+    forged = value | {
+        "controllerCommitChangedFiles": ["service.py"],
+        "mergeResolutionFiles": ["service.py"],
+    }
+    with pytest.raises(RuntimeError, match="signed resolution snapshot"):
+        module._bound_merge_resolution_scope(worktree, forged)
+
+    git(worktree, "switch", "--detach", previous_head)
+    forged_merge = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", merge_base],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert forged_merge.returncode == 1
+    (worktree / "service.py").write_text("def value():\n    return 5\n", encoding="utf-8")
+    (worktree / "service" / "new.py").write_text("VALUE = 5\n", encoding="utf-8")
+    (worktree / ".gitignore").write_text("forged-output/\n", encoding="utf-8")
+    git(worktree, "add", "service.py", "service/new.py", ".gitignore")
+    git(worktree, "commit", "-m", "merge: smuggle unrelated tree change")
+    forged_head = git(worktree, "rev-parse", "HEAD")
+    forged_tree = value | {"commitSha": forged_head}
+
+    with pytest.raises(RuntimeError, match="outside signed resolution scope"):
+        module._bound_merge_resolution_scope(worktree, forged_tree)
 
 
 def test_pass_with_blocking_finding_is_normalized_to_fail():

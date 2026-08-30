@@ -17,6 +17,7 @@ from .repo_probe import (
     PATHS_VERIFIED,
     REPRODUCED_VALIDATED,
     verify_code_path_tombstone_receipt,
+    verify_merge_resolution_scope_receipt,
     verify_probe_receipt,
 )
 from .task_quarantine import active as active_quarantine
@@ -6872,7 +6873,7 @@ class RadarLedger:
             or (followup_row is not None and bool(followup_row["followup_required"]))
         ):
             result_contract = {
-                "schemaVersion": "pr-followup-result-contract-v2",
+                "schemaVersion": "pr-followup-result-contract-v3",
                 "requiredWakeDigestField": "followupDigest",
                 "allowedStages": ["FIX_READY", "PR_OPEN"],
                 "noLocalActionStage": "PR_OPEN",
@@ -6885,6 +6886,9 @@ class RadarLedger:
                 "noLocalActionHeadBindingField": "prFollowup.preparedHeadSha",
                 "noLocalActionPrBindingField": "publicationReceipt.prUrl",
                 "mergeConflictHandoffMode": "controller_merge_required",
+                "conflictScopeInsufficientReason": "CONFLICT_SCOPE_INSUFFICIENT",
+                "requiredResolutionFilesField": "evidence.requiredResolutionFiles",
+                "authorizedResolutionFilesField": ("prFollowup.evidence.authorizedResolutionFiles"),
             }
         if followup_row is not None and bool(followup_row["followup_required"]):
             pr_followup = {
@@ -6943,6 +6947,47 @@ class RadarLedger:
             payload["resultDigest"] = continuation_result_digest
             payload["headSha"] = continuation_head
             payload["commitSha"] = continuation_head
+        if isinstance(pr_followup, dict):
+            followup_evidence = pr_followup.get("evidence")
+            scope_receipt = (
+                followup_evidence.get("mergeResolutionScopeReceipt")
+                if isinstance(followup_evidence, dict)
+                else None
+            )
+            authorized_resolution_files = (
+                followup_evidence.get("authorizedResolutionFiles")
+                if isinstance(followup_evidence, dict)
+                else None
+            )
+            if scope_receipt is not None or authorized_resolution_files is not None:
+                if (
+                    not isinstance(followup_evidence, dict)
+                    or not isinstance(scope_receipt, dict)
+                    or not isinstance(authorized_resolution_files, list)
+                    or not isinstance(followup_evidence.get("mergeConflictFiles"), list)
+                    or not verify_merge_resolution_scope_receipt(
+                        scope_receipt,
+                        key=str(row["key"]),
+                        issue_url=str(row["issue_url"]),
+                        intent_id=str(row["intent_id"]),
+                        thread_id=str(row["thread_id"]),
+                        worktree_path_fingerprint=sha256_text(
+                            str(Path(str(row["worktree_path"])).resolve())
+                        ),
+                        pr_url=str(pr_followup.get("prUrl") or ""),
+                        current_wake_digest=str(pr_followup.get("wakeDigest") or ""),
+                        head_sha=str(pr_followup.get("headSha") or ""),
+                        prepared_head_sha=str(
+                            pr_followup.get("preparedHeadSha")
+                            or scope_receipt.get("preparedHeadSha")
+                            or ""
+                        ),
+                        base_sha=str(followup_evidence.get("baseSha") or ""),
+                        merge_conflict_files=followup_evidence.get("mergeConflictFiles"),
+                        authorized_resolution_files=authorized_resolution_files,
+                    )
+                ):
+                    raise LedgerError("PR follow-up resolution scope receipt is invalid")
         result = {
             "key": row["key"],
             "stage": row["stage"],
@@ -9976,6 +10021,90 @@ class RadarLedger:
                 previous = connection.execute(
                     "SELECT * FROM pr_followups WHERE opportunity_key=?", (key,)
                 ).fetchone()
+                preserved_resolution_scope = False
+                if required and previous is not None:
+                    authorized_wake_completed = connection.execute(
+                        """SELECT 1 FROM events
+                           WHERE opportunity_key=?
+                             AND event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                             AND dedupe_key=? LIMIT 1""",
+                        (key, str(previous["wake_digest"] or "")),
+                    ).fetchone()
+                    authorized_wake_reserved = connection.execute(
+                        """SELECT 1 FROM events
+                           WHERE opportunity_key=?
+                             AND event_type='PR_FOLLOWUP_RESERVED'
+                             AND dedupe_key=? LIMIT 1""",
+                        (key, str(previous["wake_digest"] or "")),
+                    ).fetchone()
+                    previous_evidence = json.loads(previous["evidence_json"])
+                    previous_receipt = (
+                        previous_evidence.get("mergeResolutionScopeReceipt")
+                        if isinstance(previous_evidence, dict)
+                        else None
+                    )
+                    previous_authorized = (
+                        previous_evidence.get("authorizedResolutionFiles")
+                        if isinstance(previous_evidence, dict)
+                        else None
+                    )
+                    conflicts = evidence.get("mergeConflictFiles")
+                    identity = connection.execute(
+                        """SELECT o.issue_url,i.intent_id,i.thread_id,i.worktree_path
+                           FROM opportunities o JOIN intents i ON i.intent_id=(
+                             SELECT i2.intent_id FROM intents i2
+                             WHERE i2.opportunity_key=o.key
+                               AND i2.thread_id IS NOT NULL
+                               AND i2.worktree_path IS NOT NULL
+                             ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                           )
+                           WHERE o.key=?""",
+                        (key,),
+                    ).fetchone()
+                    if (
+                        isinstance(previous_evidence, dict)
+                        and isinstance(previous_receipt, dict)
+                        and isinstance(previous_authorized, list)
+                        and isinstance(conflicts, list)
+                        and identity is not None
+                        and authorized_wake_completed is None
+                        and (
+                            authorized_wake_reserved is None
+                            or previous["task_action_digest"] == task_digest
+                        )
+                        and previous["pr_url"] == pr_url
+                        and previous["head_sha"] == head_sha
+                        and previous_evidence.get("baseSha") == evidence.get("baseSha")
+                        and previous_evidence.get("mergeConflictFiles") == conflicts
+                        and verify_merge_resolution_scope_receipt(
+                            previous_receipt,
+                            key=key,
+                            issue_url=str(identity["issue_url"]),
+                            intent_id=str(identity["intent_id"]),
+                            thread_id=str(identity["thread_id"]),
+                            worktree_path_fingerprint=sha256_text(
+                                str(Path(str(identity["worktree_path"])).resolve())
+                            ),
+                            pr_url=pr_url,
+                            current_wake_digest=str(previous["wake_digest"] or ""),
+                            head_sha=head_sha,
+                            prepared_head_sha=str(previous_receipt.get("preparedHeadSha") or ""),
+                            base_sha=str(evidence.get("baseSha") or ""),
+                            merge_conflict_files=conflicts,
+                            authorized_resolution_files=previous_authorized,
+                        )
+                    ):
+                        evidence = dict(evidence) | {
+                            "authorizedResolutionFiles": list(previous_authorized),
+                            "mergeResolutionScopeReceipt": previous_receipt,
+                            "resolutionScopeSourceWakeDigest": previous_evidence.get(
+                                "resolutionScopeSourceWakeDigest"
+                            ),
+                            "resolutionScopeRequestResultDigest": previous_evidence.get(
+                                "resolutionScopeRequestResultDigest"
+                            ),
+                        }
+                        preserved_resolution_scope = True
                 deferred = connection.execute(
                     """SELECT payload_json FROM events
                        WHERE opportunity_key=?
@@ -9994,7 +10123,9 @@ class RadarLedger:
                 )
                 if suppress_deferred_snapshot:
                     required = False
-                if required and (
+                if required and preserved_resolution_scope:
+                    wake_digest = previous["wake_digest"]
+                elif required and (
                     previous is None
                     or not bool(previous["followup_required"])
                     or previous["task_action_digest"] != task_digest
@@ -10384,6 +10515,43 @@ class RadarLedger:
                 snapshot_candidate = candidate | {"evidence": evidence}
             elif merge_conflict_files is not None:
                 raise LedgerError("PR follow-up conflict files lack a prepared base")
+            snapshot_evidence = snapshot_candidate.get("evidence")
+            scope_receipt = (
+                snapshot_evidence.get("mergeResolutionScopeReceipt")
+                if isinstance(snapshot_evidence, dict)
+                else None
+            )
+            authorized_resolution_files = (
+                snapshot_evidence.get("authorizedResolutionFiles")
+                if isinstance(snapshot_evidence, dict)
+                else None
+            )
+            if scope_receipt is not None or authorized_resolution_files is not None:
+                if (
+                    prepared_head_sha is None
+                    or not isinstance(snapshot_evidence, dict)
+                    or not isinstance(scope_receipt, dict)
+                    or not isinstance(authorized_resolution_files, list)
+                    or not isinstance(snapshot_evidence.get("mergeConflictFiles"), list)
+                    or not verify_merge_resolution_scope_receipt(
+                        scope_receipt,
+                        key=str(candidate["key"]),
+                        issue_url=str(candidate["issueUrl"]),
+                        intent_id=str(candidate["intentId"]),
+                        thread_id=str(candidate["threadId"]),
+                        worktree_path_fingerprint=sha256_text(
+                            str(Path(str(candidate["worktreePath"])).resolve())
+                        ),
+                        pr_url=str(candidate["prUrl"]),
+                        current_wake_digest=str(candidate["wakeDigest"]),
+                        head_sha=str(candidate["headSha"]),
+                        prepared_head_sha=prepared_head_sha,
+                        base_sha=str(snapshot_evidence.get("baseSha") or ""),
+                        merge_conflict_files=snapshot_evidence.get("mergeConflictFiles"),
+                        authorized_resolution_files=authorized_resolution_files,
+                    )
+                ):
+                    raise LedgerError("PR follow-up resolution scope authorization is stale")
             if quarantine_reason is None:
                 require_quarantine_clear(
                     connection,
@@ -11250,6 +11418,125 @@ class RadarLedger:
                 {"resultDigest": result_digest, "stage": stage},
                 iso_z(datetime.now(UTC)),
             )
+
+    def authorize_pr_followup_resolution_scope(
+        self,
+        key: str,
+        *,
+        source_wake_digest: str,
+        result_digest: str,
+        receipt: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist one signed merge-resolution scope and rearm its follow-up."""
+
+        if (
+            not re.fullmatch(r"[0-9a-f]{64}", source_wake_digest)
+            or not re.fullmatch(r"[0-9a-f]{64}", result_digest)
+            or not isinstance(receipt, dict)
+        ):
+            raise LedgerError("PR follow-up resolution scope binding is invalid")
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            existing = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='PR_FOLLOWUP_RESOLUTION_SCOPE_AUTHORIZED'
+                     AND dedupe_key=?""",
+                (key, result_digest),
+            ).fetchone()
+            if existing is not None:
+                payload = json.loads(existing["payload_json"])
+                if not isinstance(payload, dict):
+                    raise LedgerError("PR follow-up resolution scope event is invalid")
+                return payload | {"created": False}
+
+            row = connection.execute(
+                """SELECT f.*,o.issue_url,i.intent_id,i.thread_id,i.worktree_path
+                   FROM pr_followups f
+                   JOIN opportunities o ON o.key=f.opportunity_key
+                   JOIN intents i ON i.intent_id=(
+                     SELECT i2.intent_id FROM intents i2
+                     WHERE i2.opportunity_key=f.opportunity_key
+                       AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
+                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                   )
+                   WHERE f.opportunity_key=?""",
+                (key,),
+            ).fetchone()
+            if row is None or row["wake_digest"] != source_wake_digest:
+                raise LedgerError("PR follow-up resolution scope source wake is stale")
+            evidence = json.loads(row["evidence_json"])
+            if not isinstance(evidence, dict):
+                raise LedgerError("PR follow-up resolution scope evidence is invalid")
+            conflicts = evidence.get("mergeConflictFiles")
+            authorized = receipt.get("authorizedResolutionFiles")
+            replacement_wake = str(receipt.get("authorizedWakeDigest") or "")
+            prepared_head = str(receipt.get("preparedHeadSha") or "")
+            if (
+                receipt.get("sourceWakeDigest") != source_wake_digest
+                or receipt.get("requestResultDigest") != result_digest
+                or not isinstance(conflicts, list)
+                or not isinstance(authorized, list)
+                or not verify_merge_resolution_scope_receipt(
+                    receipt,
+                    key=key,
+                    issue_url=str(row["issue_url"]),
+                    intent_id=str(row["intent_id"]),
+                    thread_id=str(row["thread_id"]),
+                    worktree_path_fingerprint=sha256_text(
+                        str(Path(str(row["worktree_path"])).resolve())
+                    ),
+                    pr_url=str(row["pr_url"]),
+                    current_wake_digest=replacement_wake,
+                    head_sha=str(row["head_sha"]),
+                    prepared_head_sha=prepared_head,
+                    base_sha=str(evidence.get("baseSha") or ""),
+                    merge_conflict_files=conflicts,
+                    authorized_resolution_files=authorized,
+                )
+            ):
+                raise LedgerError("PR follow-up resolution scope receipt is invalid")
+            updated_evidence = dict(evidence)
+            updated_evidence["authorizedResolutionFiles"] = list(authorized)
+            updated_evidence["mergeResolutionScopeReceipt"] = receipt
+            updated_evidence["resolutionScopeSourceWakeDigest"] = source_wake_digest
+            updated_evidence["resolutionScopeRequestResultDigest"] = result_digest
+            connection.execute(
+                """UPDATE pr_followups
+                   SET wake_digest=?,evidence_json=?,followup_required=1,updated_at=?
+                   WHERE opportunity_key=? AND wake_digest=?""",
+                (
+                    replacement_wake,
+                    canonical_json(updated_evidence),
+                    now,
+                    key,
+                    source_wake_digest,
+                ),
+            )
+            self._event(
+                connection,
+                key,
+                "PR_FOLLOWUP_RESULT_INGESTED",
+                source_wake_digest,
+                {"resultDigest": result_digest, "stage": "PR_OPEN"},
+                now,
+            )
+            payload = {
+                "sourceWakeDigest": source_wake_digest,
+                "replacementWakeDigest": replacement_wake,
+                "resultDigest": result_digest,
+                "authorizedResolutionFiles": list(authorized),
+                "receipt": receipt,
+            }
+            self._event(
+                connection,
+                key,
+                "PR_FOLLOWUP_RESOLUTION_SCOPE_AUTHORIZED",
+                result_digest,
+                payload,
+                now,
+            )
+        return payload | {"created": True}
 
     def record_task_result_ingested(
         self,

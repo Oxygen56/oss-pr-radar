@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -17,6 +18,7 @@ from typing import Any
 
 from .ledger import RadarLedger
 from .metrics import QUALITY_FIELDS
+from .repo_probe import verify_merge_resolution_scope_receipt
 from .util import atomic_write_json, sha256_json
 
 TASK_PRIVATE_DIR = ".oss-pr-radar"
@@ -106,6 +108,217 @@ def controller_merge_conflict_scope(
     return conflict_files
 
 
+def controller_merge_resolution_scope(
+    worktree: Path,
+    *,
+    context: dict[str, Any],
+    expected_head: str,
+    expected_base: str,
+) -> list[str]:
+    """Return the exact signed file set allowed to participate in resolution."""
+
+    conflict_files = controller_merge_conflict_scope(
+        worktree,
+        context=context,
+        expected_head=expected_head,
+        expected_base=expected_base,
+    )
+    followup = context.get("prFollowup")
+    evidence = followup.get("evidence") if isinstance(followup, dict) else None
+    if not isinstance(evidence, dict):
+        raise RuntimeError("controller merge lacks a signed resolution snapshot")
+    authorized = evidence.get("authorizedResolutionFiles")
+    receipt = evidence.get("mergeResolutionScopeReceipt")
+    if authorized is None and receipt is None:
+        return conflict_files
+    try:
+        resolution_files = _safe_changed_files(authorized)
+    except RuntimeError as exc:
+        raise RuntimeError("controller merge resolution scope is invalid") from exc
+    if not isinstance(receipt, dict) or not verify_merge_resolution_scope_receipt(
+        receipt,
+        key=str(context.get("key") or ""),
+        issue_url=str(context.get("issueUrl") or ""),
+        intent_id=str(context.get("intentId") or ""),
+        thread_id=str(context.get("threadId") or ""),
+        worktree_path_fingerprint=hashlib.sha256(
+            str(worktree.resolve()).encode("utf-8")
+        ).hexdigest(),
+        pr_url=str(followup.get("prUrl") or ""),
+        current_wake_digest=str(followup.get("wakeDigest") or ""),
+        head_sha=str(followup.get("headSha") or ""),
+        prepared_head_sha=str(followup.get("preparedHeadSha") or ""),
+        base_sha=expected_base,
+        merge_conflict_files=conflict_files,
+        authorized_resolution_files=resolution_files,
+    ):
+        raise RuntimeError("controller merge resolution scope receipt is invalid")
+    return resolution_files
+
+
+def verify_controller_merge_tree_scope(
+    worktree: Path,
+    *,
+    context: dict[str, Any],
+    merge_commit: str,
+    expected_head: str,
+    expected_base: str,
+) -> list[str]:
+    """Rebuild the automatic merge and prove only signed paths resolve differently.
+
+    The replay starts from the two signed parents, so every clean base-side or
+    automatic merge change is retained.  It then substitutes only the signed
+    resolution paths from the candidate merge commit.  Exact tree equality is
+    therefore the authorization boundary, including during crash recovery.
+    """
+
+    conflict_files = controller_merge_conflict_scope(
+        worktree,
+        context=context,
+        expected_head=expected_head,
+        expected_base=expected_base,
+    )
+    resolution_files = controller_merge_resolution_scope(
+        worktree,
+        context=context,
+        expected_head=expected_head,
+        expected_base=expected_base,
+    )
+    if not re.fullmatch(r"[0-9a-f]{40}", merge_commit):
+        raise RuntimeError("controller merge commit is invalid")
+    parents = _git(worktree, "rev-list", "--parents", "-n", "1", merge_commit).split()
+    if parents[1:] != [expected_head, expected_base]:
+        raise RuntimeError("controller merge commit parent binding failed")
+
+    mechanical_merge = subprocess.run(
+        [
+            "git",
+            "merge-tree",
+            "--write-tree",
+            "--no-messages",
+            "--name-only",
+            "-z",
+            expected_head,
+            expected_base,
+        ],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        timeout=120,
+    )
+    try:
+        merge_tree_items = [
+            item.decode("utf-8") for item in mechanical_merge.stdout.split(b"\0") if item
+        ]
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("controller merge tree replay conflict set mismatch") from exc
+    if (
+        mechanical_merge.returncode != 1
+        or not merge_tree_items
+        or not re.fullmatch(r"[0-9a-f]{40}", merge_tree_items[0])
+        or sorted(merge_tree_items[1:]) != conflict_files
+    ):
+        raise RuntimeError("controller merge tree replay conflict set mismatch")
+    automatic_tree = merge_tree_items[0]
+
+    with tempfile.TemporaryDirectory(prefix="oss-pr-radar-merge-index-") as temporary:
+        index_path = Path(temporary) / "index"
+        index_environment = os.environ.copy()
+        index_environment["GIT_INDEX_FILE"] = str(index_path)
+
+        initialized = subprocess.run(
+            ["git", "read-tree", automatic_tree],
+            cwd=worktree,
+            env=index_environment,
+            check=False,
+            capture_output=True,
+            timeout=60,
+        )
+        if initialized.returncode != 0:
+            raise RuntimeError("controller merge tree replay index initialization failed")
+
+        for path in resolution_files:
+            entry = subprocess.run(
+                [
+                    "git",
+                    "--literal-pathspecs",
+                    "ls-tree",
+                    "-z",
+                    merge_commit,
+                    "--",
+                    path,
+                ],
+                cwd=worktree,
+                check=False,
+                capture_output=True,
+                timeout=30,
+            )
+            if entry.returncode != 0:
+                raise RuntimeError("controller merge tree replay entry lookup failed")
+            if not entry.stdout:
+                updated = subprocess.run(
+                    [
+                        "git",
+                        "--literal-pathspecs",
+                        "update-index",
+                        "--force-remove",
+                        "--",
+                        path,
+                    ],
+                    cwd=worktree,
+                    env=index_environment,
+                    check=False,
+                    capture_output=True,
+                    timeout=30,
+                )
+            else:
+                records = [item for item in entry.stdout.split(b"\0") if item]
+                if len(records) != 1 or b"\t" not in records[0]:
+                    raise RuntimeError("controller merge tree replay entry is invalid")
+                metadata, entry_path = records[0].split(b"\t", 1)
+                fields = metadata.split()
+                try:
+                    decoded_entry_path = entry_path.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise RuntimeError("controller merge tree replay entry is invalid") from exc
+                if (
+                    len(fields) != 3
+                    or fields[1] != b"blob"
+                    or decoded_entry_path != path
+                    or not re.fullmatch(rb"[0-7]{6}", fields[0])
+                    or not re.fullmatch(rb"[0-9a-f]{40}", fields[2])
+                ):
+                    raise RuntimeError("controller merge tree replay entry is invalid")
+                updated = subprocess.run(
+                    ["git", "update-index", "-z", "--index-info"],
+                    cwd=worktree,
+                    env=index_environment,
+                    input=fields[0] + b" " + fields[2] + b"\t" + entry_path + b"\0",
+                    check=False,
+                    capture_output=True,
+                    timeout=30,
+                )
+            if updated.returncode != 0:
+                raise RuntimeError("controller merge tree replay index update failed")
+
+        written = subprocess.run(
+            ["git", "write-tree"],
+            cwd=worktree,
+            env=index_environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if written.returncode != 0:
+            raise RuntimeError("controller merge tree replay write failed")
+        replay_tree = written.stdout.strip()
+    merge_tree = _git(worktree, "rev-parse", f"{merge_commit}^{{tree}}")
+    if replay_tree != merge_tree:
+        raise RuntimeError("controller merge tree contains changes outside signed resolution scope")
+    return resolution_files
+
+
 def _bound_merge_resolution_scope(worktree: Path, value: dict[str, Any]) -> list[str]:
     context_path = worktree / TASK_PRIVATE_DIR / "task-context.json"
     if context_path.is_symlink() or not context_path.is_file():
@@ -118,9 +331,10 @@ def _bound_merge_resolution_scope(worktree: Path, value: dict[str, Any]) -> list
         raise RuntimeError("independent review merge context is invalid")
     previous_revision = str(value.get("previousCommitSha") or "")
     secondary_revision = str(value.get("mergeBaseSha") or "")
-    signed_files = controller_merge_conflict_scope(
+    signed_files = verify_controller_merge_tree_scope(
         worktree,
         context=context,
+        merge_commit=str(value.get("commitSha") or ""),
         expected_head=previous_revision,
         expected_base=secondary_revision,
     )
@@ -128,7 +342,7 @@ def _bound_merge_resolution_scope(worktree: Path, value: dict[str, Any]) -> list
     controller_files = _safe_changed_files(value.get("controllerCommitChangedFiles"))
     if resolution_files != signed_files or controller_files != signed_files:
         raise RuntimeError(
-            "independent review merge files do not match the signed conflict snapshot"
+            "independent review merge files do not match the signed resolution snapshot"
         )
     return signed_files
 

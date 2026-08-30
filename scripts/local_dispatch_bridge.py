@@ -51,8 +51,10 @@ from oss_pr_radar.github_client import (  # noqa: E402
 )
 from oss_pr_radar.independent_review import (  # noqa: E402
     controller_merge_conflict_scope,
+    controller_merge_resolution_scope,
     controller_review_result,
     review_once,
+    verify_controller_merge_tree_scope,
 )
 from oss_pr_radar.ledger import (  # noqa: E402
     LedgerError,
@@ -94,6 +96,7 @@ from oss_pr_radar.repo_probe import (  # noqa: E402
     REPRODUCED_VALIDATED,
     ProbeUnavailable,
     attest_code_path_tombstones,
+    attest_merge_resolution_scope,
     attest_task_reproduction_result,
     rebind_probe_receipt,
     run_repo_probe,
@@ -101,6 +104,7 @@ from oss_pr_radar.repo_probe import (  # noqa: E402
     verify_code_path_tombstone_receipt,
     verify_probe_receipt,
 )
+from oss_pr_radar.runtime import exclusive_lock  # noqa: E402
 from oss_pr_radar.target_branch import (  # noqa: E402
     TargetBranchError,
     resolve_target_base,
@@ -118,6 +122,7 @@ from oss_pr_radar.util import (  # noqa: E402
 from oss_pr_radar.war_room_messages import canonical_event_digest  # noqa: E402
 
 STATE = ROOT / "state"
+RADAR_STATE_FETCH_LOCK = "radar-state-fetch.lock"
 LEDGER_PATH = STATE / "radar_ledger.sqlite3"
 THREAD_DB = Path.home() / ".codex" / "state_5.sqlite"
 GITHUB_ROOT = Path.home() / "Documents" / "github"
@@ -1878,11 +1883,12 @@ def prepare_managed_worktree(
 
 def fetch_cloud_queue() -> dict[str, Any]:
     ref = "refs/radar/import/radar-state"
-    command(
-        ["git", "fetch", "--no-write-fetch-head", "origin", f"+radar-state:{ref}"],
-        cwd=ROOT,
-    )
-    raw = command(["git", "show", f"{ref}:dispatch_queue.json"], cwd=ROOT)
+    with exclusive_lock(STATE / RADAR_STATE_FETCH_LOCK, blocking=True):
+        command(
+            ["git", "fetch", "--no-write-fetch-head", "origin", f"+radar-state:{ref}"],
+            cwd=ROOT,
+        )
+        raw = command(["git", "show", f"{ref}:dispatch_queue.json"], cwd=ROOT)
     value = json.loads(raw)
     if not isinstance(value, dict):
         raise RuntimeError("invalid cloud queue")
@@ -1893,24 +1899,6 @@ def fetch_cloud_codex_outbox() -> dict[str, Any] | None:
     """Read the durable Codex outbox only after checking the state manifest."""
 
     ref = "refs/radar/import/radar-state"
-    fetched = subprocess.run(
-        [
-            "git",
-            "fetch",
-            "--no-write-fetch-head",
-            "origin",
-            f"+radar-state:{ref}",
-        ],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-    )
-    if fetched.returncode != 0:
-        raise RuntimeError(
-            (fetched.stderr or fetched.stdout or b"radar-state fetch failed")[:300].decode(
-                "utf-8", errors="replace"
-            )
-        )
 
     def show(name: str, *, allow_missing: bool = False) -> bytes | None:
         completed = subprocess.run(
@@ -1925,8 +1913,29 @@ def fetch_cloud_codex_outbox() -> dict[str, Any] | None:
             return None
         raise RuntimeError(f"radar-state file is missing: {name}")
 
-    manifest_raw = show("state_manifest.json")
-    assert manifest_raw is not None
+    with exclusive_lock(STATE / RADAR_STATE_FETCH_LOCK, blocking=True):
+        fetched = subprocess.run(
+            [
+                "git",
+                "fetch",
+                "--no-write-fetch-head",
+                "origin",
+                f"+radar-state:{ref}",
+            ],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+        )
+        if fetched.returncode != 0:
+            raise RuntimeError(
+                (fetched.stderr or fetched.stdout or b"radar-state fetch failed")[:300].decode(
+                    "utf-8", errors="replace"
+                )
+            )
+        manifest_raw = show("state_manifest.json")
+        assert manifest_raw is not None
+        raw = show("war_room_codex_outbox.json", allow_missing=True)
+
     try:
         manifest = json.loads(manifest_raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -1934,7 +1943,6 @@ def fetch_cloud_codex_outbox() -> dict[str, Any] | None:
     if manifest.get("version") != "radar_state_v2":
         raise RuntimeError("radar-state manifest version is unsupported")
     metadata = (manifest.get("files") or {}).get("war_room_codex_outbox.json")
-    raw = show("war_room_codex_outbox.json", allow_missing=True)
     if metadata is None and raw is None:
         return None
     if not isinstance(metadata, dict) or raw is None:
@@ -2087,6 +2095,10 @@ def _task_context_digest_payload(
     }
     if "codePathTombstoneReceipt" in context:
         payload["codePathTombstoneReceipt"] = context.get("codePathTombstoneReceipt")
+    followup = context.get("prFollowup")
+    evidence = followup.get("evidence") if isinstance(followup, dict) else None
+    if isinstance(evidence, dict) and "mergeResolutionScopeReceipt" in evidence:
+        payload["mergeResolutionScopeReceipt"] = evidence.get("mergeResolutionScopeReceipt")
     if include_target_base:
         payload["targetBase"] = context.get("targetBase")
     if include_prepared_head:
@@ -11333,8 +11345,17 @@ def _finalize_controller_merge(
         expected_head=expected_head,
         expected_base=expected_base,
     )
-    if changed_files != signed_conflict_files:
-        raise RuntimeError("controller merge files do not match the signed conflict snapshot")
+    signed_resolution_files = controller_merge_resolution_scope(
+        worktree,
+        context=context,
+        expected_head=expected_head,
+        expected_base=expected_base,
+    )
+    if changed_files != signed_resolution_files:
+        raise RuntimeError(
+            "controller merge files do not match the signed conflict snapshot "
+            "or authorized resolution scope"
+        )
     _expand_sparse_checkout_paths(worktree, changed_files)
 
     actual = _local_changed_files(worktree)
@@ -11385,11 +11406,11 @@ def _finalize_controller_merge(
             ).splitlines()
             if line
         )
-        if completed.returncode not in {0, 1} or unmerged != changed_files:
+        if completed.returncode not in {0, 1} or unmerged != signed_conflict_files:
             _optional_command(["git", "merge", "--abort"], cwd=worktree)
             raise RuntimeError(
                 "controller merge conflict set mismatch: "
-                f"expected={changed_files!r} actual={unmerged!r}"
+                f"expected={signed_conflict_files!r} actual={unmerged!r}"
             )
         _restore_tree_paths(worktree, resolution_tree, changed_files)
         remaining = command(["git", "diff", "--name-only", "--diff-filter=U"], cwd=worktree)
@@ -11407,6 +11428,13 @@ def _finalize_controller_merge(
         raise RuntimeError("controller merge did not leave a clean worktree")
 
     final_commit = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    verify_controller_merge_tree_scope(
+        worktree,
+        context=context,
+        merge_commit=final_commit,
+        expected_head=expected_head,
+        expected_base=expected_base,
+    )
     _enforce_code_path_tombstones(
         context=context,
         worktree=worktree,
@@ -11422,6 +11450,13 @@ def _finalize_controller_merge(
     finalized["previousCommitSha"] = expected_head
     finalized["mergeBaseSha"] = expected_base
     finalized["handoffMode"] = "controller_merge_complete"
+    reported_code_paths = _validated_changed_files(
+        sorted(
+            set(str(path) for path in (context.get("codePaths") or []) if str(path).strip())
+            | set(changed_files)
+        )
+    )
+    finalized["codePaths"] = reported_code_paths
     finalized["changedFiles"] = _validation_publication_changed_files(
         worktree=worktree,
         context=context,
@@ -13019,12 +13054,24 @@ def pr_followup_reserve(args: argparse.Namespace) -> dict[str, Any]:
 
 def _pr_followup_prompt(candidate: dict[str, Any]) -> str:
     context_path = shared_context_path(str(candidate["issueUrl"])).resolve()
+    evidence = candidate.get("evidence")
+    authorized_resolution_files = (
+        evidence.get("authorizedResolutionFiles") if isinstance(evidence, dict) else None
+    )
+    resolution_scope_instruction = ""
+    if isinstance(authorized_resolution_files, list) and authorized_resolution_files:
+        resolution_scope_instruction = (
+            "上下文中的 prFollowup.evidence.authorizedResolutionFiles 是控制器签名的完整"
+            "冲突解决文件集；changedFiles 和 mergeResolutionFiles 必须精确等于该列表，"
+            "而 mergeConflictFiles 仍只表示 Git 的真实冲突集。"
+        )
     return (
         f"{issue_prompt(str(candidate['issueUrl']))}\n\n"
         "这是同一任务的受控 PR 跟进，不要创建新任务或重新选择 issue。"
         f"直接读取并验证 {context_path}，再进入其中记录的 worktreePath 继续；"
         "不要在当前入口目录等待 .oss-pr-radar/task-context.json。"
         "只处理该上下文绑定的最新 PR 快照、审查意见、冲突和检查，完成后按技能协议更新结果。"
+        + resolution_scope_instruction
         + END_RESULT_TURN_PROMPT
         + PLAIN_LANGUAGE_STATUS_PROMPT
     )
@@ -15099,6 +15146,248 @@ def _normalize_exact_published_no_local_action_result(
     return dict(value) | {"headSha": inferred_head}, inferred_head
 
 
+def _ingest_merge_resolution_scope_request(
+    store: RadarLedger,
+    managed_ledger: ManagedLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    raw: bytes,
+    worktree: Path,
+) -> dict[str, Any] | None:
+    """Authorize one exact base-only expansion requested by a clean PR follow-up."""
+
+    result_evidence = value.get("evidence")
+    if (
+        value.get("reason") != "CONFLICT_SCOPE_INSUFFICIENT"
+        or not isinstance(result_evidence, dict)
+        or "requiredResolutionFiles" not in result_evidence
+    ):
+        return None
+    followup = context.get("prFollowup")
+    followup_evidence = followup.get("evidence") if isinstance(followup, dict) else None
+    publication_receipt = context.get("publicationReceipt")
+    if (
+        value.get("stage") != "PR_OPEN"
+        or str(candidate.get("stage") or "") not in PUBLISHED_TASK_STAGES
+        or context.get("taskStage") != "IMPLEMENTATION_READY"
+        or not isinstance(followup, dict)
+        or not isinstance(followup_evidence, dict)
+        or followup_evidence.get("mergeConflict") is not True
+        or not isinstance(result_evidence, dict)
+        or result_evidence.get("localAction") != "none"
+        or not isinstance(publication_receipt, dict)
+        or value.get("contextDigest") != context.get("contextDigest")
+    ):
+        raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_REQUEST_INVALID")
+
+    source_wake = str(followup.get("wakeDigest") or "")
+    expected_head = str(followup.get("headSha") or "")
+    prepared_head = str(followup.get("preparedHeadSha") or "")
+    expected_base = str(followup_evidence.get("baseSha") or "")
+    pr_url = str(followup.get("prUrl") or "")
+    if (
+        not re.fullmatch(r"[0-9a-f]{64}", source_wake)
+        or not re.fullmatch(r"[0-9a-f]{40}", expected_head)
+        or prepared_head != expected_head
+        or not re.fullmatch(r"[0-9a-f]{40}", expected_base)
+        or value.get("followupDigest") != source_wake
+        or value.get("headSha") != expected_head
+        or value.get("commitSha") != expected_head
+        or result_evidence.get("headSha") != expected_head
+        or value.get("prUrl") != pr_url
+        or publication_receipt.get("prUrl") != pr_url
+    ):
+        raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_BINDING_INVALID")
+    if any(
+        value.get(field)
+        for field in (
+            "changedFiles",
+            "controllerCommitChangedFiles",
+            "mergeResolutionFiles",
+            "handoffMode",
+            "publication",
+        )
+    ):
+        raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_LOCAL_ACTION_INVALID")
+    if command(["git", "rev-parse", "HEAD"], cwd=worktree) != expected_head or command(
+        ["git", "status", "--porcelain"], cwd=worktree
+    ):
+        raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_WORKTREE_INVALID")
+
+    conflicts_value = followup_evidence.get("mergeConflictFiles")
+    requested_value = result_evidence.get("requiredResolutionFiles")
+    result_conflicts_value = result_evidence.get("mergeConflictFiles")
+    try:
+        conflicts = _validated_changed_files(conflicts_value)
+        requested = _validated_changed_files(requested_value)
+        result_conflicts = _validated_changed_files(result_conflicts_value)
+    except RuntimeError as exc:
+        raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_PATHS_INVALID") from exc
+    if result_conflicts != conflicts or not set(conflicts) < set(requested):
+        raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_NOT_STRICT_SUPERSET")
+    extras = sorted(set(requested) - set(conflicts))
+    if len(requested) > 16 or len(extras) > 8:
+        raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_TOO_BROAD")
+    conflict_refactor_roots = {
+        PurePosixPath(conflict).with_suffix("").as_posix() for conflict in conflicts
+    }
+    if any(
+        not any(extra == root or extra.startswith(f"{root}/") for root in conflict_refactor_roots)
+        for extra in extras
+    ):
+        raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_UNRELATED_PATH")
+    tombstone_receipt = context.get("codePathTombstoneReceipt")
+    tombstones = (
+        set(str(path) for path in tombstone_receipt.get("tombstonePaths") or [])
+        if isinstance(tombstone_receipt, dict)
+        else set()
+    )
+    if set(requested) & tombstones:
+        raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_TOMBSTONE_INCLUDED")
+
+    try:
+        command(["git", "cat-file", "-e", f"{expected_head}^{{commit}}"], cwd=worktree)
+        command(["git", "cat-file", "-e", f"{expected_base}^{{commit}}"], cwd=worktree)
+        merge_base = command(["git", "merge-base", expected_head, expected_base], cwd=worktree)
+        base_changed = {
+            line
+            for line in command(
+                [
+                    "git",
+                    "diff",
+                    "--name-only",
+                    "--diff-filter=ACMRT",
+                    f"{merge_base}..{expected_base}",
+                    "--",
+                ],
+                cwd=worktree,
+            ).splitlines()
+            if line
+        }
+        for path in extras:
+            if path not in base_changed:
+                raise RuntimeError("resolution path is not part of the bound base delta")
+            if (
+                _optional_command(
+                    ["git", "cat-file", "-e", f"{expected_head}:{path}"], cwd=worktree
+                )
+                is not None
+            ):
+                raise RuntimeError("resolution path already exists at the PR head")
+            if (
+                command(["git", "cat-file", "-t", f"{expected_base}:{path}"], cwd=worktree)
+                != "blob"
+            ):
+                raise RuntimeError("resolution path is not a base blob")
+
+        merge = subprocess.run(
+            ["git", "merge", "--no-ff", "--no-commit", expected_base],
+            cwd=worktree,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        actual_conflicts = sorted(
+            line
+            for line in command(
+                ["git", "diff", "--name-only", "--diff-filter=U"], cwd=worktree
+            ).splitlines()
+            if line
+        )
+        _optional_command(["git", "merge", "--abort"], cwd=worktree)
+        if merge.returncode != 1 or actual_conflicts != conflicts:
+            raise RuntimeError("merge conflict snapshot changed")
+        if command(["git", "rev-parse", "HEAD"], cwd=worktree) != expected_head or command(
+            ["git", "status", "--porcelain"], cwd=worktree
+        ):
+            raise RuntimeError("merge scope verification did not restore the worktree")
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        _optional_command(["git", "merge", "--abort"], cwd=worktree)
+        raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_BASE_DELTA_INVALID") from exc
+
+    task_id = str(candidate.get("intentId") or candidate["threadId"])
+    issue_match = ISSUE_URL.fullmatch(str(candidate["issueUrl"]))
+    managed_task = managed_ledger.read_task(task_id) or {}
+    try:
+        managed_provenance = json.loads(managed_task.get("provenance_json") or "{}")
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise TaskResultEvidenceBlocked("DURABLE_REPRODUCTION_RECEIPT_INVALID") from exc
+    managed_receipt = managed_provenance.get("probeReceipt")
+    context_receipt = context.get("reproductionReceipt")
+    if (
+        issue_match is None
+        or not isinstance(managed_receipt, dict)
+        or not isinstance(context_receipt, dict)
+        or managed_receipt.get("receiptDigest") != context_receipt.get("receiptDigest")
+        or managed_ledger.implementation_authorization_receipt(
+            task_id=task_id,
+            thread_id=str(candidate["threadId"]),
+            worktree_path=str(worktree),
+            repo=issue_match.group(1),
+            issue_url=str(candidate["issueUrl"]),
+            receipt_digest=str(managed_receipt.get("receiptDigest") or ""),
+        )
+        is None
+    ):
+        raise TaskResultEvidenceBlocked("DURABLE_REPRODUCTION_RECEIPT_INVALID")
+    try:
+        current_pr = managed_ledger.published_pr_for_opportunity(
+            str(candidate["key"]),
+            pr_url=pr_url,
+            publication_head_sha=str(publication_receipt.get("commitSha") or ""),
+        )
+    except (KeyError, ValueError) as exc:
+        raise TaskResultEvidenceBlocked("PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID") from exc
+    if (
+        current_pr is None
+        or current_pr.get("state") != "OPEN"
+        or current_pr.get("head_sha") != expected_head
+    ):
+        raise TaskResultEvidenceBlocked("PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID")
+
+    result_digest = _task_result_digest(value, raw)
+    try:
+        receipt = attest_merge_resolution_scope(
+            key=str(candidate["key"]),
+            issue_url=str(candidate["issueUrl"]),
+            intent_id=task_id,
+            thread_id=str(candidate["threadId"]),
+            worktree_path_fingerprint=_worktree_path_fingerprint(worktree),
+            pr_url=pr_url,
+            source_wake_digest=source_wake,
+            request_result_digest=result_digest,
+            head_sha=expected_head,
+            prepared_head_sha=prepared_head,
+            base_sha=expected_base,
+            merge_conflict_files=conflicts,
+            authorized_resolution_files=requested,
+        )
+    except ProbeUnavailable as exc:
+        raise TaskResultEvidenceBlocked(str(exc)) from exc
+    store.record_task_result_ingested(
+        str(candidate["key"]),
+        digest=result_digest,
+        stage="PR_OPEN",
+        task_id=task_id,
+        thread_id=str(candidate["threadId"]),
+        **_recovered_task_result_tombstone_continuation_kwargs(
+            context,
+            value,
+            worktree=worktree,
+            continuation_head=expected_head,
+        ),
+    )
+    return store.authorize_pr_followup_resolution_scope(
+        str(candidate["key"]),
+        source_wake_digest=source_wake,
+        result_digest=result_digest,
+        receipt=receipt,
+    )
+
+
 def _preserved_published_stage(current_stage: str, managed_pr_state: str) -> str:
     if managed_pr_state == "MERGED":
         return "MERGED"
@@ -15258,6 +15547,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     quarantined_already_recorded: list[dict[str, Any]] = []
     work_blocked: list[dict[str, Any]] = []
     active_turn_deferred: list[dict[str, Any]] = []
+    resolution_scope_authorized: list[dict[str, Any]] = []
     ignored: list[dict[str, str]] = []
     errors: list[dict[str, str]] = []
     for candidate in store.task_result_candidates():
@@ -15304,6 +15594,46 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             previous_evidence_block = managed_ledger.event_by_idempotency_key(
                 evidence_block_idempotency_key
             )
+            managed_candidate["publicationReceipt"] = context.get("publicationReceipt")
+            managed_candidate["taskStage"] = context.get("taskStage")
+            expected = {
+                "schemaVersion": TASK_RESULT_SCHEMA,
+                "key": candidate["key"],
+                "issueUrl": candidate["issueUrl"],
+                "threadId": candidate["threadId"],
+                "worktreePath": str(result_access.worktree),
+            }
+            for key, expected_value in expected.items():
+                if value.get(key) != expected_value:
+                    raise RuntimeError(f"task result mismatch: {key}")
+            scope_authorization = _ingest_merge_resolution_scope_request(
+                store,
+                managed_ledger,
+                candidate=candidate,
+                context=context,
+                value=value,
+                raw=raw,
+                worktree=result_access.worktree,
+            )
+            if scope_authorization is not None:
+                resolution_scope_authorized.append(
+                    {
+                        "key": str(candidate["key"]),
+                        "replacementWakeDigest": scope_authorization["replacementWakeDigest"],
+                        "authorizedResolutionFiles": scope_authorization[
+                            "authorizedResolutionFiles"
+                        ],
+                        "alreadyRecorded": scope_authorization.get("created") is False,
+                    }
+                )
+                ingested.append(
+                    {
+                        "key": str(candidate["key"]),
+                        "stage": "PR_OPEN",
+                        "reason": "MERGE_RESOLUTION_SCOPE_AUTHORIZED",
+                    }
+                )
+                continue
             if (
                 previous_evidence_block is not None
                 and previous_evidence_block.get("event_type") == "TASK_RESULT_EVIDENCE_BLOCKED"
@@ -15317,18 +15647,6 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     }
                 )
                 continue
-            managed_candidate["publicationReceipt"] = context.get("publicationReceipt")
-            managed_candidate["taskStage"] = context.get("taskStage")
-            expected = {
-                "schemaVersion": TASK_RESULT_SCHEMA,
-                "key": candidate["key"],
-                "issueUrl": candidate["issueUrl"],
-                "threadId": candidate["threadId"],
-                "worktreePath": str(result_access.worktree),
-            }
-            for key, expected_value in expected.items():
-                if value.get(key) != expected_value:
-                    raise RuntimeError(f"task result mismatch: {key}")
             published_pr = _managed_published_pr_authority(
                 managed_ledger,
                 candidate=candidate,
@@ -16385,6 +16703,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
         result["workBlocked"] = work_blocked
     if active_turn_deferred:
         result["activeTurnDeferred"] = active_turn_deferred
+    if resolution_scope_authorized:
+        result["resolutionScopeAuthorized"] = resolution_scope_authorized
     return result
 
 

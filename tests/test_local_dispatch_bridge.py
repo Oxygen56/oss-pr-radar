@@ -1594,6 +1594,317 @@ def run_git(path: Path, *args: str) -> str:
     return completed.stdout.strip()
 
 
+def _radar_state_fetch_fixture(monkeypatch, tmp_path):
+    repository = tmp_path / "radar"
+    remote = tmp_path / "radar-state.git"
+    state = tmp_path / "runtime" / "state"
+    repository.mkdir()
+    state.mkdir(parents=True, mode=0o700)
+    run_git(repository, "init")
+    run_git(repository, "config", "user.name", "Radar Test")
+    run_git(repository, "config", "user.email", "radar@example.com")
+    run_git(repository, "branch", "-M", "radar-state")
+    run_git(remote.parent, "init", "--bare", str(remote))
+    run_git(repository, "remote", "add", "origin", str(remote))
+
+    outbox = _codex_decision_outbox()
+    outbox_raw = json.dumps(outbox, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    manifest = {
+        "version": "radar_state_v2",
+        "files": {
+            "war_room_codex_outbox.json": {
+                "sha256": hashlib.sha256(outbox_raw).hexdigest(),
+            }
+        },
+    }
+
+    def commit_state(generation: int):
+        queue = _signed_dispatch_queue(
+            intent_id=f"intent-{generation}",
+            key=f"owner/repo#{generation}",
+            queue_overrides={"generation": generation},
+        )
+        (repository / "dispatch_queue.json").write_text(
+            json.dumps(queue, sort_keys=True), encoding="utf-8"
+        )
+        (repository / "state_manifest.json").write_text(
+            json.dumps(manifest, sort_keys=True), encoding="utf-8"
+        )
+        (repository / "war_room_codex_outbox.json").write_bytes(outbox_raw)
+        run_git(repository, "add", ".")
+        run_git(repository, "commit", "-m", f"state: generation {generation}")
+        return queue
+
+    commit_state(1)
+    run_git(repository, "push", "origin", "radar-state")
+    ref = "refs/radar/import/radar-state"
+    run_git(
+        repository,
+        "fetch",
+        "--no-write-fetch-head",
+        "origin",
+        f"+radar-state:{ref}",
+    )
+    previous = run_git(repository, "rev-parse", ref)
+    expected_queue = commit_state(2)
+    current = run_git(repository, "rev-parse", "HEAD")
+    run_git(repository, "push", "origin", "radar-state")
+    assert previous != current
+
+    monkeypatch.setattr(MODULE, "ROOT", repository)
+    monkeypatch.setattr(MODULE, "STATE", state)
+    return repository, ref, current, expected_queue, outbox
+
+
+def _observe_concurrent_radar_state_fetches(monkeypatch):
+    original_run = MODULE.subprocess.run
+    guard = threading.Lock()
+    observed = {"active": 0, "maximum": 0, "count": 0}
+
+    def run(args, *positional, **kwargs):
+        is_radar_fetch = list(args[:2]) == ["git", "fetch"] and any(
+            "refs/radar/import/radar-state" in str(item) for item in args
+        )
+        if not is_radar_fetch:
+            return original_run(args, *positional, **kwargs)
+        with guard:
+            observed["active"] += 1
+            observed["count"] += 1
+            observed["maximum"] = max(observed["maximum"], observed["active"])
+        try:
+            # Widen the real Git fetch overlap window. The blocking runtime
+            # lock must keep the second caller out of this region entirely.
+            time.sleep(0.1)
+            return original_run(args, *positional, **kwargs)
+        finally:
+            with guard:
+                observed["active"] -= 1
+
+    monkeypatch.setattr(MODULE.subprocess, "run", run)
+    return observed
+
+
+def _run_concurrent_fetches(first, second):
+    barrier = threading.Barrier(2)
+
+    def run(fetch):
+        barrier.wait(timeout=3)
+        return fetch()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_result = executor.submit(run, first)
+        second_result = executor.submit(run, second)
+        return first_result.result(timeout=10), second_result.result(timeout=10)
+
+
+def _radar_fetch_process(
+    *,
+    repository: Path,
+    state: Path,
+    start: Path,
+    operation: str,
+    ledger: Path,
+    probe: Path,
+) -> subprocess.Popen:
+    source_root = Path(__file__).parents[1]
+    script = f"""
+import importlib.util
+import json
+import sys
+import time
+from pathlib import Path
+from types import SimpleNamespace
+
+script = Path({str(SCRIPT)!r})
+spec = importlib.util.spec_from_file_location("radar_fetch_process", script)
+module = importlib.util.module_from_spec(spec)
+assert spec and spec.loader
+spec.loader.exec_module(module)
+module.ROOT = Path({str(repository)!r})
+module.STATE = Path({str(state)!r})
+start = Path({str(start)!r})
+deadline = time.monotonic() + 10
+while not start.exists():
+    if time.monotonic() >= deadline:
+        raise RuntimeError("concurrent fetch start signal timed out")
+    time.sleep(0.01)
+operation = {operation!r}
+ledger = Path({str(ledger)!r})
+if operation == "sync":
+    module.recover_shared_task_contexts = lambda _store: {{
+        "verified": 0,
+        "restored": [],
+        "resultReceiptsRestored": 0,
+        "unavailable": [],
+        "quarantined": [],
+        "errors": [],
+    }}
+    module.fetch_cloud_pr_followup = lambda: {{"version": "not-published"}}
+    result = module.sync_queue(ledger)
+elif operation == "queue-import":
+    result = module.import_signed_queue(ledger)
+elif operation == "codex-outbox":
+    module._dispatch_codex_decisions_locked = (
+        lambda _args, outbox: {{"ok": True, "outbox": outbox}}
+    )
+    result = module._dispatch_codex_decisions_unlocked(
+        SimpleNamespace(ledger=ledger, project_id="github")
+    )
+else:
+    raise RuntimeError(f"unsupported test operation: {{operation}}")
+print(json.dumps(result, sort_keys=True))
+"""
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = os.pathsep.join(
+        filter(
+            None,
+            [
+                str(source_root / "src"),
+                environment.get("PYTHONPATH", ""),
+            ],
+        )
+    )
+    environment["RADAR_FETCH_PROBE_DIR"] = str(probe)
+    return subprocess.Popen(
+        [sys.executable, "-c", script],
+        cwd=source_root,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def _install_delayed_upload_pack(repository: Path, tmp_path: Path) -> Path:
+    probe = tmp_path / "fetch-probe"
+    probe.mkdir()
+    git_exec_path = run_git(repository, "--exec-path")
+    upload_pack = Path(git_exec_path) / "git-upload-pack"
+    wrapper = tmp_path / "delayed-upload-pack.py"
+    wrapper.write_text(
+        f"""#!{sys.executable}
+import fcntl
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+probe = Path(os.environ["RADAR_FETCH_PROBE_DIR"])
+guard_path = probe / "guard"
+active_path = probe / "active"
+with guard_path.open("a+") as guard:
+    fcntl.flock(guard.fileno(), fcntl.LOCK_EX)
+    active = int(active_path.read_text() or "0") if active_path.exists() else 0
+    if active:
+        (probe / "overlap").write_text("fetches overlapped")
+    active_path.write_text(str(active + 1))
+    fcntl.flock(guard.fileno(), fcntl.LOCK_UN)
+try:
+    completed = subprocess.run([{str(upload_pack)!r}, *sys.argv[1:]], check=False)
+    time.sleep(0.25)
+finally:
+    with guard_path.open("a+") as guard:
+        fcntl.flock(guard.fileno(), fcntl.LOCK_EX)
+        active = int(active_path.read_text())
+        active_path.write_text(str(active - 1))
+        fcntl.flock(guard.fileno(), fcntl.LOCK_UN)
+raise SystemExit(completed.returncode)
+""",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o700)
+    run_git(repository, "config", "remote.origin.uploadpack", str(wrapper))
+    return probe
+
+
+def _run_concurrent_fetch_processes(
+    monkeypatch, tmp_path: Path, first_operation: str
+) -> tuple[dict, dict, Path, str, str]:
+    repository, ref, current, _queue, _outbox = _radar_state_fetch_fixture(monkeypatch, tmp_path)
+    state = MODULE.STATE
+    probe = _install_delayed_upload_pack(repository, tmp_path)
+    start = tmp_path / "start-fetches"
+    first = _radar_fetch_process(
+        repository=repository,
+        state=state,
+        start=start,
+        operation=first_operation,
+        ledger=tmp_path / "first.sqlite3",
+        probe=probe,
+    )
+    second = _radar_fetch_process(
+        repository=repository,
+        state=state,
+        start=start,
+        operation="queue-import",
+        ledger=tmp_path / "second.sqlite3",
+        probe=probe,
+    )
+    start.touch()
+    first_stdout, first_stderr = first.communicate(timeout=20)
+    second_stdout, second_stderr = second.communicate(timeout=20)
+    assert first.returncode == 0, first_stderr
+    assert second.returncode == 0, second_stderr
+    return (
+        json.loads(first_stdout),
+        json.loads(second_stdout),
+        probe,
+        run_git(repository, "rev-parse", ref),
+        current,
+    )
+
+
+def test_radar_state_fetch_lock_serializes_sync_and_queue_importer(monkeypatch, tmp_path):
+    repository, ref, current, expected_queue, _outbox = _radar_state_fetch_fixture(
+        monkeypatch, tmp_path
+    )
+    observed = _observe_concurrent_radar_state_fetches(monkeypatch)
+
+    # sync_queue and import_signed_queue both enter through fetch_cloud_queue.
+    sync_queue, imported_queue = _run_concurrent_fetches(
+        MODULE.fetch_cloud_queue,
+        MODULE.fetch_cloud_queue,
+    )
+
+    assert sync_queue == expected_queue
+    assert imported_queue == expected_queue
+    assert observed == {"active": 0, "maximum": 1, "count": 2}
+    assert run_git(repository, "rev-parse", ref) == current
+
+
+def test_radar_state_fetch_lock_serializes_codex_outbox_and_queue_importer(monkeypatch, tmp_path):
+    repository, ref, current, expected_queue, expected_outbox = _radar_state_fetch_fixture(
+        monkeypatch, tmp_path
+    )
+    observed = _observe_concurrent_radar_state_fetches(monkeypatch)
+
+    outbox, imported_queue = _run_concurrent_fetches(
+        MODULE.fetch_cloud_codex_outbox,
+        MODULE.fetch_cloud_queue,
+    )
+
+    assert outbox == expected_outbox
+    assert imported_queue == expected_queue
+    assert observed == {"active": 0, "maximum": 1, "count": 2}
+    assert run_git(repository, "rev-parse", ref) == current
+
+
+@pytest.mark.parametrize("first_operation", ["sync", "codex-outbox"])
+def test_radar_state_fetch_lock_serializes_independent_bridge_processes(
+    monkeypatch, tmp_path, first_operation
+):
+    first, importer, probe, actual_ref, expected_ref = _run_concurrent_fetch_processes(
+        monkeypatch, tmp_path, first_operation
+    )
+
+    assert first["ok"] is True
+    assert importer["ok"] is True
+    assert not (probe / "overlap").exists()
+    assert (probe / "active").read_text() == "0"
+    assert actual_ref == expected_ref
+
+
 def registered_store(tmp_path: Path, worktree: Path | None = None) -> tuple[RadarLedger, Path]:
     worktree = worktree or tmp_path / "worktree"
     worktree.mkdir(parents=True)
@@ -11401,7 +11712,7 @@ def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monk
     assert context["prFollowup"]["wakeDigest"] == candidate["wakeDigest"]
     assert context["prFollowup"]["preparedHeadSha"] == "b" * 40
     assert context["prFollowup"]["resultContract"] == {
-        "schemaVersion": "pr-followup-result-contract-v2",
+        "schemaVersion": "pr-followup-result-contract-v3",
         "requiredWakeDigestField": "followupDigest",
         "allowedStages": ["FIX_READY", "PR_OPEN"],
         "noLocalActionStage": "PR_OPEN",
@@ -11414,6 +11725,9 @@ def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monk
         "noLocalActionHeadBindingField": "prFollowup.preparedHeadSha",
         "noLocalActionPrBindingField": "publicationReceipt.prUrl",
         "mergeConflictHandoffMode": "controller_merge_required",
+        "conflictScopeInsufficientReason": "CONFLICT_SCOPE_INSUFFICIENT",
+        "requiredResolutionFilesField": "evidence.requiredResolutionFiles",
+        "authorizedResolutionFilesField": "prFollowup.evidence.authorizedResolutionFiles",
     }
     assert context["publicationReceipt"]["prUrl"] == pr_url
     refreshed = json.loads(
@@ -14878,7 +15192,7 @@ def test_new_published_no_local_action_contract_does_not_repair_uningested_missi
         _published_no_local_action_without_head(monkeypatch, tmp_path, previously_ingested=False)
     )
     assert (
-        context["prFollowup"]["resultContract"]["schemaVersion"] == "pr-followup-result-contract-v2"
+        context["prFollowup"]["resultContract"]["schemaVersion"] == "pr-followup-result-contract-v3"
     )
 
     first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
@@ -17327,6 +17641,434 @@ def test_existing_policy_block_with_refreshed_context_stays_idempotent(tmp_path)
         "validationDeferred": [],
         "errors": [],
     }
+
+
+def _merge_resolution_scope_request_fixture(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    source_result = json.loads(result_path.read_text(encoding="utf-8"))
+    head_sha = str(source_result["reproductionReceipt"]["commitSha"])
+    run_git(worktree, "switch", "main")
+    (worktree / "runtime.py").write_text("value = 3\n", encoding="utf-8")
+    (worktree / "runtime").mkdir()
+    (worktree / "runtime" / "new.py").write_text("value = 3\n", encoding="utf-8")
+    (worktree / "unrelated.py").write_text("UNRELATED = True\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py", "runtime/new.py", "unrelated.py")
+    run_git(worktree, "commit", "-m", "refactor: split runtime implementation")
+    base_sha = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", "fix/1-runtime-boundary")
+    _managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        degrade_stage=False,
+    )
+    checked_at = iso_z(datetime.now(UTC) + timedelta(seconds=1))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": checked_at,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": head_sha,
+                    "actionDigest": "merge-conflict-action",
+                    "taskActionDigest": "merge-conflict-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["解决当前基线重构引起的冲突"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseRefName": "main",
+                        "baseSha": base_sha,
+                        "mergeConflictFiles": ["runtime.py"],
+                    },
+                    "checkedAt": checked_at,
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=str(candidate["wakeDigest"]),
+        prepared_head_sha=head_sha,
+        prepared_base_sha=base_sha,
+        merge_conflict_files=["runtime.py"],
+    )
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+        prepared_followup_head=head_sha,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    request = {
+        "schemaVersion": "radar-task-result-v1",
+        "contextDigest": context["contextDigest"],
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "stage": "PR_OPEN",
+        "followupDigest": context["prFollowup"]["wakeDigest"],
+        "headSha": head_sha,
+        "commitSha": head_sha,
+        "prUrl": pr_url,
+        "reason": "CONFLICT_SCOPE_INSUFFICIENT",
+        "evidence": {
+            "headSha": head_sha,
+            "localAction": "none",
+            "mergeConflictFiles": ["runtime.py"],
+            "requiredResolutionFiles": ["runtime.py", "runtime/new.py"],
+        },
+    }
+    result_path.write_text(json.dumps(request), encoding="utf-8")
+    return store, worktree, result_path, context, request, head_sha, base_sha
+
+
+def test_ingest_authorizes_base_only_merge_resolution_scope_and_finalizer_consumes_it(
+    tmp_path,
+):
+    store, worktree, result_path, source_context, request, head_sha, base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    source_wake = str(source_context["prFollowup"]["wakeDigest"])
+    source_code_paths = list(source_context["codePaths"])
+    source_receipt_digest = source_context["reproductionReceipt"]["receiptDigest"]
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True, first["errors"]
+    assert first.get("workBlocked", []) == []
+    authorization = first["resolutionScopeAuthorized"][0]
+    assert authorization["authorizedResolutionFiles"] == ["runtime.py", "runtime/new.py"]
+    assert authorization["replacementWakeDigest"] != source_wake
+    assert repeated["resolutionScopeAuthorized"][0]["alreadyRecorded"] is True
+    refreshed_at = iso_z(datetime.now(UTC) + timedelta(seconds=2))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": refreshed_at,
+            "items": [
+                {
+                    "url": request["prUrl"],
+                    "headSha": head_sha,
+                    "actionDigest": "same-snapshot-refreshed-action",
+                    "taskActionDigest": "same-snapshot-refreshed-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["继续处理同一基线和冲突集"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseRefName": "main",
+                        "baseSha": base_sha,
+                        "mergeConflictFiles": ["runtime.py"],
+                    },
+                    "checkedAt": refreshed_at,
+                }
+            ],
+        }
+    )
+    replacement = store.pr_followup_candidates()[0]
+    assert replacement["wakeDigest"] == authorization["replacementWakeDigest"]
+    assert replacement["evidence"]["mergeConflictFiles"] == ["runtime.py"]
+    assert replacement["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+    assert "authorizedResolutionFiles" in MODULE._pr_followup_prompt(replacement)
+
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=str(replacement["wakeDigest"]),
+        prepared_head_sha=head_sha,
+        prepared_base_sha=base_sha,
+        merge_conflict_files=["runtime.py"],
+    )
+    next_context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+        prepared_followup_head=head_sha,
+    )
+    next_context = json.loads(next_context_path.read_text(encoding="utf-8"))
+    assert next_context["codePaths"] == source_code_paths
+    assert next_context["reproductionReceipt"]["receiptDigest"] == source_receipt_digest
+    assert next_context["prFollowup"]["evidence"]["mergeConflictFiles"] == ["runtime.py"]
+    assert next_context["prFollowup"]["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+
+    (worktree / "runtime.py").write_text("value = 4\n", encoding="utf-8")
+    (worktree / "runtime").mkdir(exist_ok=True)
+    (worktree / "runtime" / "new.py").write_text("value = 4\n", encoding="utf-8")
+    merge_value = {
+        "handoffMode": "controller_merge_required",
+        "branch": "fix/1-runtime-boundary",
+        "commitMessage": "merge: refresh split runtime implementation",
+        "changedFiles": ["runtime.py", "runtime/new.py"],
+        "mergeBaseSha": base_sha,
+        "publication": {"baseBranch": "main"},
+    }
+    result_path.write_text(json.dumps(merge_value), encoding="utf-8")
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate={"worktreePath": str(worktree)},
+        context=next_context,
+        value=merge_value,
+        result_path=result_path,
+    )
+
+    assert finalized["mergeResolutionFiles"] == ["runtime.py", "runtime/new.py"]
+    assert finalized["controllerCommitChangedFiles"] == ["runtime.py", "runtime/new.py"]
+    assert finalized["codePaths"] == sorted(set(source_code_paths) | {"runtime/new.py"})
+    assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
+        head_sha,
+        base_sha,
+    ]
+    assert (worktree / "runtime" / "new.py").read_text(encoding="utf-8") == "value = 4\n"
+    assert run_git(worktree, "status", "--porcelain") == ""
+    assert request["evidence"]["requiredResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+
+    run_git(worktree, "switch", "--detach", head_sha)
+    forged_merge = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", base_sha],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert forged_merge.returncode == 1
+    (worktree / "runtime.py").write_text("value = 4\n", encoding="utf-8")
+    (worktree / "runtime" / "new.py").write_text("value = 4\n", encoding="utf-8")
+    (worktree / "unrelated.py").write_text("UNRELATED = 'forged'\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py", "runtime/new.py", "unrelated.py")
+    run_git(worktree, "commit", "-m", merge_value["commitMessage"])
+    forged_head = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "branch", "-f", "fix/1-runtime-boundary", forged_head)
+    run_git(worktree, "switch", "fix/1-runtime-boundary")
+    forged_complete = finalized | {"commitSha": forged_head}
+    result_path.write_text(json.dumps(forged_complete), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="outside signed resolution scope"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=next_context,
+            value=forged_complete,
+            result_path=result_path,
+        )
+
+
+def test_ingest_rejects_unrelated_base_file_in_merge_resolution_scope(tmp_path):
+    store, _worktree, result_path, _context, request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    request["evidence"]["requiredResolutionFiles"].append("unrelated.py")
+    result_path.write_text(json.dumps(request), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["ingested"] == []
+    assert result["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "MERGE_RESOLUTION_SCOPE_UNRELATED_PATH",
+            "alreadyRecorded": False,
+        }
+    ]
+    assert "resolutionScopeAuthorized" not in result
+
+
+def test_legacy_ingested_source_wake_can_backfill_merge_resolution_scope(tmp_path):
+    store, _worktree, result_path, source_context, _request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    source_wake = str(source_context["prFollowup"]["wakeDigest"])
+    raw = result_path.read_bytes()
+    result_digest = MODULE._task_result_digest(json.loads(raw), raw)
+    store.record_task_result_ingested("a/b#1", digest=result_digest, stage="PR_OPEN")
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=source_wake,
+        result_digest=result_digest,
+        stage="PR_OPEN",
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    authorization = result["resolutionScopeAuthorized"][0]
+    assert authorization["replacementWakeDigest"] != source_wake
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["wakeDigest"] == authorization["replacementWakeDigest"]
+    assert candidate["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+
+
+def test_pr_followup_base_drift_drops_authorized_merge_resolution_scope(tmp_path):
+    store, worktree, _result_path, _context, _request, head_sha, base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    authorized = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert authorized["resolutionScopeAuthorized"][0]["alreadyRecorded"] is False
+    replacement = store.pr_followup_candidates()[0]
+    assert replacement["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+
+    run_git(worktree, "switch", "main")
+    (worktree / "runtime.py").write_text("value = 5\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "refactor: advance split runtime")
+    advanced_base = run_git(worktree, "rev-parse", "HEAD")
+    assert advanced_base != base_sha
+    run_git(worktree, "switch", "fix/1-runtime-boundary")
+    checked_at = iso_z(datetime.now(UTC) + timedelta(seconds=3))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": checked_at,
+            "items": [
+                {
+                    "url": "https://github.com/a/b/pull/9",
+                    "headSha": head_sha,
+                    "actionDigest": "advanced-base-action",
+                    "taskActionDigest": "advanced-base-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["重新检查已变化的基线冲突"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseRefName": "main",
+                        "baseSha": advanced_base,
+                        "mergeConflictFiles": ["runtime.py"],
+                    },
+                    "checkedAt": checked_at,
+                }
+            ],
+        }
+    )
+
+    refreshed = store.pr_followup_candidates()[0]
+    assert refreshed["evidence"]["baseSha"] == advanced_base
+    assert "authorizedResolutionFiles" not in refreshed["evidence"]
+    assert "mergeResolutionScopeReceipt" not in refreshed["evidence"]
+
+
+def test_completed_authorized_wake_does_not_mask_new_followup_action(tmp_path):
+    store, _worktree, _result_path, _context, request, head_sha, base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    authorized = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    completed_wake = authorized["resolutionScopeAuthorized"][0]["replacementWakeDigest"]
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=completed_wake,
+        result_digest="c" * 64,
+        stage="PR_OPEN",
+    )
+    checked_at = iso_z(datetime.now(UTC) + timedelta(seconds=4))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": checked_at,
+            "items": [
+                {
+                    "url": request["prUrl"],
+                    "headSha": head_sha,
+                    "actionDigest": "new-action-after-resolution-scope",
+                    "taskActionDigest": "new-task-action-after-resolution-scope",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["处理同一快照上的新审查意见"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseRefName": "main",
+                        "baseSha": base_sha,
+                        "mergeConflictFiles": ["runtime.py"],
+                    },
+                    "checkedAt": checked_at,
+                }
+            ],
+        }
+    )
+
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["wakeDigest"] != completed_wake
+    assert "authorizedResolutionFiles" not in candidate["evidence"]
+    assert "mergeResolutionScopeReceipt" not in candidate["evidence"]
+
+
+def test_reserved_authorized_wake_does_not_consume_later_followup_action(tmp_path):
+    store, _worktree, _result_path, _context, request, head_sha, base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    authorized = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    reserved_wake = authorized["resolutionScopeAuthorized"][0]["replacementWakeDigest"]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=reserved_wake,
+        prepared_head_sha=head_sha,
+        prepared_base_sha=base_sha,
+        merge_conflict_files=["runtime.py"],
+    )
+
+    def scan(checked_at: str) -> None:
+        store.import_pr_followups(
+            {
+                "version": "pr_followup_v3",
+                "generatedAt": checked_at,
+                "items": [
+                    {
+                        "url": request["prUrl"],
+                        "headSha": head_sha,
+                        "actionDigest": "later-action-after-reserved-scope",
+                        "taskActionDigest": "later-task-action-after-reserved-scope",
+                        "taskFollowupRequired": True,
+                        "taskActions": ["处理授权任务领取后出现的新审查意见"],
+                        "evidence": {
+                            "mergeConflict": True,
+                            "baseRefName": "main",
+                            "baseSha": base_sha,
+                            "mergeConflictFiles": ["runtime.py"],
+                        },
+                        "checkedAt": checked_at,
+                    }
+                ],
+            }
+        )
+
+    scan(iso_z(datetime.now(UTC) + timedelta(seconds=5)))
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT wake_digest,evidence_json FROM pr_followups WHERE opportunity_key='a/b#1'"
+        ).fetchone()
+    assert row is not None
+    replacement_wake = str(row["wake_digest"])
+    replacement_evidence = json.loads(row["evidence_json"])
+    assert replacement_wake != reserved_wake
+    assert "authorizedResolutionFiles" not in replacement_evidence
+    assert store.pr_followup_candidates() == []
+
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=reserved_wake,
+        result_digest="d" * 64,
+        stage="PR_OPEN",
+    )
+    scan(iso_z(datetime.now(UTC) + timedelta(seconds=6)))
+
+    candidates = store.pr_followup_candidates()
+    assert len(candidates) == 1
+    assert candidates[0]["wakeDigest"] == replacement_wake
+    assert candidates[0]["wakeDigest"] != reserved_wake
+    assert "authorizedResolutionFiles" not in candidates[0]["evidence"]
 
 
 def test_controller_creates_two_parent_commit_for_conflicted_pr_followup(tmp_path):
