@@ -641,6 +641,110 @@ def test_orphan_reconcile_commits_unique_matches_and_abandons_proven_misses(monk
     assert result["abandoned"][0]["intentId"] == "intent-2"
 
 
+def test_orphan_commit_binds_before_optional_title_update(monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    worktree = tmp_path / "worktree"
+    source.mkdir()
+    worktree.mkdir()
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, title TEXT, archived INTEGER, cwd TEXT)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            ("thread-1", "automatic title", 0, str(worktree)),
+        )
+    candidate = {
+        "intentId": "intent-1",
+        "threadId": "thread-1",
+        "key": "a/b#1",
+        "repo": "a/b",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "cwd": str(worktree),
+        "worktreePath": str(worktree),
+        "workspaceMode": "codex_worktree",
+        "desiredTitle": "[有价值·处理中] a/b#1",
+        "titleTime": "08-30 06:40",
+        "leaseStartedAt": "2026-08-29T22:39:47Z",
+        "orphanNonce": "orphan-nonce",
+    }
+    calls = []
+
+    class Store:
+        def commit_orphan_dispatch(self, *_args, **_kwargs):
+            calls.append("binding")
+
+        def invalidate_title_sync(self, **_kwargs):
+            calls.append("title-deferred")
+            return True
+
+    store = Store()
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(
+        MODULE,
+        "orphan_list",
+        lambda _args: {"ok": True, "candidates": [candidate], "blocked": [], "unmatched": []},
+    )
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "command", lambda *_args, **_kwargs: "https://github.com/a/b")
+    monkeypatch.setattr(MODULE, "_worktree_belongs_to_source", lambda *_args: True)
+    monkeypatch.setattr(
+        MODULE,
+        "write_task_context",
+        lambda *_args, **_kwargs: calls.append("context") or tmp_path / "task-context.json",
+    )
+
+    def fail_title(*_args, **_kwargs):
+        raise RuntimeError("title update unavailable")
+
+    monkeypatch.setattr(MODULE, "_ensure_desktop_thread_title", fail_title)
+
+    result = MODULE.orphan_commit(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            intent_id="intent-1",
+            thread_id="thread-1",
+            project_id="github",
+            source_repo=str(source),
+            desired_title=candidate["desiredTitle"],
+            orphan_nonce="orphan-nonce",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["reconciled"] is True
+    assert result["titleDeferred"] is True
+    assert "title update unavailable" in result["titleError"]
+    assert calls == ["binding", "context", "title-deferred"]
+
+
+def test_desktop_thread_request_isolates_malformed_response_id(monkeypatch, tmp_path):
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "sys.stdin.readline()\n"
+        "sys.stdin.readline()\n"
+        'print(\'{"id": [], "result": {}}\', flush=True)\n',
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: str(fake_codex))
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+
+    result = MODULE._apply_desktop_thread_requests(
+        [{"threadId": "thread-1", "desiredTitle": "task"}],
+        method="thread/name/set",
+        parameter_builder=lambda item: {
+            "threadId": item["threadId"],
+            "name": item["desiredTitle"],
+        },
+        operation_label="title_update",
+        timeout_seconds=2,
+    )
+
+    assert result["thread-1"].startswith("TypeError:unhashable type")
+
+
 def test_duplicate_task_reconcile_archives_only_exact_renamed_duplicates(monkeypatch):
     candidate = {
         "threadId": "duplicate-1",
@@ -2867,6 +2971,150 @@ def test_claim_intent_rejects_low_information_wrong_repo_requalification(monkeyp
             ).fetchone()[0]
             == 1
         )
+
+
+def test_claim_intent_holds_bound_creation_without_reauditing(monkeypatch, tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-creating",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+            "autoSubmitAuthorized": True,
+            "publicSubmissionAllowed": True,
+            "selectedBaseSha": "a" * 40,
+        }
+    )
+    store.claim("intent-creating", "controller")
+    creation = store.reserve_creation("intent-creating", owner="controller")
+    store.bind_creation_client(
+        "intent-creating",
+        owner="controller",
+        creation_token=creation["creationToken"],
+        client_thread_id="client-thread-1",
+    )
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE,
+        "_audit_intent",
+        lambda _intent: pytest.fail("a bound creation must not be audited again"),
+    )
+
+    result = MODULE.claim_intent(
+        SimpleNamespace(
+            ledger=store.path,
+            intent_id="intent-creating",
+            owner="slow-worker",
+            lease_minutes=15,
+            prepare=True,
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "authorized": False,
+        "held": True,
+        "claimed": False,
+        "reason": "task_creation_reconciliation_pending",
+        "clientThreadId": "client-thread-1",
+    }
+    pending = store.pending()
+    assert pending[0]["ledgerStatus"] == "CREATING"
+    assert pending[0]["clientThreadId"] == "client-thread-1"
+
+    monkeypatch.setattr(
+        MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_list",
+        lambda _args: {"candidates": [], "restoreRequired": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_list",
+        lambda _args: {"candidates": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "recovery_list",
+        lambda _args: {"recoverable": [], "unresolved": []},
+    )
+
+    drained = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=store.path,
+            runtime_root=tmp_path,
+            project_id="github-project",
+            owner="slow-worker",
+        )
+    )
+
+    assert drained["ok"] is True
+    assert drained["action"] == "none"
+    assert drained["held"] == [{"key": "a/b#1", "reason": "task_creation_reconciliation_pending"}]
+
+
+def test_claim_intent_holds_active_lease_without_reauditing(monkeypatch, tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-leased",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+            "autoSubmitAuthorized": True,
+            "publicSubmissionAllowed": True,
+            "selectedBaseSha": "a" * 40,
+        }
+    )
+    store.claim("intent-leased", "hourly-controller", lease_minutes=30)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE,
+        "_audit_intent",
+        lambda _intent: pytest.fail("an active lease must not be audited by another worker"),
+    )
+
+    result = MODULE.claim_intent(
+        SimpleNamespace(
+            ledger=store.path,
+            intent_id="intent-leased",
+            owner="slow-worker",
+            lease_minutes=15,
+            prepare=True,
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "authorized": False,
+        "held": True,
+        "claimed": False,
+        "reason": "dispatch_lease_active",
+    }
+    pending = store.pending()
+    assert pending[0]["ledgerStatus"] == "LEASED"
+    assert pending[0]["leaseStale"] is False
 
 
 def test_terminal_feedback_treats_transient_github_failure_as_deferred(monkeypatch, tmp_path):
@@ -5442,7 +5690,12 @@ def test_worktree_membership_uses_common_repository_for_linked_source(tmp_path):
     assert MODULE._worktree_belongs_to_source(source, linked) is True
 
 
-def test_commit_receipt_binds_github_project_thread_to_managed_worktree(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "title_update_outcome", ["success", "reported_failure", "timeout", "malformed_response"]
+)
+def test_commit_receipt_binds_before_optional_title_update(
+    monkeypatch, tmp_path, title_update_outcome
+):
     project_root = tmp_path / "github"
     source = tmp_path / "source"
     source.mkdir()
@@ -5521,12 +5774,18 @@ def test_commit_receipt_binds_github_project_thread_to_managed_worktree(monkeypa
 
     def apply_titles(candidates):
         assert candidates[0]["desiredTitle"] == title
-        with sqlite3.connect(thread_db) as connection:
-            connection.execute(
-                "UPDATE threads SET title=? WHERE id=?",
-                (candidates[0]["desiredTitle"], candidates[0]["threadId"]),
-            )
-        return {"thread-1": None}
+        if title_update_outcome == "success":
+            with sqlite3.connect(thread_db) as connection:
+                connection.execute(
+                    "UPDATE threads SET title=? WHERE id=?",
+                    (candidates[0]["desiredTitle"], candidates[0]["threadId"]),
+                )
+            return {"thread-1": None}
+        if title_update_outcome == "timeout":
+            raise subprocess.TimeoutExpired(["codex", "app-server"], 5)
+        if title_update_outcome == "malformed_response":
+            raise TypeError("unhashable type: 'list'")
+        return {"thread-1": "title update unavailable"}
 
     monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", apply_titles)
 
@@ -5552,6 +5811,41 @@ def test_commit_receipt_binds_github_project_thread_to_managed_worktree(monkeypa
     assert context is not None
     assert context["worktreePath"] == str(worktree)
     assert MODULE.shared_context_path("https://github.com/a/b/issues/1").exists()
+    with store.connect() as connection:
+        binding = connection.execute(
+            "SELECT status,title_synced_state FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()
+    assert binding["status"] == "DISPATCHED"
+    if title_update_outcome == "success":
+        assert result.get("titleDeferred") is None
+        assert binding["title_synced_state"] == "GO"
+    else:
+        assert result["titleDeferred"] is True
+        expected_error = {
+            "timeout": "TimeoutExpired",
+            "malformed_response": "TypeError",
+        }.get(title_update_outcome, "title update unavailable")
+        assert expected_error in result["titleError"]
+        assert binding["title_synced_state"] is None
+        assert [item["threadId"] for item in store.title_candidates()] == ["thread-1"]
+
+        def retry_titles(candidates):
+            with sqlite3.connect(thread_db) as connection:
+                connection.execute(
+                    "UPDATE threads SET title=? WHERE id=?",
+                    (candidates[0]["desiredTitle"], candidates[0]["threadId"]),
+                )
+            return {"thread-1": None}
+
+        monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", retry_titles)
+        retried = MODULE.title_reconcile(SimpleNamespace(ledger=store.path))
+        assert retried["ok"] is True
+        assert [item["threadId"] for item in retried["renamed"]] == ["thread-1"]
+        with store.connect() as connection:
+            synced = connection.execute(
+                "SELECT title_synced_state FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()
+        assert synced["title_synced_state"] == "GO"
 
 
 def test_private_task_dispatch_is_not_limited_by_publication_canary(monkeypatch, tmp_path):

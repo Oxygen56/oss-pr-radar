@@ -113,6 +113,7 @@ from oss_pr_radar.util import (  # noqa: E402
     parse_time,
     read_json,
     sha256_json,
+    sha256_text,
 )
 from oss_pr_radar.war_room_messages import canonical_event_digest  # noqa: E402
 
@@ -4211,6 +4212,23 @@ def claim_intent(args: argparse.Namespace) -> dict[str, Any]:
     intent = pending.get(args.intent_id)
     if not intent:
         raise RuntimeError("intent is not pending")
+    if intent.get("ledgerStatus") == "CREATING":
+        return {
+            "ok": True,
+            "authorized": False,
+            "held": True,
+            "claimed": False,
+            "reason": "task_creation_reconciliation_pending",
+            "clientThreadId": intent.get("clientThreadId"),
+        }
+    if intent.get("ledgerStatus") == "LEASED" and intent.get("leaseStale") is False:
+        return {
+            "ok": True,
+            "authorized": False,
+            "held": True,
+            "claimed": False,
+            "reason": "dispatch_lease_active",
+        }
     if not external_side_effect_allowed(intent):
         ManagedAdapter(ROOT, args.ledger).record_preflight_outcome(
             intent=intent,
@@ -9368,7 +9386,6 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
         and normalize_origin(row["git_origin_url"] or "") != str(intent["repo"]).casefold()
     ):
         raise RuntimeError("thread origin mismatch")
-    _ensure_desktop_thread_title(args.thread_id, expected_title)
     store.commit_dispatch(
         intent["intentId"],
         owner=_active_owner(store, args),
@@ -9383,13 +9400,19 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
         thread_id=args.thread_id,
         cwd=worktree,
     )
+    title_deferred = _reconcile_desktop_thread_title_after_binding(
+        store,
+        thread_id=args.thread_id,
+        desired_title=expected_title,
+        title_state="GO",
+    )
     return {
         "ok": True,
         "key": intent["key"],
         "threadId": args.thread_id,
         "workspaceMode": "github_project_managed_worktree" if managed else "codex_worktree",
         "taskContextPath": str(context_path),
-    }
+    } | title_deferred
 
 
 def retry_dispatch(args: argparse.Namespace) -> dict[str, Any]:
@@ -9766,7 +9789,6 @@ def orphan_commit(args: argparse.Namespace) -> dict[str, Any]:
         connection.close()
     if row is None or int(row[1] or 0) != 0 or Path(row[2]).resolve() != thread_cwd:
         raise RuntimeError("orphan thread binding is invalid")
-    _ensure_desktop_thread_title(args.thread_id, args.desired_title)
     store = ledger(args.ledger)
     store.commit_orphan_dispatch(
         args.intent_id,
@@ -9782,13 +9804,19 @@ def orphan_commit(args: argparse.Namespace) -> dict[str, Any]:
         thread_id=args.thread_id,
         cwd=cwd,
     )
+    title_deferred = _reconcile_desktop_thread_title_after_binding(
+        store,
+        thread_id=args.thread_id,
+        desired_title=args.desired_title,
+        title_state="GO",
+    )
     return {
         "ok": True,
         "key": candidate["key"],
         "threadId": args.thread_id,
         "reconciled": True,
         "taskContextPath": str(context_path),
-    }
+    } | title_deferred
 
 
 def orphan_reconcile(args: argparse.Namespace) -> dict[str, Any]:
@@ -17142,22 +17170,28 @@ def _apply_desktop_thread_requests(
             if request_id in request_ids:
                 results[request_ids[request_id]] = f"app_server_{operation_label}_timeout"
         return results
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError) as exc:
         reason = f"{type(exc).__name__}:{str(exc)[:160]}"
         return {
             thread_id: (current if current is None else reason)
             for thread_id, current in results.items()
         }
     finally:
-        if process.stdin is not None:
-            process.stdin.close()
-        if process.poll() is None:
-            process.terminate()
         try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
+            if process.stdin is not None:
+                process.stdin.close()
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+        except (OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError):
+            pass
 
 
 def _archive_desktop_threads(
@@ -17379,6 +17413,43 @@ def _ensure_desktop_thread_title(thread_id: str, desired_title: str) -> None:
             connection.close()
         if row is None or int(row[1] or 0) != 0 or row[0] != desired_title:
             raise RuntimeError(apply_error or "thread title was not applied")
+
+
+def _reconcile_desktop_thread_title_after_binding(
+    store: RadarLedger,
+    *,
+    thread_id: str,
+    desired_title: str,
+    title_state: str,
+) -> dict[str, Any]:
+    """Keep cosmetic title updates outside the durable task-binding boundary."""
+
+    try:
+        _ensure_desktop_thread_title(thread_id, desired_title)
+    except Exception as exc:
+        try:
+            connection = sqlite3.connect(THREAD_DB)
+            try:
+                row = connection.execute(
+                    "SELECT title,archived FROM threads WHERE id=?", (thread_id,)
+                ).fetchone()
+            finally:
+                connection.close()
+            if row is not None and int(row[1] or 0) == 0:
+                store.invalidate_title_sync(
+                    thread_id=thread_id,
+                    state=title_state,
+                    actual_title_digest=sha256_text(str(row[0] or "")),
+                )
+        except Exception:
+            # The durable binding already succeeded. A secondary title marker
+            # must not turn a cosmetic retry into a task-creation failure.
+            pass
+        return {
+            "titleDeferred": True,
+            "titleError": f"{type(exc).__name__}:{str(exc)[:160]}",
+        }
+    return {}
 
 
 def title_reconcile(args: argparse.Namespace) -> dict[str, Any]:
