@@ -69,6 +69,7 @@ def prepared_request(tmp_path):
     git("init", cwd=worktree)
     git("config", "user.name", "Tester", cwd=worktree)
     git("config", "user.email", "tester@example.com", cwd=worktree)
+    git("commit", "--allow-empty", "-m", "chore: baseline", cwd=worktree)
     (worktree / "file.txt").write_text('assert "fixed" == "fixed"\n', encoding="utf-8")
     git("add", "file.txt", cwd=worktree)
     git("commit", "-m", "Fix streaming", cwd=worktree)
@@ -1114,13 +1115,23 @@ def test_merge_update_uses_live_repository_base_not_pr_snapshot(
     store.consume_publication_permit(permit["permit_id"], pr_url)
     worktree = tmp_path / "worktree"
     previous_head = first["commit_sha"]
-    git("switch", "-c", "upstream-base", cwd=worktree)
+    git("switch", "-c", "upstream-base", f"{previous_head}^", cwd=worktree)
     (worktree / "file.txt").write_text("upstream\n", encoding="utf-8")
     git("add", "file.txt", cwd=worktree)
     git("commit", "-m", "refactor: update file", cwd=worktree)
     base_sha = git("rev-parse", "HEAD", cwd=worktree)
     git("switch", first["branch"], cwd=worktree)
-    git("merge", "--no-ff", base_sha, "-m", "merge: refresh branch", cwd=worktree)
+    merge = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", base_sha],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert merge.returncode == 1
+    (worktree / "file.txt").write_text('assert "fixed" == "fixed"\n', encoding="utf-8")
+    git("add", "file.txt", cwd=worktree)
+    git("commit", "-m", "merge: refresh branch", cwd=worktree)
     current = git("rev-parse", "HEAD", cwd=worktree)
     quality = {field: True for field in QUALITY_FIELDS}
     store.record_stage("example/project#7", "FIX_READY", evidence=quality)
