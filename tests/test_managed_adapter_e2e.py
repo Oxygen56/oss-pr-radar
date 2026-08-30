@@ -11,6 +11,7 @@ from oss_pr_radar import scanner
 from oss_pr_radar.ledger import RadarLedger
 from oss_pr_radar.managed_adapter import ManagedAdapter
 from oss_pr_radar.managed_lifecycle import ManagedLedger, import_open_pr_observations
+from oss_pr_radar.metrics import QUALITY_FIELDS
 from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES
 from oss_pr_radar.scanner import Radar
 
@@ -459,7 +460,7 @@ def test_real_control_plane_adapter_path_reaches_all_projection_buckets(tmp_path
         },
         result_digest=digest_3,
     )
-    adapter.record_task_result(
+    task_4_result = adapter.record_task_result(
         candidate=intents["task-4"],
         value={
             "stage": "FIX_READY",
@@ -476,10 +477,14 @@ def test_real_control_plane_adapter_path_reaches_all_projection_buckets(tmp_path
             "resultDigest": result_digest,
             "previousHeadSha": "old-head",
             "publication": {"prUrl": "https://github.com/owner/repo/pull/4"},
-            "quality": {"passed": True, "evidence": ["pytest-e2e"]},
+            "quality": {field: True for field in QUALITY_FIELDS},
         },
         result_digest=result_digest,
     )
+    assert task_4_result["result"]["advanced"] is True
+    task_4_validation = json.loads(task_4_result["result"]["validation_json"])
+    assert task_4_validation["passed"] is True
+    assert task_4_validation["evidence"] == list(QUALITY_FIELDS)
     reservation = adapter.reserve_publication(
         request_id="request-4", repo="owner/repo", opportunity_key="owner/repo#4"
     )

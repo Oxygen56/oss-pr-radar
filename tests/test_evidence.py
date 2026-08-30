@@ -113,3 +113,41 @@ def test_collect_evidence_treats_issue_author_fix_as_active_claim():
 
     assert evidence.claims[0]["author"] == "reporter"
     assert evidence.claims[0]["kind"] == "active_claim"
+
+
+class RetractedClaimClient(ClaimedIssueClient):
+    def comments(self, _repo, _number):
+        return [
+            {
+                "body": (
+                    "Standing down — I see PR #45136 already addresses this. I'll defer to those."
+                ),
+                "user": {"login": "reporter"},
+                "author_association": "NONE",
+                "created_at": "2026-08-08T05:30:00Z",
+            }
+        ]
+
+
+def test_collect_evidence_drops_issue_author_claim_after_explicit_retraction():
+    policy = PolicySnapshot(
+        status="NORMAL",
+        digest="policy",
+        files=(),
+        ai_disclosure=False,
+        ai_prohibited=False,
+        assignment_required=False,
+        unsolicited_pr_blocked=False,
+        cla=False,
+        dco=False,
+        nonstandard_agreement=False,
+    )
+
+    evidence = collect_evidence(
+        RetractedClaimClient(),
+        "sgl-project/sglang",
+        34000,
+        policy_snapshot=policy,
+    )
+
+    assert evidence.claims == ()

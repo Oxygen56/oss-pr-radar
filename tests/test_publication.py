@@ -899,6 +899,24 @@ def test_broker_allows_bound_update_despite_a_competing_pr(monkeypatch, tmp_path
     )
 
     class UpdateClient(Client):
+        def comments(self, repo, number):
+            return [
+                {
+                    "body": "I'd like to work on this. I'll add regression coverage.",
+                    "user": {"login": "argszero"},
+                    "author_association": "NONE",
+                    "created_at": "2026-08-26T02:36:59Z",
+                },
+                {
+                    "body": (
+                        "Standing down — I see PR #8 already addresses this. I'll defer to those."
+                    ),
+                    "user": {"login": "argszero"},
+                    "author_association": "NONE",
+                    "created_at": "2026-08-26T10:53:24Z",
+                },
+            ]
+
         def related_open_prs(self, repo, number, **kwargs):
             return [
                 {"number": 8, "_repo": repo},

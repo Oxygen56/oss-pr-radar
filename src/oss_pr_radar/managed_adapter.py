@@ -21,6 +21,7 @@ from .managed_lifecycle import (
     parse_issue_reference,
     pr_key_from_url,
 )
+from .metrics import QUALITY_FIELDS, assess_submit_ready
 from .opportunity import (
     classify_scan_outcome,
     external_side_effect_allowed,
@@ -824,9 +825,17 @@ class ManagedAdapter:
         pr_key = pr_key_from_url(pr_url) if pr_url else None
         head_sha = str(value.get("headSha") or value.get("head_sha") or "") or None
         quality = value.get("quality") if isinstance(value.get("quality"), dict) else {}
-        validation = (
-            value.get("validation") if isinstance(value.get("validation"), dict) else quality
-        )
+        explicit_validation = value.get("validation")
+        if isinstance(explicit_validation, dict):
+            validation = dict(explicit_validation)
+        elif any(field in quality for field in QUALITY_FIELDS):
+            assessment = assess_submit_ready(quality)
+            validation = dict(quality) | {
+                "passed": assessment.ready,
+                "evidence": [field for field in QUALITY_FIELDS if quality.get(field) is True],
+            }
+        else:
+            validation = dict(quality)
         context_publication_receipt = candidate.get("publicationReceipt")
         published_managed_task = (
             ledger.read_task(task_id) if stage in PUBLISHED_RESULT_STAGES else None
