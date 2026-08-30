@@ -8441,7 +8441,13 @@ class RadarLedger:
                 if (
                     chain_evidence_digest != row["evidence_digest"]
                     or request.get("probeReceipt") != chain_receipt
-                    or row["updated_at"] != snapshot_bound_at
+                    # ``updated_at`` also advances when a publication worker
+                    # contracts the request to BLOCKED after the signed probe
+                    # receipt expires.  The immutable evidence bytes and the
+                    # signed refresh chain above bind the snapshot; require the
+                    # shared lifecycle clock to be monotonic instead of
+                    # mistaking that later status-only write for evidence drift.
+                    or parse_time(str(row["updated_at"])) < parse_time(snapshot_bound_at)
                 ):
                     raise LedgerError("managed replay replacement lineage is invalid")
             else:
@@ -8738,7 +8744,7 @@ class RadarLedger:
             if lineage_rows and (
                 chain_evidence_digest != replacement_row["evidence_digest"]
                 or chain_receipt != old_receipt
-                or replacement_row["updated_at"] != snapshot_bound_at
+                or parse_time(str(replacement_row["updated_at"])) < parse_time(snapshot_bound_at)
             ):
                 raise LedgerError("managed replay replacement lineage is invalid")
             if not lineage_rows and replacement != original_request:
@@ -8855,7 +8861,8 @@ class RadarLedger:
                         and (
                             chain_evidence_digest != new_evidence_digest
                             or chain_receipt != new_probe_receipt
-                            or replacement_row["updated_at"] != snapshot_bound_at
+                            or parse_time(str(replacement_row["updated_at"]))
+                            < parse_time(snapshot_bound_at)
                         )
                     )
                 ):

@@ -13185,6 +13185,58 @@ def test_managed_replay_restores_tombstone_continuation_for_context_recovery(mon
     )
     assert refresh_lineage["refreshedAt"] == refresh_rows[0]["created_at"]
 
+    second_previous_digest = replacement_after_refresh["evidence_digest"]
+    second_previous_receipt = replacement_after_refresh["request"]["probeReceipt"]
+    replay_now = parse_time(second_previous_receipt["expiresAt"]) + timedelta(minutes=1)
+    store.block_publication_request(
+        replayed["replacementRequestId"],
+        "BLOCKED_REPRODUCTION_REQUIRED",
+    )
+
+    replayed_after_second_expiry = MODULE.replay_managed_result(
+        SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+    )
+
+    assert replayed_after_second_expiry["replacementRequestId"] == replayed["replacementRequestId"]
+    assert replayed_after_second_expiry["replacementStatus"] == "PENDING"
+    replacement_after_second_refresh = store.publication_request(replayed["replacementRequestId"])
+    assert replacement_after_second_refresh["status"] == "PENDING"
+    assert replacement_after_second_refresh["reason"] is None
+    assert replacement_after_second_refresh["evidence_digest"] != second_previous_digest
+    with store.connect() as connection:
+        second_refresh_rows = connection.execute(
+            """SELECT * FROM events
+               WHERE event_type='MANAGED_REPLAY_REPLACEMENT_REFRESHED'
+                 AND json_extract(payload_json,'$.sourceRequestId')=?
+                 AND json_extract(payload_json,'$.replacementRequestId')=?
+               ORDER BY id""",
+            (request_id, replayed["replacementRequestId"]),
+        ).fetchall()
+    assert len(second_refresh_rows) == 2
+    second_refresh_lineage = json.loads(second_refresh_rows[-1]["payload_json"])
+    assert second_refresh_lineage["previousEvidenceDigest"] == second_previous_digest
+    assert second_refresh_lineage["previousProbeReceipt"] == second_previous_receipt
+    assert (
+        second_refresh_lineage["newEvidenceDigest"]
+        == replacement_after_second_refresh["evidence_digest"]
+    )
+
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET updated_at='2000-01-01T00:00:00Z' WHERE request_id=?",
+            (replayed["replacementRequestId"],),
+        )
+    with pytest.raises(LedgerError, match="lineage is invalid"):
+        store.managed_replay_replacement(source_request_id=request_id)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET updated_at=? WHERE request_id=?",
+            (
+                replacement_after_second_refresh["updated_at"],
+                replayed["replacementRequestId"],
+            ),
+        )
+
     with store.connect() as connection:
         counts_before_idempotent_replay = (
             connection.execute("SELECT COUNT(*) FROM events").fetchone()[0],
