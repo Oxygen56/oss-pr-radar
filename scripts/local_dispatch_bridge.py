@@ -415,6 +415,7 @@ PUBLISHED_TASK_STAGES = {
 }
 LEGACY_RESULT_REQUIRES_MIGRATION = "LEGACY_RESULT_REQUIRES_MIGRATION"
 PR_FOLLOWUP_REBIND_REQUIRED = "PR_FOLLOWUP_REBIND_REQUIRED"
+PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID = "PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID"
 IMMEDIATE_RECOVERY_ERROR_CODES = {
     "cyber_policy",
     "cyberPolicy",
@@ -14949,6 +14950,95 @@ def _managed_published_pr_authority(
     return published_pr
 
 
+def _normalize_exact_published_no_local_action_result(
+    managed_ledger: ManagedLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    previously_ingested: bool,
+) -> tuple[dict[str, Any], str | None]:
+    """Restore an omitted published head only from redundant exact authority.
+
+    Older PR-follow-up contracts allowed ``PR_OPEN`` without a top-level
+    ``headSha`` even though the managed result adapter requires one.  Accept
+    only a historical result already ingested by the controller: a new result
+    or an explicit, stale, or conflicting head remains fail-closed.  The
+    inferred value must already agree across the controller-generated context,
+    finalized publication reservation, managed PR, follow-up wake, result
+    commit, and result evidence.  The adapter performs the durable
+    implementation-authorization and clean-worktree checks again.
+    """
+
+    stage = str(value.get("stage") or "")
+    followup = context.get("prFollowup")
+    contract = followup.get("resultContract") if isinstance(followup, dict) else None
+    allowed_stages = contract.get("allowedStages") if isinstance(contract, dict) else None
+    publication_receipt = context.get("publicationReceipt")
+    evidence = value.get("evidence")
+    if (
+        not previously_ingested
+        or stage not in PUBLISHED_RESULT_STAGES
+        or not isinstance(followup, dict)
+        or not isinstance(contract, dict)
+        or contract.get("noLocalActionStage") != stage
+        or not isinstance(allowed_stages, list)
+        or not all(isinstance(item, str) for item in allowed_stages)
+        or stage not in allowed_stages
+        or "headSha" in value
+        or "head_sha" in value
+        or not isinstance(publication_receipt, dict)
+        or not isinstance(evidence, dict)
+        or value.get("publicationReceipt") is not None
+        or value.get("publication") is not None
+        or str(candidate.get("stage") or "") not in PUBLISHED_RESULT_STAGES
+        or value.get("contextDigest") != context.get("contextDigest")
+    ):
+        return value, None
+
+    commit_aliases: list[str] = []
+    for field in ("commitSha", "commit_sha"):
+        if field not in value or value[field] is None or value[field] == "":
+            continue
+        alias = value[field]
+        if not isinstance(alias, str) or re.fullmatch(r"[0-9a-f]{40}", alias) is None:
+            return value, None
+        commit_aliases.append(alias)
+    if not commit_aliases or len(set(commit_aliases)) != 1:
+        return value, None
+    inferred_head = commit_aliases[0]
+    pr_url = str(value.get("prUrl") or "")
+    publication_head = str(publication_receipt.get("commitSha") or "")
+    if (
+        re.fullmatch(r"[0-9a-f]{40}", publication_head) is None
+        or context.get("headSha") != inferred_head
+        or context.get("commitSha") != inferred_head
+        or followup.get("headSha") != inferred_head
+        or followup.get("preparedHeadSha") != inferred_head
+        or value.get("followupDigest") != followup.get("wakeDigest")
+        or evidence.get("headSha") != inferred_head
+        or not pr_url
+        or followup.get("prUrl") != pr_url
+        or publication_receipt.get("prUrl") != pr_url
+    ):
+        return value, None
+    try:
+        published_pr = managed_ledger.published_pr_for_opportunity(
+            str(candidate["key"]),
+            pr_url=pr_url,
+            publication_head_sha=publication_head,
+        )
+    except (KeyError, ValueError):
+        return value, None
+    if (
+        published_pr is None
+        or published_pr.get("state") != "OPEN"
+        or published_pr.get("head_sha") != inferred_head
+    ):
+        return value, None
+    return dict(value) | {"headSha": inferred_head}, inferred_head
+
+
 def _preserved_published_stage(current_stage: str, managed_pr_state: str) -> str:
     if managed_pr_state == "MERGED":
         return "MERGED"
@@ -15319,6 +15409,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 initial_digest = _task_result_digest(value, raw)
             digest_seen = store.task_result_digest_seen(candidate["key"], initial_digest)
+            value, recovered_published_head = _normalize_exact_published_no_local_action_result(
+                managed_ledger,
+                candidate=candidate,
+                context=context,
+                value=value,
+                previously_ingested=digest_seen,
+            )
             published_managed_backfill_required = False
             published_result_pr_url = ""
             if str(value.get("stage") or "") in PUBLISHED_RESULT_STAGES:
@@ -16117,10 +16214,35 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 evidence = value.get("evidence")
                 if not isinstance(evidence, dict):
                     raise RuntimeError("published continuation result requires evidence")
-                digest = _task_result_digest(value, raw)
-                managed_adapter.record_task_result(
-                    candidate=managed_candidate, value=value, result_digest=digest
+                digest = (
+                    initial_digest
+                    if recovered_published_head is not None
+                    else _task_result_digest(value, raw)
                 )
+                if (
+                    recovered_published_head is not None
+                    and value.get("codePathTombstoneReceipt") is None
+                ):
+                    tombstone_continuation = _recovered_task_result_tombstone_continuation_kwargs(
+                        context,
+                        value,
+                        worktree=result_access.worktree,
+                        continuation_head=recovered_published_head,
+                    )
+                else:
+                    tombstone_continuation = _task_result_tombstone_continuation_kwargs(
+                        context, value
+                    )
+                try:
+                    managed_adapter.record_task_result(
+                        candidate=managed_candidate, value=value, result_digest=digest
+                    )
+                except PermissionError as exc:
+                    if str(exc) == "published task result is not bound to the current PR":
+                        raise TaskResultEvidenceBlocked(
+                            PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID
+                        ) from exc
+                    raise
                 store.record_published_task_result_backfilled(
                     candidate["key"],
                     task_id=str(candidate.get("intentId") or candidate["threadId"]),
@@ -16136,7 +16258,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     stage=stage,
                     task_id=str(candidate.get("intentId") or candidate["threadId"]),
                     thread_id=str(candidate["threadId"]),
-                    **_task_result_tombstone_continuation_kwargs(context, value),
+                    **tombstone_continuation,
                 )
                 if current_wake_digest:
                     store.record_followup_result(

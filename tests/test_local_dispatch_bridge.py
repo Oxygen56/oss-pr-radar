@@ -10881,6 +10881,21 @@ def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monk
     context = json.loads(Path(result["contextPath"]).read_text(encoding="utf-8"))
     assert context["prFollowup"]["wakeDigest"] == candidate["wakeDigest"]
     assert context["prFollowup"]["preparedHeadSha"] == "b" * 40
+    assert context["prFollowup"]["resultContract"] == {
+        "schemaVersion": "pr-followup-result-contract-v2",
+        "requiredWakeDigestField": "followupDigest",
+        "allowedStages": ["FIX_READY", "PR_OPEN"],
+        "noLocalActionStage": "PR_OPEN",
+        "noLocalActionRequiredFields": [
+            "headSha",
+            "commitSha",
+            "prUrl",
+            "evidence.headSha",
+        ],
+        "noLocalActionHeadBindingField": "prFollowup.preparedHeadSha",
+        "noLocalActionPrBindingField": "publicationReceipt.prUrl",
+        "mergeConflictHandoffMode": "controller_merge_required",
+    }
     assert context["publicationReceipt"]["prUrl"] == pr_url
     refreshed = json.loads(
         MODULE.write_task_context(
@@ -13992,6 +14007,426 @@ def test_published_pr_authority_rejects_unbound_receipt_head(tmp_path):
         )
         is None
     )
+
+
+def _published_no_local_action_without_head(
+    monkeypatch, tmp_path, *, previously_ingested: bool = True
+):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+        degrade_stage=False,
+    )
+    store.record_stage("a/b#1", "CI_GREEN", evidence={"checks": "green"})
+    head_sha = run_git(worktree, "rev-parse", "HEAD")
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": head_sha},
+    )
+    reserved = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            wake_digest=candidate["wakeDigest"],
+        )
+    )
+    context = json.loads(Path(reserved["contextPath"]).read_text(encoding="utf-8"))
+    assert store.task_result_candidates()[0]["stage"] == "CI_GREEN"
+    value = {
+        "schemaVersion": "radar-task-result-v1",
+        "contextDigest": context["contextDigest"],
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "stage": "PR_OPEN",
+        "followupDigest": context["prFollowup"]["wakeDigest"],
+        "commitSha": head_sha,
+        "prUrl": pr_url,
+        "reason": "CONFLICT_SCOPE_INSUFFICIENT",
+        "evidence": {"headSha": head_sha, "verified": True},
+    }
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    if previously_ingested:
+        result_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+        store.record_task_result_ingested(
+            "a/b#1",
+            digest=result_digest,
+            stage="PR_OPEN",
+            task_id="intent-1",
+            thread_id="thread-1",
+        )
+        store.record_followup_result(
+            "a/b#1",
+            wake_digest=str(context["prFollowup"]["wakeDigest"]),
+            result_digest=result_digest,
+            stage="PR_OPEN",
+        )
+    return store, managed, worktree, result_path, context, value, head_sha, pr_url
+
+
+def _published_tombstone_no_local_action_without_head(monkeypatch, tmp_path):
+    store, worktree, result_path, _old_scope = _durable_scope_fixture(tmp_path)
+    managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+        degrade_stage=False,
+    )
+    head_sha = _commit_durable_scope_mutation(worktree, replacement="missing")
+    managed.upsert_pr(
+        pr_key="a/b#9",
+        owner="a",
+        repo="b",
+        number=9,
+        head_sha=head_sha,
+        pr_url=pr_url,
+        state="OPEN",
+        auto_created=True,
+        source_kind="MANAGED_PUBLICATION_RECEIPT",
+        source="test-published-tombstone-head-reconciliation",
+        observed_at=iso_z(datetime.now(UTC) + timedelta(seconds=1)),
+    )
+    source = json.loads(result_path.read_text(encoding="utf-8"))
+    checked_at = iso_z(datetime.now(UTC) + timedelta(seconds=2))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": checked_at,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": head_sha,
+                    "actionDigest": "published-tombstone-action",
+                    "taskActionDigest": "published-tombstone-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["处理当前 PR 上的真实回归"],
+                    "evidence": {
+                        "actionableCheckNames": ["Regression"],
+                        "baseRefName": "main",
+                        "baseSha": str(source["selectedBaseSha"]),
+                    },
+                    "checkedAt": checked_at,
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": head_sha},
+    )
+    reserved = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            wake_digest=candidate["wakeDigest"],
+        )
+    )
+    context = json.loads(Path(reserved["contextPath"]).read_text(encoding="utf-8"))
+    store.record_stage("a/b#1", "CI_GREEN", evidence={"checks": "green"})
+    value = {
+        "schemaVersion": "radar-task-result-v1",
+        "contextDigest": context["contextDigest"],
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "stage": "PR_OPEN",
+        "followupDigest": context["prFollowup"]["wakeDigest"],
+        "commitSha": head_sha,
+        "prUrl": pr_url,
+        "reason": "CONFLICT_SCOPE_INSUFFICIENT",
+        "evidence": {"headSha": head_sha, "verified": True},
+    }
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    result_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=result_digest,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        **MODULE._recovered_task_result_tombstone_continuation_kwargs(
+            context,
+            value,
+            worktree=worktree,
+            continuation_head=head_sha,
+        ),
+    )
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=str(context["prFollowup"]["wakeDigest"]),
+        result_digest=result_digest,
+        stage="PR_OPEN",
+    )
+    return store, managed, worktree, result_path, context, value, head_sha, pr_url
+
+
+def test_exact_published_no_local_action_backfills_omitted_legacy_head(monkeypatch, tmp_path):
+    store, managed, _worktree, result_path, _context, value, head_sha, pr_url = (
+        _published_no_local_action_without_head(monkeypatch, tmp_path)
+    )
+    original = result_path.read_bytes()
+    result_digest = hashlib.sha256(original).hexdigest()
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert first["ok"] is True, first["errors"]
+    assert first["ingested"] == [{"key": "a/b#1", "stage": "PR_OPEN"}], first
+    assert first["errors"] == []
+    assert result_path.read_bytes() == original
+    assert "headSha" not in value
+    current = managed.current_result_for_pr("a/b#9")
+    assert current is not None
+    assert current["head_sha"] == head_sha
+    assert current["commit_sha"] == head_sha
+    assert current["result_digest"] == result_digest
+    published = managed.current_published_result_for_task("intent-1")
+    assert published is not None
+    assert published["headSha"] == head_sha
+    assert published["prUrl"] == pr_url
+    assert repeated["ok"] is True, repeated["errors"]
+    assert repeated["ingested"] == []
+
+
+def test_exact_published_no_local_action_recovers_omitted_tombstone_receipt_before_writes(
+    monkeypatch, tmp_path
+):
+    store, managed, _worktree, result_path, context, value, head_sha, _pr_url = (
+        _published_tombstone_no_local_action_without_head(monkeypatch, tmp_path)
+    )
+    original = result_path.read_bytes()
+    result_digest = hashlib.sha256(original).hexdigest()
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True, first["errors"]
+    assert first["ingested"] == [{"key": "a/b#1", "stage": "PR_OPEN"}], first
+    assert first.get("workBlocked", []) == []
+    assert repeated["ok"] is True, repeated["errors"]
+    assert repeated["ingested"] == []
+    assert repeated.get("workBlocked", []) == []
+    assert result_path.read_bytes() == original
+    assert "headSha" not in value
+    assert "codePathTombstoneReceipt" not in value
+    current = managed.current_result_for_pr("a/b#9")
+    assert current is not None
+    assert current["head_sha"] == head_sha
+    assert current["commit_sha"] == head_sha
+    assert current["result_digest"] == result_digest
+    restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert restored["codePathTombstoneContinuationHeadSha"] == head_sha
+    assert (
+        restored["codePathTombstoneReceipt"]["receiptDigest"]
+        == context["codePathTombstoneReceipt"]["receiptDigest"]
+    )
+    with managed._connection() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM managed_lifecycle_events
+                   WHERE event_type='TASK_RESULT_EVIDENCE_BLOCKED'"""
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "explicit_old_head",
+        "explicit_null_head",
+        "explicit_object_head",
+        "explicit_array_head",
+        "evidence_old_head",
+        "conflicting_commit_alias",
+    ],
+)
+def test_published_no_local_action_legacy_head_normalization_fails_closed(
+    monkeypatch, tmp_path, tamper
+):
+    store, managed, _worktree, result_path, _context, value, _head_sha, _pr_url = (
+        _published_no_local_action_without_head(monkeypatch, tmp_path)
+    )
+    old_head = "f" * 40
+    if tamper == "explicit_old_head":
+        value["headSha"] = old_head
+    elif tamper == "explicit_null_head":
+        value["headSha"] = None
+    elif tamper == "explicit_object_head":
+        value["headSha"] = {"sha": old_head}
+    elif tamper == "explicit_array_head":
+        value["headSha"] = [old_head]
+    elif tamper == "evidence_old_head":
+        value["evidence"] = dict(value["evidence"]) | {"headSha": old_head}
+    else:
+        value["commit_sha"] = old_head
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True
+    assert first["ingested"] == []
+    assert first["errors"] == []
+    assert first["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID",
+            "alreadyRecorded": False,
+        }
+    ]
+    assert repeated["ok"] is True
+    assert repeated["ingested"] == []
+    assert repeated["errors"] == []
+    assert repeated["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID",
+            "alreadyRecorded": True,
+        }
+    ]
+    assert managed.current_result_for_pr("a/b#9") is None
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM managed_lifecycle_events
+                   WHERE event_type='TASK_RESULT_EVIDENCE_BLOCKED'"""
+            ).fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.parametrize(
+    "allowed_stages",
+    [7, "PR_OPEN", {"PR_OPEN": True}, ["PR_OPEN", 7]],
+)
+def test_published_no_local_action_legacy_head_rejects_malformed_allowed_stages(
+    allowed_stages,
+):
+    value = {
+        "stage": "PR_OPEN",
+        "contextDigest": "c" * 64,
+        "commitSha": "a" * 40,
+        "followupDigest": "w" * 64,
+        "prUrl": "https://github.com/a/b/pull/9",
+        "evidence": {"headSha": "a" * 40},
+    }
+    context = {
+        "contextDigest": "c" * 64,
+        "headSha": "a" * 40,
+        "commitSha": "a" * 40,
+        "publicationReceipt": {
+            "commitSha": "a" * 40,
+            "prUrl": "https://github.com/a/b/pull/9",
+        },
+        "prFollowup": {
+            "headSha": "a" * 40,
+            "preparedHeadSha": "a" * 40,
+            "wakeDigest": "w" * 64,
+            "prUrl": "https://github.com/a/b/pull/9",
+            "resultContract": {
+                "noLocalActionStage": "PR_OPEN",
+                "allowedStages": allowed_stages,
+            },
+        },
+    }
+
+    normalized, recovered_head = MODULE._normalize_exact_published_no_local_action_result(
+        object(),
+        candidate={"key": "a/b#1", "stage": "CI_GREEN"},
+        context=context,
+        value=value,
+        previously_ingested=True,
+    )
+
+    assert normalized is value
+    assert recovered_head is None
+
+
+def test_new_published_no_local_action_contract_does_not_repair_uningested_missing_head(
+    monkeypatch, tmp_path
+):
+    store, managed, _worktree, result_path, context, _value, _head_sha, _pr_url = (
+        _published_no_local_action_without_head(monkeypatch, tmp_path, previously_ingested=False)
+    )
+    assert (
+        context["prFollowup"]["resultContract"]["schemaVersion"] == "pr-followup-result-contract-v2"
+    )
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True, first["errors"]
+    assert first["ingested"] == []
+    assert first["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID",
+            "alreadyRecorded": False,
+        }
+    ]
+    assert managed.current_result_for_pr("a/b#9") is None
+    assert not store.task_result_digest_seen(
+        "a/b#1", hashlib.sha256(result_path.read_bytes()).hexdigest()
+    )
+
+
+def test_exact_published_no_local_action_rejects_conflicting_tombstone_before_managed_write(
+    monkeypatch, tmp_path
+):
+    store, managed, worktree, result_path, context, value, head_sha, _pr_url = (
+        _published_tombstone_no_local_action_without_head(monkeypatch, tmp_path)
+    )
+    value["codePathTombstoneReceipt"] = {"receiptDigest": "f" * 64}
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    tampered_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    historical_value = dict(value)
+    historical_value.pop("codePathTombstoneReceipt")
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=tampered_digest,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        **MODULE._recovered_task_result_tombstone_continuation_kwargs(
+            context,
+            historical_value,
+            worktree=worktree,
+            continuation_head=head_sha,
+        ),
+    )
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True, first["errors"]
+    assert first["ingested"] == []
+    assert first["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "CODE_PATH_TOMBSTONE_CONTINUATION_INVALID",
+            "alreadyRecorded": False,
+        }
+    ]
+    assert repeated["ok"] is True, repeated["errors"]
+    assert repeated["ingested"] == []
+    assert repeated["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "CODE_PATH_TOMBSTONE_CONTINUATION_INVALID",
+            "alreadyRecorded": True,
+        }
+    ]
+    assert managed.current_result_for_pr("a/b#9") is None
+    assert not store.published_task_result_backfill_seen("a/b#1", digest=tampered_digest)
 
 
 @pytest.mark.parametrize("include_result_receipt", [True, False])

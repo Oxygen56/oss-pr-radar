@@ -6872,9 +6872,18 @@ class RadarLedger:
             or (followup_row is not None and bool(followup_row["followup_required"]))
         ):
             result_contract = {
+                "schemaVersion": "pr-followup-result-contract-v2",
                 "requiredWakeDigestField": "followupDigest",
                 "allowedStages": ["FIX_READY", "PR_OPEN"],
                 "noLocalActionStage": "PR_OPEN",
+                "noLocalActionRequiredFields": [
+                    "headSha",
+                    "commitSha",
+                    "prUrl",
+                    "evidence.headSha",
+                ],
+                "noLocalActionHeadBindingField": "prFollowup.preparedHeadSha",
+                "noLocalActionPrBindingField": "publicationReceipt.prUrl",
                 "mergeConflictHandoffMode": "controller_merge_required",
             }
         if followup_row is not None and bool(followup_row["followup_required"]):
