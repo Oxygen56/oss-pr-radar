@@ -12849,6 +12849,35 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(monkeypa
     assert replacement["request"]["followupWakeDigest"] != later_followup_wake
     assert replacement["request"]["intent"]["resultDigest"] == stale_intent_result_digest
     assert replacement["request"]["resultDigest"] == request["resultDigest"]
+    with store.connect() as connection:
+        created_rows = connection.execute(
+            """SELECT * FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='MANAGED_REPLAY_REPLACEMENT_CREATED'
+                 AND dedupe_key=?""",
+            (request_id,),
+        ).fetchall()
+        replacement_created_at = connection.execute(
+            "SELECT created_at FROM publication_requests WHERE request_id=?",
+            (replayed["replacementRequestId"],),
+        ).fetchone()["created_at"]
+    assert len(created_rows) == 1
+    created_lineage = json.loads(created_rows[0]["payload_json"])
+    assert created_lineage == {
+        "policyVersion": "managed-replay-replacement-created-v1",
+        "sourceRequestId": request_id,
+        "replacementRequestId": replayed["replacementRequestId"],
+        "immutableRequestDigest": sha256_json(
+            {
+                key: value
+                for key, value in replacement["request"].items()
+                if key not in {"requestId", "evidenceDigest", "evidenceRawBase64", "probeReceipt"}
+            }
+        ),
+        "replacementCreatedAt": replacement_created_at,
+        "recordedAt": replacement_created_at,
+    }
+    assert created_rows[0]["created_at"] == replacement_created_at
 
     replacement_snapshot = replacement["request"]
     with store.connect() as connection:
@@ -12881,10 +12910,18 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(monkeypa
             "WHERE opportunity_key='a/b#1' AND commit_sha=?",
             (desired_head,),
         ).fetchall()
+        created_count = connection.execute(
+            """SELECT COUNT(*) FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='MANAGED_REPLAY_REPLACEMENT_CREATED'
+                 AND dedupe_key=?""",
+            (request_id,),
+        ).fetchone()[0]
     assert {row["request_id"] for row in update_requests} == {
         request_id,
         replayed["replacementRequestId"],
     }
+    assert created_count == 1
 
 
 def test_managed_replay_restores_tombstone_continuation_for_context_recovery(monkeypatch, tmp_path):

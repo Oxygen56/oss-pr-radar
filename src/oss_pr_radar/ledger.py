@@ -54,7 +54,13 @@ STAGES = (
 TERMINAL_STAGES = {"AUDIT_NO_GO", "MERGED", "CLOSED"}
 PUBLISHED_STAGES = {"PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "MERGED", "CLOSED"}
 STATE_DRIFT_RECHECK_EVENT = "STATE_DRIFT_RECHECK_REQUIRED"
-PR_UPDATE_REARM_REASONS = {"EXISTING_PR_HEAD_DRIFT", "NON_FAST_FORWARD_PR_UPDATE"}
+PR_UPDATE_REARM_REASONS = {
+    "EXISTING_PR_BASE_DRIFT",
+    "EXISTING_PR_HEAD_DRIFT",
+    "NON_FAST_FORWARD_PR_UPDATE",
+}
+PR_FOLLOWUP_REARM_BARRIER_EVENT = "PR_FOLLOWUP_REARM_OBSERVATION_BARRIER"
+MANAGED_REPLAY_REPLACEMENT_CREATED_EVENT = "MANAGED_REPLAY_REPLACEMENT_CREATED"
 PR_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
 ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
 PROBE_RECEIPT_VOLATILE_FIELDS = frozenset({"observedAt", "expiresAt", "receiptDigest", "signature"})
@@ -493,6 +499,46 @@ def _managed_replay_immutable_request(request: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _managed_replay_receipt_valid_at(
+    receipt: Any,
+    *,
+    source: dict[str, Any],
+    bound_at: str,
+) -> bool:
+    issue_url = str(source.get("issueUrl") or "")
+    issue_match = ISSUE_URL_RE.fullmatch(issue_url)
+    code_paths = sorted(
+        {str(path) for path in (source.get("codePaths") or []) if str(path).strip()}
+    )
+    if issue_match is None or not code_paths or not isinstance(receipt, dict):
+        return False
+    try:
+        observed_at = parse_time(str(receipt.get("observedAt") or ""))
+        snapshot_bound_at = parse_time(bound_at)
+        expires_at = parse_time(str(receipt.get("expiresAt") or ""))
+    except (TypeError, ValueError):
+        return False
+    return (
+        receipt.get("bindingPurpose") == "implementation-result-v1"
+        and bool(receipt.get("derivedFromReceiptDigest"))
+        and observed_at <= snapshot_bound_at <= expires_at
+        and verify_probe_receipt(
+            receipt,
+            repo=issue_match.group(1),
+            base_sha=str(source.get("selectedBaseSha") or ""),
+            code_paths=code_paths,
+            required_level=REPRODUCED_VALIDATED,
+            issue_url=issue_url,
+            task_id=str(source.get("intentId") or ""),
+            thread_id=str(source.get("threadId") or ""),
+            head_sha=str(source.get("headSha") or ""),
+            commit_sha=str(source.get("commitSha") or ""),
+            result_digest=str(source.get("resultDigest") or ""),
+            enforce_freshness=False,
+        )
+    )
+
+
 def _managed_replay_creation_snapshot(
     connection: sqlite3.Connection,
     *,
@@ -908,10 +954,97 @@ class RadarLedger:
                 """SELECT r.request_id,r.opportunity_key,r.request_json,r.reason
                    FROM publication_requests r
                    JOIN opportunities o ON o.key=r.opportunity_key
-                   WHERE r.status='BLOCKED' AND o.stage='FIX_READY'
-                     AND r.reason IN ('EXISTING_PR_HEAD_DRIFT','NON_FAST_FORWARD_PR_UPDATE')"""
+                   JOIN pr_followups f ON f.opportunity_key=r.opportunity_key
+                   JOIN intents i ON i.intent_id=json_extract(
+                     CASE WHEN json_valid(r.request_json) THEN r.request_json ELSE '{}' END,
+                     '$.intentId'
+                   )
+                   WHERE r.status='BLOCKED'
+                     AND o.stage IN ('FIX_READY','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
+                     AND r.reason IN (
+                       'EXISTING_PR_BASE_DRIFT',
+                       'EXISTING_PR_HEAD_DRIFT',
+                       'NON_FAST_FORWARD_PR_UPDATE'
+                     )
+                     AND json_valid(r.request_json)=1
+                     AND json_extract(
+                       CASE WHEN json_valid(r.request_json) THEN r.request_json ELSE '{}' END,
+                       '$.publicationKind'
+                     )='PR_UPDATE'
+                     AND json_extract(
+                       CASE WHEN json_valid(r.request_json) THEN r.request_json ELSE '{}' END,
+                       '$.existingPrUrl'
+                     )=f.pr_url
+                     AND json_extract(
+                       CASE WHEN json_valid(r.request_json) THEN r.request_json ELSE '{}' END,
+                       '$.previousCommitSha'
+                     ) IS NOT NULL
+                     AND (
+                       r.reason='EXISTING_PR_HEAD_DRIFT'
+                       OR json_extract(
+                         CASE
+                           WHEN json_valid(r.request_json) THEN r.request_json ELSE '{}'
+                         END,
+                         '$.previousCommitSha'
+                       )=f.head_sha
+                     )
+                     AND i.opportunity_key=r.opportunity_key
+                     AND i.thread_id=r.thread_id
+                     AND i.worktree_path=r.worktree_path
+                     AND i.status IN ('DISPATCHED','COMPLETED')
+                     AND i.intent_id=(
+                       SELECT i2.intent_id FROM intents i2
+                       WHERE i2.opportunity_key=r.opportunity_key
+                         AND i2.thread_id IS NOT NULL
+                         AND i2.worktree_path IS NOT NULL
+                       ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events barrier
+                       WHERE barrier.opportunity_key=r.opportunity_key
+                         AND barrier.event_type='PR_FOLLOWUP_REARM_OBSERVATION_BARRIER'
+                         AND barrier.dedupe_key=r.request_id
+                     )
+                     AND EXISTS (
+                       SELECT 1 FROM events blocked
+                       WHERE blocked.opportunity_key=r.opportunity_key
+                         AND blocked.event_type='PUBLICATION_BLOCKED'
+                         AND blocked.dedupe_key=r.request_id || ':' || r.reason
+                         AND json_extract(blocked.payload_json,'$.requestId')=r.request_id
+                         AND json_extract(blocked.payload_json,'$.reason')=r.reason
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM task_quarantines quarantine
+                       WHERE quarantine.opportunity_key=r.opportunity_key
+                         AND quarantine.status='ACTIVE'
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM publication_requests newer
+                       WHERE newer.opportunity_key=r.opportunity_key
+                         AND (
+                           newer.created_at>r.created_at
+                           OR (
+                             newer.created_at=r.created_at
+                             AND newer.request_id>r.request_id
+                           )
+                         )
+                     )
+                     AND EXISTS (
+                       SELECT 1 FROM publication_requests published
+                       JOIN publication_permits permit
+                         ON permit.request_id=published.request_id
+                       WHERE published.opportunity_key=r.opportunity_key
+                         AND permit.status='CONSUMED'
+                         AND permit.pr_url=f.pr_url
+                     )"""
             ).fetchall()
             for row in drifted_updates:
+                if _publication_has_irreversible_terminal_evidence(
+                    connection,
+                    request_id=str(row["request_id"]),
+                    opportunity_key=str(row["opportunity_key"]),
+                ):
+                    continue
                 self._rearm_followup_for_publication_drift(
                     connection,
                     request_id=row["request_id"],
@@ -8228,6 +8361,41 @@ class RadarLedger:
                 request,
                 now,
             )
+            if replacement_of_request_id is not None:
+                replacement_created_payload = {
+                    "policyVersion": "managed-replay-replacement-created-v1",
+                    "sourceRequestId": replacement_of_request_id,
+                    "replacementRequestId": request_id,
+                    "immutableRequestDigest": sha256_json(
+                        _managed_replay_immutable_request(request)
+                    ),
+                    "replacementCreatedAt": now,
+                    "recordedAt": now,
+                }
+                self._event(
+                    connection,
+                    row["key"],
+                    MANAGED_REPLAY_REPLACEMENT_CREATED_EVENT,
+                    replacement_of_request_id,
+                    replacement_created_payload,
+                    now,
+                )
+                replacement_created = connection.execute(
+                    """SELECT payload_json,created_at FROM events
+                       WHERE opportunity_key=? AND event_type=? AND dedupe_key=?""",
+                    (
+                        row["key"],
+                        MANAGED_REPLAY_REPLACEMENT_CREATED_EVENT,
+                        replacement_of_request_id,
+                    ),
+                ).fetchone()
+                if (
+                    replacement_created is None
+                    or replacement_created["payload_json"]
+                    != canonical_json(replacement_created_payload)
+                    or replacement_created["created_at"] != now
+                ):
+                    raise LedgerError("managed replay replacement lineage conflicts")
             return {
                 "request_id": request_id,
                 "status": request_status,
@@ -8255,40 +8423,6 @@ class RadarLedger:
 
         def immutable_request(value: dict[str, Any]) -> dict[str, Any]:
             return {field: item for field, item in value.items() if field not in refreshed_fields}
-
-        def receipt_valid_at(
-            receipt: Any,
-            *,
-            source: dict[str, Any],
-            bound_at: str,
-        ) -> bool:
-            issue_url = str(source.get("issueUrl") or "")
-            issue_match = ISSUE_URL_RE.fullmatch(issue_url)
-            code_paths = sorted(
-                {str(path) for path in (source.get("codePaths") or []) if str(path).strip()}
-            )
-            if issue_match is None or not code_paths or not isinstance(receipt, dict):
-                return False
-            try:
-                observed_at = parse_time(str(receipt.get("observedAt") or ""))
-                snapshot_bound_at = parse_time(bound_at)
-                expires_at = parse_time(str(receipt.get("expiresAt") or ""))
-            except (TypeError, ValueError):
-                return False
-            return observed_at <= snapshot_bound_at <= expires_at and verify_probe_receipt(
-                receipt,
-                repo=issue_match.group(1),
-                base_sha=str(source.get("selectedBaseSha") or ""),
-                code_paths=code_paths,
-                required_level=REPRODUCED_VALIDATED,
-                issue_url=issue_url,
-                task_id=str(source.get("intentId") or ""),
-                thread_id=str(source.get("threadId") or ""),
-                head_sha=str(source.get("headSha") or ""),
-                commit_sha=str(source.get("commitSha") or ""),
-                result_digest=str(source.get("resultDigest") or ""),
-                enforce_freshness=False,
-            )
 
         with self.connect() as connection:
             source_row = connection.execute(
@@ -8408,12 +8542,12 @@ class RadarLedger:
                         != new_receipt.get("derivedFromReceiptDigest")
                         or lineage.get("previousReceiptDigest") != sha256_json(previous_receipt)
                         or lineage.get("newReceiptDigest") != sha256_json(new_receipt)
-                        or not receipt_valid_at(
+                        or not _managed_replay_receipt_valid_at(
                             previous_receipt,
                             source=source,
                             bound_at=snapshot_bound_at,
                         )
-                        or not receipt_valid_at(
+                        or not _managed_replay_receipt_valid_at(
                             new_receipt,
                             source=source,
                             bound_at=str(lineage_row["created_at"]),
@@ -8452,7 +8586,7 @@ class RadarLedger:
                     raise LedgerError("managed replay replacement lineage is invalid")
             else:
                 receipt = request.get("probeReceipt")
-                if request != original_request or not receipt_valid_at(
+                if request != original_request or not _managed_replay_receipt_valid_at(
                     receipt,
                     source=source,
                     bound_at=snapshot_bound_at,
@@ -10042,6 +10176,108 @@ class RadarLedger:
                WHERE request_id=? AND status='ACTIVE'""",
             (now, request_id),
         )
+        previous_commit = str(request.get("previousCommitSha") or "")
+        intent_id = str(request.get("intentId") or "")
+        thread_id = str(request.get("threadId") or "")
+        worktree_path = str(request.get("worktreePath") or "")
+        if (
+            re.fullmatch(r"[0-9a-f]{40}", previous_commit) is None
+            or not intent_id
+            or not thread_id
+            or not worktree_path
+        ):
+            return False
+        existing_barrier = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key=? AND event_type=? AND dedupe_key=?""",
+            (key, PR_FOLLOWUP_REARM_BARRIER_EVENT, request_id),
+        ).fetchone()
+        if existing_barrier is not None:
+            try:
+                barrier_payload = json.loads(existing_barrier["payload_json"])
+            except (TypeError, json.JSONDecodeError):
+                return False
+            return bool(
+                isinstance(barrier_payload, dict)
+                and barrier_payload.get("requestId") == request_id
+                and barrier_payload.get("reason") == reason
+                and barrier_payload.get("rearmAfter")
+            )
+        followup = connection.execute(
+            """SELECT pr_url,head_sha,wake_digest,checked_at FROM pr_followups
+               WHERE opportunity_key=?""",
+            (key,),
+        ).fetchone()
+        if followup is None or request.get("existingPrUrl") != followup["pr_url"]:
+            return False
+        if reason != "EXISTING_PR_HEAD_DRIFT" and previous_commit != followup["head_sha"]:
+            return False
+        request_row = connection.execute(
+            """SELECT thread_id,worktree_path,status,reason FROM publication_requests
+               WHERE request_id=? AND opportunity_key=?""",
+            (request_id, key),
+        ).fetchone()
+        latest_intent = connection.execute(
+            """SELECT intent_id,thread_id,worktree_path,status FROM intents
+               WHERE opportunity_key=? AND thread_id IS NOT NULL AND worktree_path IS NOT NULL
+               ORDER BY updated_at DESC,intent_id DESC LIMIT 1""",
+            (key,),
+        ).fetchone()
+        newer_request = connection.execute(
+            """SELECT 1 FROM publication_requests newer
+               JOIN publication_requests current
+                 ON current.request_id=? AND current.opportunity_key=newer.opportunity_key
+               WHERE newer.created_at>current.created_at
+                  OR (
+                    newer.created_at=current.created_at
+                    AND newer.request_id>current.request_id
+                  )
+               LIMIT 1""",
+            (request_id,),
+        ).fetchone()
+        published = connection.execute(
+            """SELECT 1 FROM publication_requests published
+               JOIN publication_permits permit ON permit.request_id=published.request_id
+               WHERE published.opportunity_key=?
+                 AND permit.status='CONSUMED'
+                 AND permit.pr_url=?
+               LIMIT 1""",
+            (key, followup["pr_url"]),
+        ).fetchone()
+        if (
+            request_row is None
+            or request_row["status"] != "BLOCKED"
+            or request_row["reason"] != reason
+            or request_row["thread_id"] != thread_id
+            or request_row["worktree_path"] != worktree_path
+            or latest_intent is None
+            or latest_intent["intent_id"] != intent_id
+            or latest_intent["thread_id"] != thread_id
+            or latest_intent["worktree_path"] != worktree_path
+            or latest_intent["status"] not in {"DISPATCHED", "COMPLETED"}
+            or newer_request is not None
+            or published is None
+            or _publication_has_irreversible_terminal_evidence(
+                connection,
+                request_id=request_id,
+                opportunity_key=key,
+            )
+        ):
+            return False
+        blocked = connection.execute(
+            """SELECT 1 FROM events
+               WHERE opportunity_key=? AND event_type='PUBLICATION_BLOCKED'
+                 AND dedupe_key=?
+                 AND json_extract(payload_json,'$.requestId')=?
+                 AND json_extract(payload_json,'$.reason')=?""",
+            (key, f"{request_id}:{reason}", request_id, reason),
+        ).fetchone()
+        if blocked is None or active_quarantine(connection, opportunity_key=key) is not None:
+            return False
+        try:
+            rearm_after = iso_z(max(parse_time(now), parse_time(followup["checked_at"])))
+        except (TypeError, ValueError):
+            return False
         connection.execute(
             """UPDATE opportunities SET stage='PR_OPEN',terminal_reason=NULL,updated_at=?
                WHERE key=? AND stage='FIX_READY'""",
@@ -10078,7 +10314,27 @@ class RadarLedger:
             key,
             "PR_FOLLOWUP_REARM_REQUIRED",
             request_id,
-            {"requestId": request_id, "reason": reason},
+            {
+                "requestId": request_id,
+                "reason": reason,
+                "previousWakeDigest": followup["wake_digest"],
+                "sourceCheckedAt": followup["checked_at"],
+                "rearmAfter": rearm_after,
+            },
+            now,
+        )
+        self._event(
+            connection,
+            key,
+            PR_FOLLOWUP_REARM_BARRIER_EVENT,
+            request_id,
+            {
+                "requestId": request_id,
+                "reason": reason,
+                "previousWakeDigest": followup["wake_digest"],
+                "sourceCheckedAt": followup["checked_at"],
+                "rearmAfter": rearm_after,
+            },
             now,
         )
         return True
@@ -10991,6 +11247,16 @@ class RadarLedger:
                     consumed_time = parse_time(binding["consumedAt"])
                 except (TypeError, ValueError) as exc:
                     raise LedgerError("PR follow-up timestamps are invalid") from exc
+                previous = connection.execute(
+                    "SELECT * FROM pr_followups WHERE opportunity_key=?", (key,)
+                ).fetchone()
+                if previous is not None:
+                    try:
+                        previous_checked_time = parse_time(previous["checked_at"])
+                    except (TypeError, ValueError) as exc:
+                        raise LedgerError("stored PR follow-up timestamp is invalid") from exc
+                    if checked_time < previous_checked_time:
+                        continue
                 if head_sha != binding["commitSha"] and checked_time <= consumed_time:
                     retired = connection.execute(
                         """UPDATE pr_followups
@@ -11019,9 +11285,23 @@ class RadarLedger:
                     )
                     continue
                 required = item.get("taskFollowupRequired") is True
-                previous = connection.execute(
-                    "SELECT * FROM pr_followups WHERE opportunity_key=?", (key,)
+                rearm_barrier = connection.execute(
+                    """SELECT payload_json FROM events
+                       WHERE opportunity_key=? AND event_type=?
+                       ORDER BY id DESC LIMIT 1""",
+                    (key, PR_FOLLOWUP_REARM_BARRIER_EVENT),
                 ).fetchone()
+                rearm_after = None
+                if rearm_barrier is not None:
+                    try:
+                        rearm_payload = json.loads(rearm_barrier["payload_json"])
+                        rearm_after = parse_time(str(rearm_payload.get("rearmAfter") or ""))
+                    except (AttributeError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                        raise LedgerError("PR follow-up rearm barrier is invalid") from exc
+                if rearm_after is not None and checked_time <= rearm_after:
+                    if previous is not None and parse_time(previous["checked_at"]) > rearm_after:
+                        continue
+                    required = False
                 preserved_resolution_scope = False
                 if required and previous is not None:
                     authorized_wake_completed = connection.execute(
@@ -11225,6 +11505,362 @@ class RadarLedger:
         return keys
 
     @staticmethod
+    def _pr_update_rearm_allows_followup(
+        connection: sqlite3.Connection,
+        *,
+        request_row: sqlite3.Row,
+        followup_pr_url: str,
+        followup_checked_at: str,
+    ) -> bool:
+        if (
+            request_row["status"] != "BLOCKED"
+            or request_row["reason"] not in PR_UPDATE_REARM_REASONS
+        ):
+            return False
+        try:
+            request = json.loads(request_row["request_json"])
+        except (TypeError, json.JSONDecodeError):
+            return False
+        if (
+            not isinstance(request, dict)
+            or request.get("requestId") != request_row["request_id"]
+            or request.get("publicationKind") != "PR_UPDATE"
+            or request.get("existingPrUrl") != followup_pr_url
+        ):
+            return False
+        event_rows = connection.execute(
+            """SELECT event_type,payload_json FROM events
+               WHERE opportunity_key=? AND dedupe_key=?
+                 AND event_type IN (
+                   'PR_FOLLOWUP_REARM_REQUIRED',
+                   'PR_FOLLOWUP_REARM_OBSERVATION_BARRIER'
+                 )""",
+            (request_row["opportunity_key"], request_row["request_id"]),
+        ).fetchall()
+        if len(event_rows) != 2:
+            return False
+        payloads: dict[str, dict[str, Any]] = {}
+        for event_row in event_rows:
+            try:
+                payload = json.loads(event_row["payload_json"])
+            except (TypeError, json.JSONDecodeError):
+                return False
+            if not isinstance(payload, dict):
+                return False
+            payloads[str(event_row["event_type"])] = payload
+        rearm = payloads.get("PR_FOLLOWUP_REARM_REQUIRED")
+        barrier = payloads.get(PR_FOLLOWUP_REARM_BARRIER_EVENT)
+        if (
+            rearm is None
+            or barrier is None
+            or rearm.get("requestId") != request_row["request_id"]
+            or barrier.get("requestId") != request_row["request_id"]
+            or rearm.get("reason") != request_row["reason"]
+            or barrier.get("reason") != request_row["reason"]
+            or rearm.get("rearmAfter") != barrier.get("rearmAfter")
+        ):
+            return False
+        try:
+            return parse_time(followup_checked_at) > parse_time(
+                str(barrier.get("rearmAfter") or "")
+            )
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _managed_replay_source_allows_followup(
+        connection: sqlite3.Connection,
+        *,
+        source_row: sqlite3.Row,
+        source_request: dict[str, Any],
+        followup_pr_url: str,
+        followup_checked_at: str,
+    ) -> bool:
+        if source_row["status"] != "BLOCKED":
+            return False
+        lineage_rows = connection.execute(
+            """SELECT * FROM events
+               WHERE opportunity_key=?
+                 AND event_type IN (
+                   'MANAGED_REPLAY_REPLACEMENT_CREATED',
+                   'MANAGED_REPLAY_REPLACEMENT_REFRESHED'
+                 )
+                 AND (
+                   dedupe_key=?
+                   OR json_extract(
+                     CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END,
+                     '$.sourceRequestId'
+                   )=?
+                 )
+               ORDER BY id""",
+            (
+                source_row["opportunity_key"],
+                source_row["request_id"],
+                source_row["request_id"],
+            ),
+        ).fetchall()
+        if not lineage_rows:
+            return False
+        parsed_lineage: list[tuple[sqlite3.Row, dict[str, Any]]] = []
+        replacement_ids: set[str] = set()
+        for lineage_row in lineage_rows:
+            try:
+                lineage = json.loads(lineage_row["payload_json"])
+            except (TypeError, json.JSONDecodeError):
+                return False
+            if not isinstance(lineage, dict):
+                return False
+            replacement_id = str(lineage.get("replacementRequestId") or "")
+            if lineage.get("sourceRequestId") != source_row["request_id"] or not re.fullmatch(
+                r"[0-9a-f]{64}", replacement_id
+            ):
+                return False
+            if lineage_row["event_type"] == MANAGED_REPLAY_REPLACEMENT_CREATED_EVENT:
+                if (
+                    lineage_row["dedupe_key"] != source_row["request_id"]
+                    or lineage.get("policyVersion") != "managed-replay-replacement-created-v1"
+                    or lineage.get("replacementCreatedAt") != lineage_row["created_at"]
+                    or lineage.get("recordedAt") != lineage_row["created_at"]
+                    or not re.fullmatch(
+                        r"[0-9a-f]{64}",
+                        str(lineage.get("immutableRequestDigest") or ""),
+                    )
+                ):
+                    return False
+            elif (
+                lineage.get("policyVersion") != "managed-replay-replacement-refresh-v1"
+                or lineage.get("refreshedAt") != lineage_row["created_at"]
+            ):
+                return False
+            replacement_ids.add(replacement_id)
+            parsed_lineage.append((lineage_row, lineage))
+        if len(replacement_ids) != 1:
+            return False
+        replacement_id = replacement_ids.pop()
+        replacement_row = connection.execute(
+            "SELECT * FROM publication_requests WHERE request_id=?",
+            (replacement_id,),
+        ).fetchone()
+        if (
+            replacement_row is None
+            or replacement_row["opportunity_key"] != source_row["opportunity_key"]
+            or replacement_row["thread_id"] != source_row["thread_id"]
+            or replacement_row["commit_sha"] != source_row["commit_sha"]
+            or replacement_row["branch"] != source_row["branch"]
+            or replacement_row["worktree_path"] != source_row["worktree_path"]
+            or replacement_row["status"] != "BLOCKED"
+            or replacement_row["reason"] not in PR_UPDATE_REARM_REASONS
+        ):
+            return False
+        try:
+            replacement_request = json.loads(replacement_row["request_json"])
+        except (TypeError, json.JSONDecodeError):
+            return False
+        try:
+            replacement_created_time = parse_time(str(replacement_row["created_at"]))
+            source_created_time = parse_time(str(source_row["created_at"]))
+        except (TypeError, ValueError):
+            return False
+        if (
+            not isinstance(replacement_request, dict)
+            or source_request.get("publicationKind") != "PR_UPDATE"
+            or replacement_request.get("publicationKind") != "PR_UPDATE"
+            or source_request.get("existingPrUrl") != followup_pr_url
+            or replacement_request.get("existingPrUrl") != followup_pr_url
+            or _managed_replay_immutable_request(source_request)
+            != _managed_replay_immutable_request(replacement_request)
+            or replacement_created_time <= source_created_time
+        ):
+            return False
+        for row, request in (
+            (source_row, source_request),
+            (replacement_row, replacement_request),
+        ):
+            bindings = {
+                "requestId": row["request_id"],
+                "opportunityKey": row["opportunity_key"],
+                "threadId": row["thread_id"],
+                "commitSha": row["commit_sha"],
+                "branch": row["branch"],
+                "worktreePath": row["worktree_path"],
+                "evidenceDigest": row["evidence_digest"],
+            }
+            if any(request.get(field) != value for field, value in bindings.items()):
+                return False
+        try:
+            source_original = _managed_replay_creation_snapshot(
+                connection,
+                row=source_row,
+                request=source_request,
+            )
+            replacement_original = _managed_replay_creation_snapshot(
+                connection,
+                row=replacement_row,
+                request=replacement_request,
+            )
+        except LedgerError:
+            return False
+        if (
+            source_original != source_request
+            or not _managed_replay_receipt_valid_at(
+                source_original.get("probeReceipt"),
+                source=source_request,
+                bound_at=str(source_row["created_at"]),
+            )
+            or not _managed_replay_receipt_valid_at(
+                replacement_original.get("probeReceipt"),
+                source=source_request,
+                bound_at=str(replacement_row["created_at"]),
+            )
+        ):
+            return False
+        created_lineage = [
+            (row, lineage)
+            for row, lineage in parsed_lineage
+            if row["event_type"] == MANAGED_REPLAY_REPLACEMENT_CREATED_EVENT
+        ]
+        refresh_lineage = [
+            (row, lineage)
+            for row, lineage in parsed_lineage
+            if row["event_type"] == "MANAGED_REPLAY_REPLACEMENT_REFRESHED"
+        ]
+        if created_lineage:
+            if (
+                len(created_lineage) != 1
+                or created_lineage[0][1].get("replacementCreatedAt")
+                != replacement_row["created_at"]
+                or created_lineage[0][1].get("immutableRequestDigest")
+                != sha256_json(_managed_replay_immutable_request(replacement_request))
+            ):
+                return False
+        elif not refresh_lineage:
+            return False
+
+        snapshot_bound_at = str(replacement_row["created_at"])
+        evidence_digest = str(replacement_original.get("evidenceDigest") or "")
+        probe_receipt = replacement_original.get("probeReceipt")
+        for lineage_row, lineage in refresh_lineage:
+            previous_receipt = lineage.get("previousProbeReceipt")
+            new_receipt = lineage.get("newProbeReceipt")
+            previous_digest = str(lineage.get("previousEvidenceDigest") or "")
+            new_digest = str(lineage.get("newEvidenceDigest") or "")
+            try:
+                lineage_time = parse_time(str(lineage_row["created_at"]))
+                previous_bound_time = parse_time(snapshot_bound_at)
+            except (TypeError, ValueError):
+                return False
+            if (
+                lineage_time <= previous_bound_time
+                or lineage.get("previousSnapshotBoundAt") != snapshot_bound_at
+                or previous_digest != evidence_digest
+                or previous_receipt != probe_receipt
+                or not re.fullmatch(r"[0-9a-f]{64}", new_digest)
+                or previous_digest == new_digest
+                or not isinstance(previous_receipt, dict)
+                or not isinstance(new_receipt, dict)
+                or previous_receipt.get("bindingPurpose") != "implementation-result-v1"
+                or new_receipt.get("bindingPurpose") != "implementation-result-v1"
+                or not previous_receipt.get("derivedFromReceiptDigest")
+                or previous_receipt.get("derivedFromReceiptDigest")
+                != new_receipt.get("derivedFromReceiptDigest")
+                or lineage.get("previousReceiptDigest") != sha256_json(previous_receipt)
+                or lineage.get("newReceiptDigest") != sha256_json(new_receipt)
+                or not _managed_replay_receipt_valid_at(
+                    previous_receipt,
+                    source=source_request,
+                    bound_at=snapshot_bound_at,
+                )
+                or not _managed_replay_receipt_valid_at(
+                    new_receipt,
+                    source=source_request,
+                    bound_at=str(lineage_row["created_at"]),
+                )
+            ):
+                return False
+            try:
+                _validate_managed_replay_lineage_authority(
+                    connection,
+                    opportunity_key=str(source_row["opportunity_key"]),
+                    source_request_id=str(source_row["request_id"]),
+                    source=source_request,
+                    lineage=lineage,
+                    refreshed_at=str(lineage_row["created_at"]),
+                )
+            except LedgerError:
+                return False
+            snapshot_bound_at = str(lineage_row["created_at"])
+            evidence_digest = new_digest
+            probe_receipt = new_receipt
+        if refresh_lineage:
+            try:
+                replacement_updated_time = parse_time(str(replacement_row["updated_at"]))
+                final_snapshot_time = parse_time(snapshot_bound_at)
+            except (TypeError, ValueError):
+                return False
+            if (
+                replacement_row["evidence_digest"] != evidence_digest
+                or replacement_request.get("probeReceipt") != probe_receipt
+                or replacement_updated_time < final_snapshot_time
+            ):
+                return False
+        elif replacement_request != replacement_original:
+            return False
+        return RadarLedger._pr_update_rearm_allows_followup(
+            connection,
+            request_row=replacement_row,
+            followup_pr_url=followup_pr_url,
+            followup_checked_at=followup_checked_at,
+        )
+
+    @staticmethod
+    def _pr_followup_has_blocking_update(
+        connection: sqlite3.Connection,
+        *,
+        opportunity_key: str,
+        followup_head_sha: str,
+        followup_pr_url: str,
+        followup_checked_at: str,
+    ) -> bool:
+        rows = connection.execute(
+            """SELECT * FROM publication_requests
+               WHERE opportunity_key=?
+                 AND status IN ('PENDING','GRANTED','BLOCKED')""",
+            (opportunity_key,),
+        ).fetchall()
+        for row in rows:
+            try:
+                request = json.loads(row["request_json"])
+            except (TypeError, json.JSONDecodeError):
+                if row["commit_sha"] != followup_head_sha:
+                    return True
+                continue
+            if not isinstance(request, dict):
+                if row["commit_sha"] != followup_head_sha:
+                    return True
+                continue
+            if request.get("publicationKind") != "PR_UPDATE":
+                continue
+            if row["commit_sha"] == followup_head_sha:
+                continue
+            if RadarLedger._pr_update_rearm_allows_followup(
+                connection,
+                request_row=row,
+                followup_pr_url=followup_pr_url,
+                followup_checked_at=followup_checked_at,
+            ):
+                continue
+            if RadarLedger._managed_replay_source_allows_followup(
+                connection,
+                source_row=row,
+                source_request=request,
+                followup_pr_url=followup_pr_url,
+                followup_checked_at=followup_checked_at,
+            ):
+                continue
+            return True
+        return False
+
+    @staticmethod
     def _pr_followup_candidate_rows(
         connection: sqlite3.Connection,
         *,
@@ -11260,15 +11896,6 @@ class RadarLedger:
                        p.status='CONSUMED' OR
                        (p.status='BLOCKED' AND r.reason='BLOCKED_REPRODUCTION_REQUIRED'
                         AND json_extract(r.request_json,'$.recoveredFromTaskContext')=1)
-                     )
-                     AND NOT EXISTS (
-                       SELECT 1 FROM publication_requests update_request
-                       WHERE update_request.opportunity_key=o.key
-                         AND update_request.status IN ('PENDING','GRANTED','BLOCKED')
-                         AND json_extract(
-                           update_request.request_json,'$.publicationKind'
-                         )='PR_UPDATE'
-                         AND update_request.commit_sha<>f.head_sha
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
@@ -11396,7 +12023,22 @@ class RadarLedger:
                      )
                      {extra_filters}
                    ORDER BY f.checked_at,r.updated_at DESC"""
-        return list(connection.execute(query, tuple(params)).fetchall())
+        rows = list(connection.execute(query, tuple(params)).fetchall())
+        blocked: dict[str, bool] = {}
+        eligible: list[sqlite3.Row] = []
+        for row in rows:
+            key = str(row["key"])
+            if key not in blocked:
+                blocked[key] = RadarLedger._pr_followup_has_blocking_update(
+                    connection,
+                    opportunity_key=key,
+                    followup_head_sha=str(row["head_sha"]),
+                    followup_pr_url=str(row["pr_url"]),
+                    followup_checked_at=str(row["checked_at"]),
+                )
+            if not blocked[key]:
+                eligible.append(row)
+        return eligible
 
     @staticmethod
     def _materialize_pr_followup_candidates(

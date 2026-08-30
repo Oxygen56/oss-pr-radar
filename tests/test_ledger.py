@@ -5285,9 +5285,18 @@ def _insert_pr_update_request(
     *,
     status: str,
     commit_sha: str,
+    reason: str | None = None,
+    request_payload: dict | None = None,
 ) -> None:
     now = iso_z(datetime.now(UTC))
     permit_id = "permit-update" if status in {"GRANTED", "CONSUMED"} else None
+    payload = {
+        "requestId": "request-update",
+        "publicationKind": "PR_UPDATE",
+        "commitSha": commit_sha,
+        "existingPrUrl": "https://github.com/a/b/pull/9",
+    }
+    payload.update(request_payload or {})
     with store.connect() as connection:
         connection.execute(
             """INSERT INTO publication_requests
@@ -5299,7 +5308,7 @@ def _insert_pr_update_request(
                 commit_sha,
                 status,
                 permit_id,
-                json.dumps({"publicationKind": "PR_UPDATE", "commitSha": commit_sha}),
+                json.dumps(payload),
                 now,
                 now,
             ),
@@ -5321,6 +5330,408 @@ def _insert_pr_update_request(
                     now,
                 ),
             )
+        if reason is not None:
+            connection.execute(
+                "UPDATE publication_requests SET reason=? WHERE request_id='request-update'",
+                (reason,),
+            )
+
+
+def _base_drift_recovery_fixture(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store, head_sha="b" * 40)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET commit_sha=? WHERE request_id='request-intent-1'",
+            ("b" * 40,),
+        )
+        connection.execute(
+            "UPDATE publication_permits SET commit_sha=? WHERE permit_id='permit-intent-1'",
+            ("b" * 40,),
+        )
+        followup = connection.execute(
+            "SELECT * FROM pr_followups WHERE opportunity_key=?",
+            (key,),
+        ).fetchone()
+    _insert_pr_update_request(
+        store,
+        status="GRANTED",
+        commit_sha="c" * 40,
+        reason="EXISTING_PR_BASE_DRIFT",
+        request_payload={
+            "publicationKind": "PR_UPDATE",
+            "commitSha": "c" * 40,
+            "existingPrUrl": "https://github.com/a/b/pull/9",
+            "previousCommitSha": "b" * 40,
+            "intentId": "intent-1",
+            "threadId": "thread-1",
+            "worktreePath": "/tmp/worktree",
+        },
+    )
+    state = {
+        "version": "pr_followup_v3",
+        "generatedAt": followup["checked_at"],
+        "items": [
+            {
+                "url": followup["pr_url"],
+                "headSha": followup["head_sha"],
+                "actionDigest": followup["action_digest"],
+                "taskActionDigest": followup["task_action_digest"],
+                "taskFollowupRequired": True,
+                "taskActions": json.loads(followup["actions_json"]),
+                "evidence": json.loads(followup["evidence_json"]),
+                "checkedAt": followup["checked_at"],
+            }
+        ],
+    }
+    return store, key, state
+
+
+def _managed_replay_blocker_fixture(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store, head_sha="b" * 40)
+    with store.connect() as connection:
+        followup = connection.execute(
+            "SELECT * FROM pr_followups WHERE opportunity_key=?",
+            (key,),
+        ).fetchone()
+    checked_at = parse_time(followup["checked_at"])
+    source_created_at = iso_z(checked_at - timedelta(seconds=30))
+    replacement_created_at = iso_z(checked_at - timedelta(seconds=20))
+    rearm_after = iso_z(checked_at - timedelta(seconds=10))
+    from oss_pr_radar.repo_probe import (
+        PROBE_SCHEMA,
+        REPRODUCED_VALIDATED,
+        _signed_receipt,
+        thread_fingerprint,
+    )
+
+    receipt_payload = {
+        "schema": PROBE_SCHEMA,
+        "repo": "a/b",
+        "defaultBranch": "main",
+        "baseSha": "a" * 40,
+        "checkoutSha": "a" * 40,
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "taskId": "intent-1",
+        "threadFingerprint": thread_fingerprint("thread-1"),
+        "attemptId": "managed-replay-test",
+        "headSha": "c" * 40,
+        "commitSha": "c" * 40,
+        "resultDigest": "d" * 64,
+        "codePaths": ["runtime.py"],
+        "codePathBindings": {"runtime.py": "blob-binding"},
+        "checkoutSnapshotDigest": "snapshot-digest",
+        "probeLevel": REPRODUCED_VALIDATED,
+        "status": REPRODUCED_VALIDATED,
+        "codePathsVerified": True,
+        "reproductionVerified": True,
+        "validationVerified": True,
+        "commandStatuses": {"reproduction": {"exitCode": 0}},
+        "profileId": "managed-replay-test",
+        "profileVersion": 1,
+        "policyDigest": "managed-replay-policy",
+        "bindingPurpose": "implementation-result-v1",
+        "derivedFromReceiptDigest": "f" * 64,
+        "observedAt": iso_z(checked_at - timedelta(minutes=1)),
+        "expiresAt": iso_z(checked_at + timedelta(hours=1)),
+        "attemptJournal": {
+            "effectToken": "managed-replay-effect",
+            "externalEffectCount": 0,
+            "network": "denied",
+            "hostWrites": "denied",
+            "events": ["ATTEMPT_CLEANUP_FINISHED"],
+        },
+    }
+    receipt_payload["receiptDigest"] = sha256_json(receipt_payload)
+    probe_receipt = _signed_receipt(receipt_payload)
+    publication = {"title": "fix: replay", "body": "body"}
+    immutable = {
+        "opportunityKey": key,
+        "intentId": "intent-1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "commitSha": "c" * 40,
+        "branch": "fix/intent-1",
+        "worktreePath": "/tmp/worktree",
+        "evidencePath": "/tmp/evidence.json",
+        "publication": publication,
+        "resultDigest": "d" * 64,
+        "headSha": "c" * 40,
+        "selectedBaseSha": "a" * 40,
+        "codePaths": ["runtime.py"],
+        "quality": {},
+        "intent": {"autoSubmitAuthorized": True},
+        "publicationKind": "PR_UPDATE",
+        "existingPrUrl": "https://github.com/a/b/pull/9",
+        "previousCommitSha": "b" * 40,
+        "followupWakeDigest": "e" * 64,
+    }
+
+    def request(raw: str) -> tuple[str, dict]:
+        evidence_digest = sha256_text(raw)
+        request_id = sha256_text(
+            "|".join(
+                (
+                    immutable["issueUrl"],
+                    immutable["threadId"],
+                    immutable["commitSha"],
+                    immutable["branch"],
+                    immutable["worktreePath"],
+                    evidence_digest,
+                    json.dumps(publication, sort_keys=True, separators=(",", ":")),
+                )
+            )
+        )
+        import base64
+
+        return request_id, {
+            "requestId": request_id,
+            **immutable,
+            "evidenceDigest": evidence_digest,
+            "evidenceRawBase64": base64.b64encode(raw.encode()).decode(),
+            "probeReceipt": probe_receipt,
+        }
+
+    source_id, source = request("{}")
+    replacement_id, replacement = request('{"snapshot":2}')
+    with store.transaction() as connection:
+        for request_id, payload, created_at, reason in (
+            (
+                source_id,
+                source,
+                source_created_at,
+                "ACTIVE_OR_CONDITIONAL_CLAIM",
+            ),
+            (
+                replacement_id,
+                replacement,
+                replacement_created_at,
+                "EXISTING_PR_BASE_DRIFT",
+            ),
+        ):
+            connection.execute(
+                """INSERT INTO publication_requests
+                   (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                    evidence_digest,status,reason,request_json,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?,'BLOCKED',?,?,?,?)""",
+                (
+                    request_id,
+                    key,
+                    "thread-1",
+                    "c" * 40,
+                    "fix/intent-1",
+                    "/tmp/worktree",
+                    payload["evidenceDigest"],
+                    reason,
+                    json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                    created_at,
+                    created_at,
+                ),
+            )
+            store._event(
+                connection,
+                key,
+                "PUBLICATION_REQUESTED",
+                request_id,
+                payload,
+                created_at,
+            )
+        store._event(
+            connection,
+            key,
+            "MANAGED_REPLAY_REPLACEMENT_CREATED",
+            source_id,
+            {
+                "policyVersion": "managed-replay-replacement-created-v1",
+                "sourceRequestId": source_id,
+                "replacementRequestId": replacement_id,
+                "immutableRequestDigest": sha256_json(immutable),
+                "replacementCreatedAt": replacement_created_at,
+                "recordedAt": replacement_created_at,
+            },
+            replacement_created_at,
+        )
+        rearm = {
+            "requestId": replacement_id,
+            "reason": "EXISTING_PR_BASE_DRIFT",
+            "rearmAfter": rearm_after,
+        }
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_REARM_REQUIRED",
+            replacement_id,
+            rearm,
+            rearm_after,
+        )
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_REARM_OBSERVATION_BARRIER",
+            replacement_id,
+            rearm,
+            rearm_after,
+        )
+    return store, key, source_id, replacement_id
+
+
+def _fresh_followup_state(state, *, after: str, required: bool):
+    refreshed = json.loads(json.dumps(state))
+    checked_at = iso_z(parse_time(after) + timedelta(minutes=1))
+    refreshed["generatedAt"] = checked_at
+    refreshed["items"][0]["checkedAt"] = checked_at
+    refreshed["items"][0]["actionDigest"] = f"action-{checked_at}"
+    refreshed["items"][0]["taskActionDigest"] = f"task-action-{checked_at}"
+    refreshed["items"][0]["taskFollowupRequired"] = required
+    return refreshed
+
+
+def test_base_drift_rearm_requires_post_block_observation(tmp_path):
+    store, key, state = _base_drift_recovery_fixture(tmp_path)
+
+    store.block_publication_request(
+        "request-update",
+        "EXISTING_PR_BASE_DRIFT",
+        evidence={
+            "existingPrUrl": "https://github.com/a/b/pull/9",
+            "expectedBaseSha": "d" * 40,
+            "observedBaseSha": "e" * 40,
+        },
+    )
+
+    with store.connect() as connection:
+        permit_status = connection.execute(
+            "SELECT status FROM publication_permits WHERE request_id='request-update'"
+        ).fetchone()["status"]
+        barrier = json.loads(
+            connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='PR_FOLLOWUP_REARM_OBSERVATION_BARRIER'
+                     AND dedupe_key='request-update'""",
+                (key,),
+            ).fetchone()["payload_json"]
+        )
+    assert permit_status == "EXPIRED"
+    assert barrier["sourceCheckedAt"] == state["items"][0]["checkedAt"]
+
+    store.import_pr_followups(state)
+    store.import_pr_followups(state)
+    assert store.pr_followup_candidates() == []
+    with store.connect() as connection:
+        assert dict(
+            connection.execute(
+                """SELECT followup_required,wake_digest FROM pr_followups
+                   WHERE opportunity_key=?""",
+                (key,),
+            ).fetchone()
+        ) == {"followup_required": 0, "wake_digest": None}
+
+    no_action = _fresh_followup_state(state, after=barrier["rearmAfter"], required=False)
+    store.import_pr_followups(no_action)
+    assert store.pr_followup_candidates() == []
+
+    actionable = _fresh_followup_state(
+        state,
+        after=no_action["items"][0]["checkedAt"],
+        required=True,
+    )
+    store.import_pr_followups(actionable)
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["key"] == key
+
+    store.import_pr_followups(no_action)
+    assert store.pr_followup_candidates()[0]["wakeDigest"] == candidate["wakeDigest"]
+
+    store.import_pr_followups(state)
+    assert store.pr_followup_candidates()[0]["wakeDigest"] == candidate["wakeDigest"]
+
+
+def test_historical_base_drift_rearms_once_on_initialization(tmp_path):
+    store, key, state = _base_drift_recovery_fixture(tmp_path)
+    now = iso_z(datetime.now(UTC))
+    with store.transaction() as connection:
+        connection.execute(
+            """UPDATE publication_requests
+               SET status='BLOCKED',reason='EXISTING_PR_BASE_DRIFT',updated_at=?
+               WHERE request_id='request-update'""",
+            (now,),
+        )
+        connection.execute(
+            """UPDATE publication_permits SET status='EXPIRED',updated_at=?
+               WHERE request_id='request-update'""",
+            (now,),
+        )
+        store._event(
+            connection,
+            key,
+            "PUBLICATION_BLOCKED",
+            "request-update:EXISTING_PR_BASE_DRIFT",
+            {
+                "requestId": "request-update",
+                "reason": "EXISTING_PR_BASE_DRIFT",
+                "auditEvidence": {
+                    "existingPrUrl": "https://github.com/a/b/pull/9",
+                    "expectedBaseSha": "d" * 40,
+                    "observedBaseSha": "e" * 40,
+                },
+            },
+            now,
+        )
+        connection.execute(
+            "UPDATE opportunities SET stage='CI_GREEN' WHERE key=?",
+            (key,),
+        )
+
+    migrated = RadarLedger(store.path)
+    with migrated.connect() as connection:
+        followup = connection.execute(
+            """SELECT followup_required,wake_digest FROM pr_followups
+               WHERE opportunity_key=?""",
+            (key,),
+        ).fetchone()
+        events = connection.execute(
+            """SELECT event_type,payload_json FROM events
+               WHERE opportunity_key=? AND dedupe_key='request-update'
+                 AND event_type IN (
+                   'PR_FOLLOWUP_REARM_REQUIRED',
+                   'PR_FOLLOWUP_REARM_OBSERVATION_BARRIER'
+                 )""",
+            (key,),
+        ).fetchall()
+    assert followup["followup_required"] == 0
+    assert {row["event_type"] for row in events} == {
+        "PR_FOLLOWUP_REARM_REQUIRED",
+        "PR_FOLLOWUP_REARM_OBSERVATION_BARRIER",
+    }
+    barrier = next(
+        json.loads(row["payload_json"])
+        for row in events
+        if row["event_type"] == "PR_FOLLOWUP_REARM_OBSERVATION_BARRIER"
+    )
+
+    migrated.import_pr_followups(state)
+    migrated.import_pr_followups(state)
+    assert migrated.pr_followup_candidates() == []
+
+    actionable = _fresh_followup_state(state, after=barrier["rearmAfter"], required=True)
+    migrated.import_pr_followups(actionable)
+    wake_digest = migrated.pr_followup_candidates()[0]["wakeDigest"]
+
+    reopened = RadarLedger(store.path)
+    assert reopened.pr_followup_candidates()[0]["wakeDigest"] == wake_digest
+    with reopened.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='PR_FOLLOWUP_REARM_OBSERVATION_BARRIER'
+                     AND dedupe_key='request-update'""",
+                (key,),
+            ).fetchone()[0]
+            == 1
+        )
 
 
 @pytest.mark.parametrize("request_status", ["PENDING", "GRANTED", "BLOCKED"])
@@ -5347,6 +5758,174 @@ def test_pr_followup_candidates_allow_consumed_different_head_update(tmp_path):
     _insert_pr_update_request(store, status="CONSUMED", commit_sha="c" * 40)
 
     assert [candidate["key"] for candidate in store.pr_followup_candidates()] == [key]
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "EXISTING_PR_BASE_DRIFT",
+        "EXISTING_PR_HEAD_DRIFT",
+        "NON_FAST_FORWARD_PR_UPDATE",
+    ],
+)
+def test_pr_followup_candidates_allow_rearmed_drift_update(tmp_path, reason):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store, head_sha="b" * 40)
+    _insert_pr_update_request(
+        store,
+        status="BLOCKED",
+        commit_sha="c" * 40,
+        reason=reason,
+    )
+    rearm_after = datetime.now(UTC)
+    rearm_payload = {
+        "requestId": "request-update",
+        "reason": reason,
+        "rearmAfter": iso_z(rearm_after),
+    }
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_REARM_REQUIRED",
+            "request-update",
+            rearm_payload,
+            iso_z(rearm_after),
+        )
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_REARM_OBSERVATION_BARRIER",
+            "request-update",
+            rearm_payload,
+            iso_z(rearm_after),
+        )
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": iso_z(rearm_after + timedelta(minutes=1)),
+            "items": [
+                {
+                    "url": "https://github.com/a/b/pull/9",
+                    "headSha": "b" * 40,
+                    "actionDigest": "action-after-drift",
+                    "taskActionDigest": "task-action-after-drift",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["current branch check failed"],
+                    "evidence": {"actionableCheckNames": ["Ruff"]},
+                    "checkedAt": iso_z(rearm_after + timedelta(minutes=1)),
+                }
+            ],
+        }
+    )
+
+    assert [candidate["key"] for candidate in store.pr_followup_candidates()] == [key]
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        ("PENDING", "EXISTING_PR_BASE_DRIFT"),
+        ("GRANTED", "EXISTING_PR_BASE_DRIFT"),
+        ("BLOCKED", "SUBMIT_READY_EVIDENCE_INCOMPLETE"),
+    ],
+)
+def test_pr_followup_candidates_keep_nonrecoverable_update_blockers(tmp_path, status, reason):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store, head_sha="b" * 40)
+    _insert_pr_update_request(
+        store,
+        status=status,
+        commit_sha="c" * 40,
+        reason=reason,
+    )
+    rearm_after = iso_z(datetime.now(UTC) - timedelta(minutes=1))
+    rearm_payload = {
+        "requestId": "request-update",
+        "reason": reason,
+        "rearmAfter": rearm_after,
+    }
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_REARM_REQUIRED",
+            "request-update",
+            rearm_payload,
+            rearm_after,
+        )
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_REARM_OBSERVATION_BARRIER",
+            "request-update",
+            rearm_payload,
+            rearm_after,
+        )
+
+    assert store.pr_followup_candidates() == []
+
+
+def test_managed_replay_source_does_not_mask_rearmed_replacement(tmp_path):
+    store, key, source_id, _ = _managed_replay_blocker_fixture(tmp_path)
+
+    assert [candidate["key"] for candidate in store.pr_followup_candidates()] == [key]
+
+    with store.connect() as connection:
+        connection.execute(
+            """DELETE FROM events
+               WHERE opportunity_key=?
+                 AND event_type='MANAGED_REPLAY_REPLACEMENT_CREATED'
+                 AND dedupe_key=?""",
+            (key, source_id),
+        )
+    assert store.pr_followup_candidates() == []
+
+
+@pytest.mark.parametrize("status", ["PENDING", "GRANTED"])
+def test_managed_replay_lineage_never_waives_live_source_request(tmp_path, status):
+    store, _, source_id, _ = _managed_replay_blocker_fixture(tmp_path)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET status=? WHERE request_id=?",
+            (status, source_id),
+        )
+
+    assert store.pr_followup_candidates() == []
+
+
+def test_managed_replay_lineage_must_preserve_exact_request_identity(tmp_path):
+    store, _, _, replacement_id = _managed_replay_blocker_fixture(tmp_path)
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT request_json FROM publication_requests WHERE request_id=?",
+            (replacement_id,),
+        ).fetchone()
+        request = json.loads(row["request_json"])
+        request["previousCommitSha"] = "f" * 40
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id=?",
+            (json.dumps(request, sort_keys=True, separators=(",", ":")), replacement_id),
+        )
+
+    assert store.pr_followup_candidates() == []
+
+
+def test_managed_replay_lineage_requires_authenticated_replacement_receipt(tmp_path):
+    store, _, _, replacement_id = _managed_replay_blocker_fixture(tmp_path)
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT request_json FROM publication_requests WHERE request_id=?",
+            (replacement_id,),
+        ).fetchone()
+        request = json.loads(row["request_json"])
+        request["probeReceipt"]["signature"] = "forged"
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id=?",
+            (json.dumps(request, sort_keys=True, separators=(",", ":")), replacement_id),
+        )
+
+    assert store.pr_followup_candidates() == []
 
 
 def test_pr_followup_candidates_exclude_active_task_quarantine(tmp_path):
@@ -5580,7 +6159,11 @@ def _assert_no_pr_followup_reservation(store: RadarLedger, key: str) -> None:
     assert reserved == 0
 
 
-def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
+@pytest.mark.parametrize(
+    "publication_drift_reason",
+    ["EXISTING_PR_BASE_DRIFT", "EXISTING_PR_HEAD_DRIFT"],
+)
+def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path, publication_drift_reason):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(
         intent(
@@ -5761,7 +6344,7 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     )
     assert permit["status"] == "ACTIVE"
 
-    store.block_publication_request(update["request_id"], "EXISTING_PR_HEAD_DRIFT")
+    store.block_publication_request(update["request_id"], publication_drift_reason)
 
     with store.connect() as connection:
         expired = connection.execute(
@@ -5776,15 +6359,18 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
         == "PR_OPEN"
     )
     assert store.active_pr_followup("a/b#1") is None
-    store.import_pr_followups(state)
     assert store.pr_followup_candidates() == []
-    receipt = store.task_context(
-        issue_url="https://github.com/a/b/issues/1",
-        thread_id="thread-1",
-    )["publicationReceipt"]
-    assert receipt["status"] == "PR_OPEN"
-    assert receipt["prUrl"] == "https://github.com/a/b/pull/9"
-    assert receipt["commitSha"] == "a" * 40
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key='a/b#1'
+                     AND event_type='PR_FOLLOWUP_REARM_OBSERVATION_BARRIER'
+                     AND dedupe_key=?""",
+                (update["request_id"],),
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_existing_publication_request_without_snapshot_upgrades_idempotently(tmp_path):
