@@ -10048,7 +10048,18 @@ class RadarLedger:
                         if isinstance(previous_evidence, dict)
                         else None
                     )
-                    conflicts = evidence.get("mergeConflictFiles")
+                    incoming_conflicts = evidence.get("mergeConflictFiles")
+                    previous_conflicts = (
+                        previous_evidence.get("mergeConflictFiles")
+                        if isinstance(previous_evidence, dict)
+                        else None
+                    )
+                    conflicts = (
+                        previous_conflicts
+                        if evidence.get("mergeConflict") is True
+                        and "mergeConflictFiles" not in evidence
+                        else incoming_conflicts
+                    )
                     identity = connection.execute(
                         """SELECT o.issue_url,i.intent_id,i.thread_id,i.worktree_path
                            FROM opportunities o JOIN intents i ON i.intent_id=(
@@ -10095,6 +10106,7 @@ class RadarLedger:
                         )
                     ):
                         evidence = dict(evidence) | {
+                            "mergeConflictFiles": list(conflicts),
                             "authorizedResolutionFiles": list(previous_authorized),
                             "mergeResolutionScopeReceipt": previous_receipt,
                             "resolutionScopeSourceWakeDigest": previous_evidence.get(
@@ -11468,13 +11480,58 @@ class RadarLedger:
             evidence = json.loads(row["evidence_json"])
             if not isinstance(evidence, dict):
                 raise LedgerError("PR follow-up resolution scope evidence is invalid")
-            conflicts = evidence.get("mergeConflictFiles")
+            source_row = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='PR_FOLLOWUP_PREPARATION_BOUND'
+                     AND dedupe_key=?
+                     AND json_extract(payload_json,'$.threadId')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (key, source_wake_digest, row["thread_id"]),
+            ).fetchone()
+            try:
+                source_payload = (
+                    json.loads(source_row["payload_json"]) if source_row is not None else None
+                )
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise LedgerError(
+                    "PR follow-up resolution scope source snapshot is invalid"
+                ) from exc
+            source_snapshot = (
+                source_payload.get("snapshot") if isinstance(source_payload, dict) else None
+            )
+            source_evidence = (
+                source_snapshot.get("evidence") if isinstance(source_snapshot, dict) else None
+            )
+            conflicts = (
+                source_evidence.get("mergeConflictFiles")
+                if isinstance(source_evidence, dict)
+                else None
+            )
+            source_base = (
+                str(source_evidence.get("baseSha") or "")
+                if isinstance(source_evidence, dict)
+                else ""
+            )
             authorized = receipt.get("authorizedResolutionFiles")
             replacement_wake = str(receipt.get("authorizedWakeDigest") or "")
             prepared_head = str(receipt.get("preparedHeadSha") or "")
             if (
                 receipt.get("sourceWakeDigest") != source_wake_digest
                 or receipt.get("requestResultDigest") != result_digest
+                or not isinstance(source_snapshot, dict)
+                or not isinstance(source_evidence, dict)
+                or source_snapshot.get("wakeDigest") != source_wake_digest
+                or source_snapshot.get("prUrl") != row["pr_url"]
+                or source_snapshot.get("headSha") != row["head_sha"]
+                or source_snapshot.get("preparedHeadSha") != prepared_head
+                or source_snapshot.get("preparedHeadSha") != source_snapshot.get("headSha")
+                or not str(source_snapshot.get("actionDigest") or "")
+                or not str(source_snapshot.get("checkedAt") or "")
+                or source_snapshot.get("taskActionDigest") != row["task_action_digest"]
+                or source_evidence.get("mergeConflict") is not True
+                or evidence.get("mergeConflict") is not True
+                or str(evidence.get("baseSha") or "") != source_base
                 or not isinstance(conflicts, list)
                 or not isinstance(authorized, list)
                 or not verify_merge_resolution_scope_receipt(
@@ -11490,13 +11547,14 @@ class RadarLedger:
                     current_wake_digest=replacement_wake,
                     head_sha=str(row["head_sha"]),
                     prepared_head_sha=prepared_head,
-                    base_sha=str(evidence.get("baseSha") or ""),
+                    base_sha=source_base,
                     merge_conflict_files=conflicts,
                     authorized_resolution_files=authorized,
                 )
             ):
                 raise LedgerError("PR follow-up resolution scope receipt is invalid")
             updated_evidence = dict(evidence)
+            updated_evidence["mergeConflictFiles"] = list(conflicts)
             updated_evidence["authorizedResolutionFiles"] = list(authorized)
             updated_evidence["mergeResolutionScopeReceipt"] = receipt
             updated_evidence["resolutionScopeSourceWakeDigest"] = source_wake_digest

@@ -17885,10 +17885,11 @@ def test_ingest_rejects_unrelated_base_file_in_merge_resolution_scope(tmp_path):
 
 
 def test_legacy_ingested_source_wake_can_backfill_merge_resolution_scope(tmp_path):
-    store, _worktree, result_path, source_context, _request, _head_sha, _base_sha = (
+    store, _worktree, result_path, source_context, request, head_sha, base_sha = (
         _merge_resolution_scope_request_fixture(tmp_path)
     )
-    source_wake = str(source_context["prFollowup"]["wakeDigest"])
+    source_followup = source_context["prFollowup"]
+    source_wake = str(source_followup["wakeDigest"])
     raw = result_path.read_bytes()
     result_digest = MODULE._task_result_digest(json.loads(raw), raw)
     store.record_task_result_ingested("a/b#1", digest=result_digest, stage="PR_OPEN")
@@ -17906,6 +17907,116 @@ def test_legacy_ingested_source_wake_can_backfill_merge_resolution_scope(tmp_pat
     assert authorization["replacementWakeDigest"] != source_wake
     candidate = store.pr_followup_candidates()[0]
     assert candidate["wakeDigest"] == authorization["replacementWakeDigest"]
+    assert candidate["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+    post_authorization_at = iso_z(datetime.now(UTC) + timedelta(seconds=3))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": post_authorization_at,
+            "items": [
+                {
+                    "url": request["prUrl"],
+                    "headSha": head_sha,
+                    "actionDigest": "same-task-post-authorization-action",
+                    "taskActionDigest": source_followup["taskActionDigest"],
+                    "taskFollowupRequired": True,
+                    "taskActions": ["继续处理同一冲突"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseRefName": "main",
+                        "baseSha": base_sha,
+                    },
+                    "checkedAt": post_authorization_at,
+                }
+            ],
+        }
+    )
+    preserved = store.pr_followup_candidates()[0]
+    assert preserved["wakeDigest"] == authorization["replacementWakeDigest"]
+    assert preserved["evidence"]["mergeConflictFiles"] == ["runtime.py"]
+    assert preserved["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+    assert isinstance(preserved["evidence"]["mergeResolutionScopeReceipt"], dict)
+
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=str(preserved["wakeDigest"]),
+        prepared_head_sha=head_sha,
+        prepared_base_sha=base_sha,
+        merge_conflict_files=["runtime.py"],
+    )
+    next_context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=Path(request["worktreePath"]),
+        prepared_followup_head=head_sha,
+    )
+    next_context = json.loads(next_context_path.read_text(encoding="utf-8"))
+    assert next_context["prFollowup"]["evidence"]["mergeConflictFiles"] == ["runtime.py"]
+    assert next_context["prFollowup"]["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+
+
+def test_scope_backfill_uses_bound_preparation_when_refresh_omits_conflicts(tmp_path):
+    store, _worktree, result_path, source_context, request, head_sha, base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    source_followup = source_context["prFollowup"]
+    source_wake = str(source_followup["wakeDigest"])
+    raw = result_path.read_bytes()
+    result_digest = MODULE._task_result_digest(json.loads(raw), raw)
+    store.record_task_result_ingested("a/b#1", digest=result_digest, stage="PR_OPEN")
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=source_wake,
+        result_digest=result_digest,
+        stage="PR_OPEN",
+    )
+    refreshed_at = iso_z(datetime.now(UTC) + timedelta(seconds=2))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": refreshed_at,
+            "items": [
+                {
+                    "url": request["prUrl"],
+                    "headSha": head_sha,
+                    "actionDigest": "same-task-refreshed-action",
+                    "taskActionDigest": source_followup["taskActionDigest"],
+                    "taskFollowupRequired": True,
+                    "taskActions": ["继续处理同一冲突"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseRefName": "main",
+                        "baseSha": base_sha,
+                    },
+                    "checkedAt": refreshed_at,
+                }
+            ],
+        }
+    )
+    with store.connect() as connection:
+        refreshed = connection.execute(
+            "SELECT wake_digest,evidence_json FROM pr_followups WHERE opportunity_key='a/b#1'"
+        ).fetchone()
+    assert refreshed["wake_digest"] == source_wake
+    assert "mergeConflictFiles" not in json.loads(refreshed["evidence_json"])
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    authorization = result["resolutionScopeAuthorized"][0]
+    assert authorization["replacementWakeDigest"] != source_wake
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["evidence"]["mergeConflictFiles"] == ["runtime.py"]
     assert candidate["evidence"]["authorizedResolutionFiles"] == [
         "runtime.py",
         "runtime/new.py",
