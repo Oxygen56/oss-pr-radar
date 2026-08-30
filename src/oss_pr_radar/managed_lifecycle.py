@@ -3542,6 +3542,26 @@ class ManagedLedger:
         finally:
             connection.close()
 
+    def read_result(self, result_key: str) -> dict[str, Any] | None:
+        """Return one exact managed result with its validation status."""
+
+        connection = self._connection()
+        try:
+            row = connection.execute(
+                "SELECT * FROM managed_results WHERE result_key=?",
+                (result_key,),
+            ).fetchone()
+            if row is None:
+                return None
+            result = dict(row)
+            validation = json_payload(result.get("validation_json"))
+            return result | {
+                "validation": validation,
+                "validationValid": _valid_validation(validation),
+            }
+        finally:
+            connection.close()
+
     def record_published_task_result(
         self,
         *,

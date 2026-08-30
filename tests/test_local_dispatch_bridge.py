@@ -12507,7 +12507,7 @@ def test_prepare_pr_followup_refreshes_fast_forwarded_base_before_integration(
     assert run_git(worktree, "status", "--porcelain") == ""
 
 
-def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path):
+def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(monkeypatch, tmp_path):
     store, worktree, previous_head, pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
     store.reserve_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
@@ -12628,6 +12628,244 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path
     assert store.task_result_digest_seen(
         "a/b#1", MODULE._task_result_digest(value, result_path.read_bytes())
     )
+
+    request_row = store.publication_work_items()[0]
+    request_id = request_row["request_id"]
+    request = request_row["request"]
+    old_followup_wake = request["followupWakeDigest"]
+    stale_intent_result_digest = "f" * 64
+    request["intent"] = dict(request["intent"], resultDigest=stale_intent_result_digest)
+    desired_head = request["commitSha"]
+    with store.connect() as connection:
+        intent_payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+        intent_payload["resultDigest"] = stale_intent_result_digest
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
+            (json.dumps(intent_payload, sort_keys=True),),
+        )
+        managed_result = connection.execute(
+            "SELECT result_key FROM managed_results WHERE result_digest=?",
+            (request["resultDigest"],),
+        ).fetchone()
+        historical_validation = dict(request["quality"]) | {
+            "reproductionReceiptAuthenticated": True
+        }
+        connection.execute(
+            "UPDATE managed_results SET validation_json=? WHERE result_key=?",
+            (json.dumps(historical_validation, sort_keys=True), managed_result["result_key"]),
+        )
+        connection.execute(
+            "UPDATE publication_requests SET status='BLOCKED',reason='ACTIVE_OR_CONDITIONAL_CLAIM',"
+            "request_json=? "
+            "WHERE request_id=?",
+            (json.dumps(request, sort_keys=True), request_id),
+        )
+
+    later = iso_z(datetime.now(UTC) + timedelta(minutes=1))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": later,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": previous_head,
+                    "actionDigest": "later-erroneous-action",
+                    "taskActionDigest": "later-erroneous-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["错误重派的旧头跟进"],
+                    "evidence": {
+                        "actionableCheckNames": ["Ruff"],
+                        "baseRefName": "main",
+                        "baseSha": previous_head,
+                    },
+                    "checkedAt": later,
+                }
+            ],
+        }
+    )
+    later_followup_wake = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )["prFollowup"]["wakeDigest"]
+    assert later_followup_wake != old_followup_wake
+
+    run_git(worktree, "switch", "main")
+    run_git(worktree, "branch", "-f", request["branch"], previous_head)
+    run_git(worktree, "switch", request["branch"])
+    result_path.write_text('{"stage":"PR_OPEN"}\n', encoding="utf-8")
+    external = tmp_path / "unbound-result.json"
+    external.write_text(json.dumps(value), encoding="utf-8")
+    missing_snapshot = dict(request)
+    missing_snapshot.pop("evidenceRawBase64")
+    missing_snapshot["evidencePath"] = str(external)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id=?",
+            (json.dumps(missing_snapshot, sort_keys=True), request_id),
+        )
+
+    with pytest.raises(RuntimeError, match="requires embedded publication evidence"):
+        MODULE.replay_managed_result(SimpleNamespace(ledger=store.path, request_id=request_id))
+    assert run_git(worktree, "rev-parse", "HEAD") == previous_head
+    assert (
+        ManagedLedger(store.path).read_result(managed_result["result_key"])["validationValid"]
+        is False
+    )
+
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id=?",
+            (json.dumps(request, sort_keys=True), request_id),
+        )
+    monkeypatch.setattr(
+        MODULE,
+        "broker_publication_request",
+        lambda *_args, **_kwargs: pytest.fail("managed replay must not publish"),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_executor",
+        lambda *_args, **_kwargs: pytest.fail("managed replay must not call the executor"),
+    )
+    from oss_pr_radar import ledger as ledger_module
+    from oss_pr_radar import repo_probe
+
+    replay_now = datetime.now(UTC) + timedelta(hours=2)
+
+    class ReplayDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return replay_now if tz is not None else replay_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(repo_probe, "datetime", ReplayDateTime)
+    monkeypatch.setattr(ledger_module, "datetime", ReplayDateTime)
+    historical_receipt = request["probeReceipt"]
+    assert repo_probe.verify_probe_receipt(
+        historical_receipt,
+        repo="a/b",
+        base_sha=request["selectedBaseSha"],
+        code_paths=request["codePaths"],
+        issue_url=request["issueUrl"],
+        task_id=request["intentId"],
+        thread_id=request["threadId"],
+        head_sha=request["headSha"],
+        commit_sha=request["commitSha"],
+        result_digest=request["resultDigest"],
+        enforce_freshness=False,
+    )
+    assert not repo_probe.verify_probe_receipt(
+        historical_receipt,
+        repo="a/b",
+        base_sha=request["selectedBaseSha"],
+        code_paths=request["codePaths"],
+        issue_url=request["issueUrl"],
+        task_id=request["intentId"],
+        thread_id=request["threadId"],
+        head_sha=request["headSha"],
+        commit_sha=request["commitSha"],
+        result_digest=request["resultDigest"],
+    )
+    with store.connect() as connection:
+        original_created_at = connection.execute(
+            "SELECT created_at FROM publication_requests WHERE request_id=?", (request_id,)
+        ).fetchone()["created_at"]
+        connection.execute(
+            "UPDATE publication_requests SET created_at=? WHERE request_id=?",
+            (
+                iso_z(parse_time(historical_receipt["expiresAt"]) + timedelta(seconds=1)),
+                request_id,
+            ),
+        )
+    with pytest.raises(RuntimeError, match="within its receipt lifetime"):
+        MODULE.replay_managed_result(SimpleNamespace(ledger=store.path, request_id=request_id))
+    assert run_git(worktree, "rev-parse", "HEAD") == previous_head
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET created_at=? WHERE request_id=?",
+            (original_created_at, request_id),
+        )
+
+    replayed = MODULE.replay_managed_result(
+        SimpleNamespace(ledger=store.path, request_id=request_id)
+    )
+
+    assert replayed == {
+        "ok": True,
+        "requestId": request_id,
+        "resultKey": managed_result["result_key"],
+        "validationUpgraded": True,
+        "advanced": True,
+        "worktreeFastForwarded": True,
+        "resultSnapshotRestored": True,
+        "replacementRequestId": replayed["replacementRequestId"],
+        "replacementStatus": "PENDING",
+        "publicationTriggered": False,
+    }
+    assert run_git(worktree, "rev-parse", "HEAD") == desired_head
+    refreshed_raw = result_path.read_bytes()
+    refreshed_value = json.loads(refreshed_raw)
+    assert refreshed_raw != base64.b64decode(request["evidenceRawBase64"])
+    assert refreshed_value["resultDigest"] == request["resultDigest"]
+    assert refreshed_value["reproductionReceipt"] != historical_receipt
+    assert (
+        refreshed_value["reproductionReceipt"]["derivedFromReceiptDigest"]
+        == (historical_receipt["receiptDigest"])
+    )
+    assert repo_probe.verify_probe_receipt(
+        refreshed_value["reproductionReceipt"],
+        repo="a/b",
+        base_sha=request["selectedBaseSha"],
+        code_paths=request["codePaths"],
+        issue_url=request["issueUrl"],
+        task_id=request["intentId"],
+        thread_id=request["threadId"],
+        head_sha=request["headSha"],
+        commit_sha=request["commitSha"],
+        result_digest=request["resultDigest"],
+    )
+    assert (
+        ManagedLedger(store.path).read_result(managed_result["result_key"])["validationValid"]
+        is True
+    )
+    persisted_request = store.publication_request(request_id)
+    assert persisted_request["status"] == "BLOCKED"
+    assert persisted_request["reason"] == "ACTIVE_OR_CONDITIONAL_CLAIM"
+    replacement = store.publication_request(replayed["replacementRequestId"])
+    assert replacement["status"] == "PENDING"
+    allowed_refreshes = {
+        "requestId",
+        "evidenceDigest",
+        "evidenceRawBase64",
+        "probeReceipt",
+    }
+    assert {
+        key: value for key, value in replacement["request"].items() if key not in allowed_refreshes
+    } == {key: value for key, value in request.items() if key not in allowed_refreshes}
+    assert replacement["request"]["followupWakeDigest"] == old_followup_wake
+    assert replacement["request"]["followupWakeDigest"] != later_followup_wake
+    assert replacement["request"]["intent"]["resultDigest"] == stale_intent_result_digest
+    assert replacement["request"]["resultDigest"] == request["resultDigest"]
+
+    replayed_again = MODULE.replay_managed_result(
+        SimpleNamespace(ledger=store.path, request_id=request_id)
+    )
+    assert replayed_again["replacementRequestId"] == replayed["replacementRequestId"]
+    assert replayed_again["validationUpgraded"] is False
+    assert replayed_again["worktreeFastForwarded"] is False
+    with store.connect() as connection:
+        update_requests = connection.execute(
+            "SELECT request_id FROM publication_requests "
+            "WHERE opportunity_key='a/b#1' AND commit_sha=?",
+            (desired_head,),
+        ).fetchall()
+    assert {row["request_id"] for row in update_requests} == {
+        request_id,
+        replayed["replacementRequestId"],
+    }
 
 
 def test_followup_commit_preserves_prepared_base_integration_diff(tmp_path):
@@ -16047,6 +16285,228 @@ def test_context_recovery_clears_only_exact_validation_auth_quarantine(monkeypat
     restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
     assert restored["stage"] == "PR_OPEN"
     assert restored["publicationReceipt"]["prUrl"] == pr_url
+
+
+def _missing_publication_receipt_quarantine_fixture(monkeypatch, tmp_path):
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(tmp_path, worktree=worktree)
+    _managed, current, _pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        degrade_stage=False,
+    )
+    shared_path = MODULE.shared_context_path(current["issueUrl"])
+    local_path = worktree / MODULE.TASK_PRIVATE_DIR / "task-context.json"
+    blocked_at = iso_z(datetime.now(UTC) + timedelta(minutes=1))
+    blocked_commit = "d" * 40
+    blocked_request = {
+        "requestId": "blocked-update-request",
+        "opportunityKey": current["key"],
+        "issueUrl": current["issueUrl"],
+        "intentId": current["intentId"],
+        "threadId": current["threadId"],
+        "worktreePath": current["worktreePath"],
+        "commitSha": blocked_commit,
+        "branch": current["publicationReceipt"]["branch"],
+        "publicationKind": "PR_UPDATE",
+        "existingPrUrl": current["publicationReceipt"]["prUrl"],
+        "previousCommitSha": current["publicationReceipt"]["commitSha"],
+    }
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,reason,request_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,'BLOCKED','ACTIVE_OR_CONDITIONAL_CLAIM',?,?,?)""",
+            (
+                blocked_request["requestId"],
+                blocked_request["opportunityKey"],
+                blocked_request["threadId"],
+                blocked_request["commitSha"],
+                blocked_request["branch"],
+                blocked_request["worktreePath"],
+                "blocked-update-evidence",
+                json.dumps(blocked_request, sort_keys=True),
+                blocked_at,
+                blocked_at,
+            ),
+        )
+    historical = dict(current) | {
+        "publicationReceipt": {
+            "status": "BLOCKED",
+            "prUrl": None,
+            "commitSha": blocked_request["commitSha"],
+            "branch": blocked_request["branch"],
+            "requestedAt": blocked_at,
+            "updatedAt": blocked_at,
+        },
+    }
+    historical_raw = (
+        json.dumps(historical, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+    shared_path.write_bytes(historical_raw)
+    local_path.write_bytes(historical_raw)
+
+    first = MODULE.recover_shared_task_contexts(store)
+
+    assert first["errors"] == []
+    assert first["verified"] == 0
+    assert first["quarantined"][0]["reason"] == "SHARED_CONTEXT_INVALID"
+    gate = next(
+        gate
+        for gate in store.active_task_quarantines(current["key"])
+        if gate["payload"].get("error")
+        == "published task context is missing a pull request receipt"
+    )
+    assert gate["payload"]["originalBytesSha256"] == hashlib.sha256(historical_raw).hexdigest()
+    return store, worktree, shared_path, local_path, historical, current, gate
+
+
+def test_missing_publication_receipt_repair_is_receipt_only_and_keeps_old_head(
+    monkeypatch, tmp_path
+):
+    store, worktree, shared_path, local_path, historical, current, gate = (
+        _missing_publication_receipt_quarantine_fixture(monkeypatch, tmp_path)
+    )
+    original_head = run_git(worktree, "rev-parse", "HEAD")
+    store.record_shared_context_quarantine(
+        key=current["key"],
+        reason="SHARED_CONTEXT_INVALID",
+        dedupe_key="unrelated-context-invalid",
+        payload={"error": "a different context failure"},
+        created_at=iso_z(datetime.now(UTC)),
+    )
+
+    cleared = MODULE._clear_exact_missing_publication_receipt_quarantine(
+        store,
+        path=local_path,
+        context=historical,
+    )
+
+    assert cleared == 1
+    assert run_git(worktree, "rev-parse", "HEAD") == original_head
+    assert shared_path.read_bytes() == local_path.read_bytes()
+    repaired = json.loads(shared_path.read_text(encoding="utf-8"))
+    historical_without_receipt = dict(historical)
+    historical_without_receipt.pop("publicationReceipt")
+    repaired_without_receipt = dict(repaired)
+    repaired_without_receipt.pop("publicationReceipt")
+    assert repaired_without_receipt == historical_without_receipt
+    assert repaired["contextDigest"] == historical["contextDigest"]
+    assert repaired["publicationReceipt"] == current["publicationReceipt"]
+    remaining = store.active_task_quarantines(current["key"])
+    assert [(item["reason"], item["dedupeKey"]) for item in remaining] == [
+        ("SHARED_CONTEXT_INVALID", "unrelated-context-invalid")
+    ]
+    with store.connect() as connection:
+        cleared_row = connection.execute(
+            "SELECT clear_payload_json FROM task_quarantines WHERE dedupe_key=?",
+            (gate["dedupeKey"],),
+        ).fetchone()
+    evidence = json.loads(cleared_row["clear_payload_json"])
+    assert evidence["repair"] == "DURABLE_PUBLICATION_RECEIPT_REPROJECTED"
+    assert evidence["prUrl"] == current["publicationReceipt"]["prUrl"]
+    assert evidence["commitSha"] == current["publicationReceipt"]["commitSha"]
+    assert evidence["branch"] == current["publicationReceipt"]["branch"]
+
+
+def test_context_recovery_replays_exact_missing_publication_receipt_gate(monkeypatch, tmp_path):
+    store, worktree, shared_path, local_path, _historical, current, _gate = (
+        _missing_publication_receipt_quarantine_fixture(monkeypatch, tmp_path)
+    )
+    original_head = run_git(worktree, "rev-parse", "HEAD")
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    assert recovered["verified"] == 1
+    assert store.active_task_quarantines(current["key"]) == []
+    assert shared_path.read_bytes() == local_path.read_bytes()
+    repaired = json.loads(shared_path.read_text(encoding="utf-8"))
+    assert repaired["publicationReceipt"] == current["publicationReceipt"]
+    assert run_git(worktree, "rev-parse", "HEAD") == original_head
+
+
+def test_missing_publication_receipt_repair_resumes_split_mirror_write(monkeypatch, tmp_path):
+    store, _worktree, shared_path, local_path, historical, current, _gate = (
+        _missing_publication_receipt_quarantine_fixture(monkeypatch, tmp_path)
+    )
+    repaired = dict(historical) | {"publicationReceipt": current["publicationReceipt"]}
+    repaired_raw = (
+        json.dumps(repaired, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+    local_path.write_bytes(repaired_raw)
+    assert shared_path.read_bytes() != local_path.read_bytes()
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    assert recovered["verified"] == 1
+    assert shared_path.read_bytes() == local_path.read_bytes() == repaired_raw
+    assert store.active_task_quarantines(current["key"]) == []
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["gate-dedupe", "artifact-metadata", "current-bytes", "ledger-permit", "managed-binding"],
+)
+def test_missing_publication_receipt_repair_fails_closed_on_tamper(monkeypatch, tmp_path, tamper):
+    store, _worktree, shared_path, local_path, historical, current, gate = (
+        _missing_publication_receipt_quarantine_fixture(monkeypatch, tmp_path)
+    )
+    if tamper == "gate-dedupe":
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE task_quarantines SET dedupe_key='tampered' WHERE dedupe_key=?",
+                (gate["dedupeKey"],),
+            )
+    elif tamper == "artifact-metadata":
+        artifact_path = Path(gate["payload"]["artifactPath"])
+        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+        artifact["originalMode"] = 0o640
+        artifact_path.write_text(
+            json.dumps(artifact, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    elif tamper == "current-bytes":
+        changed = dict(historical) | {"titleTime": "01-01 00:00"}
+        changed_raw = (
+            json.dumps(changed, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        ).encode("utf-8")
+        shared_path.write_bytes(changed_raw)
+        local_path.write_bytes(changed_raw)
+        historical = changed
+    elif tamper == "ledger-permit":
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE publication_permits SET branch='tampered-branch' "
+                "WHERE permit_id='published-authority-permit'"
+            )
+    elif tamper == "managed-binding":
+        with ManagedLedger(store.path, ensure_schema=True)._connection() as connection:
+            connection.execute(
+                "UPDATE managed_publication_reservations SET head_ref='tampered-branch' "
+                "WHERE reservation_key='publication:published-authority'"
+            )
+
+    before_shared = shared_path.read_bytes()
+    before_local = local_path.read_bytes()
+    cleared = MODULE._clear_exact_missing_publication_receipt_quarantine(
+        store,
+        path=shared_path,
+        context=historical,
+    )
+
+    assert cleared == 0
+    assert shared_path.read_bytes() == before_shared
+    assert local_path.read_bytes() == before_local
+    assert any(
+        item["reason"] == "SHARED_CONTEXT_INVALID"
+        for item in store.active_task_quarantines(current["key"])
+    )
 
 
 def test_published_validation_repair_is_idempotent_when_locked_writer_wins_race(

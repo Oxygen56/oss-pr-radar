@@ -468,6 +468,159 @@ def test_verified_task_context_rebuilds_publication_and_suppresses_duplicate(tmp
     assert store.pr_followup_candidates() == []
 
 
+@pytest.mark.parametrize("update_status", ["PENDING", "BLOCKED"])
+def test_task_context_keeps_consumed_pr_until_update_is_consumed(tmp_path, update_status):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    store.commit_dispatch(
+        "intent-1",
+        owner="controller",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": "https://github.com/a/b/pull/9"})
+    published_at = iso_z(datetime.now(UTC) - timedelta(minutes=2))
+    update_at = iso_z(datetime.now(UTC) - timedelta(minutes=1))
+    old_commit = "a" * 40
+    new_commit = "b" * 40
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES ('request-create','a/b#1','thread-1',?,'fix/runtime','/tmp/worktree',
+                       'evidence-create','CONSUMED','{}',?,?)""",
+            (old_commit, published_at, published_at),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES ('permit-create','request-create','https://github.com/a/b/issues/1',?,
+                       'fix/runtime','CONSUMED',?,'https://github.com/a/b/pull/9','{}',?,?)""",
+            (
+                old_commit,
+                iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                published_at,
+                published_at,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,reason,request_json,created_at,updated_at)
+               VALUES ('request-update','a/b#1','thread-1',?,'fix/runtime','/tmp/worktree',
+                       'evidence-update',?,?,'{"publicationKind":"PR_UPDATE"}',?,?)""",
+            (
+                new_commit,
+                update_status,
+                "ACTIVE_OR_CONDITIONAL_CLAIM" if update_status == "BLOCKED" else None,
+                update_at,
+                update_at,
+            ),
+        )
+
+    pending_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+
+    assert pending_context is not None
+    assert pending_context["publicationReceipt"] == {
+        "status": "PR_OPEN",
+        "prUrl": "https://github.com/a/b/pull/9",
+        "commitSha": old_commit,
+        "branch": "fix/runtime",
+        "requestedAt": published_at,
+        "updatedAt": published_at,
+    }
+
+    consumed_at = iso_z(datetime.now(UTC))
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE publication_requests
+               SET status='CONSUMED',reason=NULL,permit_id='permit-update',updated_at=?
+               WHERE request_id='request-update'""",
+            (consumed_at,),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES ('permit-update','request-update','https://github.com/a/b/issues/1',?,
+                       'fix/runtime','CONSUMED',?,'https://github.com/a/b/pull/9','{}',?,?)""",
+            (
+                new_commit,
+                iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                update_at,
+                consumed_at,
+            ),
+        )
+
+    consumed_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+
+    assert consumed_context is not None
+    assert consumed_context["publicationReceipt"] == {
+        "status": "PR_OPEN",
+        "prUrl": "https://github.com/a/b/pull/9",
+        "commitSha": new_commit,
+        "branch": "fix/runtime",
+        "requestedAt": update_at,
+        "updatedAt": consumed_at,
+    }
+
+
+@pytest.mark.parametrize("request_status", ["PENDING", "BLOCKED"])
+def test_task_context_without_consumed_pr_projects_current_request(tmp_path, request_status):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    store.commit_dispatch(
+        "intent-1",
+        owner="controller",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/worktree",
+    )
+    requested_at = iso_z(datetime.now(UTC))
+    commit_sha = "b" * 40
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,reason,request_json,created_at,updated_at)
+               VALUES ('request-update','a/b#1','thread-1',?,'fix/runtime','/tmp/worktree',
+                       'evidence-update',?,?,'{"publicationKind":"PR_UPDATE"}',?,?)""",
+            (
+                commit_sha,
+                request_status,
+                "ACTIVE_OR_CONDITIONAL_CLAIM" if request_status == "BLOCKED" else None,
+                requested_at,
+                requested_at,
+            ),
+        )
+
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+
+    assert context is not None
+    assert context["publicationReceipt"] == {
+        "status": request_status,
+        "prUrl": None,
+        "commitSha": commit_sha,
+        "branch": "fix/runtime",
+        "requestedAt": requested_at,
+        "updatedAt": requested_at,
+    }
+
+
 def test_published_context_recovery_ignores_expired_prepublication_freshness(tmp_path):
     old = iso_z(datetime.now(UTC) - timedelta(hours=2))
     context = published_task_context(liveAuditRecordedAt=old)
@@ -5127,6 +5280,75 @@ def _make_pr_followup_candidate(
     return key
 
 
+def _insert_pr_update_request(
+    store: RadarLedger,
+    *,
+    status: str,
+    commit_sha: str,
+) -> None:
+    now = iso_z(datetime.now(UTC))
+    permit_id = "permit-update" if status in {"GRANTED", "CONSUMED"} else None
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,permit_id,request_json,created_at,updated_at)
+               VALUES ('request-update','a/b#1','thread-1',?,'fix/intent-1','/tmp/worktree',
+                       'evidence-update',?,?,?,?,?)""",
+            (
+                commit_sha,
+                status,
+                permit_id,
+                json.dumps({"publicationKind": "PR_UPDATE", "commitSha": commit_sha}),
+                now,
+                now,
+            ),
+        )
+        if permit_id is not None:
+            connection.execute(
+                """INSERT INTO publication_permits
+                   (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                    evidence_json,created_at,updated_at)
+                   VALUES (?,'request-update','https://github.com/a/b/issues/1',?,
+                           'fix/intent-1',?,?,?,'{}',?,?)""",
+                (
+                    permit_id,
+                    commit_sha,
+                    "CONSUMED" if status == "CONSUMED" else "ACTIVE",
+                    iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                    "https://github.com/a/b/pull/9" if status == "CONSUMED" else None,
+                    now,
+                    now,
+                ),
+            )
+
+
+@pytest.mark.parametrize("request_status", ["PENDING", "GRANTED", "BLOCKED"])
+def test_pr_followup_candidates_wait_for_different_head_update(tmp_path, request_status):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    _make_pr_followup_candidate(store, head_sha="b" * 40)
+    _insert_pr_update_request(store, status=request_status, commit_sha="c" * 40)
+
+    assert store.pr_followup_candidates() == []
+
+
+@pytest.mark.parametrize("request_status", ["PENDING", "GRANTED", "BLOCKED"])
+def test_pr_followup_candidates_allow_same_head_update(tmp_path, request_status):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store, head_sha="b" * 40)
+    _insert_pr_update_request(store, status=request_status, commit_sha="b" * 40)
+
+    assert [candidate["key"] for candidate in store.pr_followup_candidates()] == [key]
+
+
+def test_pr_followup_candidates_allow_consumed_different_head_update(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store, head_sha="b" * 40)
+    _insert_pr_update_request(store, status="CONSUMED", commit_sha="c" * 40)
+
+    assert [candidate["key"] for candidate in store.pr_followup_candidates()] == [key]
+
+
 def test_pr_followup_candidates_exclude_active_task_quarantine(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     key = _make_pr_followup_candidate(store)
@@ -5500,7 +5722,6 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     assert still_bound["headSha"] == "b" * 40
     assert still_bound["preparedHeadSha"] == "d" * 40
 
-    previous_wake = candidate["wakeDigest"]
     store.record_stage("a/b#1", "FIX_READY", evidence={field: True for field in QUALITY_FIELDS})
     worktree, base_sha, head_sha, branch, probe_receipt, result_digest, evidence_path = (
         legal_publication_probe(tmp_path)
@@ -5556,8 +5777,14 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     )
     assert store.active_pr_followup("a/b#1") is None
     store.import_pr_followups(state)
-    rearmed = store.pr_followup_candidates()[0]
-    assert rearmed["wakeDigest"] != previous_wake
+    assert store.pr_followup_candidates() == []
+    receipt = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )["publicationReceipt"]
+    assert receipt["status"] == "PR_OPEN"
+    assert receipt["prUrl"] == "https://github.com/a/b/pull/9"
+    assert receipt["commitSha"] == "a" * 40
 
 
 def test_existing_publication_request_without_snapshot_upgrades_idempotently(tmp_path):

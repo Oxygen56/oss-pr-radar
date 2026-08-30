@@ -6181,7 +6181,18 @@ class RadarLedger:
                        FROM publication_requests r
                        LEFT JOIN publication_permits p ON p.request_id=r.request_id
                        WHERE r.opportunity_key=?
-                       ORDER BY r.updated_at DESC LIMIT 1""",
+                       ORDER BY
+                         CASE
+                           WHEN p.status='CONSUMED' AND p.pr_url IS NOT NULL THEN 1
+                           ELSE 0
+                         END DESC,
+                         CASE
+                           WHEN p.status='CONSUMED' AND p.pr_url IS NOT NULL
+                             THEN p.updated_at
+                           ELSE r.updated_at
+                         END DESC,
+                         r.updated_at DESC,r.created_at DESC,r.request_id DESC
+                       LIMIT 1""",
                     (row["key"],),
                 ).fetchone()
                 if row is not None
@@ -7757,6 +7768,7 @@ class RadarLedger:
         target_base: dict[str, str] | None = None,
         target_base_bound: bool = False,
         evidence_raw_base64: str | None = None,
+        replacement_of_request_id: str | None = None,
     ) -> dict[str, Any]:
         now = iso_z(datetime.now(UTC))
         request_identity = [
@@ -7822,6 +7834,28 @@ class RadarLedger:
                 (row["key"],),
             ).fetchone()
             quality = json.loads(outcome["quality_json"]) if outcome else {}
+            replacement_source = None
+            replacement_source_request = None
+            if replacement_of_request_id is not None:
+                replacement_source = connection.execute(
+                    "SELECT * FROM publication_requests WHERE request_id=?",
+                    (replacement_of_request_id,),
+                ).fetchone()
+                if (
+                    replacement_source is None
+                    or replacement_source["status"] != "BLOCKED"
+                    or replacement_source["opportunity_key"] != row["key"]
+                    or replacement_source["thread_id"] != thread_id
+                ):
+                    raise LedgerError(
+                        "publication replacement source is not an exact blocked request"
+                    )
+                try:
+                    replacement_source_request = json.loads(replacement_source["request_json"])
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise LedgerError("publication replacement source is invalid") from exc
+                if not isinstance(replacement_source_request, dict):
+                    raise LedgerError("publication replacement source is invalid")
             if previous_publication and previous_publication["branch"] != branch:
                 raise LedgerError("PR update must preserve the published branch")
             previous_commit_sha = (
@@ -7863,6 +7897,56 @@ class RadarLedger:
                         "existingPrUrl": previous_publication["pr_url"],
                         "previousCommitSha": previous_commit_sha,
                         "followupWakeDigest": followup["wake_digest"] if followup else None,
+                    }
+                )
+            if replacement_source_request is not None:
+                expected_source = {
+                    "opportunityKey": row["key"],
+                    "intentId": row["intent_id"],
+                    "issueUrl": issue_url,
+                    "threadId": thread_id,
+                    "commitSha": commit_sha,
+                    "branch": branch,
+                    "worktreePath": str(Path(worktree_path).resolve()),
+                    "evidencePath": str(Path(evidence_path).resolve()),
+                    "publication": publication,
+                    "resultDigest": result_digest,
+                    "headSha": head_sha or commit_sha,
+                    "selectedBaseSha": selected_base_sha,
+                    "codePaths": sorted(
+                        {str(path) for path in (code_paths or []) if str(path).strip()}
+                    ),
+                    "quality": quality,
+                    "publicationKind": "PR_UPDATE",
+                    "existingPrUrl": (
+                        previous_publication["pr_url"] if previous_publication else None
+                    ),
+                    "previousCommitSha": (
+                        str(previous_publication["commit_sha"]) if previous_publication else None
+                    ),
+                }
+                for field, expected_value in expected_source.items():
+                    if replacement_source_request.get(field) != expected_value:
+                        raise LedgerError(f"publication replacement source mismatch: {field}")
+                if target_base_bound or target_base is not None:
+                    if replacement_source_request.get("targetBase") != target_base:
+                        raise LedgerError("publication replacement source mismatch: targetBase")
+                elif "targetBase" in replacement_source_request:
+                    raise LedgerError("publication replacement source mismatch: targetBase")
+                if not isinstance(
+                    replacement_source_request.get("intent"), dict
+                ) or replacement_source_request.get("followupWakeDigest") in {None, ""}:
+                    raise LedgerError("publication replacement source update binding is incomplete")
+                # Preserve the historical PR-update authority exactly.  In
+                # particular, a later and possibly erroneous follow-up row must
+                # not silently replace the wake that authorized this commit.
+                request = dict(replacement_source_request)
+                request.update(
+                    {
+                        "requestId": request_id,
+                        "evidenceDigest": evidence_digest,
+                        "evidenceRawBase64": evidence_raw_base64,
+                        "probeReceipt": probe_receipt,
                     }
                 )
             request_allowed = _publication_probe_valid(request)
@@ -10259,6 +10343,15 @@ class RadarLedger:
                        p.status='CONSUMED' OR
                        (p.status='BLOCKED' AND r.reason='BLOCKED_REPRODUCTION_REQUIRED'
                         AND json_extract(r.request_json,'$.recoveredFromTaskContext')=1)
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM publication_requests update_request
+                       WHERE update_request.opportunity_key=o.key
+                         AND update_request.status IN ('PENDING','GRANTED','BLOCKED')
+                         AND json_extract(
+                           update_request.request_json,'$.publicationKind'
+                         )='PR_UPDATE'
+                         AND update_request.commit_sha<>f.head_sha
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
