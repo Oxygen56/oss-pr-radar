@@ -10011,6 +10011,46 @@
     ],
     "why": "The issue provides a clear root cause: the sequential pipeline FX-traces the vision tower even when it is excluded from quantization, and Qwen3-VL's rot_pos_emb is not FX-traceable on transformers 4.57.x. A minimal reproduction script and environment details are supplied, enabling a concrete validation path."
   },
+  "2cd36f642e54df827ee965aaa1cbbe7b887cc8b0f4c43d64e2dbc05cf8bfb008": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Original report claimed no CUDA DSA backend supports fp8 KV, but PR #36904 demonstrates a working path on SM121 and SM90"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "srt/layers/attention/dsa_backend.py",
+      "srt/mem_cache/kv_cache_configurator.py",
+      "srt/mem_cache/memory_pool.py",
+      "srt/arg_groups/overrides.py"
+    ],
+    "risks": [
+      "PR #36904 branches from a commit predating #36884/#36885, which may cause silent wrong output if not merged onto current head",
+      "Raw layout shifts pool accounting, potentially affecting max_running_requests resolution",
+      "Validation on SM90 is spot-checking, not a full accuracy suite"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run kernel-level one-hot exact case and scrambled-index negative control on SM90",
+      "Run boot-gate negative control (mixed backends + fp8 must raise)",
+      "Compare temperature=0 outputs vs bf16 baseline over fixed prompt set",
+      "Measure decode tok/s and TTFT at multiple context depths, bf16 vs fp8",
+      "Verify KV allocation tokens and max_running_requests accounting"
+    ],
+    "unknowns": [
+      "Whether PR #36904 will be merged and whether it fully resolves the issue without further changes",
+      "Exact impact of raw layout on pool accounting and max_running_requests on SM90"
+    ],
+    "why": "The issue provides a precise root cause chain (index_kpool>1 excludes flashmla_kv, no CUDA bf16-query x fp8-KV backend), concrete reproduction commands, and a validation path via PR #36904 which has been validated on SM90 and SM121. The evidence includes kernel-level tests, negative controls, and output parity checks, establishing a concrete reference-vs-implementation test."
+  },
   "2ce03d3d0a2d0af56eb1b08b32d2f655bfc1824d3df534f2394cced5f75c57a7": {
     "confidence": 0.7,
     "contradictions": [
@@ -14347,6 +14387,34 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The issue is a report-only meta-report with 8 confirmed latent bugs, each requiring maintainer design decisions (e.g., shared containment helper, dead code removal vs. implementation, migration precedence rule, thin-client remote config semantics). The maintainer has already acknowledged and confirmed the findings, but no implementation direction has been approved. The candidate is actionable but blocked on design confirmation for several items."
+  },
+  "4151e2ff7fcb22c4d9ecf2e37cc6f8cf901907eefa6e66d76c6ee9df9d9382db": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py: add phase guard to prevent classifying a one-token prefill remainder as a new decode when prefill is incomplete",
+      "vllm/v1/core/sched/scheduler.py: add defensive invariant to cancel speculative padding if final width is shortened by any limiter"
+    ],
+    "risks": [
+      "The proposed phase guard may affect other speculative decoding paths; need to ensure it does not regress normal decode scheduling.",
+      "The defensive invariant may need careful handling of token budget and other limiters to avoid over-cancellation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a scheduler unit test with hybrid Mamba align, block_size=384, K=7, one running decode request, and a waiting request with prompt_tokens=380 and external_computed_tokens=379; assert num_scheduled_tokens==1 and no speculative placeholders.",
+      "Parameterize the test for generic MTP/EAGLE to cover the same condition."
+    ],
+    "unknowns": [
+      "Whether the proposed fix has been validated on the exact failing configuration beyond the described experiments; the issue mentions backend-side experiments but not the exact scheduler fix validation."
+    ],
+    "why": "The issue provides a precise root cause: a scheduler invariant violation where synthetic speculative padding is not atomically preserved after Mamba block alignment, leading to a 5-token physical span with 7 speculative placeholders. It includes a concrete reproduction recipe, exact scheduler transition, and validation experiments. The proposed fix is a minimal phase guard plus a defensive invariant, with a clear regression test. This is a valuable algorithmic bug fix in the LLM inference scheduler."
   },
   "4155990f90121f056f9f0a29597537263685b079e4d774a54068758e55da37ec": {
     "confidence": 0.8,
