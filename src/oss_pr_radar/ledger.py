@@ -7151,11 +7151,17 @@ class RadarLedger:
                 else None
             )
             if scope_receipt is not None or authorized_resolution_files is not None:
+                scope_prepared_head = (
+                    str(scope_receipt.get("preparedHeadSha") or "")
+                    if isinstance(scope_receipt, dict)
+                    else ""
+                )
                 if (
                     not isinstance(followup_evidence, dict)
                     or not isinstance(scope_receipt, dict)
                     or not isinstance(authorized_resolution_files, list)
                     or not isinstance(followup_evidence.get("mergeConflictFiles"), list)
+                    or scope_prepared_head != str(pr_followup.get("headSha") or "")
                     or not verify_merge_resolution_scope_receipt(
                         scope_receipt,
                         key=str(row["key"]),
@@ -7168,11 +7174,7 @@ class RadarLedger:
                         pr_url=str(pr_followup.get("prUrl") or ""),
                         current_wake_digest=str(pr_followup.get("wakeDigest") or ""),
                         head_sha=str(pr_followup.get("headSha") or ""),
-                        prepared_head_sha=str(
-                            pr_followup.get("preparedHeadSha")
-                            or scope_receipt.get("preparedHeadSha")
-                            or ""
-                        ),
+                        prepared_head_sha=scope_prepared_head,
                         base_sha=str(followup_evidence.get("baseSha") or ""),
                         merge_conflict_files=followup_evidence.get("mergeConflictFiles"),
                         authorized_resolution_files=authorized_resolution_files,

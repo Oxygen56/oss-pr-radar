@@ -8067,6 +8067,106 @@ def test_empty_ledger_context_recovery_projects_tombstone_until_new_result(
     assert "codePathTombstoneReceipt" not in superseded
 
 
+def test_empty_ledger_recovery_preserves_historical_merge_scope_with_current_tombstone(
+    tmp_path,
+):
+    from oss_pr_radar.repo_probe import attest_merge_resolution_scope
+
+    worktree_path = str(tmp_path / "managed-worktree-merge-scope")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    historical_head = str(snapshot["headSha"])
+    current_head = str(tombstone_receipt["preparedHeadSha"])
+    merge_receipt = attest_merge_resolution_scope(
+        key="a/b#1",
+        issue_url="https://github.com/a/b/issues/1",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path_fingerprint=sha256_text(str(Path(worktree_path).resolve())),
+        pr_url=str(snapshot["prUrl"]),
+        source_wake_digest="a" * 64,
+        request_result_digest="b" * 64,
+        head_sha=historical_head,
+        prepared_head_sha=historical_head,
+        base_sha="6" * 40,
+        merge_conflict_files=["present.py"],
+        authorized_resolution_files=["present.py", "split/present.py"],
+    )
+    tombstone_receipt, snapshot = _resign_recovered_tombstone(
+        reproduction_receipt=reproduction_receipt,
+        snapshot=snapshot,
+        worktree_path=worktree_path,
+        prepared_head_sha=current_head,
+        wake_digest=str(merge_receipt["authorizedWakeDigest"]),
+        checked_at="2026-08-30T04:00:00Z",
+    )
+    snapshot["evidence"] = {
+        "mergeConflict": True,
+        "baseSha": "6" * 40,
+        "mergeConflictFiles": ["present.py"],
+        "authorizedResolutionFiles": ["present.py", "split/present.py"],
+        "mergeResolutionScopeReceipt": merge_receipt,
+    }
+    context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="recovered-merge-scope-context",
+    )
+    store = RadarLedger(tmp_path / "recovered-merge-scope.sqlite3")
+
+    store.restore_task_context(context)
+    recovered = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+
+    assert recovered["headSha"] == current_head
+    assert recovered["commitSha"] == current_head
+    assert recovered["prFollowup"]["preparedHeadSha"] == current_head
+    assert recovered["codePathTombstoneReceipt"]["preparedHeadSha"] == current_head
+    assert recovered["prFollowup"]["headSha"] == historical_head
+    assert (
+        recovered["prFollowup"]["evidence"]["mergeResolutionScopeReceipt"]["preparedHeadSha"]
+        == historical_head
+    )
+
+    mismatched_merge_receipt = attest_merge_resolution_scope(
+        key="a/b#1",
+        issue_url="https://github.com/a/b/issues/1",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path_fingerprint=sha256_text(str(Path(worktree_path).resolve())),
+        pr_url=str(snapshot["prUrl"]),
+        source_wake_digest="a" * 64,
+        request_result_digest="b" * 64,
+        head_sha=historical_head,
+        prepared_head_sha=current_head,
+        base_sha="6" * 40,
+        merge_conflict_files=["present.py"],
+        authorized_resolution_files=["present.py", "split/present.py"],
+    )
+    mismatched_snapshot = json.loads(json.dumps(snapshot))
+    mismatched_snapshot["evidence"]["mergeResolutionScopeReceipt"] = mismatched_merge_receipt
+    mismatched_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=mismatched_snapshot,
+        context_digest="mismatched-merge-scope-context",
+    )
+    mismatched_store = RadarLedger(tmp_path / "mismatched-merge-scope.sqlite3")
+    mismatched_store.restore_task_context(mismatched_context)
+    with pytest.raises(LedgerError, match="resolution scope receipt is invalid"):
+        mismatched_store.task_context(
+            issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+        )
+
+
 def test_newer_context_revokes_old_tombstone_authority_and_blocks_replay(tmp_path):
     from oss_pr_radar.managed_lifecycle import ManagedLedger
     from oss_pr_radar.repo_probe import attest_code_path_tombstones

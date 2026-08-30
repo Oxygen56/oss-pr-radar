@@ -1298,8 +1298,10 @@ def test_review_binds_conflict_and_authorized_resolution_scopes_separately(
             },
         },
     }
+    projected_context = json.loads(json.dumps(context))
+    projected_context["prFollowup"]["preparedHeadSha"] = head
     (worktree / ".oss-pr-radar" / "task-context.json").write_text(
-        json.dumps(context), encoding="utf-8"
+        json.dumps(projected_context), encoding="utf-8"
     )
     value = json.loads(result_path.read_text(encoding="utf-8"))
     value.update(
@@ -1321,6 +1323,33 @@ def test_review_binds_conflict_and_authorized_resolution_scopes_separately(
         "service.py",
         "service/new.py",
     ]
+    mismatched_receipt = attest_merge_resolution_scope(
+        key="owner/repo#1",
+        issue_url="https://github.com/owner/repo/issues/1",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path_fingerprint=module.hashlib.sha256(
+            str(worktree.resolve()).encode("utf-8")
+        ).hexdigest(),
+        pr_url="https://github.com/owner/repo/pull/7",
+        source_wake_digest=source_wake,
+        request_result_digest="b" * 64,
+        head_sha=previous_head,
+        prepared_head_sha=head,
+        base_sha=merge_base,
+        merge_conflict_files=["service.py"],
+        authorized_resolution_files=["service.py", "service/new.py"],
+    )
+    mismatched_context = json.loads(json.dumps(projected_context))
+    mismatched_context["prFollowup"]["evidence"]["mergeResolutionScopeReceipt"] = mismatched_receipt
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        json.dumps(mismatched_context), encoding="utf-8"
+    )
+    with pytest.raises(RuntimeError, match="scope receipt is invalid"):
+        module._bound_merge_resolution_scope(worktree, value)
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        json.dumps(projected_context), encoding="utf-8"
+    )
     forged = value | {
         "controllerCommitChangedFiles": ["service.py"],
         "mergeResolutionFiles": ["service.py"],

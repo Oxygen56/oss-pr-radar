@@ -135,22 +135,29 @@ def controller_merge_resolution_scope(
         resolution_files = _safe_changed_files(authorized)
     except RuntimeError as exc:
         raise RuntimeError("controller merge resolution scope is invalid") from exc
-    if not isinstance(receipt, dict) or not verify_merge_resolution_scope_receipt(
-        receipt,
-        key=str(context.get("key") or ""),
-        issue_url=str(context.get("issueUrl") or ""),
-        intent_id=str(context.get("intentId") or ""),
-        thread_id=str(context.get("threadId") or ""),
-        worktree_path_fingerprint=hashlib.sha256(
-            str(worktree.resolve()).encode("utf-8")
-        ).hexdigest(),
-        pr_url=str(followup.get("prUrl") or ""),
-        current_wake_digest=str(followup.get("wakeDigest") or ""),
-        head_sha=str(followup.get("headSha") or ""),
-        prepared_head_sha=str(followup.get("preparedHeadSha") or ""),
-        base_sha=expected_base,
-        merge_conflict_files=conflict_files,
-        authorized_resolution_files=resolution_files,
+    receipt_prepared_head = (
+        str(receipt.get("preparedHeadSha") or "") if isinstance(receipt, dict) else ""
+    )
+    if (
+        not isinstance(receipt, dict)
+        or receipt_prepared_head != expected_head
+        or not verify_merge_resolution_scope_receipt(
+            receipt,
+            key=str(context.get("key") or ""),
+            issue_url=str(context.get("issueUrl") or ""),
+            intent_id=str(context.get("intentId") or ""),
+            thread_id=str(context.get("threadId") or ""),
+            worktree_path_fingerprint=hashlib.sha256(
+                str(worktree.resolve()).encode("utf-8")
+            ).hexdigest(),
+            pr_url=str(followup.get("prUrl") or ""),
+            current_wake_digest=str(followup.get("wakeDigest") or ""),
+            head_sha=str(followup.get("headSha") or ""),
+            prepared_head_sha=receipt_prepared_head,
+            base_sha=expected_base,
+            merge_conflict_files=conflict_files,
+            authorized_resolution_files=resolution_files,
+        )
     ):
         raise RuntimeError("controller merge resolution scope receipt is invalid")
     return resolution_files
