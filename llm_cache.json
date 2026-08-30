@@ -3865,6 +3865,35 @@
     ],
     "why": "Issue reports a clear bug with root cause and minimal repro, but the deterministic gate requires HUMAN_REVIEW and the repository has an AI disclosure policy that blocks automated action. Existing PR #50955 is weak (failed CI) and may be a competition opportunity, but maintainer confirmation is needed."
   },
+  "1139c9b3d001ed1b4866d0212ea8d94d9a44359eb91b4a114db3150f5979c068": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/engine/output_processor.py",
+      "components/src/dynamo/vllm/handlers.py",
+      "lib/llm/src/kv_router/prefill_router/admission.rs",
+      "lib/llm/src/protocols/common/preprocessor.rs"
+    ],
+    "risks": [
+      "Protocol change may affect existing single-choice behavior",
+      "Potential performance impact from handling multiple handoffs"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided curl command and inspect prefill worker logs for multiple handoff lines",
+      "Add regression test for n>1 disaggregated serving verifying all choices' KV handoff reaches decode worker"
+    ],
+    "unknowns": [
+      "Exact maintainer design preference for protocol extension"
+    ],
+    "why": "Issue provides a clear user-visible bug with detailed reproduction steps and a contributor's root-cause analysis identifying specific code paths and protocol gaps. The fix is actionable and testable."
+  },
   "113ea4100d7da2e79ff9501a1cda4d7c98872d9e24d5c672b1639681b25fe21e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -27536,6 +27565,41 @@
     "wait_reason": null,
     "why": "Issue identifies a concrete algorithmic bug in ThinkingBudgetStateHolder: it fails to treat <tool_call> as an implicit reasoning end, causing forced reasoning_end tokens to corrupt tool-call arguments. Existing PRs #44689/#44690 are weak (no tests, stale, CI failures), so a materially better PR with regression tests is plausible."
   },
+  "74f47f69677345b177581c80356b46ee695982d90efad36d2c9125fdaa112c0c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue claims the bug is in the hosted gateway, but the code anchors point to client-side packages; the reproduction comments state the failure occurs without AI SDK code, suggesting the fix may be outside this repository."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/gateway/src/gateway-provider.ts",
+      "packages/gateway/src/gateway-language-model.ts",
+      "packages/open-responses/src/responses/open-responses-language-model.ts",
+      "packages/open-responses/src/responses/convert-to-open-responses-input.ts",
+      "packages/openai/src/responses/openai-responses-language-model.ts",
+      "packages/openai/src/responses/convert-to-openai-responses-input.ts"
+    ],
+    "risks": [
+      "The fix may require changes to the hosted AI Gateway backend, which is not fully open-source; the repository may only contain client-side code, making the fix not directly implementable in this repo.",
+      "Potential API behavior changes could affect existing clients if signature fields are added to responses."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided curl commands to reproduce the 400 error with two parallel function calls on /v1/responses, then verify the fix returns 200 and includes thought signatures in the response.",
+      "Add a regression test that replays a conversation with two parallel function calls and asserts the request succeeds and includes signature material."
+    ],
+    "unknowns": [
+      "Whether the AI Gateway backend code is available in this repository or if the fix must be submitted to a separate service.",
+      "Whether maintainers have acknowledged the issue and are willing to accept a fix in this repo."
+    ],
+    "why": "The issue provides a clear, reproducible bug in the AI Gateway's /v1/responses emulation for Gemini 3: thought signatures are not surfaced, and replaying parallel function calls fails with HTTP 400. The root cause is identified as missing signature transport in the gateway backend, with a concrete contrast to the working /v1/chat/completions path. The issue includes minimal reproduction commands and a test matrix, making it actionable."
+  },
   "74facd5ee6348ff75f344cb5c5dce2bbaa4a4aa323da3c1dbd489a9b1fb1ab54": {
     "confidence": 0.85,
     "contradictions": [
@@ -39391,6 +39455,32 @@
     ],
     "why": "Issue provides a detailed root cause and fix direction, but the deterministic gate requires HUMAN_REVIEW and existing PR #19217 overlaps semantically, needing maintainer comparison before new work."
   },
+  "ab813c6024e058e14b6e5b06498162f5791e33fe94469d89146016fcdbe76f5f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "LoRA reference counting in parallel-sampling path",
+      "prefix-cache warm-up request accounting"
+    ],
+    "risks": [
+      "Fix may interact with existing PRs #25747 and #31808; need to coordinate or compare implementations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script with n=16 and verify unload completes",
+      "Add regression test for LoRA unload after parallel-sampling traffic"
+    ],
+    "unknowns": [
+      "Exact implementation details of the fix and whether existing PRs are complete"
+    ],
+    "why": "The issue provides a deterministic reproduction and a comment identifies the root cause as an extra LoRA reference release in the parallel-sampling path, with existing fix PRs #25747 and #31808. This is a concrete, actionable algorithm bug in LoRA reference counting."
+  },
   "abd0dc83190a49c628ea83f21d4e43004b4b2cac3d2f627613be493686ec1dd3": {
     "confidence": 0.85,
     "contradictions": [],
@@ -40736,6 +40826,32 @@
       "Maintainer decision on accepting the behavior change is pending"
     ],
     "why": "Issue provides a precise root cause with code anchors, a concrete reproduction using a public MCP server, and a clear expected behavior. The triage confirms the static analysis and identifies implementation dependencies. The proposed fix direction is sound and actionable."
+  },
+  "b1c6494aa96b09d470c299f70f37830f3ab1289a4eacfa3d6d900fcf1af222e4": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/extensions/ai-load-balancer/main.go: restore ctx.DisableReroute() in onHttpRequestHeaders",
+      "Add regression test for cross-service LB + model routing scenario"
+    ],
+    "risks": [
+      "Potential behavior change if other ai-load-balancer strategies depend on reroute; need to verify no regressions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by configuring AI route with model routing and ai-load-balancer with lb_type: cluster, lb_policy: cluster_metrics; verify 404 occurs. After fix, assert request succeeds and route matching survives x-higress-target-cluster header write."
+    ],
+    "unknowns": [
+      "Whether existing PR #4043 or #4352 already addresses this exact issue; need to compare implementation boundaries."
+    ],
+    "why": "Issue provides a precise root cause: #3063 accidentally removed ctx.DisableReroute() from ai-load-balancer's onHttpRequestHeaders, causing route cache invalidation and 404s when combined with model routing. The fix is a one-line revert plus regression test, with clear reproduction steps and code anchors."
   },
   "b23458a086727897c48c5afb097272de6041089847c1ce2260ffeff3434407ee": {
     "confidence": 0.85,
