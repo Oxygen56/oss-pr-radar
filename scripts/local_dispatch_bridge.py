@@ -17992,6 +17992,9 @@ def _replay_managed_result_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError("publication request payload is invalid")
     if row.get("status") != "BLOCKED":
         raise RuntimeError("managed result replay requires a blocked publication request")
+    replay_result_watermark = store.managed_replay_task_result_watermark(
+        request_id=str(args.request_id)
+    )
     row_bindings = {
         "requestId": row.get("request_id"),
         "opportunityKey": row.get("opportunity_key"),
@@ -18105,6 +18108,69 @@ def _replay_managed_result_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError("publication request historical receipt time is invalid") from exc
     if not receipt_observed_at <= request_created_at <= receipt_expires_at:
         raise RuntimeError("publication request was not created within its receipt lifetime")
+
+    existing_replacement = store.managed_replay_replacement(source_request_id=str(args.request_id))
+    replacement_value: dict[str, Any] | None = None
+    if existing_replacement is not None:
+        replacement_request = existing_replacement.get("request")
+        if existing_replacement.get("status") not in {"PENDING", "BLOCKED"} or not isinstance(
+            replacement_request, dict
+        ):
+            raise RuntimeError("managed result replay replacement is not reusable")
+        replacement_value, replacement_evidence_digest = publication_evidence_from_request(
+            replacement_request
+        )
+        replacement_snapshot_base64 = replacement_request.get("evidenceRawBase64")
+        if not isinstance(replacement_snapshot_base64, str):
+            raise RuntimeError("managed result replay replacement evidence is missing")
+        replacement_raw = base64.b64decode(
+            replacement_snapshot_base64.encode("ascii"), validate=True
+        )
+        replacement_receipt = replacement_value.get("reproductionReceipt") or replacement_value.get(
+            "probeReceipt"
+        )
+        source_semantics = dict(value)
+        source_semantics.pop("reproductionReceipt", None)
+        source_semantics.pop("probeReceipt", None)
+        replacement_semantics = dict(replacement_value)
+        replacement_semantics.pop("reproductionReceipt", None)
+        replacement_semantics.pop("probeReceipt", None)
+        try:
+            replacement_observed_at = parse_time(
+                str((replacement_receipt or {}).get("observedAt") or "")
+            )
+            replacement_bound_at = parse_time(
+                str(existing_replacement.get("snapshotBoundAt") or "")
+            )
+            replacement_expires_at = parse_time(
+                str((replacement_receipt or {}).get("expiresAt") or "")
+            )
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("managed result replay replacement receipt time is invalid") from exc
+        if (
+            hashlib.sha256(replacement_raw).hexdigest() != replacement_evidence_digest
+            or _task_result_digest(replacement_value, replacement_raw)
+            != str(request["resultDigest"])
+            or replacement_semantics != source_semantics
+            or replacement_request.get("probeReceipt") != replacement_receipt
+            or not isinstance(replacement_receipt, dict)
+            or not verify_probe_receipt(
+                replacement_receipt,
+                repo=issue_match.group(1),
+                base_sha=str(request.get("selectedBaseSha") or ""),
+                code_paths=[str(path) for path in request.get("codePaths") or []],
+                required_level=REPRODUCED_VALIDATED,
+                issue_url=str(request["issueUrl"]),
+                task_id=str(request["intentId"]),
+                thread_id=str(request["threadId"]),
+                head_sha=str(request["headSha"]),
+                commit_sha=str(request["commitSha"]),
+                result_digest=str(request["resultDigest"]),
+                enforce_freshness=False,
+            )
+            or not replacement_observed_at <= replacement_bound_at <= replacement_expires_at
+        ):
+            raise RuntimeError("managed result replay replacement evidence changed")
 
     candidate = dict(intent) | {
         "intentId": request["intentId"],
@@ -18406,23 +18472,104 @@ def _replay_managed_result_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         or persisted_result.get("validationValid") is not True
     ):
         raise RuntimeError("managed result replay validation did not persist")
+    if tombstone_receipt is not None:
+        validation_json = str(persisted_result.get("validation_json") or "")
+        continuation_binding = store.bind_managed_replay_task_result_continuation(
+            request_id=str(args.request_id),
+            durable_receipt=durable_receipt,
+            managed_result_key=result_key,
+            managed_validation_digest=hashlib.sha256(validation_json.encode("utf-8")).hexdigest(),
+            expected_watermark=replay_result_watermark,
+        )
+        if continuation_binding.get("alreadyCurrent") is not True:
+            raise RuntimeError("managed result replay continuation did not become current")
+        rebound_context = store.task_context(
+            issue_url=str(request["issueUrl"]),
+            thread_id=str(request["threadId"]),
+        )
+        if (
+            not isinstance(rebound_context, dict)
+            or rebound_context.get("codePathTombstoneContinuationHeadSha") != desired_commit
+        ):
+            raise RuntimeError("managed result replay continuation projection is invalid")
 
-    replacement = _request_publication_from_task_result(
-        store,
-        candidate=candidate,
-        result_access=result_access,
-        value=normalized,
-        raw=normalized_raw,
-        review_state_root=_review_state_root(args),
-        review_context=review_context,
-        replacement_of_request_id=str(args.request_id),
-    )
+    if existing_replacement is None:
+        replacement = _request_publication_from_task_result(
+            store,
+            candidate=candidate,
+            result_access=result_access,
+            value=normalized,
+            raw=normalized_raw,
+            review_state_root=_review_state_root(args),
+            review_context=review_context,
+            replacement_of_request_id=str(args.request_id),
+        )
+    else:
+        replacement = existing_replacement
+        normalized_evidence_digest = hashlib.sha256(normalized_raw).hexdigest()
+        normalized_evidence_base64 = base64.b64encode(normalized_raw).decode("ascii")
+        normalized_receipt = normalized.get("reproductionReceipt") or normalized.get("probeReceipt")
+        if (
+            replacement.get("status") == "BLOCKED"
+            and replacement.get("reason") == "BLOCKED_REPRODUCTION_REQUIRED"
+        ):
+            if not isinstance(normalized_receipt, dict):
+                raise RuntimeError("managed result replay refreshed receipt is missing")
+            replacement = store.refresh_managed_replay_replacement(
+                source_request_id=str(args.request_id),
+                replacement_request_id=str(replacement["request_id"]),
+                expected_source=row,
+                expected_replacement=replacement,
+                new_evidence_digest=normalized_evidence_digest,
+                new_evidence_raw_base64=normalized_evidence_base64,
+                new_probe_receipt=normalized_receipt,
+            )
+        elif replacement.get("status") == "PENDING":
+            replacement_request = replacement.get("request")
+            if (
+                not isinstance(replacement_request, dict)
+                or not isinstance(replacement_receipt, dict)
+                or not isinstance(replacement_request.get("evidenceRawBase64"), str)
+            ):
+                raise RuntimeError("managed result replay pending replacement is invalid")
+            replacement = store.refresh_managed_replay_replacement(
+                source_request_id=str(args.request_id),
+                replacement_request_id=str(replacement["request_id"]),
+                expected_source=row,
+                expected_replacement=replacement,
+                new_evidence_digest=str(replacement["evidence_digest"]),
+                new_evidence_raw_base64=str(replacement_request["evidenceRawBase64"]),
+                new_probe_receipt=replacement_receipt,
+            )
+        elif (
+            replacement.get("status") == "BLOCKED"
+            and replacement.get("reason") == "CONTROLLER_INDEPENDENT_REVIEW_REQUIRED"
+        ):
+            review = _controller_review_result(
+                args,
+                normalized,
+                review_context=review_context,
+            )
+            if review and review.get("verdict") == "PASS":
+                retried = store.retry_blocked_publication_request(
+                    str(replacement["request_id"]),
+                    expected_reason="CONTROLLER_INDEPENDENT_REVIEW_REQUIRED",
+                )
+                replacement = {
+                    **replacement,
+                    **retried,
+                    "reason": None,
+                    "request": replacement["request"],
+                }
+        else:
+            raise RuntimeError("managed result replay replacement is not reusable")
     replacement_id = str(replacement.get("request_id") or replacement.get("requestId") or "")
     replacement_payload = replacement.get("request")
+    replacement_status = str(replacement.get("status") or "")
     if (
         not replacement_id
         or replacement_id == args.request_id
-        or replacement.get("status") != "PENDING"
+        or replacement_status != "PENDING"
         or replacement.get("reason") is not None
         or not isinstance(replacement_payload, dict)
         or replacement_payload.get("publicationKind") != "PR_UPDATE"
@@ -18448,7 +18595,7 @@ def _replay_managed_result_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         "worktreeFastForwarded": fast_forwarded,
         "resultSnapshotRestored": True,
         "replacementRequestId": replacement_id,
-        "replacementStatus": "PENDING",
+        "replacementStatus": replacement_status,
         "publicationTriggered": False,
     }
 

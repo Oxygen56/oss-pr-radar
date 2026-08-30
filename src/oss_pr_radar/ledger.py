@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 import secrets
@@ -476,6 +478,169 @@ _EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE = """
 
 class LedgerError(RuntimeError):
     pass
+
+
+_MANAGED_REPLAY_REFRESHED_REQUEST_FIELDS = frozenset(
+    {"requestId", "evidenceDigest", "evidenceRawBase64", "probeReceipt"}
+)
+
+
+def _managed_replay_immutable_request(request: dict[str, Any]) -> dict[str, Any]:
+    return {
+        field: value
+        for field, value in request.items()
+        if field not in _MANAGED_REPLAY_REFRESHED_REQUEST_FIELDS
+    }
+
+
+def _managed_replay_creation_snapshot(
+    connection: sqlite3.Connection,
+    *,
+    row: sqlite3.Row,
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    """Authenticate the original snapshot from which a stable request ID was derived."""
+
+    event_rows = connection.execute(
+        """SELECT * FROM events
+           WHERE opportunity_key=? AND event_type='PUBLICATION_REQUESTED'
+             AND dedupe_key=?""",
+        (row["opportunity_key"], row["request_id"]),
+    ).fetchall()
+    if len(event_rows) != 1:
+        raise LedgerError("managed replay replacement creation event is missing")
+    event_row = event_rows[0]
+    try:
+        original = json.loads(event_row["payload_json"])
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise LedgerError("managed replay replacement creation event is invalid") from exc
+    if not isinstance(original, dict):
+        raise LedgerError("managed replay replacement creation event is invalid")
+    original_evidence_digest = str(original.get("evidenceDigest") or "")
+    original_snapshot = original.get("evidenceRawBase64")
+    if not isinstance(original_snapshot, str):
+        raise LedgerError("managed replay replacement creation snapshot is missing")
+    try:
+        original_raw = base64.b64decode(original_snapshot.encode("ascii"), validate=True)
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise LedgerError("managed replay replacement creation snapshot is invalid") from exc
+    identity = [
+        str(original.get("issueUrl") or ""),
+        str(original.get("threadId") or ""),
+        str(original.get("commitSha") or ""),
+        str(original.get("branch") or ""),
+        str(original.get("worktreePath") or ""),
+        original_evidence_digest,
+        canonical_json(original.get("publication")),
+    ]
+    if original.get("targetBase") is not None:
+        identity.append(canonical_json(original["targetBase"]))
+    if (
+        event_row["created_at"] != row["created_at"]
+        or original.get("requestId") != row["request_id"]
+        or sha256_text("|".join(identity)) != row["request_id"]
+        or not re.fullmatch(r"[0-9a-f]{64}", original_evidence_digest)
+        or hashlib.sha256(original_raw).hexdigest() != original_evidence_digest
+        or _managed_replay_immutable_request(original) != _managed_replay_immutable_request(request)
+    ):
+        raise LedgerError("managed replay replacement creation identity changed")
+    return original
+
+
+def _validate_managed_replay_lineage_authority(
+    connection: sqlite3.Connection,
+    *,
+    opportunity_key: str,
+    source_request_id: str,
+    source: dict[str, Any],
+    lineage: dict[str, Any],
+    refreshed_at: str,
+) -> None:
+    authority_id = lineage.get("authorityEventId")
+    continuation_key = str(lineage.get("continuationDedupeKey") or "")
+    if (
+        not isinstance(authority_id, int)
+        or authority_id <= 0
+        or not re.fullmatch(r"[0-9a-f]{64}", continuation_key)
+    ):
+        raise LedgerError("managed replay replacement lineage authority is invalid")
+    authority_row = connection.execute(
+        "SELECT * FROM events WHERE id=? AND opportunity_key=?",
+        (authority_id, opportunity_key),
+    ).fetchone()
+    continuation_row = connection.execute(
+        """SELECT * FROM events
+           WHERE opportunity_key=?
+             AND event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+             AND dedupe_key=?""",
+        (opportunity_key, continuation_key),
+    ).fetchone()
+    if (
+        authority_row is None
+        or authority_row["event_type"] != "TASK_RESULT_AUTHORITY_BOUND"
+        or continuation_row is None
+    ):
+        raise LedgerError("managed replay replacement lineage authority is invalid")
+    try:
+        authority = json.loads(authority_row["payload_json"])
+        continuation = json.loads(continuation_row["payload_json"])
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise LedgerError("managed replay replacement lineage authority is invalid") from exc
+    if not isinstance(authority, dict) or not isinstance(continuation, dict):
+        raise LedgerError("managed replay replacement lineage authority is invalid")
+    source_result_event_id = authority.get("sourceResultEventId")
+    result_row = (
+        connection.execute(
+            "SELECT * FROM events WHERE id=? AND opportunity_key=?",
+            (source_result_event_id, opportunity_key),
+        ).fetchone()
+        if isinstance(source_result_event_id, int) and source_result_event_id > 0
+        else None
+    )
+    authority_state = {
+        field: authority.get(field)
+        for field in (
+            "taskId",
+            "threadId",
+            "sourceResultEventId",
+            "resultDigest",
+            "continuationDedupeKey",
+            "tombstoneReceiptDigest",
+        )
+    }
+    tombstone = continuation.get("codePathTombstoneReceipt")
+    try:
+        refresh_time = parse_time(refreshed_at)
+        result_time = parse_time(str(result_row["created_at"] if result_row else ""))
+        authority_time = parse_time(str(authority.get("authorityObservedAt") or ""))
+        continuation_time = parse_time(str(continuation_row["created_at"]))
+    except (TypeError, ValueError) as exc:
+        raise LedgerError("managed replay replacement lineage authority is invalid") from exc
+    if (
+        authority.get("sourcePublicationRequestId") != source_request_id
+        or result_row is None
+        or result_row["event_type"] != "TASK_RESULT_INGESTED"
+        or result_row["dedupe_key"] != source.get("resultDigest")
+        or authority.get("continuationDedupeKey") != continuation_key
+        or authority.get("taskId") != source.get("intentId")
+        or authority.get("threadId") != source.get("threadId")
+        or authority.get("resultDigest") != source.get("resultDigest")
+        or authority.get("authorityStateDigest") != sha256_json(authority_state)
+        or authority.get("authorityObservedAt") != authority_row["created_at"]
+        or continuation.get("sourcePublicationRequestId") != source_request_id
+        or continuation.get("taskId") != source.get("intentId")
+        or continuation.get("threadId") != source.get("threadId")
+        or continuation.get("continuationHeadSha") != source.get("commitSha")
+        or continuation.get("resultDigest") != source.get("resultDigest")
+        or continuation.get("sourceResultEventId") != authority.get("sourceResultEventId")
+        or continuation_row["dedupe_key"] != sha256_json(continuation)
+        or not isinstance(tombstone, dict)
+        or authority.get("tombstoneReceiptDigest") != sha256_json(tombstone)
+        or authority_time >= refresh_time
+        or continuation_time >= refresh_time
+        or not result_time <= continuation_time <= authority_time
+    ):
+        raise LedgerError("managed replay replacement lineage authority is invalid")
 
 
 class RadarLedger:
@@ -6370,9 +6535,26 @@ class RadarLedger:
             )
             latest_task_result_row = (
                 connection.execute(
-                    """WITH current_result AS (
+                    """WITH result_candidates AS (
                          SELECT result2.id,result2.opportunity_key,result2.dedupe_key,
-                                result2.created_at
+                                result2.created_at,
+                                (
+                                  SELECT MAX(authority.id) FROM events authority
+                                  WHERE authority.opportunity_key=result2.opportunity_key
+                                    AND authority.event_type='TASK_RESULT_AUTHORITY_BOUND'
+                                    AND json_extract(
+                                      authority.payload_json,'$.taskId'
+                                    )=?
+                                    AND json_extract(
+                                      authority.payload_json,'$.threadId'
+                                    )=?
+                                    AND json_extract(
+                                      authority.payload_json,'$.sourceResultEventId'
+                                    )=result2.id
+                                    AND json_extract(
+                                      authority.payload_json,'$.resultDigest'
+                                    )=result2.dedupe_key
+                                ) AS selection_authority_id
                          FROM events result2
                          WHERE result2.opportunity_key=?
                            AND result2.event_type='TASK_RESULT_INGESTED'
@@ -6404,13 +6586,20 @@ class RadarLedger:
                                  AND json_extract(binding.payload_json,'$.threadId')=?
                              )
                            )
-                         ORDER BY result2.id DESC LIMIT 1
+                       ), current_result AS (
+                         SELECT *,MAX(id,COALESCE(selection_authority_id,0)) AS selection_id
+                         FROM result_candidates
+                         ORDER BY selection_id DESC,id DESC LIMIT 1
                        )
                        SELECT result.id AS result_id,
                               result.created_at AS result_created_at,
                               continuation.dedupe_key AS continuation_dedupe_key,
-                              continuation.payload_json AS continuation_json
+                              continuation.payload_json AS continuation_json,
+                              authority.id AS selection_authority_id,
+                              authority.payload_json AS selection_authority_json
                        FROM current_result result
+                       LEFT JOIN events authority
+                         ON authority.id=result.selection_authority_id
                        LEFT JOIN events continuation ON continuation.id=(
                          SELECT MAX(continuation2.id) FROM events continuation2
                          WHERE continuation2.opportunity_key=result.opportunity_key
@@ -6423,6 +6612,12 @@ class RadarLedger:
                              continuation2.payload_json,'$.resultDigest'
                            )=result.dedupe_key
                            AND json_extract(continuation2.payload_json,'$.taskId')=?
+                           AND (
+                             authority.id IS NULL
+                             OR continuation2.dedupe_key=json_extract(
+                               authority.payload_json,'$.continuationDedupeKey'
+                             )
+                           )
                            AND (
                              json_extract(
                                continuation2.payload_json,'$.sourceResultEventId'
@@ -6449,6 +6644,8 @@ class RadarLedger:
                          )='object'
                        LIMIT 1""",
                     (
+                        row["intent_id"],
+                        row["thread_id"],
                         row["key"],
                         row["thread_id"],
                         row["intent_id"],
@@ -6471,68 +6668,51 @@ class RadarLedger:
                     )
                 except (TypeError, ValueError) as exc:
                     raise LedgerError("task result authority timestamp is invalid") from exc
-                if latest_task_result_row["continuation_json"] is not None:
+                if latest_task_result_row["selection_authority_json"] is not None:
+                    if latest_task_result_row["continuation_json"] is None:
+                        raise LedgerError("task result authority marker is invalid")
                     try:
                         result_continuation = json.loads(
                             latest_task_result_row["continuation_json"]
                         )
-                    except (TypeError, json.JSONDecodeError) as exc:
+                        result_authority = json.loads(
+                            latest_task_result_row["selection_authority_json"]
+                        )
+                        result_authority_observed_time = parse_time(
+                            str(result_authority.get("authorityObservedAt") or "")
+                        )
+                    except (TypeError, ValueError, json.JSONDecodeError) as exc:
                         raise LedgerError("task result authority marker is invalid") from exc
-                    result_authority_row = connection.execute(
-                        """SELECT payload_json FROM events
-                           WHERE opportunity_key=?
-                             AND event_type='TASK_RESULT_AUTHORITY_BOUND'
-                             AND json_extract(payload_json,'$.taskId')=?
-                             AND json_extract(payload_json,'$.threadId')=?
-                             AND json_extract(payload_json,'$.sourceResultEventId')=?
-                             AND json_extract(payload_json,'$.continuationDedupeKey')=?
-                           ORDER BY id DESC LIMIT 1""",
-                        (
-                            row["key"],
-                            row["intent_id"],
-                            row["thread_id"],
-                            latest_task_result_row["result_id"],
-                            latest_task_result_row["continuation_dedupe_key"],
-                        ),
-                    ).fetchone()
-                    if result_authority_row is not None:
-                        try:
-                            result_authority = json.loads(result_authority_row["payload_json"])
-                            result_authority_observed_time = parse_time(
-                                str(result_authority.get("authorityObservedAt") or "")
-                            )
-                        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                            raise LedgerError("task result authority marker is invalid") from exc
-                        result_authority_state = {
-                            field: result_authority.get(field)
-                            for field in (
-                                "taskId",
-                                "threadId",
-                                "sourceResultEventId",
-                                "resultDigest",
-                                "continuationDedupeKey",
-                                "tombstoneReceiptDigest",
-                            )
-                        }
-                        continuation_tombstone = result_continuation.get("codePathTombstoneReceipt")
-                        if (
-                            not isinstance(continuation_tombstone, dict)
-                            or result_authority_state["taskId"] != row["intent_id"]
-                            or result_authority_state["threadId"] != row["thread_id"]
-                            or result_authority_state["sourceResultEventId"]
-                            != latest_task_result_row["result_id"]
-                            or result_authority_state["resultDigest"]
-                            != result_continuation.get("resultDigest")
-                            or result_authority_state["continuationDedupeKey"]
-                            != latest_task_result_row["continuation_dedupe_key"]
-                            or result_authority_state["tombstoneReceiptDigest"]
-                            != sha256_json(continuation_tombstone)
-                            or result_authority.get("authorityStateDigest")
-                            != sha256_json(result_authority_state)
-                            or result_authority_observed_time < result_observed_time
-                        ):
-                            raise LedgerError("task result authority marker is invalid")
-                        task_result_continuation_authorized = True
+                    result_authority_state = {
+                        field: result_authority.get(field)
+                        for field in (
+                            "taskId",
+                            "threadId",
+                            "sourceResultEventId",
+                            "resultDigest",
+                            "continuationDedupeKey",
+                            "tombstoneReceiptDigest",
+                        )
+                    }
+                    continuation_tombstone = result_continuation.get("codePathTombstoneReceipt")
+                    if (
+                        not isinstance(continuation_tombstone, dict)
+                        or result_authority_state["taskId"] != row["intent_id"]
+                        or result_authority_state["threadId"] != row["thread_id"]
+                        or result_authority_state["sourceResultEventId"]
+                        != latest_task_result_row["result_id"]
+                        or result_authority_state["resultDigest"]
+                        != result_continuation.get("resultDigest")
+                        or result_authority_state["continuationDedupeKey"]
+                        != latest_task_result_row["continuation_dedupe_key"]
+                        or result_authority_state["tombstoneReceiptDigest"]
+                        != sha256_json(continuation_tombstone)
+                        or result_authority.get("authorityStateDigest")
+                        != sha256_json(result_authority_state)
+                        or result_authority_observed_time < result_observed_time
+                    ):
+                        raise LedgerError("task result authority marker is invalid")
+                    task_result_continuation_authorized = True
                 if latest_task_result_row is not None and (
                     legacy_unmarked_context_authority
                     or (
@@ -8060,6 +8240,734 @@ class RadarLedger:
                 (request_id,),
             ).fetchone()
         return dict(row) | {"request": json.loads(row["request_json"])} if row else None
+
+    def managed_replay_replacement(self, *, source_request_id: str) -> dict[str, Any] | None:
+        """Return the sole request that only refreshed one replay snapshot."""
+
+        refreshed_fields = {
+            "requestId",
+            "evidenceDigest",
+            "evidenceRawBase64",
+            "probeReceipt",
+        }
+
+        def immutable_request(value: dict[str, Any]) -> dict[str, Any]:
+            return {field: item for field, item in value.items() if field not in refreshed_fields}
+
+        def receipt_valid_at(
+            receipt: Any,
+            *,
+            source: dict[str, Any],
+            bound_at: str,
+        ) -> bool:
+            issue_url = str(source.get("issueUrl") or "")
+            issue_match = ISSUE_URL_RE.fullmatch(issue_url)
+            code_paths = sorted(
+                {str(path) for path in (source.get("codePaths") or []) if str(path).strip()}
+            )
+            if issue_match is None or not code_paths or not isinstance(receipt, dict):
+                return False
+            try:
+                observed_at = parse_time(str(receipt.get("observedAt") or ""))
+                snapshot_bound_at = parse_time(bound_at)
+                expires_at = parse_time(str(receipt.get("expiresAt") or ""))
+            except (TypeError, ValueError):
+                return False
+            return observed_at <= snapshot_bound_at <= expires_at and verify_probe_receipt(
+                receipt,
+                repo=issue_match.group(1),
+                base_sha=str(source.get("selectedBaseSha") or ""),
+                code_paths=code_paths,
+                required_level=REPRODUCED_VALIDATED,
+                issue_url=issue_url,
+                task_id=str(source.get("intentId") or ""),
+                thread_id=str(source.get("threadId") or ""),
+                head_sha=str(source.get("headSha") or ""),
+                commit_sha=str(source.get("commitSha") or ""),
+                result_digest=str(source.get("resultDigest") or ""),
+                enforce_freshness=False,
+            )
+
+        with self.connect() as connection:
+            source_row = connection.execute(
+                "SELECT * FROM publication_requests WHERE request_id=?",
+                (source_request_id,),
+            ).fetchone()
+            if source_row is None or source_row["status"] != "BLOCKED":
+                raise LedgerError("managed replay replacement source is not blocked")
+            try:
+                source = json.loads(source_row["request_json"])
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise LedgerError("managed replay replacement source is invalid") from exc
+            if not isinstance(source, dict) or source.get("publicationKind") != "PR_UPDATE":
+                raise LedgerError("managed replay replacement source is invalid")
+            rows = connection.execute(
+                """SELECT * FROM publication_requests
+                   WHERE opportunity_key=? AND thread_id=? AND commit_sha=?
+                     AND branch=? AND worktree_path=? AND request_id<>?
+                   ORDER BY created_at,request_id""",
+                (
+                    source_row["opportunity_key"],
+                    source_row["thread_id"],
+                    source_row["commit_sha"],
+                    source_row["branch"],
+                    source_row["worktree_path"],
+                    source_request_id,
+                ),
+            ).fetchall()
+            candidates: list[tuple[sqlite3.Row, dict[str, Any]]] = []
+            expected = immutable_request(source)
+            for row in rows:
+                try:
+                    request = json.loads(row["request_json"])
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise LedgerError("managed replay replacement candidate is invalid") from exc
+                if not isinstance(request, dict):
+                    raise LedgerError("managed replay replacement candidate is invalid")
+                if immutable_request(request) == expected:
+                    row_bindings = {
+                        "requestId": row["request_id"],
+                        "opportunityKey": row["opportunity_key"],
+                        "threadId": row["thread_id"],
+                        "commitSha": row["commit_sha"],
+                        "branch": row["branch"],
+                        "worktreePath": row["worktree_path"],
+                        "evidenceDigest": row["evidence_digest"],
+                    }
+                    if any(
+                        not value or str(request.get(field) or "") != str(value)
+                        for field, value in row_bindings.items()
+                    ):
+                        raise LedgerError("managed replay replacement row binding changed")
+                    candidates.append((row, request))
+            if len(candidates) > 1:
+                raise LedgerError("managed replay has multiple replacement requests")
+            if not candidates:
+                return None
+            row, request = candidates[0]
+            original_request = _managed_replay_creation_snapshot(
+                connection,
+                row=row,
+                request=request,
+            )
+            lineage_rows = connection.execute(
+                """SELECT * FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='MANAGED_REPLAY_REPLACEMENT_REFRESHED'
+                     AND json_extract(payload_json,'$.sourceRequestId')=?
+                     AND json_extract(payload_json,'$.replacementRequestId')=?
+                   ORDER BY id""",
+                (row["opportunity_key"], source_request_id, row["request_id"]),
+            ).fetchall()
+            snapshot_bound_at = str(row["created_at"])
+            previous_evidence_digest = None
+            if lineage_rows:
+                chain_evidence_digest: str | None = None
+                chain_receipt: dict[str, Any] | None = None
+                for index, lineage_row in enumerate(lineage_rows):
+                    try:
+                        lineage = json.loads(lineage_row["payload_json"])
+                    except (TypeError, json.JSONDecodeError) as exc:
+                        raise LedgerError("managed replay replacement lineage is invalid") from exc
+                    previous_receipt = (
+                        lineage.get("previousProbeReceipt") if isinstance(lineage, dict) else None
+                    )
+                    new_receipt = (
+                        lineage.get("newProbeReceipt") if isinstance(lineage, dict) else None
+                    )
+                    previous_digest = (
+                        str(lineage.get("previousEvidenceDigest") or "")
+                        if isinstance(lineage, dict)
+                        else ""
+                    )
+                    new_digest = (
+                        str(lineage.get("newEvidenceDigest") or "")
+                        if isinstance(lineage, dict)
+                        else ""
+                    )
+                    if (
+                        not isinstance(lineage, dict)
+                        or lineage.get("policyVersion") != "managed-replay-replacement-refresh-v1"
+                        or lineage.get("sourceRequestId") != source_request_id
+                        or lineage.get("replacementRequestId") != row["request_id"]
+                        or lineage.get("refreshedAt") != lineage_row["created_at"]
+                        or lineage.get("previousSnapshotBoundAt") != snapshot_bound_at
+                        or parse_time(str(lineage_row["created_at"]))
+                        <= parse_time(snapshot_bound_at)
+                        or not re.fullmatch(r"[0-9a-f]{64}", previous_digest)
+                        or not re.fullmatch(r"[0-9a-f]{64}", new_digest)
+                        or previous_digest == new_digest
+                        or not isinstance(previous_receipt, dict)
+                        or not isinstance(new_receipt, dict)
+                        or previous_receipt.get("bindingPurpose") != "implementation-result-v1"
+                        or new_receipt.get("bindingPurpose") != "implementation-result-v1"
+                        or not previous_receipt.get("derivedFromReceiptDigest")
+                        or previous_receipt.get("derivedFromReceiptDigest")
+                        != new_receipt.get("derivedFromReceiptDigest")
+                        or lineage.get("previousReceiptDigest") != sha256_json(previous_receipt)
+                        or lineage.get("newReceiptDigest") != sha256_json(new_receipt)
+                        or not receipt_valid_at(
+                            previous_receipt,
+                            source=source,
+                            bound_at=snapshot_bound_at,
+                        )
+                        or not receipt_valid_at(
+                            new_receipt,
+                            source=source,
+                            bound_at=str(lineage_row["created_at"]),
+                        )
+                        or (index > 0 and previous_digest != chain_evidence_digest)
+                        or (index > 0 and previous_receipt != chain_receipt)
+                        or (
+                            index == 0 and previous_digest != original_request.get("evidenceDigest")
+                        )
+                        or (index == 0 and previous_receipt != original_request.get("probeReceipt"))
+                    ):
+                        raise LedgerError("managed replay replacement lineage is invalid")
+                    _validate_managed_replay_lineage_authority(
+                        connection,
+                        opportunity_key=str(row["opportunity_key"]),
+                        source_request_id=source_request_id,
+                        source=source,
+                        lineage=lineage,
+                        refreshed_at=str(lineage_row["created_at"]),
+                    )
+                    previous_evidence_digest = previous_digest
+                    chain_evidence_digest = new_digest
+                    chain_receipt = new_receipt
+                    snapshot_bound_at = str(lineage_row["created_at"])
+                if (
+                    chain_evidence_digest != row["evidence_digest"]
+                    or request.get("probeReceipt") != chain_receipt
+                    or row["updated_at"] != snapshot_bound_at
+                ):
+                    raise LedgerError("managed replay replacement lineage is invalid")
+            else:
+                receipt = request.get("probeReceipt")
+                if request != original_request or not receipt_valid_at(
+                    receipt,
+                    source=source,
+                    bound_at=snapshot_bound_at,
+                ):
+                    raise LedgerError("managed replay replacement receipt is invalid")
+            return dict(row) | {
+                "request": request,
+                "snapshotBoundAt": snapshot_bound_at,
+                "previousEvidenceDigest": previous_evidence_digest,
+            }
+
+    def refresh_managed_replay_replacement(
+        self,
+        *,
+        source_request_id: str,
+        replacement_request_id: str,
+        expected_source: dict[str, Any],
+        expected_replacement: dict[str, Any],
+        new_evidence_digest: str,
+        new_evidence_raw_base64: str,
+        new_probe_receipt: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Refresh one exact replay replacement in place without publishing."""
+
+        refreshed_fields = {
+            "requestId",
+            "evidenceDigest",
+            "evidenceRawBase64",
+            "probeReceipt",
+        }
+
+        def parse_object(raw: Any, error: str) -> dict[str, Any]:
+            try:
+                value = json.loads(raw)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise LedgerError(error) from exc
+            if not isinstance(value, dict):
+                raise LedgerError(error)
+            return value
+
+        def immutable_request(value: dict[str, Any]) -> dict[str, Any]:
+            return {field: item for field, item in value.items() if field not in refreshed_fields}
+
+        def evidence_semantics(value: dict[str, Any]) -> dict[str, Any]:
+            semantics = dict(value)
+            semantics.pop("reproductionReceipt", None)
+            semantics.pop("probeReceipt", None)
+            return semantics
+
+        with self.transaction() as connection:
+            source_row = connection.execute(
+                "SELECT * FROM publication_requests WHERE request_id=?",
+                (source_request_id,),
+            ).fetchone()
+            replacement_row = connection.execute(
+                "SELECT * FROM publication_requests WHERE request_id=?",
+                (replacement_request_id,),
+            ).fetchone()
+            if (
+                source_row is None
+                or source_row["status"] != "BLOCKED"
+                or replacement_row is None
+                or source_row["request_id"] == replacement_row["request_id"]
+                or replacement_row["permit_id"] is not None
+            ):
+                raise LedgerError("managed replay replacement refresh source changed")
+            source = parse_object(
+                source_row["request_json"], "managed replay replacement source is invalid"
+            )
+            replacement = parse_object(
+                replacement_row["request_json"],
+                "managed replay replacement request is invalid",
+            )
+            expected_source_request = expected_source.get("request")
+            if not isinstance(expected_source_request, dict):
+                raise LedgerError("managed replay replacement source CAS snapshot is invalid")
+            for field in source_row.keys():
+                if source_row[field] != expected_source.get(field):
+                    raise LedgerError("managed replay replacement source CAS row changed")
+            if (
+                source.get("requestId") != source_request_id
+                or source.get("publicationKind") != "PR_UPDATE"
+                or source != expected_source_request
+                or replacement.get("requestId") != replacement_request_id
+                or immutable_request(replacement) != immutable_request(source)
+            ):
+                raise LedgerError("managed replay replacement semantics changed")
+
+            expected_request = expected_replacement.get("request")
+            if not isinstance(expected_request, dict):
+                raise LedgerError("managed replay replacement CAS snapshot is invalid")
+            for field in replacement_row.keys():
+                if replacement_row[field] != expected_replacement.get(field):
+                    raise LedgerError("managed replay replacement CAS row changed")
+            if replacement != expected_request:
+                raise LedgerError("managed replay replacement CAS request changed")
+            original_request = _managed_replay_creation_snapshot(
+                connection,
+                row=replacement_row,
+                request=replacement,
+            )
+
+            sibling_rows = connection.execute(
+                """SELECT request_id,request_json FROM publication_requests
+                   WHERE opportunity_key=? AND thread_id=? AND commit_sha=?
+                     AND branch=? AND worktree_path=? AND request_id<>?""",
+                (
+                    source_row["opportunity_key"],
+                    source_row["thread_id"],
+                    source_row["commit_sha"],
+                    source_row["branch"],
+                    source_row["worktree_path"],
+                    source_request_id,
+                ),
+            ).fetchall()
+            exact_siblings = []
+            for sibling in sibling_rows:
+                sibling_request = parse_object(
+                    sibling["request_json"],
+                    "managed replay replacement sibling is invalid",
+                )
+                if immutable_request(sibling_request) == immutable_request(source):
+                    exact_siblings.append(str(sibling["request_id"]))
+            if len(exact_siblings) != 1 or exact_siblings[0] != replacement_request_id:
+                raise LedgerError("managed replay replacement is not unique")
+            local_permit = connection.execute(
+                "SELECT 1 FROM publication_permits WHERE request_id=? LIMIT 1",
+                (replacement_request_id,),
+            ).fetchone()
+            local_effect = connection.execute(
+                """SELECT 1 FROM publication_effects effect
+                   JOIN publication_permits permit ON permit.permit_id=effect.permit_id
+                   WHERE permit.request_id=? LIMIT 1""",
+                (replacement_request_id,),
+            ).fetchone()
+            managed_reservation_table = connection.execute(
+                """SELECT 1 FROM sqlite_master
+                   WHERE type='table' AND name='managed_publication_reservations'"""
+            ).fetchone()
+            managed_reservation = (
+                connection.execute(
+                    """SELECT 1 FROM managed_publication_reservations
+                       WHERE request_id=? LIMIT 1""",
+                    (replacement_request_id,),
+                ).fetchone()
+                if managed_reservation_table is not None
+                else None
+            )
+            if (
+                local_permit is not None
+                or local_effect is not None
+                or managed_reservation is not None
+            ):
+                raise LedgerError("managed replay replacement already has a permit")
+
+            source_snapshot = source.get("evidenceRawBase64")
+            old_snapshot = replacement.get("evidenceRawBase64")
+            if not isinstance(source_snapshot, str) or not isinstance(old_snapshot, str):
+                raise LedgerError("managed replay replacement evidence is missing")
+            try:
+                source_raw = base64.b64decode(source_snapshot.encode("ascii"), validate=True)
+                old_raw = base64.b64decode(old_snapshot.encode("ascii"), validate=True)
+                new_raw = base64.b64decode(new_evidence_raw_base64.encode("ascii"), validate=True)
+                source_evidence = json.loads(source_raw)
+                old_evidence = json.loads(old_raw)
+                new_evidence = json.loads(new_raw)
+            except (ValueError, UnicodeEncodeError, json.JSONDecodeError) as exc:
+                raise LedgerError("managed replay replacement evidence is invalid") from exc
+            if not all(
+                isinstance(item, dict) for item in (source_evidence, old_evidence, new_evidence)
+            ):
+                raise LedgerError("managed replay replacement evidence is invalid")
+            old_receipt = old_evidence.get("reproductionReceipt") or old_evidence.get(
+                "probeReceipt"
+            )
+            new_evidence_receipt = new_evidence.get("reproductionReceipt") or new_evidence.get(
+                "probeReceipt"
+            )
+            if (
+                hashlib.sha256(source_raw).hexdigest() != source_row["evidence_digest"]
+                or hashlib.sha256(old_raw).hexdigest() != replacement_row["evidence_digest"]
+                or hashlib.sha256(new_raw).hexdigest() != new_evidence_digest
+                or replacement.get("probeReceipt") != old_receipt
+                or new_evidence_receipt != new_probe_receipt
+                or evidence_semantics(old_evidence) != evidence_semantics(source_evidence)
+                or evidence_semantics(new_evidence) != evidence_semantics(source_evidence)
+            ):
+                raise LedgerError("managed replay replacement evidence semantics changed")
+
+            issue_url = str(source.get("issueUrl") or "")
+            issue_match = ISSUE_URL_RE.fullmatch(issue_url)
+            code_paths = sorted(
+                {str(path) for path in (source.get("codePaths") or []) if str(path).strip()}
+            )
+            expected_receipt = {
+                "repo": issue_match.group(1) if issue_match is not None else "",
+                "base_sha": str(source.get("selectedBaseSha") or ""),
+                "code_paths": code_paths,
+                "issue_url": issue_url,
+                "task_id": str(source.get("intentId") or ""),
+                "thread_id": str(source.get("threadId") or ""),
+                "head_sha": str(source.get("headSha") or ""),
+                "commit_sha": str(source.get("commitSha") or ""),
+                "result_digest": str(source.get("resultDigest") or ""),
+            }
+
+            def receipt_valid_at(receipt: Any, bound_at: str) -> bool:
+                if not isinstance(receipt, dict):
+                    return False
+                try:
+                    observed_at = parse_time(str(receipt.get("observedAt") or ""))
+                    snapshot_bound_at = parse_time(bound_at)
+                    expires_at = parse_time(str(receipt.get("expiresAt") or ""))
+                except (TypeError, ValueError):
+                    return False
+                return observed_at <= snapshot_bound_at <= expires_at and verify_probe_receipt(
+                    receipt,
+                    **expected_receipt,
+                    required_level=REPRODUCED_VALIDATED,
+                    enforce_freshness=False,
+                )
+
+            lineage_rows = connection.execute(
+                """SELECT * FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='MANAGED_REPLAY_REPLACEMENT_REFRESHED'
+                     AND json_extract(payload_json,'$.sourceRequestId')=?
+                     AND json_extract(payload_json,'$.replacementRequestId')=?
+                   ORDER BY id""",
+                (
+                    source_row["opportunity_key"],
+                    source_request_id,
+                    replacement_request_id,
+                ),
+            ).fetchall()
+            snapshot_bound_at = str(replacement_row["created_at"])
+            chain_evidence_digest: str | None = None
+            chain_receipt: dict[str, Any] | None = None
+            for index, lineage_row in enumerate(lineage_rows):
+                lineage = parse_object(
+                    lineage_row["payload_json"],
+                    "managed replay replacement lineage is invalid",
+                )
+                previous_receipt = lineage.get("previousProbeReceipt")
+                lineage_new_receipt = lineage.get("newProbeReceipt")
+                previous_digest = str(lineage.get("previousEvidenceDigest") or "")
+                lineage_new_digest = str(lineage.get("newEvidenceDigest") or "")
+                if (
+                    lineage.get("policyVersion") != "managed-replay-replacement-refresh-v1"
+                    or lineage.get("sourceRequestId") != source_request_id
+                    or lineage.get("replacementRequestId") != replacement_request_id
+                    or lineage.get("refreshedAt") != lineage_row["created_at"]
+                    or lineage.get("previousSnapshotBoundAt") != snapshot_bound_at
+                    or parse_time(str(lineage_row["created_at"])) <= parse_time(snapshot_bound_at)
+                    or not re.fullmatch(r"[0-9a-f]{64}", previous_digest)
+                    or not re.fullmatch(r"[0-9a-f]{64}", lineage_new_digest)
+                    or previous_digest == lineage_new_digest
+                    or not isinstance(previous_receipt, dict)
+                    or not isinstance(lineage_new_receipt, dict)
+                    or previous_receipt.get("bindingPurpose") != "implementation-result-v1"
+                    or lineage_new_receipt.get("bindingPurpose") != "implementation-result-v1"
+                    or not previous_receipt.get("derivedFromReceiptDigest")
+                    or previous_receipt.get("derivedFromReceiptDigest")
+                    != lineage_new_receipt.get("derivedFromReceiptDigest")
+                    or lineage.get("previousReceiptDigest") != sha256_json(previous_receipt)
+                    or lineage.get("newReceiptDigest") != sha256_json(lineage_new_receipt)
+                    or not receipt_valid_at(previous_receipt, snapshot_bound_at)
+                    or not receipt_valid_at(
+                        lineage_new_receipt,
+                        str(lineage_row["created_at"]),
+                    )
+                    or (index > 0 and previous_digest != chain_evidence_digest)
+                    or (index > 0 and previous_receipt != chain_receipt)
+                    or (index == 0 and previous_digest != original_request.get("evidenceDigest"))
+                    or (index == 0 and previous_receipt != original_request.get("probeReceipt"))
+                ):
+                    raise LedgerError("managed replay replacement lineage is invalid")
+                _validate_managed_replay_lineage_authority(
+                    connection,
+                    opportunity_key=str(source_row["opportunity_key"]),
+                    source_request_id=source_request_id,
+                    source=source,
+                    lineage=lineage,
+                    refreshed_at=str(lineage_row["created_at"]),
+                )
+                chain_evidence_digest = lineage_new_digest
+                chain_receipt = lineage_new_receipt
+                snapshot_bound_at = str(lineage_row["created_at"])
+            if lineage_rows and (
+                chain_evidence_digest != replacement_row["evidence_digest"]
+                or chain_receipt != old_receipt
+                or replacement_row["updated_at"] != snapshot_bound_at
+            ):
+                raise LedgerError("managed replay replacement lineage is invalid")
+            if not lineage_rows and replacement != original_request:
+                raise LedgerError("managed replay replacement creation snapshot changed")
+            if expected_replacement.get("snapshotBoundAt") != snapshot_bound_at:
+                raise LedgerError("managed replay replacement snapshot binding changed")
+            try:
+                old_observed_at = parse_time(str((old_receipt or {}).get("observedAt") or ""))
+                old_expires_at = parse_time(str((old_receipt or {}).get("expiresAt") or ""))
+                old_bound_at = parse_time(snapshot_bound_at)
+            except (TypeError, ValueError) as exc:
+                raise LedgerError("managed replay replacement receipt time is invalid") from exc
+            if (
+                issue_match is None
+                or not code_paths
+                or not isinstance(old_receipt, dict)
+                or not isinstance(new_probe_receipt, dict)
+                or old_receipt.get("bindingPurpose") != "implementation-result-v1"
+                or new_probe_receipt.get("bindingPurpose") != "implementation-result-v1"
+                or not old_receipt.get("derivedFromReceiptDigest")
+                or old_receipt.get("derivedFromReceiptDigest")
+                != new_probe_receipt.get("derivedFromReceiptDigest")
+                or not old_observed_at <= old_bound_at <= old_expires_at
+                or not verify_probe_receipt(
+                    old_receipt,
+                    **expected_receipt,
+                    required_level=REPRODUCED_VALIDATED,
+                    enforce_freshness=False,
+                )
+                or not verify_probe_receipt(
+                    new_probe_receipt,
+                    **expected_receipt,
+                    required_level=REPRODUCED_VALIDATED,
+                )
+            ):
+                raise LedgerError("managed replay replacement receipt is invalid")
+
+            watermark = self._managed_replay_task_result_watermark(
+                connection,
+                key=str(source_row["opportunity_key"]),
+                task_id=str(source["intentId"]),
+                thread_id=str(source_row["thread_id"]),
+                request_updated_at=str(source_row["updated_at"]),
+            )
+            authority_id = watermark.get("authorityEventId")
+            authority_row = (
+                connection.execute(
+                    "SELECT * FROM events WHERE id=? AND opportunity_key=?",
+                    (authority_id, source_row["opportunity_key"]),
+                ).fetchone()
+                if authority_id is not None
+                else None
+            )
+            authority = (
+                parse_object(
+                    authority_row["payload_json"],
+                    "managed replay replacement authority is invalid",
+                )
+                if authority_row is not None
+                else {}
+            )
+            continuation_key = str(watermark.get("continuationDedupeKey") or "")
+            continuation_row = connection.execute(
+                """SELECT * FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+                     AND dedupe_key=?""",
+                (source_row["opportunity_key"], continuation_key),
+            ).fetchone()
+            continuation = (
+                parse_object(
+                    continuation_row["payload_json"],
+                    "managed replay replacement continuation is invalid",
+                )
+                if continuation_row is not None
+                else {}
+            )
+            authority_state = {
+                field: authority.get(field)
+                for field in (
+                    "taskId",
+                    "threadId",
+                    "sourceResultEventId",
+                    "resultDigest",
+                    "continuationDedupeKey",
+                    "tombstoneReceiptDigest",
+                )
+            }
+            continuation_tombstone = continuation.get("codePathTombstoneReceipt")
+            if (
+                authority_row is None
+                or authority_row["event_type"] != "TASK_RESULT_AUTHORITY_BOUND"
+                or authority.get("sourcePublicationRequestId") != source_request_id
+                or authority.get("continuationDedupeKey") != continuation_key
+                or authority.get("resultDigest") != source.get("resultDigest")
+                or authority.get("authorityStateDigest") != sha256_json(authority_state)
+                or continuation.get("sourcePublicationRequestId") != source_request_id
+                or continuation.get("continuationHeadSha") != source.get("commitSha")
+                or continuation.get("resultDigest") != source.get("resultDigest")
+                or not isinstance(continuation_tombstone, dict)
+                or authority.get("tombstoneReceiptDigest") != sha256_json(continuation_tombstone)
+            ):
+                raise LedgerError("managed replay replacement authority is not current")
+
+            if replacement_row["status"] == "PENDING":
+                if (
+                    replacement_row["reason"] is not None
+                    or replacement_row["evidence_digest"] != new_evidence_digest
+                    or replacement.get("evidenceDigest") != new_evidence_digest
+                    or replacement.get("evidenceRawBase64") != new_evidence_raw_base64
+                    or replacement.get("probeReceipt") != new_probe_receipt
+                    or (
+                        lineage_rows
+                        and (
+                            chain_evidence_digest != new_evidence_digest
+                            or chain_receipt != new_probe_receipt
+                            or replacement_row["updated_at"] != snapshot_bound_at
+                        )
+                    )
+                ):
+                    raise LedgerError("managed replay replacement pending state changed")
+                return dict(replacement_row) | {
+                    "request": replacement,
+                    "refreshed": False,
+                }
+
+            if (
+                replacement_row["status"] != "BLOCKED"
+                or replacement_row["reason"] != "BLOCKED_REPRODUCTION_REQUIRED"
+                or replacement_row["evidence_digest"] == new_evidence_digest
+            ):
+                raise LedgerError("managed replay replacement block state changed")
+
+            refreshed_at = iso_z(datetime.now(UTC))
+            try:
+                refreshed_time = parse_time(refreshed_at)
+                new_observed_at = parse_time(str(new_probe_receipt.get("observedAt") or ""))
+                new_expires_at = parse_time(str(new_probe_receipt.get("expiresAt") or ""))
+            except (TypeError, ValueError) as exc:
+                raise LedgerError("managed replay replacement new receipt time is invalid") from exc
+            if (
+                refreshed_time <= old_bound_at
+                or not new_observed_at <= refreshed_time <= new_expires_at
+            ):
+                raise LedgerError("managed replay replacement new receipt is not current")
+            refreshed_request = dict(replacement)
+            refreshed_request.update(
+                {
+                    "evidenceDigest": new_evidence_digest,
+                    "evidenceRawBase64": new_evidence_raw_base64,
+                    "probeReceipt": new_probe_receipt,
+                }
+            )
+            updated = connection.execute(
+                """UPDATE publication_requests
+                   SET evidence_digest=?,request_json=?,status='PENDING',reason=NULL,updated_at=?
+                   WHERE request_id=? AND status='BLOCKED'
+                     AND reason='BLOCKED_REPRODUCTION_REQUIRED'
+                     AND evidence_digest=? AND request_json=? AND updated_at=?""",
+                (
+                    new_evidence_digest,
+                    canonical_json(refreshed_request),
+                    refreshed_at,
+                    replacement_request_id,
+                    replacement_row["evidence_digest"],
+                    replacement_row["request_json"],
+                    replacement_row["updated_at"],
+                ),
+            ).rowcount
+            if updated != 1:
+                raise LedgerError("managed replay replacement refresh CAS lost")
+            lineage = {
+                "policyVersion": "managed-replay-replacement-refresh-v1",
+                "sourceRequestId": source_request_id,
+                "replacementRequestId": replacement_request_id,
+                "previousEvidenceDigest": replacement_row["evidence_digest"],
+                "newEvidenceDigest": new_evidence_digest,
+                "previousReceiptDigest": sha256_json(old_receipt),
+                "newReceiptDigest": sha256_json(new_probe_receipt),
+                "previousProbeReceipt": old_receipt,
+                "newProbeReceipt": new_probe_receipt,
+                "previousSnapshotBoundAt": snapshot_bound_at,
+                "continuationDedupeKey": continuation_key,
+                "authorityEventId": int(authority_row["id"]),
+                "refreshedAt": refreshed_at,
+            }
+            lineage_dedupe_key = sha256_text(
+                "|".join(
+                    (
+                        "managed-replay-replacement-refresh-v1",
+                        source_request_id,
+                        replacement_request_id,
+                        str(replacement_row["evidence_digest"]),
+                        new_evidence_digest,
+                    )
+                )
+            )
+            self._event(
+                connection,
+                str(source_row["opportunity_key"]),
+                "MANAGED_REPLAY_REPLACEMENT_REFRESHED",
+                lineage_dedupe_key,
+                lineage,
+                refreshed_at,
+            )
+            lineage_row = connection.execute(
+                """SELECT * FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='MANAGED_REPLAY_REPLACEMENT_REFRESHED'
+                     AND dedupe_key=?""",
+                (source_row["opportunity_key"], lineage_dedupe_key),
+            ).fetchone()
+            refreshed_row = connection.execute(
+                "SELECT * FROM publication_requests WHERE request_id=?",
+                (replacement_request_id,),
+            ).fetchone()
+            if (
+                refreshed_row is None
+                or refreshed_row["status"] != "PENDING"
+                or refreshed_row["reason"] is not None
+                or refreshed_row["evidence_digest"] != new_evidence_digest
+                or refreshed_row["request_json"] != canonical_json(refreshed_request)
+                or lineage_row is None
+                or lineage_row["payload_json"] != canonical_json(lineage)
+                or lineage_row["created_at"] != refreshed_at
+            ):
+                raise LedgerError("managed replay replacement refresh did not persist")
+            return dict(refreshed_row) | {
+                "request": refreshed_request,
+                "refreshed": True,
+            }
 
     def publication_work_items(self) -> list[dict[str, Any]]:
         """Return publication requests that the privileged controller may advance."""
@@ -11884,6 +12792,737 @@ class RadarLedger:
                         result_authority_marker,
                         recorded_at,
                     )
+
+    @staticmethod
+    def _managed_replay_task_result_watermark(
+        connection: sqlite3.Connection,
+        *,
+        key: str,
+        task_id: str,
+        thread_id: str,
+        request_updated_at: str,
+    ) -> dict[str, Any]:
+        selected = connection.execute(
+            """WITH candidates AS (
+                 SELECT result.*,(
+                   SELECT MAX(authority.id) FROM events authority
+                   WHERE authority.opportunity_key=result.opportunity_key
+                     AND authority.event_type='TASK_RESULT_AUTHORITY_BOUND'
+                     AND json_extract(authority.payload_json,'$.taskId')=?
+                     AND json_extract(authority.payload_json,'$.threadId')=?
+                     AND json_extract(authority.payload_json,'$.sourceResultEventId')=
+                         result.id
+                     AND json_extract(authority.payload_json,'$.resultDigest')=
+                         result.dedupe_key
+                 ) AS selection_authority_id
+                 FROM events result
+                 WHERE result.opportunity_key=?
+                   AND result.event_type='TASK_RESULT_INGESTED'
+                   AND (
+                     (
+                       json_extract(result.payload_json,'$.threadId')=?
+                       AND COALESCE(json_extract(result.payload_json,'$.taskId'),'')
+                           IN ('',?)
+                     )
+                     OR (
+                       COALESCE(json_extract(result.payload_json,'$.threadId'),'')=''
+                       AND json_extract(result.payload_json,'$.taskId')=?
+                     )
+                     OR EXISTS (
+                       SELECT 1 FROM events binding
+                       WHERE binding.opportunity_key=result.opportunity_key
+                         AND binding.event_type=
+                             'TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+                         AND json_extract(binding.payload_json,'$.sourceResultEventId')=
+                             result.id
+                         AND json_extract(binding.payload_json,'$.resultDigest')=
+                             result.dedupe_key
+                         AND json_extract(binding.payload_json,'$.taskId')=?
+                         AND json_extract(binding.payload_json,'$.threadId')=?
+                     )
+                   )
+               )
+               SELECT candidates.*,
+                      MAX(
+                        candidates.id,COALESCE(candidates.selection_authority_id,0)
+                      ) AS selection_id,
+                      authority.payload_json AS selection_authority_json
+               FROM candidates
+               LEFT JOIN events authority
+                 ON authority.id=candidates.selection_authority_id
+               ORDER BY selection_id DESC,candidates.id DESC LIMIT 1""",
+            (
+                task_id,
+                thread_id,
+                key,
+                thread_id,
+                task_id,
+                task_id,
+                task_id,
+                thread_id,
+            ),
+        ).fetchone()
+        latest_related = connection.execute(
+            """SELECT MAX(id) FROM events
+               WHERE opportunity_key=?
+                 AND event_type IN (
+                   'TASK_RESULT_INGESTED',
+                   'TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND',
+                   'TASK_RESULT_AUTHORITY_BOUND'
+                 )
+                 AND (
+                   json_extract(payload_json,'$.taskId')=?
+                   OR json_extract(payload_json,'$.threadId')=?
+                 )""",
+            (key, task_id, thread_id),
+        ).fetchone()[0]
+        authority_payload: dict[str, Any] = {}
+        if selected is not None and selected["selection_authority_json"] is not None:
+            try:
+                authority_payload = json.loads(selected["selection_authority_json"])
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise LedgerError("managed replay selection authority is invalid") from exc
+            if not isinstance(authority_payload, dict):
+                raise LedgerError("managed replay selection authority is invalid")
+        return {
+            "requestUpdatedAt": request_updated_at,
+            "selectionId": int(selected["selection_id"]) if selected is not None else None,
+            "resultEventId": int(selected["id"]) if selected is not None else None,
+            "authorityEventId": (
+                int(selected["selection_authority_id"])
+                if selected is not None and selected["selection_authority_id"] is not None
+                else None
+            ),
+            "continuationDedupeKey": authority_payload.get("continuationDedupeKey"),
+            "latestRelatedEventId": int(latest_related) if latest_related is not None else None,
+        }
+
+    def managed_replay_task_result_watermark(self, *, request_id: str) -> dict[str, Any]:
+        """Capture the exact result projection before replay mutates local state."""
+
+        with self.connect() as connection:
+            request_row = connection.execute(
+                """SELECT opportunity_key,thread_id,request_json,status,updated_at
+                   FROM publication_requests WHERE request_id=?""",
+                (request_id,),
+            ).fetchone()
+            if request_row is None or request_row["status"] != "BLOCKED":
+                raise LedgerError("managed replay source request is not blocked")
+            try:
+                request = json.loads(request_row["request_json"])
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise LedgerError("managed replay source request is invalid") from exc
+            if (
+                not isinstance(request, dict)
+                or request.get("requestId") != request_id
+                or request.get("publicationKind") != "PR_UPDATE"
+                or request.get("opportunityKey") != request_row["opportunity_key"]
+                or request.get("threadId") != request_row["thread_id"]
+                or not request.get("intentId")
+            ):
+                raise LedgerError("managed replay source request is invalid")
+            return self._managed_replay_task_result_watermark(
+                connection,
+                key=str(request_row["opportunity_key"]),
+                task_id=str(request["intentId"]),
+                thread_id=str(request_row["thread_id"]),
+                request_updated_at=str(request_row["updated_at"]),
+            )
+
+    def bind_managed_replay_task_result_continuation(
+        self,
+        *,
+        request_id: str,
+        durable_receipt: dict[str, Any],
+        managed_result_key: str,
+        managed_validation_digest: str,
+        expected_watermark: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Reassert one historical tombstone continuation for an exact replay.
+
+        This is deliberately narrower than generic result ingestion.  It never
+        rewrites a result or an earlier authority event.  A transaction verifies
+        the blocked PR-update snapshot, the durable managed authorization, the
+        historical result triple, and the currently selected triple before it
+        appends one continuation and its matching authority marker.
+        """
+
+        def parse_object(raw: Any, error: str) -> dict[str, Any]:
+            try:
+                value = json.loads(raw)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise LedgerError(error) from exc
+            if not isinstance(value, dict):
+                raise LedgerError(error)
+            return value
+
+        with self.transaction() as connection:
+            request_row = connection.execute(
+                "SELECT * FROM publication_requests WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            if request_row is None or request_row["status"] != "BLOCKED":
+                raise LedgerError("managed replay source request is not blocked")
+            request = parse_object(
+                request_row["request_json"], "managed replay source request is invalid"
+            )
+            row_bindings = {
+                "requestId": request_row["request_id"],
+                "opportunityKey": request_row["opportunity_key"],
+                "threadId": request_row["thread_id"],
+                "commitSha": request_row["commit_sha"],
+                "branch": request_row["branch"],
+                "worktreePath": request_row["worktree_path"],
+                "evidenceDigest": request_row["evidence_digest"],
+            }
+            if any(
+                not expected or str(request.get(field) or "") != str(expected)
+                for field, expected in row_bindings.items()
+            ):
+                raise LedgerError("managed replay source request row binding changed")
+            if request.get("publicationKind") != "PR_UPDATE":
+                raise LedgerError("managed replay source is not a PR update")
+
+            key = str(request.get("opportunityKey") or "")
+            task_id = str(request.get("intentId") or "")
+            thread_id = str(request.get("threadId") or "")
+            issue_url = str(request.get("issueUrl") or "")
+            worktree_path = str(request.get("worktreePath") or "")
+            result_digest = str(request.get("resultDigest") or "")
+            source_wake_digest = str(request.get("followupWakeDigest") or "")
+            previous_commit = str(request.get("previousCommitSha") or "")
+            desired_commit = str(request.get("commitSha") or "")
+            selected_base_sha = str(request.get("selectedBaseSha") or "")
+            existing_pr_url = str(request.get("existingPrUrl") or "")
+            code_paths = sorted(
+                {str(path) for path in (request.get("codePaths") or []) if str(path).strip()}
+            )
+            issue_match = ISSUE_URL_RE.fullmatch(issue_url)
+            pr_match = PR_URL_RE.fullmatch(existing_pr_url)
+            if (
+                not key
+                or not task_id
+                or not thread_id
+                or not worktree_path
+                or issue_match is None
+                or key != f"{issue_match.group(1)}#{issue_match.group(2)}"
+                or pr_match is None
+                or pr_match.group(1) != issue_match.group(1)
+                or re.fullmatch(r"[0-9a-f]{64}", result_digest) is None
+                or re.fullmatch(r"[0-9a-f]{64}", source_wake_digest) is None
+                or re.fullmatch(r"[0-9a-f]{40}", previous_commit) is None
+                or re.fullmatch(r"[0-9a-f]{40}", desired_commit) is None
+                or previous_commit == desired_commit
+                or re.fullmatch(r"[0-9a-f]{40}", selected_base_sha) is None
+                or not code_paths
+            ):
+                raise LedgerError("managed replay source identity is invalid")
+            if Path(worktree_path).resolve() != Path(str(request_row["worktree_path"])).resolve():
+                raise LedgerError("managed replay source worktree changed")
+            if not isinstance(expected_watermark, dict) or expected_watermark != (
+                self._managed_replay_task_result_watermark(
+                    connection,
+                    key=key,
+                    task_id=task_id,
+                    thread_id=thread_id,
+                    request_updated_at=str(request_row["updated_at"]),
+                )
+            ):
+                raise LedgerError("managed replay task result projection changed")
+
+            snapshot_base64 = request.get("evidenceRawBase64")
+            if not isinstance(snapshot_base64, str) or not snapshot_base64:
+                raise LedgerError("managed replay source evidence is missing")
+            try:
+                evidence_raw = base64.b64decode(snapshot_base64.encode("ascii"), validate=True)
+                evidence = json.loads(evidence_raw)
+            except (ValueError, UnicodeEncodeError, json.JSONDecodeError) as exc:
+                raise LedgerError("managed replay source evidence is invalid") from exc
+            if (
+                not isinstance(evidence, dict)
+                or hashlib.sha256(evidence_raw).hexdigest() != request_row["evidence_digest"]
+                or evidence.get("resultDigest") != result_digest
+                or (evidence.get("taskId") or evidence.get("intentId")) != task_id
+                or evidence.get("threadId") != thread_id
+                or evidence.get("commitSha") != desired_commit
+                or evidence.get("previousCommitSha") != previous_commit
+                or evidence.get("worktreePath") != worktree_path
+            ):
+                raise LedgerError("managed replay source evidence binding changed")
+            historical_tombstone = evidence.get("codePathTombstoneReceipt")
+            if not isinstance(historical_tombstone, dict) or not historical_tombstone:
+                raise LedgerError("managed replay source tombstone is missing")
+
+            intent_row = connection.execute(
+                """SELECT worktree_path FROM intents
+                   WHERE opportunity_key=? AND intent_id=? AND thread_id=?""",
+                (key, task_id, thread_id),
+            ).fetchone()
+            if (
+                intent_row is None
+                or Path(str(intent_row["worktree_path"] or "")).resolve()
+                != Path(worktree_path).resolve()
+            ):
+                raise LedgerError("managed replay intent binding changed")
+
+            managed_task = connection.execute(
+                "SELECT * FROM managed_tasks WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            if (
+                managed_task is None
+                or managed_task["opportunity_key"] != key
+                or managed_task["thread_id"] != thread_id
+                or Path(str(managed_task["worktree_path"] or "")).resolve()
+                != Path(worktree_path).resolve()
+                or managed_task["state"] not in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}
+            ):
+                raise LedgerError("managed replay durable task binding changed")
+            managed_provenance = parse_object(
+                managed_task["provenance_json"], "managed replay durable receipt is invalid"
+            )
+            if (
+                not isinstance(durable_receipt, dict)
+                or managed_provenance.get("probeReceipt") != durable_receipt
+                or managed_provenance.get("probeReceiptDigest")
+                != durable_receipt.get("receiptDigest")
+            ):
+                raise LedgerError("managed replay durable receipt binding changed")
+            durable_paths = sorted(
+                {
+                    str(path)
+                    for path in (durable_receipt.get("codePaths") or [])
+                    if str(path).strip()
+                }
+            )
+            if (
+                durable_paths != code_paths
+                or durable_receipt.get("baseSha") != selected_base_sha
+                or not verify_probe_receipt(
+                    durable_receipt,
+                    repo=issue_match.group(1),
+                    base_sha=selected_base_sha,
+                    code_paths=code_paths,
+                    required_level=REPRODUCED_VALIDATED,
+                    issue_url=issue_url,
+                    task_id=task_id,
+                    thread_id=thread_id,
+                    head_sha=str(durable_receipt.get("headSha") or ""),
+                    commit_sha=str(durable_receipt.get("commitSha") or ""),
+                    result_digest=str(durable_receipt.get("resultDigest") or ""),
+                    enforce_freshness=False,
+                )
+            ):
+                raise LedgerError("managed replay durable receipt is invalid")
+
+            managed_result = connection.execute(
+                "SELECT * FROM managed_results WHERE result_key=?",
+                (managed_result_key,),
+            ).fetchone()
+            if managed_result is None:
+                raise LedgerError("managed replay result disappeared")
+            expected_pr_key = f"{pr_match.group(1)}#{int(pr_match.group(2))}"
+            expected_managed_result_key = (
+                f"{task_id}|{expected_pr_key}|{desired_commit}|{result_digest}"
+            )
+            validation_json = str(managed_result["validation_json"] or "")
+            validation = parse_object(
+                validation_json, "managed replay result validation is invalid"
+            )
+            if (
+                hashlib.sha256(validation_json.encode("utf-8")).hexdigest()
+                != managed_validation_digest
+                or managed_result_key != expected_managed_result_key
+                or managed_result["task_id"] != task_id
+                or managed_result["pr_key"] != expected_pr_key
+                or managed_result["head_sha"] != desired_commit
+                or managed_result["commit_sha"] != desired_commit
+                or managed_result["result_digest"] != result_digest
+                or managed_result["worker_state"] != "patched"
+                or int(managed_result["is_current"] or 0) != 1
+                or validation.get("passed") is not True
+                or not validation.get("evidence")
+            ):
+                raise LedgerError("managed replay result validation changed")
+
+            def load_bundle(
+                result_row: sqlite3.Row | dict[str, Any],
+                *,
+                continuation_dedupe_key: str | None = None,
+                original_only: bool = False,
+                authority_id: int | None = None,
+            ) -> dict[str, Any]:
+                result_payload = parse_object(
+                    result_row["payload_json"], "managed replay result event is invalid"
+                )
+                continuation_clauses = [
+                    "opportunity_key=?",
+                    "event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'",
+                    "json_extract(payload_json,'$.sourceResultEventId')=?",
+                    "json_extract(payload_json,'$.resultDigest')=?",
+                    "json_extract(payload_json,'$.taskId')=?",
+                    "json_extract(payload_json,'$.threadId')=?",
+                ]
+                continuation_params: list[Any] = [
+                    key,
+                    int(result_row["id"]),
+                    result_row["dedupe_key"],
+                    task_id,
+                    thread_id,
+                ]
+                if continuation_dedupe_key is not None:
+                    continuation_clauses.append("dedupe_key=?")
+                    continuation_params.append(continuation_dedupe_key)
+                if original_only:
+                    continuation_clauses.append(
+                        "json_type(payload_json,'$.sourcePublicationRequestId') IS NULL"
+                    )
+                continuation_row = connection.execute(
+                    f"""SELECT * FROM events WHERE {" AND ".join(continuation_clauses)}
+                        ORDER BY id DESC LIMIT 1""",
+                    tuple(continuation_params),
+                ).fetchone()
+                if continuation_row is None:
+                    raise LedgerError("managed replay continuation is missing")
+                continuation = parse_object(
+                    continuation_row["payload_json"],
+                    "managed replay continuation is invalid",
+                )
+                if continuation_row["dedupe_key"] != sha256_json(continuation):
+                    raise LedgerError("managed replay continuation digest is invalid")
+
+                if authority_id is None:
+                    authority_row = connection.execute(
+                        """SELECT * FROM events
+                           WHERE opportunity_key=?
+                             AND event_type='TASK_RESULT_AUTHORITY_BOUND'
+                             AND json_extract(payload_json,'$.taskId')=?
+                             AND json_extract(payload_json,'$.threadId')=?
+                             AND json_extract(payload_json,'$.sourceResultEventId')=?
+                             AND json_extract(payload_json,'$.continuationDedupeKey')=?
+                           ORDER BY id DESC LIMIT 1""",
+                        (
+                            key,
+                            task_id,
+                            thread_id,
+                            int(result_row["id"]),
+                            continuation_row["dedupe_key"],
+                        ),
+                    ).fetchone()
+                else:
+                    authority_row = connection.execute(
+                        "SELECT * FROM events WHERE id=? AND opportunity_key=?",
+                        (authority_id, key),
+                    ).fetchone()
+                if (
+                    authority_row is None
+                    or authority_row["event_type"] != "TASK_RESULT_AUTHORITY_BOUND"
+                ):
+                    raise LedgerError("managed replay result authority is missing")
+                authority = parse_object(
+                    authority_row["payload_json"], "managed replay result authority is invalid"
+                )
+                authority_state = {
+                    field: authority.get(field)
+                    for field in (
+                        "taskId",
+                        "threadId",
+                        "sourceResultEventId",
+                        "resultDigest",
+                        "continuationDedupeKey",
+                        "tombstoneReceiptDigest",
+                    )
+                }
+                tombstone = continuation.get("codePathTombstoneReceipt")
+                snapshot = continuation.get("prFollowupSnapshot")
+                try:
+                    result_time = parse_time(str(result_row["created_at"] or ""))
+                    continuation_time = parse_time(str(continuation_row["created_at"] or ""))
+                    authority_time = parse_time(str(authority.get("authorityObservedAt") or ""))
+                    authority_event_time = parse_time(str(authority_row["created_at"] or ""))
+                except (TypeError, ValueError) as exc:
+                    raise LedgerError("managed replay authority timestamp is invalid") from exc
+                if (
+                    result_row["event_type"] != "TASK_RESULT_INGESTED"
+                    or result_payload.get("taskId") != task_id
+                    or result_payload.get("threadId") != thread_id
+                    or result_payload.get("resultDigest") != result_row["dedupe_key"]
+                    or continuation.get("sourceResultEventId") != int(result_row["id"])
+                    or continuation.get("taskId") != task_id
+                    or continuation.get("threadId") != thread_id
+                    or continuation.get("resultDigest") != result_row["dedupe_key"]
+                    or continuation.get("stage") != result_payload.get("stage")
+                    or continuation.get("followupWakeDigest")
+                    != result_payload.get("followupWakeDigest")
+                    or continuation.get("continuationHeadSha")
+                    != result_payload.get("continuationHeadSha")
+                    or continuation.get("codePathTombstoneReceipt")
+                    != result_payload.get("codePathTombstoneReceipt")
+                    or not isinstance(tombstone, dict)
+                    or not isinstance(snapshot, dict)
+                    or snapshot.get("wakeDigest") != continuation.get("followupWakeDigest")
+                    or snapshot.get("prUrl") != tombstone.get("prUrl")
+                    or snapshot.get("actionDigest") != tombstone.get("actionDigest")
+                    or snapshot.get("taskActionDigest") != tombstone.get("taskActionDigest")
+                    or snapshot.get("checkedAt") != tombstone.get("checkedAt")
+                    or snapshot.get("preparedHeadSha") != tombstone.get("preparedHeadSha")
+                    or authority_state["taskId"] != task_id
+                    or authority_state["threadId"] != thread_id
+                    or authority_state["sourceResultEventId"] != int(result_row["id"])
+                    or authority_state["resultDigest"] != result_row["dedupe_key"]
+                    or authority_state["continuationDedupeKey"] != continuation_row["dedupe_key"]
+                    or authority_state["tombstoneReceiptDigest"] != sha256_json(tombstone)
+                    or authority.get("authorityStateDigest") != sha256_json(authority_state)
+                    or not result_time <= continuation_time <= authority_time
+                    or authority_time != authority_event_time
+                    or not verify_code_path_tombstone_receipt(
+                        tombstone,
+                        source_receipt_digest=str(durable_receipt.get("receiptDigest") or ""),
+                        base_sha=selected_base_sha,
+                        key=key,
+                        issue_url=issue_url,
+                        intent_id=task_id,
+                        thread_id=thread_id,
+                        worktree_path_fingerprint=sha256_text(str(Path(worktree_path).resolve())),
+                        pr_url=str(snapshot.get("prUrl") or ""),
+                        wake_digest=str(continuation.get("followupWakeDigest") or ""),
+                        action_digest=str(snapshot.get("actionDigest") or ""),
+                        task_action_digest=str(snapshot.get("taskActionDigest") or ""),
+                        checked_at=str(snapshot.get("checkedAt") or ""),
+                        prepared_head_sha=str(snapshot.get("preparedHeadSha") or ""),
+                        code_paths=code_paths,
+                    )
+                ):
+                    raise LedgerError("managed replay result authority is invalid")
+                return {
+                    "resultRow": result_row,
+                    "result": result_payload,
+                    "continuationRow": continuation_row,
+                    "continuation": continuation,
+                    "authorityRow": authority_row,
+                    "authority": authority,
+                }
+
+            source_result_row = connection.execute(
+                """SELECT * FROM events
+                   WHERE opportunity_key=? AND event_type='TASK_RESULT_INGESTED'
+                     AND dedupe_key=?""",
+                (key, result_digest),
+            ).fetchone()
+            if source_result_row is None:
+                raise LedgerError("managed replay historical result is missing")
+            source_bundle = load_bundle(source_result_row, original_only=True)
+            source_continuation = source_bundle["continuation"]
+            source_snapshot = source_continuation["prFollowupSnapshot"]
+            if (
+                source_continuation.get("followupWakeDigest") != source_wake_digest
+                or source_continuation.get("continuationHeadSha") != desired_commit
+                or source_continuation.get("codePathTombstoneReceipt") != historical_tombstone
+                or source_snapshot.get("prUrl") != existing_pr_url
+                or source_snapshot.get("preparedHeadSha") != previous_commit
+            ):
+                raise LedgerError("managed replay historical continuation changed")
+
+            def selected_result() -> dict[str, Any] | None:
+                selection = self._managed_replay_task_result_watermark(
+                    connection,
+                    key=key,
+                    task_id=task_id,
+                    thread_id=thread_id,
+                    request_updated_at=str(request_row["updated_at"]),
+                )
+                result_event_id = selection.get("resultEventId")
+                if result_event_id is None:
+                    return None
+                selected_row = connection.execute(
+                    "SELECT * FROM events WHERE id=? AND opportunity_key=?",
+                    (result_event_id, key),
+                ).fetchone()
+                if selected_row is None:
+                    raise LedgerError("managed replay selected result disappeared")
+                return dict(selected_row) | {
+                    "selection_authority_id": selection.get("authorityEventId"),
+                    "selection_id": selection.get("selectionId"),
+                }
+
+            replay_authority_rows = connection.execute(
+                """SELECT * FROM events
+                   WHERE opportunity_key=? AND event_type='TASK_RESULT_AUTHORITY_BOUND'
+                     AND json_extract(payload_json,'$.sourcePublicationRequestId')=?
+                   ORDER BY id DESC""",
+                (key, request_id),
+            ).fetchall()
+            current_result_row = selected_result()
+            if current_result_row is None:
+                raise LedgerError("managed replay current result is missing")
+
+            if replay_authority_rows:
+                if len(replay_authority_rows) != 1:
+                    raise LedgerError("managed replay continuation was bound more than once")
+                replay_authority_row = replay_authority_rows[0]
+                replay_authority = parse_object(
+                    replay_authority_row["payload_json"],
+                    "managed replay continuation authority is invalid",
+                )
+                replay_continuation_key = str(replay_authority.get("continuationDedupeKey") or "")
+                previous_continuation_key = str(
+                    replay_authority.get("previousContinuationDedupeKey") or ""
+                )
+                if (
+                    int(current_result_row["id"]) != int(source_result_row["id"])
+                    or int(current_result_row["selection_authority_id"] or 0)
+                    != int(replay_authority_row["id"])
+                    or replay_authority.get("sourcePublicationRequestId") != request_id
+                    or not re.fullmatch(r"[0-9a-f]{64}", previous_continuation_key)
+                ):
+                    raise LedgerError("managed replay continuation authority is stale")
+                replay_bundle = load_bundle(
+                    source_result_row,
+                    continuation_dedupe_key=replay_continuation_key,
+                    authority_id=int(replay_authority_row["id"]),
+                )
+                previous_row = connection.execute(
+                    """SELECT * FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+                         AND dedupe_key=?""",
+                    (key, previous_continuation_key),
+                ).fetchone()
+                if previous_row is None:
+                    raise LedgerError("managed replay previous continuation disappeared")
+                previous_result_row = connection.execute(
+                    "SELECT * FROM events WHERE id=?",
+                    (
+                        parse_object(
+                            previous_row["payload_json"],
+                            "managed replay previous continuation is invalid",
+                        ).get("sourceResultEventId"),
+                    ),
+                ).fetchone()
+                if previous_result_row is None:
+                    raise LedgerError("managed replay previous result disappeared")
+                previous_bundle = load_bundle(
+                    previous_result_row,
+                    continuation_dedupe_key=previous_continuation_key,
+                )
+                expected_continuation = dict(source_continuation) | {
+                    "continuationHeadSha": desired_commit,
+                    "previousContinuationDedupeKey": previous_continuation_key,
+                    "sourcePublicationRequestId": request_id,
+                }
+                if (
+                    previous_bundle["continuation"].get("continuationHeadSha") != previous_commit
+                    or replay_bundle["continuation"] != expected_continuation
+                    or replay_authority.get("previousContinuationDedupeKey")
+                    != previous_continuation_key
+                ):
+                    raise LedgerError("managed replay continuation authority changed")
+                return {
+                    "created": False,
+                    "alreadyCurrent": True,
+                    "continuationDedupeKey": replay_continuation_key,
+                    "previousContinuationDedupeKey": previous_continuation_key,
+                }
+
+            current_bundle = load_bundle(
+                current_result_row,
+                authority_id=int(current_result_row["selection_authority_id"] or 0),
+            )
+            if (
+                int(current_result_row["id"]) == int(source_result_row["id"])
+                and current_bundle["continuationRow"]["dedupe_key"]
+                == source_bundle["continuationRow"]["dedupe_key"]
+            ):
+                return {
+                    "created": False,
+                    "alreadyCurrent": True,
+                    "continuationDedupeKey": source_bundle["continuationRow"]["dedupe_key"],
+                    "previousContinuationDedupeKey": None,
+                }
+            if (
+                current_bundle["continuation"].get("continuationHeadSha") != previous_commit
+                or current_bundle["continuation"].get("sourcePublicationRequestId") is not None
+            ):
+                raise LedgerError("managed replay current continuation changed")
+
+            previous_continuation_key = str(current_bundle["continuationRow"]["dedupe_key"])
+            rebound_continuation = dict(source_continuation) | {
+                "continuationHeadSha": desired_commit,
+                "previousContinuationDedupeKey": previous_continuation_key,
+                "sourcePublicationRequestId": request_id,
+            }
+            rebound_continuation_key = sha256_json(rebound_continuation)
+            recorded_at = iso_z(datetime.now(UTC))
+            self._event(
+                connection,
+                key,
+                "TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND",
+                rebound_continuation_key,
+                rebound_continuation,
+                recorded_at,
+            )
+            authority_state = {
+                "taskId": task_id,
+                "threadId": thread_id,
+                "sourceResultEventId": int(source_result_row["id"]),
+                "resultDigest": result_digest,
+                "continuationDedupeKey": rebound_continuation_key,
+                "tombstoneReceiptDigest": sha256_json(historical_tombstone),
+            }
+            rebound_authority = authority_state | {
+                "authorityObservedAt": recorded_at,
+                "authorityStateDigest": sha256_json(authority_state),
+                "previousContinuationDedupeKey": previous_continuation_key,
+                "sourcePublicationRequestId": request_id,
+            }
+            authority_dedupe_key = sha256_text(
+                "|".join(
+                    (
+                        "managed-result-replay-authority-v1",
+                        request_id,
+                        str(source_result_row["id"]),
+                        rebound_continuation_key,
+                        previous_continuation_key,
+                    )
+                )
+            )
+            self._event(
+                connection,
+                key,
+                "TASK_RESULT_AUTHORITY_BOUND",
+                authority_dedupe_key,
+                rebound_authority,
+                recorded_at,
+            )
+            rebound_authority_row = connection.execute(
+                """SELECT id FROM events
+                   WHERE opportunity_key=? AND event_type='TASK_RESULT_AUTHORITY_BOUND'
+                     AND dedupe_key=? AND payload_json=?""",
+                (key, authority_dedupe_key, canonical_json(rebound_authority)),
+            ).fetchone()
+            rebound_continuation_row = connection.execute(
+                """SELECT id FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+                     AND dedupe_key=? AND payload_json=?""",
+                (key, rebound_continuation_key, canonical_json(rebound_continuation)),
+            ).fetchone()
+            selected_after = selected_result()
+            if (
+                rebound_authority_row is None
+                or rebound_continuation_row is None
+                or selected_after is None
+                or int(selected_after["id"]) != int(source_result_row["id"])
+                or int(selected_after["selection_authority_id"] or 0)
+                != int(rebound_authority_row["id"])
+            ):
+                raise LedgerError("managed replay continuation CAS did not commit exactly")
+            return {
+                "created": True,
+                "alreadyCurrent": True,
+                "continuationDedupeKey": rebound_continuation_key,
+                "previousContinuationDedupeKey": previous_continuation_key,
+            }
 
     def published_task_result_backfill_seen(self, key: str, *, digest: str) -> bool:
         """Return whether the legacy controller recorded a published-result backfill."""

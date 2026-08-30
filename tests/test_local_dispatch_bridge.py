@@ -12887,6 +12887,354 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(monkeypa
     }
 
 
+def test_managed_replay_restores_tombstone_continuation_for_context_recovery(monkeypatch, tmp_path):
+    (
+        store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        followup_context,
+        published_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    pr_url = str(followup_context["prFollowup"]["prUrl"])
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET commit_sha=? "
+            "WHERE request_id='published-authority-request'",
+            (published_head,),
+        )
+        connection.execute(
+            "UPDATE publication_permits SET commit_sha=? "
+            "WHERE permit_id='published-authority-permit'",
+            (published_head,),
+        )
+        connection.execute(
+            "UPDATE pr_followups SET head_sha=? WHERE opportunity_key='a/b#1'",
+            (published_head,),
+        )
+    managed.upsert_pr(
+        pr_key="a/b#9",
+        owner="a",
+        repo="b",
+        number=9,
+        head_sha=published_head,
+        pr_url=pr_url,
+        state="OPEN",
+        auto_created=True,
+        source_kind="MANAGED_PUBLICATION_RECEIPT",
+        source="test-managed-replay-published-head",
+    )
+
+    runtime = worktree / "runtime.py"
+    runtime.write_text(runtime.read_text(encoding="utf-8") + "# replayed fix\n", encoding="utf-8")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=followup_context,
+        changed_files=["runtime.py"],
+    )
+    value["prUrl"] = pr_url
+    monkeypatch.setattr(
+        MODULE,
+        "controller_review_result",
+        lambda *_args, **_kwargs: {
+            "schemaVersion": REVIEW_SCHEMA,
+            "verdict": "PASS",
+            "summary": "The exact replay result passed controller review.",
+        },
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ingested["ok"] is True, ingested
+    request_id = ingested["publicationRequests"][0]["requestId"]
+    request_row = store.publication_request(request_id)
+    request = request_row["request"]
+    desired_head = str(request["commitSha"])
+    assert request["previousCommitSha"] == published_head
+    assert desired_head != published_head
+
+    stale_value = dict(json.loads(result_path.read_text(encoding="utf-8")))
+    stale_value["commitSha"] = published_head
+    stale_value["headSha"] = published_head
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="e" * 64,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        **MODULE._task_result_tombstone_continuation_kwargs(
+            followup_context,
+            stale_value,
+        ),
+    )
+    stale_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert stale_context["codePathTombstoneContinuationHeadSha"] == published_head
+
+    store.block_publication_request(request_id, "ACTIVE_OR_CONDITIONAL_CLAIM")
+    run_git(worktree, "switch", "--detach", published_head)
+    run_git(worktree, "branch", "-f", request["branch"], published_head)
+    run_git(worktree, "switch", request["branch"])
+    monkeypatch.setattr(
+        MODULE,
+        "broker_publication_request",
+        lambda *_args, **_kwargs: pytest.fail("managed replay must not publish"),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_executor",
+        lambda *_args, **_kwargs: pytest.fail("managed replay must not call the executor"),
+    )
+
+    with store.connect() as connection:
+        request_count_before_interruption = connection.execute(
+            "SELECT COUNT(*) FROM publication_requests"
+        ).fetchone()[0]
+        permit_count_before_interruption = connection.execute(
+            "SELECT COUNT(*) FROM publication_permits"
+        ).fetchone()[0]
+    real_publication_request = MODULE._request_publication_from_task_result
+    monkeypatch.setattr(
+        MODULE,
+        "_request_publication_from_task_result",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("simulated replacement interruption")
+        ),
+    )
+    with pytest.raises(RuntimeError, match="simulated replacement interruption"):
+        MODULE.replay_managed_result(
+            SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+        )
+    assert run_git(worktree, "rev-parse", "HEAD") == desired_head
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0]
+            == request_count_before_interruption
+        )
+        assert (
+            connection.execute("SELECT COUNT(*) FROM publication_permits").fetchone()[0]
+            == permit_count_before_interruption
+        )
+        replay_markers = connection.execute(
+            """SELECT event_type FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type IN (
+                   'TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND',
+                   'TASK_RESULT_AUTHORITY_BOUND'
+                 )
+                 AND json_extract(payload_json,'$.sourcePublicationRequestId')=?
+               ORDER BY event_type""",
+            (request_id,),
+        ).fetchall()
+    assert [row["event_type"] for row in replay_markers] == [
+        "TASK_RESULT_AUTHORITY_BOUND",
+        "TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND",
+    ]
+    monkeypatch.setattr(
+        MODULE,
+        "_request_publication_from_task_result",
+        real_publication_request,
+    )
+
+    replayed = MODULE.replay_managed_result(
+        SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+    )
+
+    assert replayed["replacementStatus"] == "PENDING"
+    assert run_git(worktree, "rev-parse", "HEAD") == desired_head
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    assert synced["ok"] is True, synced["errors"]
+    refreshed = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert refreshed["headSha"] == desired_head
+    assert refreshed["commitSha"] == desired_head
+    assert refreshed["codePathTombstoneReceipt"]["preparedHeadSha"] == desired_head
+    assert (
+        refreshed["codePathTombstoneReceipt"]["tombstonePaths"]
+        == (followup_context["codePathTombstoneReceipt"]["tombstonePaths"])
+    )
+    projected = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert projected["codePathTombstoneContinuationHeadSha"] == desired_head
+    with store.connect() as connection:
+        target_requests = connection.execute(
+            "SELECT request_id FROM publication_requests "
+            "WHERE opportunity_key='a/b#1' AND commit_sha=?",
+            (desired_head,),
+        ).fetchall()
+    assert {row["request_id"] for row in target_requests} == {
+        request_id,
+        replayed["replacementRequestId"],
+    }
+
+    with store.connect() as connection:
+        counts_before_retry = tuple(
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE opportunity_key='a/b#1' AND event_type=?",
+                (event_type,),
+            ).fetchone()[0]
+            for event_type in (
+                "TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND",
+                "TASK_RESULT_AUTHORITY_BOUND",
+            )
+        ) + (
+            connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM publication_permits").fetchone()[0],
+        )
+    replacement_before_refresh = store.publication_request(replayed["replacementRequestId"])
+    replacement_receipt = replacement_before_refresh["request"]["probeReceipt"]
+    previous_evidence_digest = replacement_before_refresh["evidence_digest"]
+    store.block_publication_request(
+        replayed["replacementRequestId"],
+        "BLOCKED_REPRODUCTION_REQUIRED",
+    )
+    from oss_pr_radar import ledger as ledger_module
+    from oss_pr_radar import repo_probe
+
+    replay_now = parse_time(replacement_receipt["expiresAt"]) + timedelta(minutes=1)
+
+    class ReplayDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return replay_now if tz is not None else replay_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(repo_probe, "datetime", ReplayDateTime)
+    monkeypatch.setattr(ledger_module, "datetime", ReplayDateTime)
+    original_refresh = RadarLedger.refresh_managed_replay_replacement
+
+    def refresh_with_forged_bound(self, **kwargs):
+        forged = dict(kwargs["expected_replacement"])
+        forged["snapshotBoundAt"] = "2099-01-01T00:00:00Z"
+        return original_refresh(self, **(kwargs | {"expected_replacement": forged}))
+
+    monkeypatch.setattr(
+        RadarLedger,
+        "refresh_managed_replay_replacement",
+        refresh_with_forged_bound,
+    )
+    with pytest.raises(LedgerError, match="snapshot binding changed"):
+        MODULE.replay_managed_result(
+            SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+        )
+    forged_refresh = store.publication_request(replayed["replacementRequestId"])
+    assert forged_refresh["status"] == "BLOCKED"
+    assert forged_refresh["evidence_digest"] == previous_evidence_digest
+    monkeypatch.setattr(
+        RadarLedger,
+        "refresh_managed_replay_replacement",
+        original_refresh,
+    )
+
+    original_event = RadarLedger._event
+    monkeypatch.setattr(RadarLedger, "_event", lambda *_args, **_kwargs: None)
+    with pytest.raises(LedgerError, match="refresh did not persist"):
+        MODULE.replay_managed_result(
+            SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+        )
+    failed_refresh = store.publication_request(replayed["replacementRequestId"])
+    assert failed_refresh["status"] == "BLOCKED"
+    assert failed_refresh["reason"] == "BLOCKED_REPRODUCTION_REQUIRED"
+    assert failed_refresh["evidence_digest"] == previous_evidence_digest
+    monkeypatch.setattr(RadarLedger, "_event", original_event)
+
+    replayed_again = MODULE.replay_managed_result(
+        SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+    )
+    assert replayed_again["replacementRequestId"] == replayed["replacementRequestId"]
+    assert replayed_again["replacementStatus"] == "PENDING"
+    replacement_after_refresh = store.publication_request(replayed["replacementRequestId"])
+    assert replacement_after_refresh["request"]["requestId"] == replayed["replacementRequestId"]
+    assert replacement_after_refresh["status"] == "PENDING"
+    assert replacement_after_refresh["reason"] is None
+    assert replacement_after_refresh["evidence_digest"] != previous_evidence_digest
+    with store.connect() as connection:
+        counts_after_retry = tuple(
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE opportunity_key='a/b#1' AND event_type=?",
+                (event_type,),
+            ).fetchone()[0]
+            for event_type in (
+                "TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND",
+                "TASK_RESULT_AUTHORITY_BOUND",
+            )
+        ) + (
+            connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM publication_permits").fetchone()[0],
+        )
+        refresh_rows = connection.execute(
+            """SELECT * FROM events
+               WHERE event_type='MANAGED_REPLAY_REPLACEMENT_REFRESHED'
+                 AND json_extract(payload_json,'$.sourceRequestId')=?
+                 AND json_extract(payload_json,'$.replacementRequestId')=?""",
+            (request_id, replayed["replacementRequestId"]),
+        ).fetchall()
+    assert counts_after_retry == counts_before_retry
+    assert len(refresh_rows) == 1
+    refresh_lineage = json.loads(refresh_rows[0]["payload_json"])
+    assert refresh_lineage["previousEvidenceDigest"] == previous_evidence_digest
+    assert refresh_lineage["newEvidenceDigest"] == replacement_after_refresh["evidence_digest"]
+    assert refresh_lineage["previousReceiptDigest"] == sha256_json(replacement_receipt)
+    assert refresh_lineage["newReceiptDigest"] == sha256_json(
+        replacement_after_refresh["request"]["probeReceipt"]
+    )
+    assert refresh_lineage["refreshedAt"] == refresh_rows[0]["created_at"]
+
+    with store.connect() as connection:
+        counts_before_idempotent_replay = (
+            connection.execute("SELECT COUNT(*) FROM events").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM publication_permits").fetchone()[0],
+        )
+    replayed_idempotently = MODULE.replay_managed_result(
+        SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+    )
+    assert replayed_idempotently["replacementRequestId"] == replayed["replacementRequestId"]
+    assert replayed_idempotently["replacementStatus"] == "PENDING"
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM events").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM publication_permits").fetchone()[0],
+        ) == counts_before_idempotent_replay
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="f" * 64,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        **MODULE._task_result_tombstone_continuation_kwargs(
+            followup_context,
+            stale_value,
+        ),
+    )
+    with store.connect() as connection:
+        event_count_before_stale_retry = connection.execute(
+            "SELECT COUNT(*) FROM events"
+        ).fetchone()[0]
+        request_count_before_stale_retry = connection.execute(
+            "SELECT COUNT(*) FROM publication_requests"
+        ).fetchone()[0]
+    with pytest.raises(RuntimeError, match="continuation authority is stale"):
+        MODULE.replay_managed_result(
+            SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+        )
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == (
+            event_count_before_stale_retry
+        )
+        assert (
+            connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0]
+            == request_count_before_stale_retry
+        )
+
+
 def test_followup_commit_preserves_prepared_base_integration_diff(tmp_path):
     worktree = tmp_path / "worktree"
     worktree.mkdir()
