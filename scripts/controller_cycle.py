@@ -26,6 +26,8 @@ from oss_pr_radar.util import iso_z, utc_now  # noqa: E402
 
 AUTOMATION_ID = "oss-pr-radar"
 AUTOMATION_ROLE = "controller-heartbeat"
+MAX_FAILURE_LABELS = 8
+MAX_FAILURE_SECTION_CHARS = 240
 
 
 def _error_result(blocked: str, exc: BaseException) -> dict[str, object]:
@@ -35,6 +37,50 @@ def _error_result(blocked: str, exc: BaseException) -> dict[str, object]:
         "blocked": blocked,
         "error": f"{type(exc).__name__}:{str(exc)[:400]}",
     }
+
+
+def _bounded_failure_labels(
+    values: object,
+    *,
+    include_queue: bool,
+) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    labels: list[str] = []
+    characters = 0
+    for item in values:
+        if isinstance(item, dict):
+            stage = str(item.get("stage") or "").strip()
+            queue = str(item.get("queue") or "").strip()
+            label = f"{stage}:{queue}" if include_queue and stage and queue else stage
+        elif isinstance(item, str):
+            label = item.strip()
+        else:
+            continue
+        label = label[:80]
+        if not label or label in labels:
+            continue
+        added = len(label) + (1 if labels else 0)
+        if len(labels) >= MAX_FAILURE_LABELS or characters + added > MAX_FAILURE_SECTION_CHARS:
+            break
+        labels.append(label)
+        characters += added
+    return labels
+
+
+def _controller_failure_summary(result: dict[str, object]) -> str | None:
+    parts: list[str] = []
+    blockers = result.get("finalBlockers")
+    failures = result.get("failures")
+    blocker_labels = _bounded_failure_labels(blockers, include_queue=True)
+    failure_labels = _bounded_failure_labels(failures, include_queue=False)
+    if isinstance(blockers, list) and blockers:
+        suffix = ": " + ",".join(blocker_labels) if blocker_labels else ""
+        parts.append("controller final blockers" + suffix)
+    if isinstance(failures, list) and failures:
+        suffix = ": " + ",".join(failure_labels) if failure_labels else ""
+        parts.append("controller stage failures" + suffix)
+    return "; ".join(parts) or None
 
 
 def _external_effects(
@@ -157,17 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         blocked_reason = str(result.get("blocked") or "") or None
         error = str(result.get("error") or "") or None
         if exit_code != 0 and not blocked_reason:
-            blockers = result.get("finalBlockers")
-            failures = result.get("failures")
-            if isinstance(blockers, list) and blockers:
-                labels = [
-                    f"{item.get('stage')}:{item.get('queue')}"
-                    for item in blockers
-                    if isinstance(item, dict)
-                ]
-                blocked_reason = "controller final blockers: " + ",".join(labels[:8])
-            elif isinstance(failures, list) and failures:
-                blocked_reason = "controller stage failures"
+            blocked_reason = _controller_failure_summary(result)
         startup_effects_known = bool(result.get("blocked")) and not result.get("stages")
     except SystemExit as exc:
         exit_code = exc.code if isinstance(exc.code, int) else 1

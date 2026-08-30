@@ -128,6 +128,23 @@ DEFAULT_TASK_PROJECT_ID = os.environ.get(
 )
 ISSUE_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
 PULL_URL = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
+
+
+def _thread_display_title_sql(
+    connection: sqlite3.Connection,
+    *,
+    columns: set[str] | None = None,
+) -> str:
+    """Return the compatible SQLite expression for Codex's displayed task name."""
+
+    available = columns or {
+        str(item[1]) for item in connection.execute("PRAGMA table_info(threads)").fetchall()
+    }
+    if "name" in available:
+        return "COALESCE(NULLIF(name,''),title)"
+    return "title"
+
+
 DELEGATED_INPUT = re.compile(r"<input>(.*?)</input>", re.DOTALL)
 MAX_TITLE_CHARS = 59
 TASK_PRIVATE_DIR = ".oss-pr-radar"
@@ -148,6 +165,7 @@ APP_SERVER_WATCHDOG_LIVE_PROBE_SECONDS = 60.0
 APP_SERVER_WATCHDOG_LIVE_RETRY_SECONDS = 120.0
 APP_SERVER_EVENT_DRAIN_SLICE_SECONDS = 1.0
 APP_SERVER_TASK_TURN_MAX_SECONDS = 45 * 60.0
+DESKTOP_BATCH_ERROR_KEY = "__batchError__"
 ROOT_THREAD_START_TIMEOUT_SECONDS = 60.0
 ROOT_TURN_START_TIMEOUT_SECONDS = 45.0
 ROOT_TASK_INDEX_WAIT_SECONDS = 30.0
@@ -4060,8 +4078,9 @@ def _codex_usage_limit_pause(store: Any) -> dict[str, Any] | None:
     rows: dict[str, tuple[int, str, int, str | None]] = {}
     try:
         connection = sqlite3.connect(THREAD_DB)
+        display_title = _thread_display_title_sql(connection)
         values = connection.execute(
-            f"SELECT id,archived,title,updated_at,rollout_path FROM threads "
+            f"SELECT id,archived,{display_title} AS title,updated_at,rollout_path FROM threads "
             f"WHERE id IN ({placeholders})",
             thread_ids,
         ).fetchall()
@@ -6623,9 +6642,10 @@ def _codex_decision_thread(thread_id: str) -> dict[str, Any] | None:
         return None
     connection = sqlite3.connect(THREAD_DB)
     try:
+        display_title = _thread_display_title_sql(connection)
         row = connection.execute(
-            """SELECT title,archived,first_user_message,cwd,project_id,thread_source
-               FROM threads WHERE id=?""",
+            f"""SELECT {display_title} AS title,archived,first_user_message,cwd,
+                       project_id,thread_source FROM threads WHERE id=?""",
             (thread_id,),
         ).fetchone()
     finally:
@@ -6667,8 +6687,10 @@ def _recover_codex_decision_thread(prompt: str, *, project_id: str) -> str | Non
         return None
     connection = sqlite3.connect(THREAD_DB)
     try:
+        display_title = _thread_display_title_sql(connection)
         rows = connection.execute(
-            """SELECT id,title,archived,first_user_message,cwd,project_id,thread_source
+            f"""SELECT id,{display_title} AS title,archived,first_user_message,cwd,
+                      project_id,thread_source
                FROM threads
                WHERE archived=0 AND cwd=? AND first_user_message=?
                  AND thread_source='appServer'
@@ -9366,8 +9388,10 @@ def commit_receipt(args: argparse.Namespace) -> dict[str, Any]:
             str(item[1]) for item in connection.execute("PRAGMA table_info(threads)").fetchall()
         }
         source_projection = "thread_source" if "thread_source" in columns else "'appServer'"
+        display_title = _thread_display_title_sql(connection, columns=columns)
         row = connection.execute(
-            f"SELECT cwd,title,first_user_message,git_origin_url,archived,{source_projection} AS thread_source FROM threads WHERE id=?",
+            f"SELECT cwd,{display_title} AS title,first_user_message,git_origin_url,"
+            f"archived,{source_projection} AS thread_source FROM threads WHERE id=?",
             (args.thread_id,),
         ).fetchone()
     finally:
@@ -9474,8 +9498,10 @@ def orphan_list(args: argparse.Namespace) -> dict[str, Any]:
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
     try:
+        display_title = _thread_display_title_sql(connection)
         rows = connection.execute(
-            """SELECT id,cwd,title,first_user_message,git_origin_url,archived,
+            f"""SELECT id,cwd,{display_title} AS title,first_user_message,
+                      git_origin_url,archived,
                       created_at,created_at_ms
                FROM threads"""
         ).fetchall()
@@ -9638,8 +9664,10 @@ def duplicate_task_list(args: argparse.Namespace) -> dict[str, Any]:
     connection = sqlite3.connect(THREAD_DB)
     connection.row_factory = sqlite3.Row
     try:
+        display_title = _thread_display_title_sql(connection)
         rows = connection.execute(
-            """SELECT id,title,first_user_message,archived,created_at,updated_at,
+            f"""SELECT id,{display_title} AS title,first_user_message,archived,
+                      created_at,updated_at,
                       thread_source
                FROM threads WHERE cwd=? AND archived=0 AND updated_at<=?""",
             (str(GITHUB_ROOT.resolve()), cutoff),
@@ -9684,10 +9712,12 @@ def duplicate_task_title_reconcile(args: argparse.Namespace) -> dict[str, Any]:
     results = _set_desktop_thread_titles(candidates)
     connection = sqlite3.connect(THREAD_DB)
     try:
+        display_title = _thread_display_title_sql(connection)
         current = {
             str(row[0]): str(row[1] or "")
             for row in connection.execute(
-                f"SELECT id,title FROM threads WHERE id IN ({','.join('?' for _ in candidates)})",
+                f"SELECT id,{display_title} AS title FROM threads "
+                f"WHERE id IN ({','.join('?' for _ in candidates)})",
                 [item["threadId"] for item in candidates],
             ).fetchall()
         }
@@ -9782,8 +9812,10 @@ def orphan_commit(args: argparse.Namespace) -> dict[str, Any]:
             raise RuntimeError("orphan managed task project mismatch")
     connection = sqlite3.connect(THREAD_DB)
     try:
+        display_title = _thread_display_title_sql(connection)
         row = connection.execute(
-            "SELECT title,archived,cwd FROM threads WHERE id=?", (args.thread_id,)
+            f"SELECT {display_title} AS title,archived,cwd FROM threads WHERE id=?",
+            (args.thread_id,),
         ).fetchone()
     finally:
         connection.close()
@@ -16937,12 +16969,13 @@ def restore_list(args: argparse.Namespace) -> dict[str, Any]:
     reconciled: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
     try:
+        display_title = _thread_display_title_sql(connection)
         for candidate in bindings:
             ledger_archived = (
                 candidate.get("lifecycleState", "THREAD_ARCHIVED") == "THREAD_ARCHIVED"
             )
             row = connection.execute(
-                "SELECT archived,title FROM threads WHERE id=?",
+                f"SELECT archived,{display_title} AS title FROM threads WHERE id=?",
                 (candidate["threadId"],),
             ).fetchone()
             if row is None:
@@ -17017,9 +17050,10 @@ def cleanup_list(args: argparse.Namespace) -> dict[str, Any]:
     connection.row_factory = sqlite3.Row
     pending: list[dict[str, Any]] = []
     try:
+        display_title = _thread_display_title_sql(connection)
         for candidate in candidates:
             row = connection.execute(
-                "SELECT archived,title FROM threads WHERE id=?",
+                f"SELECT archived,{display_title} AS title FROM threads WHERE id=?",
                 (candidate["threadId"],),
             ).fetchone()
             if row is None:
@@ -17083,7 +17117,8 @@ def _apply_desktop_thread_requests(
         return results
     executable = shutil.which("codex")
     if not executable:
-        return {thread_id: "codex_executable_missing" for thread_id in results}
+        reason = "codex_executable_missing"
+        return {thread_id: reason for thread_id in results} | {DESKTOP_BATCH_ERROR_KEY: reason}
     process = subprocess.Popen(
         [
             executable,
@@ -17132,6 +17167,7 @@ def _apply_desktop_thread_requests(
         process.stdin.flush()
 
         pending = {0, *request_ids}
+        batch_error: str | None = None
         buffer = b""
         deadline = monotonic() + max(1.0, timeout_seconds)
         with selectors.DefaultSelector() as selector:
@@ -17161,21 +17197,30 @@ def _apply_desktop_thread_requests(
                             raise RuntimeError("app server initialization failed")
                         continue
                     thread_id = request_ids[response_id]
+                    response_error = response.get("error")
                     results[thread_id] = (
-                        f"app_server_{operation_label}_failed" if response.get("error") else None
+                        f"app_server_{operation_label}_failed" if response_error else None
                     )
+                    if isinstance(response_error, dict) and str(response_error.get("code")) in {
+                        "-32601",
+                        "-32602",
+                    }:
+                        batch_error = f"app_server_{operation_label}_protocol_error"
         if 0 in pending:
-            return {thread_id: "app_server_initialization_timeout" for thread_id in results}
+            reason = "app_server_initialization_timeout"
+            return {thread_id: reason for thread_id in results} | {DESKTOP_BATCH_ERROR_KEY: reason}
         for request_id in pending:
             if request_id in request_ids:
                 results[request_ids[request_id]] = f"app_server_{operation_label}_timeout"
-        return results
+        return (
+            results | {DESKTOP_BATCH_ERROR_KEY: batch_error} if batch_error is not None else results
+        )
     except (OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError) as exc:
         reason = f"{type(exc).__name__}:{str(exc)[:160]}"
         return {
             thread_id: (current if current is None else reason)
             for thread_id, current in results.items()
-        }
+        } | {DESKTOP_BATCH_ERROR_KEY: reason}
     finally:
         try:
             if process.stdin is not None:
@@ -17312,8 +17357,10 @@ def title_list(args: argparse.Namespace) -> dict[str, Any]:
         connection = sqlite3.connect(THREAD_DB)
         try:
             placeholders = ",".join("?" for _ in thread_ids)
+            display_title = _thread_display_title_sql(connection)
             rows = connection.execute(
-                f"SELECT id,title,archived FROM threads WHERE id IN ({placeholders})",
+                f"SELECT id,{display_title} AS title,archived FROM threads "
+                f"WHERE id IN ({placeholders})",
                 thread_ids,
             ).fetchall()
             current = {str(row[0]): (str(row[1] or ""), int(row[2] or 0)) for row in rows}
@@ -17357,8 +17404,10 @@ def title_list(args: argparse.Namespace) -> dict[str, Any]:
 def title_commit(args: argparse.Namespace) -> dict[str, Any]:
     connection = sqlite3.connect(THREAD_DB)
     try:
+        display_title = _thread_display_title_sql(connection)
         row = connection.execute(
-            "SELECT title,archived FROM threads WHERE id=?", (args.thread_id,)
+            f"SELECT {display_title} AS title,archived FROM threads WHERE id=?",
+            (args.thread_id,),
         ).fetchone()
     finally:
         connection.close()
@@ -17392,8 +17441,10 @@ def _set_desktop_thread_titles(
 def _ensure_desktop_thread_title(thread_id: str, desired_title: str) -> None:
     connection = sqlite3.connect(THREAD_DB)
     try:
+        display_title = _thread_display_title_sql(connection)
         row = connection.execute(
-            "SELECT title,archived FROM threads WHERE id=?", (thread_id,)
+            f"SELECT {display_title} AS title,archived FROM threads WHERE id=?",
+            (thread_id,),
         ).fetchone()
     finally:
         connection.close()
@@ -17406,8 +17457,10 @@ def _ensure_desktop_thread_title(thread_id: str, desired_title: str) -> None:
         apply_error = result.get(thread_id)
         connection = sqlite3.connect(THREAD_DB)
         try:
+            display_title = _thread_display_title_sql(connection)
             row = connection.execute(
-                "SELECT title,archived FROM threads WHERE id=?", (thread_id,)
+                f"SELECT {display_title} AS title,archived FROM threads WHERE id=?",
+                (thread_id,),
             ).fetchone()
         finally:
             connection.close()
@@ -17430,8 +17483,10 @@ def _reconcile_desktop_thread_title_after_binding(
         try:
             connection = sqlite3.connect(THREAD_DB)
             try:
+                display_title = _thread_display_title_sql(connection)
                 row = connection.execute(
-                    "SELECT title,archived FROM threads WHERE id=?", (thread_id,)
+                    f"SELECT {display_title} AS title,archived FROM threads WHERE id=?",
+                    (thread_id,),
                 ).fetchone()
             finally:
                 connection.close()
@@ -17455,9 +17510,18 @@ def _reconcile_desktop_thread_title_after_binding(
 def title_reconcile(args: argparse.Namespace) -> dict[str, Any]:
     candidates = title_list(args)["titles"]
     if not candidates:
-        return {"ok": True, "renamed": [], "errors": []}
+        return {"ok": True, "renamed": [], "deferred": [], "errors": []}
     apply_results = _set_desktop_thread_titles(candidates)
+    batch_error = apply_results.get(DESKTOP_BATCH_ERROR_KEY)
+    if batch_error:
+        return {
+            "ok": False,
+            "renamed": [],
+            "deferred": [],
+            "errors": [{"error": batch_error}],
+        }
     renamed: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     for candidate in candidates:
         thread_id = str(candidate["threadId"])
@@ -17472,8 +17536,28 @@ def title_reconcile(args: argparse.Namespace) -> dict[str, Any]:
                 )
             )
             renamed.append({"key": candidate["key"], **committed})
-        except (OSError, RuntimeError, ValueError) as exc:
+        except LedgerError as exc:
             errors.append(
+                {
+                    "key": candidate["key"],
+                    "threadId": thread_id,
+                    "error": f"{type(exc).__name__}:{str(exc)[:160]}",
+                }
+            )
+        except RuntimeError as exc:
+            if str(exc) != "thread title was not applied":
+                errors.append(
+                    {
+                        "key": candidate["key"],
+                        "threadId": thread_id,
+                        "error": f"{type(exc).__name__}:{str(exc)[:160]}",
+                    }
+                )
+                continue
+            # The task binding and context are already durable. A desktop title
+            # is cosmetic, so retain the ledger candidate for a later retry
+            # without making the publication worker unhealthy.
+            deferred.append(
                 {
                     "key": candidate["key"],
                     "threadId": thread_id,
@@ -17481,7 +17565,20 @@ def title_reconcile(args: argparse.Namespace) -> dict[str, Any]:
                     or f"{type(exc).__name__}:{str(exc)[:160]}",
                 }
             )
-    return {"ok": not errors, "renamed": renamed, "errors": errors}
+        except (OSError, ValueError) as exc:
+            errors.append(
+                {
+                    "key": candidate["key"],
+                    "threadId": thread_id,
+                    "error": f"{type(exc).__name__}:{str(exc)[:160]}",
+                }
+            )
+    return {
+        "ok": not errors,
+        "renamed": renamed,
+        "deferred": deferred,
+        "errors": errors,
+    }
 
 
 def pr_lifecycle_stage(value: dict[str, Any]) -> str:
@@ -17738,6 +17835,7 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
         (datetime.now(UTC) - timedelta(minutes=max(30, args.min_age_minutes))).timestamp()
     )
     try:
+        display_title = _thread_display_title_sql(connection)
         candidates = store.recovery_candidates(
             min_age_minutes=0,
             include_exhausted_dispatched=True,
@@ -17769,7 +17867,8 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
             if not thread_id or thread_id in candidate_thread_ids:
                 continue
             row = connection.execute(
-                "SELECT archived,title,updated_at,rollout_path FROM threads WHERE id=?",
+                f"SELECT archived,{display_title} AS title,updated_at,rollout_path "
+                "FROM threads WHERE id=?",
                 (thread_id,),
             ).fetchone()
             if (
@@ -17795,7 +17894,8 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
             )
         for candidate in candidates:
             row = connection.execute(
-                "SELECT archived,title,first_user_message,cwd,git_origin_url,updated_at,"
+                f"SELECT archived,{display_title} AS title,first_user_message,cwd,"
+                "git_origin_url,updated_at,"
                 "rollout_path "
                 "FROM threads WHERE id=?",
                 (candidate["threadId"],),

@@ -744,6 +744,58 @@ def test_desktop_thread_request_isolates_malformed_response_id(monkeypatch, tmp_
 
     assert result["thread-1"].startswith("TypeError:")
     assert "list" in result["thread-1"]
+    assert result[MODULE.DESKTOP_BATCH_ERROR_KEY] == result["thread-1"]
+
+
+def test_desktop_thread_request_marks_missing_codex_as_batch_failure(monkeypatch):
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: None)
+
+    result = MODULE._apply_desktop_thread_requests(
+        [{"threadId": "thread-1", "desiredTitle": "task"}],
+        method="thread/name/set",
+        parameter_builder=lambda item: {
+            "threadId": item["threadId"],
+            "name": item["desiredTitle"],
+        },
+        operation_label="title_update",
+    )
+
+    assert result == {
+        "thread-1": "codex_executable_missing",
+        MODULE.DESKTOP_BATCH_ERROR_KEY: "codex_executable_missing",
+    }
+
+
+def test_desktop_thread_request_marks_protocol_error_as_batch_failure(monkeypatch, tmp_path):
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "sys.stdin.readline()\n"
+        "sys.stdin.readline()\n"
+        'print(\'{"id": 0, "result": {}}\', flush=True)\n'
+        'print(\'{"id": 1, "error": {"code": -32601, "message": "missing"}}\', flush=True)\n',
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: str(fake_codex))
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+
+    result = MODULE._apply_desktop_thread_requests(
+        [{"threadId": "thread-1", "desiredTitle": "task"}],
+        method="thread/name/set",
+        parameter_builder=lambda item: {
+            "threadId": item["threadId"],
+            "name": item["desiredTitle"],
+        },
+        operation_label="title_update",
+        timeout_seconds=2,
+    )
+
+    assert result == {
+        "thread-1": "app_server_title_update_failed",
+        MODULE.DESKTOP_BATCH_ERROR_KEY: "app_server_title_update_protocol_error",
+    }
 
 
 def test_duplicate_task_reconcile_archives_only_exact_renamed_duplicates(monkeypatch):
@@ -1933,6 +1985,173 @@ def test_title_reconcile_applies_and_receipts_desktop_title(monkeypatch, tmp_pat
         "ok": True,
         "titles": [],
     }
+
+
+def test_title_reconcile_uses_codex_display_name_when_legacy_title_is_stale(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "PR_OPEN", evidence={})
+    pending = store.title_candidates()[0]
+    desired_title = MODULE.lifecycle_title(
+        pending["titleState"], pending["titleTime"], pending["key"], pending["title"]
+    )
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, title TEXT, name TEXT, archived INTEGER)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            ("thread-1", "<codex_delegation>...", desired_title, 0),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(
+        MODULE,
+        "_set_desktop_thread_titles",
+        lambda _candidates: {"thread-1": None},
+    )
+
+    result = MODULE.title_reconcile(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True
+    assert result["deferred"] == []
+    assert [item["threadId"] for item in result["renamed"]] == ["thread-1"]
+    assert MODULE.title_list(SimpleNamespace(ledger=store.path)) == {
+        "ok": True,
+        "titles": [],
+    }
+
+
+def test_ensure_desktop_title_accepts_codex_display_name(monkeypatch, tmp_path):
+    desired_title = "[有价值·处理中] 08-30 10:00 a/b#1 Runtime bug"
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, title TEXT, name TEXT, archived INTEGER)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            ("thread-1", "legacy automatic title", desired_title, 0),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(
+        MODULE,
+        "_set_desktop_thread_titles",
+        lambda _candidates: (_ for _ in ()).throw(AssertionError("unexpected title rewrite")),
+    )
+
+    MODULE._ensure_desktop_thread_title("thread-1", desired_title)
+
+
+def test_title_reconcile_defers_desktop_failure_and_retries(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "PR_OPEN", evidence={})
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, title TEXT, archived INTEGER)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?)",
+            ("thread-1", "<codex_delegation>...", 0),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(
+        MODULE,
+        "_set_desktop_thread_titles",
+        lambda _candidates: {"thread-1": "app_server_title_update_failed"},
+    )
+
+    deferred = MODULE.title_reconcile(SimpleNamespace(ledger=store.path))
+
+    assert deferred == {
+        "ok": True,
+        "renamed": [],
+        "deferred": [
+            {
+                "key": "a/b#1",
+                "threadId": "thread-1",
+                "error": "app_server_title_update_failed",
+            }
+        ],
+        "errors": [],
+    }
+    assert [item["threadId"] for item in store.title_candidates()] == ["thread-1"]
+
+    def apply_titles(candidates):
+        with sqlite3.connect(thread_db) as connection:
+            connection.execute(
+                "UPDATE threads SET title=? WHERE id=?",
+                (candidates[0]["desiredTitle"], candidates[0]["threadId"]),
+            )
+        return {"thread-1": None}
+
+    monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", apply_titles)
+    retried = MODULE.title_reconcile(SimpleNamespace(ledger=store.path))
+
+    assert retried["ok"] is True
+    assert retried["deferred"] == []
+    assert [item["threadId"] for item in retried["renamed"]] == ["thread-1"]
+    assert store.title_candidates() == []
+
+
+def test_title_reconcile_keeps_ledger_authorization_failure_fatal(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "PR_OPEN", evidence={})
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, title TEXT, archived INTEGER)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?)",
+            ("thread-1", "<codex_delegation>...", 0),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", lambda _candidates: {})
+    monkeypatch.setattr(
+        MODULE,
+        "title_commit",
+        lambda _args: (_ for _ in ()).throw(MODULE.LedgerError("title authorization is stale")),
+    )
+
+    result = MODULE.title_reconcile(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is False
+    assert result["deferred"] == []
+    assert result["errors"] == [
+        {
+            "key": "a/b#1",
+            "threadId": "thread-1",
+            "error": "LedgerError:title authorization is stale",
+        }
+    ]
+
+
+def test_title_reconcile_keeps_batch_infrastructure_failure_fatal(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "PR_OPEN", evidence={})
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, title TEXT, archived INTEGER)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?)",
+            ("thread-1", "<codex_delegation>...", 0),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(
+        MODULE,
+        "_set_desktop_thread_titles",
+        lambda _candidates: {
+            "thread-1": "app_server_initialization_timeout",
+            MODULE.DESKTOP_BATCH_ERROR_KEY: "app_server_initialization_timeout",
+        },
+    )
+
+    result = MODULE.title_reconcile(SimpleNamespace(ledger=store.path))
+
+    assert result == {
+        "ok": False,
+        "renamed": [],
+        "deferred": [],
+        "errors": [{"error": "app_server_initialization_timeout"}],
+    }
+    assert [item["threadId"] for item in store.title_candidates()] == ["thread-1"]
 
 
 def test_title_list_ignores_archived_desktop_tasks(monkeypatch, tmp_path):
@@ -10288,8 +10507,13 @@ def test_cleanup_reconcile_archives_reconciled_no_go_task(monkeypatch, tmp_path)
     )
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
-        connection.execute("CREATE TABLE threads (id TEXT, archived INTEGER, title TEXT)")
-        connection.execute("INSERT INTO threads VALUES (?,?,?)", ("thread-1", 0, desired_title))
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, archived INTEGER, title TEXT, name TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            ("thread-1", 0, "legacy automatic title", desired_title),
+        )
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
 
     def archive(candidates):
@@ -23393,20 +23617,51 @@ def test_duplicate_task_list_only_returns_stale_unbound_raw_tasks(monkeypatch, t
     with sqlite3.connect(thread_db) as connection:
         connection.execute(
             """CREATE TABLE threads (
-                id TEXT, cwd TEXT, title TEXT, first_user_message TEXT,
+                id TEXT, cwd TEXT, title TEXT, name TEXT, first_user_message TEXT,
                 archived INTEGER, created_at INTEGER, updated_at INTEGER,
                 thread_source TEXT
             )"""
         )
         rows = [
-            ("canonical", str(project_root), "[有价值]", prompt, 0, -300, -60, "app"),
-            ("duplicate", str(project_root), "<codex_delegation>raw", prompt, 0, -240, -60, "app"),
-            ("recent", str(project_root), "<codex_delegation>raw", prompt, 0, -20, -5, "app"),
-            ("archived", str(project_root), "<codex_delegation>raw", prompt, 1, -240, -60, "app"),
+            ("canonical", str(project_root), "[有价值]", None, prompt, 0, -300, -60, "app"),
+            (
+                "duplicate",
+                str(project_root),
+                "<codex_delegation>raw",
+                None,
+                prompt,
+                0,
+                -240,
+                -60,
+                "app",
+            ),
+            (
+                "recent",
+                str(project_root),
+                "<codex_delegation>raw",
+                None,
+                prompt,
+                0,
+                -20,
+                -5,
+                "app",
+            ),
+            (
+                "archived",
+                str(project_root),
+                "<codex_delegation>raw",
+                None,
+                prompt,
+                1,
+                -240,
+                -60,
+                "app",
+            ),
             (
                 "helper",
                 str(project_root),
                 "<codex_delegation>raw",
+                None,
                 prompt,
                 0,
                 -240,
@@ -23416,12 +23671,12 @@ def test_duplicate_task_list_only_returns_stale_unbound_raw_tasks(monkeypatch, t
         ]
         for row in rows:
             connection.execute(
-                "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
-                row[:5]
+                "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?)",
+                row[:6]
                 + (
-                    int((now + timedelta(minutes=row[5])).timestamp()),
                     int((now + timedelta(minutes=row[6])).timestamp()),
-                    row[7],
+                    int((now + timedelta(minutes=row[7])).timestamp()),
+                    row[8],
                 ),
             )
 
@@ -23450,15 +23705,26 @@ def test_duplicate_task_list_only_returns_stale_unbound_raw_tasks(monkeypatch, t
     assert result["duplicates"][0]["canonicalThreadId"] == "canonical"
     assert result["duplicates"][0]["desiredTitle"].startswith("[无价值·重复任务]")
 
-    with sqlite3.connect(thread_db) as connection:
-        connection.execute(
-            "UPDATE threads SET title=? WHERE id=?",
-            (result["duplicates"][0]["desiredTitle"], "duplicate"),
-        )
+    def apply_titles(candidates):
+        with sqlite3.connect(thread_db) as connection:
+            connection.execute(
+                "UPDATE threads SET name=? WHERE id=?",
+                (candidates[0]["desiredTitle"], candidates[0]["threadId"]),
+            )
+        return {"duplicate": None}
+
+    monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", apply_titles)
+    reconciled = MODULE.duplicate_task_title_reconcile(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=30)
+    )
+    assert reconciled["ok"] is True
+    assert [item["threadId"] for item in reconciled["renamed"]] == ["duplicate"]
+
     after_rename = MODULE.duplicate_task_list(
         SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=30)
     )
     assert [item["threadId"] for item in after_rename["duplicates"]] == ["duplicate"]
+    assert after_rename["duplicates"][0]["currentTitle"].startswith("[无价值·重复任务]")
 
 
 def test_orphan_list_recovers_thread_created_in_github_project(monkeypatch, tmp_path):

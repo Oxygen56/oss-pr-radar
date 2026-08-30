@@ -461,6 +461,57 @@ def test_controller_and_daily_entrypoints_write_blocked_receipts(
     assert daily_audit["failedRuns"][0]["blockedReason"] == "operational authorization required"
 
 
+def test_controller_receipt_preserves_stage_failure_and_final_blockers(
+    tmp_path: Path, monkeypatch, capsys
+):
+    root = Path(__file__).parents[1]
+    controller = _load_script(
+        "controller_cycle_combined_failure_receipt_test",
+        root / "scripts/controller_cycle.py",
+    )
+
+    class Binding:
+        release_id = "test-release"
+        code_root = root
+        release = {"manifestSha256": "digest"}
+
+    result = {
+        "ok": False,
+        "checkedAt": "2026-08-30T02:41:25Z",
+        "boundReleaseId": "test-release",
+        "stages": {},
+        "failures": [
+            {
+                "stage": "titleReconcile",
+                "reason": "sensitive implementation detail must not enter the receipt",
+            }
+        ],
+        "finalBlockers": [
+            {"stage": "resultIngestion", "queue": "workBlocked", "count": 1},
+            {"stage": "finalLocalAgentStatus", "queue": "unhealthy", "count": 1},
+        ],
+    }
+    monkeypatch.setattr(controller, "bind_runtime", lambda *_args, **_kwargs: Binding())
+    monkeypatch.setattr(
+        controller,
+        "run_locked_controller_cycle",
+        lambda *_args, **_kwargs: result,
+    )
+
+    assert controller.main(["--root", str(tmp_path), "--code-root", str(root), "--full"]) == 1
+    json.loads(capsys.readouterr().out)
+    records, issues = load_automation_run_receipts(tmp_path)
+    completion = records[-1]
+    expected = (
+        "controller final blockers: resultIngestion:workBlocked,"
+        "finalLocalAgentStatus:unhealthy; controller stage failures: titleReconcile"
+    )
+    assert completion["blockedReason"] == expected
+    assert "sensitive implementation detail" not in completion["blockedReason"]
+    audit = audit_automation_runs(records, source_issues=issues)
+    assert audit["failedRuns"][0]["blockedReason"] == expected
+
+
 def test_daily_send_gate_blocks_before_credentials_and_records_zero_effects(
     tmp_path: Path, monkeypatch, capsys
 ):

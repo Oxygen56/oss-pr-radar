@@ -716,6 +716,49 @@ def test_fast_publication_surfaces_title_reconciliation_failure(tmp_path):
     assert result["errors"] == [{"error": "rename failed"}]
 
 
+def test_publication_keeps_title_retry_visible_without_failing(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            return {"ok": True, "ingested": [], "publicationRequests": [], "errors": []}
+        if operation == "title-reconcile":
+            return {
+                "ok": True,
+                "renamed": [],
+                "deferred": [
+                    {
+                        "key": "a/b#1",
+                        "threadId": "thread-1",
+                        "error": "app_server_title_update_failed",
+                    }
+                ],
+                "errors": [],
+            }
+        if operation == "publication-feedback-list":
+            return {
+                "ok": True,
+                "candidates": [{"key": "c/d#2"}],
+                "unresolved": [],
+                "errors": [],
+            }
+        if operation == "drain-once":
+            return {"ok": True, "action": "publication_feedback_dispatched", "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert result["activity"] is True
+    assert result["titlesDeferred"][0]["threadId"] == "thread-1"
+    assert result["errors"] == []
+    assert "drain-once" in calls
+    assert compact_advance_result(result)["counts"]["titlesDeferred"] == 1
+
+
 def test_missing_historical_worktree_does_not_stop_fast_publication(tmp_path):
     calls = []
 
@@ -2203,6 +2246,7 @@ def test_compact_result_keeps_counts_and_omits_large_payloads():
         "workBlocked": 0,
         "reviewsUpdated": 1,
         "titlesRenamed": 0,
+        "titlesDeferred": 0,
         "threadsArchived": 0,
         "published": 0,
         "publicationFeedbackPending": 0,

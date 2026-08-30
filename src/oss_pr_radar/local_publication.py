@@ -1352,6 +1352,7 @@ def advance_once(
     blocked = list(publication.get("blocked") or [])
     pending = list(publication.get("pending") or [])
     renamed = list(title_reconciliation.get("renamed") or [])
+    titles_deferred = list(title_reconciliation.get("deferred") or [])
     archived = list(cleanup_reconciliation.get("archived") or [])
     drain = {"ok": True, "action": "not_triggered"}
     terminal_feedback = {"ok": True, "published": 0, "errors": []}
@@ -1398,6 +1399,7 @@ def advance_once(
         ingested
         or requests
         or renamed
+        or titles_deferred
         or archived
         or published
         or publication_feedback.get("reconciled")
@@ -1430,6 +1432,7 @@ def advance_once(
         "workBlocked": work_blocked,
         "independentReview": independent_review,
         "titlesRenamed": renamed,
+        "titlesDeferred": titles_deferred,
         "threadsArchived": archived,
         "published": published,
         "contextsSynced": list(context_sync.get("written") or []),
@@ -1469,6 +1472,7 @@ def compact_advance_result(result: dict[str, Any]) -> dict[str, Any]:
             "workBlocked": len(result.get("workBlocked") or []),
             "reviewsUpdated": len(review.get("updated") or []),
             "titlesRenamed": len(result.get("titlesRenamed") or []),
+            "titlesDeferred": len(result.get("titlesDeferred") or []),
             "threadsArchived": len(result.get("threadsArchived") or []),
             "published": len(result.get("published") or []),
             "publicationFeedbackPending": len(
