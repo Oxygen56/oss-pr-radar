@@ -3725,6 +3725,31 @@
     ],
     "why": "The issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach rather than adding each model to a hardcoded list. No existing PR addresses this issue, and the issue is actionable with a clear reproduction."
   },
+  "110873a2c2f5a782a1a27844418e5a76c0ebb6eb9c528cabc7dbd4b02b7cd385": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/durable/workflows/steps/normalize-model-output.ts"
+    ],
+    "risks": [
+      "Potential maintainer preference for handling V2 unsupported shapes (e.g., error vs. base64 conversion) may require design confirmation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided gist reproduction to confirm the bug, then add a regression test that asserts image-url and providerOptions are preserved for V3 models and that V2 models do not receive HTTPS URLs in media.data."
+    ],
+    "unknowns": [
+      "Maintainer design preference for V2 handling of remote URLs is not yet confirmed."
+    ],
+    "why": "Issue provides a clear root cause (unconditional rewrite to V2 media shape in normalize-model-output.ts), a minimal reproduction with executable commands, and expected behavior for both V3 and V2 models. The code anchor is specific and the fix is actionable."
+  },
   "110997e82dcaa32e56ebe75ed994131e0496bc3f31dc305d7a47b5dd198a5dbd": {
     "confidence": 0.85,
     "contradictions": [
