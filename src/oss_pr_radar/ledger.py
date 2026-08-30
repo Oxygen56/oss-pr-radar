@@ -10564,6 +10564,61 @@ class RadarLedger:
             "checkedAt": candidate["checkedAt"],
         }
 
+    def historical_pr_followup_preparation(
+        self,
+        *,
+        key: str,
+        task_id: str,
+        thread_id: str,
+        wake_digest: str,
+    ) -> dict[str, Any] | None:
+        """Return one exact immutable preparation, including completed wakes."""
+
+        if (
+            not key
+            or not task_id
+            or not thread_id
+            or re.fullmatch(r"[0-9a-f]{64}", wake_digest) is None
+        ):
+            raise ValueError("historical PR follow-up preparation identity is invalid")
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT e.payload_json,o.issue_url,i.intent_id,i.thread_id,
+                          i.worktree_path
+                   FROM events e
+                   JOIN opportunities o ON o.key=e.opportunity_key
+                   JOIN intents i ON i.opportunity_key=e.opportunity_key
+                    AND i.intent_id=? AND i.thread_id=?
+                   WHERE e.opportunity_key=?
+                     AND e.event_type='PR_FOLLOWUP_PREPARATION_BOUND'
+                     AND e.dedupe_key=?
+                     AND json_extract(e.payload_json,'$.threadId')=?""",
+                (task_id, thread_id, key, wake_digest, thread_id),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise LedgerError("historical PR follow-up preparation is invalid") from exc
+        snapshot = payload.get("snapshot") if isinstance(payload, dict) else None
+        if (
+            not isinstance(payload, dict)
+            or payload.get("threadId") != thread_id
+            or not isinstance(snapshot, dict)
+            or snapshot.get("wakeDigest") != wake_digest
+        ):
+            raise LedgerError("historical PR follow-up preparation is invalid")
+        return {
+            "key": key,
+            "issueUrl": row["issue_url"],
+            "intentId": row["intent_id"],
+            "threadId": row["thread_id"],
+            "worktreePath": row["worktree_path"],
+            "wakeDigest": wake_digest,
+            "snapshot": snapshot,
+        }
+
     def reserve_pr_followup(
         self,
         *,

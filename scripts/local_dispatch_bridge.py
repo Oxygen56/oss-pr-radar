@@ -104,6 +104,7 @@ from oss_pr_radar.repo_probe import (  # noqa: E402
     run_repo_probe,
     validate_indexable_checkout_paths,
     verify_code_path_tombstone_receipt,
+    verify_merge_resolution_scope_receipt,
     verify_probe_receipt,
 )
 from oss_pr_radar.runtime import exclusive_lock  # noqa: E402
@@ -4204,12 +4205,176 @@ def _review_state_root(args: argparse.Namespace) -> Path | None:
 
 
 def _controller_review_result(
-    args: argparse.Namespace, value: dict[str, Any]
+    args: argparse.Namespace,
+    value: dict[str, Any],
+    *,
+    review_context: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     state_root = _review_state_root(args)
-    if state_root is None:
+    if state_root is None and review_context is None:
         return controller_review_result(ROOT, value)
-    return controller_review_result(ROOT, value, state_root=state_root)
+    if state_root is None:
+        return controller_review_result(
+            ROOT,
+            value,
+            review_context=review_context,
+        )
+    if review_context is None:
+        return controller_review_result(ROOT, value, state_root=state_root)
+    return controller_review_result(
+        ROOT,
+        value,
+        state_root=state_root,
+        review_context=review_context,
+    )
+
+
+def _publication_review_context(
+    store: RadarLedger,
+    *,
+    request: dict[str, Any],
+    value: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Recover one immutable, signed merge-review context from the ledger.
+
+    PR follow-up state is mutable, so a later scan may replace the worktree
+    context after a result was reviewed.  Only the exact immutable preparation
+    and its signed merge scope may recover the historical review context.
+    """
+
+    if value.get("handoffMode") != "controller_merge_complete":
+        return None
+    task_id = str(request.get("intentId") or "")
+    key = str(request.get("opportunityKey") or "")
+    thread_id = str(request.get("threadId") or "")
+    worktree_path = str(request.get("worktreePath") or "")
+    result_digest = str(request.get("resultDigest") or "")
+    wake_digest = str(request.get("followupWakeDigest") or "")
+    commit_sha = str(request.get("commitSha") or "")
+    previous_commit = str(request.get("previousCommitSha") or "")
+    merge_base = str(value.get("mergeBaseSha") or "")
+    pr_url = str(request.get("existingPrUrl") or "")
+    value_task_id = str(value.get("taskId") or value.get("intentId") or "")
+    exact_bindings = (
+        (value.get("key"), key),
+        (value.get("issueUrl"), request.get("issueUrl")),
+        (value.get("threadId"), thread_id),
+        (value_task_id, task_id),
+        (str(value.get("worktreePath") or ""), worktree_path),
+        (value.get("resultDigest"), result_digest),
+        (value.get("commitSha"), commit_sha),
+        (value.get("headSha"), commit_sha),
+        (value.get("previousCommitSha"), previous_commit),
+        (value.get("followupDigest"), wake_digest),
+        (value.get("prUrl"), pr_url),
+    )
+    if (
+        not key
+        or not task_id
+        or not thread_id
+        or not re.fullmatch(r"[0-9a-f]{64}", result_digest)
+        or not re.fullmatch(r"[0-9a-f]{64}", wake_digest)
+        or not re.fullmatch(r"[0-9a-f]{40}", commit_sha)
+        or not re.fullmatch(r"[0-9a-f]{40}", previous_commit)
+        or not re.fullmatch(r"[0-9a-f]{40}", merge_base)
+        or PULL_URL.fullmatch(pr_url) is None
+        or any(observed != expected for observed, expected in exact_bindings)
+        or Path(worktree_path).resolve() != Path(str(value.get("worktreePath") or "")).resolve()
+    ):
+        raise RuntimeError("publication independent review identity mismatch")
+
+    preparation = store.historical_pr_followup_preparation(
+        key=key,
+        task_id=task_id,
+        thread_id=thread_id,
+        wake_digest=wake_digest,
+    )
+    if preparation is None:
+        raise RuntimeError("publication independent review preparation is unavailable")
+    snapshot = preparation.get("snapshot")
+    if (
+        not isinstance(preparation, dict)
+        or preparation.get("threadId") != thread_id
+        or not isinstance(snapshot, dict)
+        or preparation.get("key") != key
+        or preparation.get("issueUrl") != request.get("issueUrl")
+        or preparation.get("intentId") != task_id
+        or preparation.get("wakeDigest") != wake_digest
+        or Path(str(preparation.get("worktreePath") or "")).resolve()
+        != Path(worktree_path).resolve()
+    ):
+        raise RuntimeError("publication independent review ledger binding mismatch")
+
+    snapshot_evidence = snapshot.get("evidence")
+    authorized_files = (
+        snapshot_evidence.get("authorizedResolutionFiles")
+        if isinstance(snapshot_evidence, dict)
+        else None
+    )
+    scope_receipt = (
+        snapshot_evidence.get("mergeResolutionScopeReceipt")
+        if isinstance(snapshot_evidence, dict)
+        else None
+    )
+    if (
+        snapshot.get("wakeDigest") != wake_digest
+        or snapshot.get("prUrl") != pr_url
+        or snapshot.get("headSha") != previous_commit
+        or snapshot.get("preparedHeadSha") != previous_commit
+        or not isinstance(snapshot_evidence, dict)
+        or snapshot_evidence.get("mergeConflict") is not True
+        or snapshot_evidence.get("baseSha") != merge_base
+        or not isinstance(authorized_files, list)
+        or not authorized_files
+        or not isinstance(scope_receipt, dict)
+        or (
+            snapshot_evidence.get("resolutionScopeSourceWakeDigest") is not None
+            and snapshot_evidence.get("resolutionScopeSourceWakeDigest")
+            != scope_receipt.get("sourceWakeDigest")
+        )
+        or (
+            snapshot_evidence.get("resolutionScopeRequestResultDigest") is not None
+            and snapshot_evidence.get("resolutionScopeRequestResultDigest")
+            != scope_receipt.get("requestResultDigest")
+        )
+        or not verify_merge_resolution_scope_receipt(
+            scope_receipt,
+            key=key,
+            issue_url=str(request.get("issueUrl") or ""),
+            intent_id=task_id,
+            thread_id=thread_id,
+            worktree_path_fingerprint=_worktree_path_fingerprint(Path(worktree_path)),
+            pr_url=pr_url,
+            current_wake_digest=wake_digest,
+            head_sha=previous_commit,
+            prepared_head_sha=previous_commit,
+            base_sha=merge_base,
+            merge_conflict_files=snapshot_evidence.get("mergeConflictFiles"),
+            authorized_resolution_files=authorized_files,
+        )
+    ):
+        raise RuntimeError("publication independent review signed context mismatch")
+    review_context = {
+        "key": key,
+        "issueUrl": request["issueUrl"],
+        "intentId": task_id,
+        "threadId": thread_id,
+        "worktreePath": str(Path(worktree_path).resolve()),
+        "prFollowup": snapshot,
+    }
+    resolution_files = controller_merge_resolution_scope(
+        Path(worktree_path),
+        context=review_context,
+        expected_head=previous_commit,
+        expected_base=merge_base,
+    )
+    if (
+        resolution_files != authorized_files
+        or resolution_files != value.get("mergeResolutionFiles")
+        or resolution_files != value.get("controllerCommitChangedFiles")
+    ):
+        raise RuntimeError("publication independent review resolution scope mismatch")
+    return review_context
 
 
 def _higher_priority_existing_work(
@@ -15345,6 +15510,7 @@ def _request_publication_from_task_result(
     value: dict[str, Any],
     raw: bytes,
     review_state_root: Path | None = None,
+    review_context: dict[str, Any] | None = None,
     replacement_of_request_id: str | None = None,
 ) -> dict[str, Any]:
     worktree = result_access.worktree
@@ -15427,17 +15593,38 @@ def _request_publication_from_task_result(
         and request.get("reason") == "CONTROLLER_INDEPENDENT_REVIEW_REQUIRED"
         and request.get("evidence_digest") == evidence_digest
     ):
-        review = (
-            controller_review_result(ROOT, value)
-            if review_state_root is None
-            else controller_review_result(ROOT, value, state_root=review_state_root)
-        )
+        if review_state_root is None and review_context is None:
+            review = controller_review_result(ROOT, value)
+        elif review_state_root is None:
+            review = controller_review_result(
+                ROOT,
+                value,
+                review_context=review_context,
+            )
+        elif review_context is None:
+            review = controller_review_result(
+                ROOT,
+                value,
+                state_root=review_state_root,
+            )
+        else:
+            review = controller_review_result(
+                ROOT,
+                value,
+                state_root=review_state_root,
+                review_context=review_context,
+            )
         if review and review.get("verdict") == "PASS":
             retried = store.retry_blocked_publication_request(
                 str(request.get("request_id") or request.get("requestId")),
                 expected_reason="CONTROLLER_INDEPENDENT_REVIEW_REQUIRED",
             )
-            request = {**request, **retried, "request": request["request"]}
+            request = {
+                **request,
+                **retried,
+                "reason": None,
+                "request": request["request"],
+            }
     return request
 
 
@@ -17361,8 +17548,21 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                     transient_reasons=TRANSIENT_PUBLICATION_AUDIT_REASONS,
                 )
             evidence_value = _evidence_from_publication_request(request)
+            review_context = (
+                _publication_review_context(
+                    store,
+                    request=request,
+                    value=evidence_value,
+                )
+                if isinstance(evidence_value, dict)
+                else None
+            )
             controller_review = (
-                _controller_review_result(args, evidence_value)
+                _controller_review_result(
+                    args,
+                    evidence_value,
+                    review_context=review_context,
+                )
                 if isinstance(evidence_value, dict)
                 else None
             )
@@ -17391,15 +17591,27 @@ def _run_publication_queue_unlocked(args: argparse.Namespace) -> dict[str, Any]:
                 post_push_reconciliation = permit is not None
             if permit is None:
                 review_state_root = _review_state_root(args)
-                broker = (
-                    broker_publication_request(store, request_id)
-                    if review_state_root is None
-                    else broker_publication_request(
+                if review_state_root is None and review_context is None:
+                    broker = broker_publication_request(store, request_id)
+                elif review_state_root is None:
+                    broker = broker_publication_request(
+                        store,
+                        request_id,
+                        review_context=review_context,
+                    )
+                elif review_context is None:
+                    broker = broker_publication_request(
                         store,
                         request_id,
                         review_state_root=review_state_root,
                     )
-                )
+                else:
+                    broker = broker_publication_request(
+                        store,
+                        request_id,
+                        review_state_root=review_state_root,
+                        review_context=review_context,
+                    )
                 if broker.get("pending"):
                     pending.append(
                         {
@@ -18158,6 +18370,21 @@ def _replay_managed_result_unlocked(args: argparse.Namespace) -> dict[str, Any]:
             or _task_result_digest(normalized, normalized_raw) != request["resultDigest"]
         ):
             raise RuntimeError("managed result replay changed the immutable result digest")
+        review_context = _publication_review_context(
+            store,
+            request=request,
+            value=normalized,
+        )
+        if normalized.get("handoffMode") == "controller_merge_complete":
+            if review_context is None:
+                raise RuntimeError("managed result replay independent review is unavailable")
+            review = _controller_review_result(
+                args,
+                normalized,
+                review_context=review_context,
+            )
+            if not review or review.get("verdict") != "PASS":
+                raise RuntimeError("managed result replay independent review is unavailable")
 
     recorded = adapter.record_task_result(
         candidate=candidate,
@@ -18186,6 +18413,8 @@ def _replay_managed_result_unlocked(args: argparse.Namespace) -> dict[str, Any]:
         result_access=result_access,
         value=normalized,
         raw=normalized_raw,
+        review_state_root=_review_state_root(args),
+        review_context=review_context,
         replacement_of_request_id=str(args.request_id),
     )
     replacement_id = str(replacement.get("request_id") or replacement.get("requestId") or "")

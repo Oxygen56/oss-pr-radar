@@ -492,6 +492,7 @@ def audit_publication_request(
     client: GitHubClient | None = None,
     expected_existing_pr_head: str | None = None,
     review_state_root: Path | None = None,
+    review_context: dict[str, Any] | None = None,
 ) -> PublicationAudit:
     row = store.publication_request(request_id)
     if not row:
@@ -569,11 +570,27 @@ def audit_publication_request(
         return PublicationAudit(
             "BLOCK", "SUBMIT_READY_EVIDENCE_INCOMPLETE", request_id, assessment.as_dict()
         )
-    review_passed = (
-        controller_review_passed(CONTROL_ROOT, evidence_file)
-        if review_state_root is None
-        else controller_review_passed(CONTROL_ROOT, evidence_file, state_root=review_state_root)
-    )
+    if review_state_root is None and review_context is None:
+        review_passed = controller_review_passed(CONTROL_ROOT, evidence_file)
+    elif review_state_root is None:
+        review_passed = controller_review_passed(
+            CONTROL_ROOT,
+            evidence_file,
+            review_context=review_context,
+        )
+    elif review_context is None:
+        review_passed = controller_review_passed(
+            CONTROL_ROOT,
+            evidence_file,
+            state_root=review_state_root,
+        )
+    else:
+        review_passed = controller_review_passed(
+            CONTROL_ROOT,
+            evidence_file,
+            state_root=review_state_root,
+            review_context=review_context,
+        )
     if not review_passed:
         return PublicationAudit("BLOCK", "CONTROLLER_INDEPENDENT_REVIEW_REQUIRED", request_id, {})
     intent = request.get("intent") or {}
@@ -849,12 +866,14 @@ def broker_publication_request(
     *,
     client: GitHubClient | None = None,
     review_state_root: Path | None = None,
+    review_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     audit = audit_publication_request(
         store,
         request_id,
         client=client,
         review_state_root=review_state_root,
+        review_context=review_context,
     )
     if audit.status == "DEFER":
         store.defer_publication_request(request_id, audit.reason, evidence=audit.evidence)

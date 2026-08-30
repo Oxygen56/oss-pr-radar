@@ -1236,9 +1236,9 @@ def test_review_supports_controller_merge_resolution(tmp_path, monkeypatch):
 
 
 def test_review_binds_conflict_and_authorized_resolution_scopes_separately(
-    tmp_path, current_signing_key
+    tmp_path, current_signing_key, monkeypatch
 ):
-    _control, worktree, result_path, _candidate, _base, previous_head = prepared_task(tmp_path)
+    control, worktree, result_path, candidate, _base, previous_head = prepared_task(tmp_path)
     git(worktree, "switch", "main")
     (worktree / "service.py").write_text("def value():\n    return 4\n", encoding="utf-8")
     (worktree / "service").mkdir()
@@ -1305,7 +1305,11 @@ def test_review_binds_conflict_and_authorized_resolution_scopes_separately(
     value.update(
         {
             "commitSha": head,
+            "headSha": head,
             "handoffMode": "controller_merge_complete",
+            "taskId": "intent-1",
+            "followupDigest": receipt["authorizedWakeDigest"],
+            "prUrl": "https://github.com/owner/repo/pull/7",
             "previousCommitSha": previous_head,
             "mergeBaseSha": merge_base,
             "controllerCommitChangedFiles": ["service.py", "service/new.py"],
@@ -1323,6 +1327,56 @@ def test_review_binds_conflict_and_authorized_resolution_scopes_separately(
     }
     with pytest.raises(RuntimeError, match="signed resolution snapshot"):
         module._bound_merge_resolution_scope(worktree, forged)
+
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+    reviewed = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: {
+            "verdict": "PASS",
+            "summary": "The signed merge resolution is correct and narrowly scoped.",
+            "findings": [],
+            "evidence": ["Both authorized resolution files match the reviewed merge tree."],
+        },
+    )
+    assert reviewed["updated"][0]["commitSha"] == head
+    assert module.controller_review_passed(control, value) is True
+
+    drifted_context = json.loads(json.dumps(context))
+    drifted_context["prFollowup"]["wakeDigest"] = "f" * 64
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        json.dumps(drifted_context),
+        encoding="utf-8",
+    )
+    assert module.controller_review_passed(control, value) is False
+    assert (
+        module.controller_review_passed(
+            control,
+            value,
+            review_context=context,
+        )
+        is True
+    )
+    forged_context = json.loads(json.dumps(context))
+    forged_context["prFollowup"]["evidence"]["authorizedResolutionFiles"] = ["service.py"]
+    assert (
+        module.controller_review_passed(
+            control,
+            value,
+            review_context=forged_context,
+        )
+        is False
+    )
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        json.dumps(context),
+        encoding="utf-8",
+    )
 
     git(worktree, "switch", "--detach", previous_head)
     forged_merge = subprocess.run(

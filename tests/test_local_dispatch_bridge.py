@@ -12790,7 +12790,7 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(monkeypa
         )
 
     replayed = MODULE.replay_managed_result(
-        SimpleNamespace(ledger=store.path, request_id=request_id)
+        SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
     )
 
     assert replayed == {
@@ -12850,13 +12850,32 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(monkeypa
     assert replacement["request"]["intent"]["resultDigest"] == stale_intent_result_digest
     assert replacement["request"]["resultDigest"] == request["resultDigest"]
 
+    replacement_snapshot = replacement["request"]
+    with store.connect() as connection:
+        request_count_before_retry = connection.execute(
+            "SELECT COUNT(*) FROM publication_requests"
+        ).fetchone()[0]
+        connection.execute(
+            "UPDATE publication_requests SET status='BLOCKED',"
+            "reason='CONTROLLER_INDEPENDENT_REVIEW_REQUIRED' WHERE request_id=?",
+            (replayed["replacementRequestId"],),
+        )
     replayed_again = MODULE.replay_managed_result(
-        SimpleNamespace(ledger=store.path, request_id=request_id)
+        SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
     )
     assert replayed_again["replacementRequestId"] == replayed["replacementRequestId"]
+    assert replayed_again["replacementStatus"] == "PENDING"
     assert replayed_again["validationUpgraded"] is False
     assert replayed_again["worktreeFastForwarded"] is False
+    retried_replacement = store.publication_request(replayed["replacementRequestId"])
+    assert retried_replacement["status"] == "PENDING"
+    assert retried_replacement["reason"] is None
+    assert retried_replacement["request"] == replacement_snapshot
     with store.connect() as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0]
+            == request_count_before_retry
+        )
         update_requests = connection.execute(
             "SELECT request_id FROM publication_requests "
             "WHERE opportunity_key='a/b#1' AND commit_sha=?",
@@ -18342,6 +18361,7 @@ def test_ingest_authorizes_base_only_merge_resolution_scope_and_finalizer_consum
         "worktreePath": str(worktree.resolve()),
         "stage": "FIX_READY",
         "reason": "MERGE_CONFLICT_RESOLVED",
+        "prUrl": request["prUrl"],
         "followupDigest": replacement["wakeDigest"],
         "handoffMode": "controller_merge_required",
         "commitSha": None,
@@ -18437,6 +18457,37 @@ def test_ingest_authorizes_base_only_merge_resolution_scope_and_finalizer_consum
     assert receipt_bound["reproductionReceipt"]["resultDigest"] == receipt_bound["resultDigest"]
     assert receipt_bound["quality"]["independent_review_passed"] is True
     assert receipt_bound["independentReview"]["verdict"] == "PASS"
+    assert "codePathTombstoneReceipt" not in receipt_bound
+    publication_id = ingested["publicationRequests"][0]["requestId"]
+    publication_request = store.publication_request(publication_id)["request"]
+    historical_context = MODULE._publication_review_context(
+        store,
+        request=publication_request,
+        value=receipt_bound,
+    )
+    assert historical_context["prFollowup"]["wakeDigest"] == replacement["wakeDigest"]
+    assert historical_context["prFollowup"]["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+    drifted_context = json.loads(json.dumps(next_context))
+    drifted_context["prFollowup"]["wakeDigest"] = "f" * 64
+    next_context_path.write_text(json.dumps(drifted_context), encoding="utf-8")
+    assert (
+        MODULE._controller_review_result(
+            SimpleNamespace(ledger=store.path, runtime_root=tmp_path), receipt_bound
+        )
+        is None
+    )
+    assert (
+        MODULE._controller_review_result(
+            SimpleNamespace(ledger=store.path, runtime_root=tmp_path),
+            receipt_bound,
+            review_context=historical_context,
+        )["verdict"]
+        == "PASS"
+    )
+    next_context_path.write_text(json.dumps(next_context), encoding="utf-8")
     assert repeated_ingest["ok"] is True, repeated_ingest
     assert repeated_ingest["errors"] == []
     assert repeated_ingest["ingested"] == []

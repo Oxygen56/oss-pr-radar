@@ -577,6 +577,39 @@ def test_broker_reads_private_review_from_durable_runtime_state(monkeypatch, tmp
     assert result["audit"]["reason"] == "LIVE_PUBLICATION_GATES_PASSED"
 
 
+def test_broker_forwards_historical_review_context(monkeypatch, tmp_path):
+    store, request, _ = prepared_request(tmp_path)
+    durable_runtime = tmp_path / "runtime"
+    review_context = {"prFollowup": {"wakeDigest": "historical-wake"}}
+    observed = {}
+
+    def review_passed(root, value, *, state_root=None, review_context=None):
+        observed.update(
+            {
+                "root": root,
+                "value": value,
+                "stateRoot": state_root,
+                "reviewContext": review_context,
+            }
+        )
+        return True
+
+    monkeypatch.setattr(publication, "controller_review_passed", review_passed)
+    monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt"])
+
+    result = broker_publication_request(
+        store,
+        request["request_id"],
+        client=Client(),
+        review_state_root=durable_runtime,
+        review_context=review_context,
+    )
+
+    assert result["granted"] is True
+    assert observed["stateRoot"] == durable_runtime
+    assert observed["reviewContext"] is review_context
+
+
 def test_bound_evidence_snapshot_prevents_evidence_path_reread(monkeypatch, tmp_path):
     store, request, evidence_path = prepared_request(tmp_path)
     evidence_path.write_text("{}", encoding="utf-8")

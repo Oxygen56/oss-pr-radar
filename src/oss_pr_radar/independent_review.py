@@ -319,16 +319,43 @@ def verify_controller_merge_tree_scope(
     return resolution_files
 
 
-def _bound_merge_resolution_scope(worktree: Path, value: dict[str, Any]) -> list[str]:
-    context_path = worktree / TASK_PRIVATE_DIR / "task-context.json"
-    if context_path.is_symlink() or not context_path.is_file():
-        raise RuntimeError("independent review merge context is unavailable")
-    try:
-        context = json.loads(context_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError("independent review merge context is invalid") from exc
-    if not isinstance(context, dict):
-        raise RuntimeError("independent review merge context is invalid")
+def _bound_merge_resolution_scope(
+    worktree: Path,
+    value: dict[str, Any],
+    *,
+    review_context: dict[str, Any] | None = None,
+) -> list[str]:
+    if review_context is None:
+        context_path = worktree / TASK_PRIVATE_DIR / "task-context.json"
+        if context_path.is_symlink() or not context_path.is_file():
+            raise RuntimeError("independent review merge context is unavailable")
+        try:
+            context = json.loads(context_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError("independent review merge context is invalid") from exc
+        if not isinstance(context, dict):
+            raise RuntimeError("independent review merge context is invalid")
+    else:
+        if not isinstance(review_context, dict) or not str(
+            review_context.get("worktreePath") or ""
+        ):
+            raise RuntimeError("independent review historical merge context is invalid")
+        context = review_context
+        followup = context.get("prFollowup")
+        result_task_id = str(value.get("taskId") or value.get("intentId") or "")
+        result_pr_url = str(value.get("prUrl") or "")
+        if (
+            context.get("key") != value.get("key")
+            or context.get("issueUrl") != value.get("issueUrl")
+            or context.get("threadId") != value.get("threadId")
+            or context.get("intentId") != result_task_id
+            or Path(str(context.get("worktreePath") or "")).resolve() != worktree.resolve()
+            or not isinstance(followup, dict)
+            or followup.get("wakeDigest") != value.get("followupDigest")
+            or followup.get("prUrl") != result_pr_url
+            or followup.get("preparedHeadSha") != value.get("previousCommitSha")
+        ):
+            raise RuntimeError("independent review historical merge context mismatch")
     previous_revision = str(value.get("previousCommitSha") or "")
     secondary_revision = str(value.get("mergeBaseSha") or "")
     signed_files = verify_controller_merge_tree_scope(
@@ -508,7 +535,12 @@ def _review_failure_attempts(
     return max(0, int(value.get("attempts") or 0))
 
 
-def _load_review_receipt(root: Path, value: dict[str, Any]) -> dict[str, Any] | None:
+def _load_review_receipt(
+    root: Path,
+    value: dict[str, Any],
+    *,
+    review_context: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     key = str(value.get("key") or "")
     commit_sha = str(value.get("commitSha") or "")
     if not key or not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
@@ -556,7 +588,11 @@ def _load_review_receipt(root: Path, value: dict[str, Any]) -> dict[str, Any] | 
         ):
             return None
         if value.get("handoffMode") == "controller_merge_complete":
-            _bound_merge_resolution_scope(worktree, value)
+            _bound_merge_resolution_scope(
+                worktree,
+                value,
+                review_context=review_context,
+            )
     except RuntimeError:
         return None
     return review
@@ -567,10 +603,15 @@ def controller_review_result(
     value: dict[str, Any],
     *,
     state_root: Path | None = None,
+    review_context: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Return the controller-private review bound to this exact result and checkout."""
 
-    return _load_review_receipt((state_root or root).resolve(), value)
+    return _load_review_receipt(
+        (state_root or root).resolve(),
+        value,
+        review_context=review_context,
+    )
 
 
 def controller_review_passed(
@@ -578,10 +619,16 @@ def controller_review_passed(
     value: dict[str, Any],
     *,
     state_root: Path | None = None,
+    review_context: dict[str, Any] | None = None,
 ) -> bool:
     """Return true only for a controller-private PASS receipt bound to this result."""
 
-    review = controller_review_result(root, value, state_root=state_root)
+    review = controller_review_result(
+        root,
+        value,
+        state_root=state_root,
+        review_context=review_context,
+    )
     return bool(review and review.get("verdict") == "PASS")
 
 
@@ -1135,7 +1182,12 @@ def _candidate_result(candidate: dict[str, Any]) -> tuple[Path, dict[str, Any]] 
     return result_path, value
 
 
-def _review_scope(worktree: Path, value: dict[str, Any]) -> tuple[str, str, str | None, list[str]]:
+def _review_scope(
+    worktree: Path,
+    value: dict[str, Any],
+    *,
+    review_context: dict[str, Any] | None = None,
+) -> tuple[str, str, str | None, list[str]]:
     head_revision = str(value["commitSha"])
     handoff_mode = str(value.get("handoffMode") or "")
     previous_revision = str(value.get("previousCommitSha") or "")
@@ -1150,7 +1202,11 @@ def _review_scope(worktree: Path, value: dict[str, Any]) -> tuple[str, str, str 
             secondary_revision,
         ]:
             raise RuntimeError("independent review merge parents do not match the result")
-        changed_files = _bound_merge_resolution_scope(worktree, value)
+        changed_files = _bound_merge_resolution_scope(
+            worktree,
+            value,
+            review_context=review_context,
+        )
         visible: set[str] = set()
         for parent in (previous_revision, secondary_revision):
             visible.update(
