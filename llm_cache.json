@@ -30635,6 +30635,39 @@
     ],
     "why": "The issue describes a concrete, reproducible bug in the MCP server auth-update flow: full-replace semantics without read-back, no session hot-reload, and leaky OAuth errors. It provides ordered repro steps, root cause analysis, and a suggested fix direction. This is a user-visible bug in an agent/inference infrastructure path, with clear actionability."
   },
+  "83467bc1c14d0ef66aeea259629eeed649194f904f31a377609e42b7be05b6d5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #6929 is open and semantically overlaps but does not reference the issue; issue author mentions PR #6929 in the body"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Fix _validate_agent_import() to invalidate import caches or otherwise handle newly created packages",
+      "Add deterministic regression test in tests/unittests/cli/utils/test_cli_deploy.py"
+    ],
+    "risks": [
+      "Potential overlap with PR #6929; need to compare implementations to avoid duplicate work",
+      "If _validate_agent_import() is obsolete, the fix may be unnecessary; maintainer feedback needed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the two existing unit tests in the specified order to reproduce the failure",
+      "Apply the fix and rerun the tests to confirm both pass",
+      "Run the full test suite for the CLI utils module to check for regressions"
+    ],
+    "unknowns": [
+      "Whether maintainers consider _validate_agent_import() obsolete or still needed",
+      "Whether PR #6929 fully resolves the issue or requires additional changes"
+    ],
+    "why": "Issue provides a concrete reproduction with ordered steps, existing tests, and a clear root cause (stale import cache). PR #6929 offers a proposed fix and regression test, but requires maintainer review to confirm scope and avoid duplicate work."
+  },
   "83864425fd83c6e9cd9ef02a1dbe7154481c38b16980935f89025323fb6e4841": {
     "confidence": 0.8,
     "contradictions": [],
@@ -37521,6 +37554,32 @@
     ],
     "why": "Issue reports three concrete correctness defects in createInngestAgent resume() with clear code paths and expected behavior. No competing PR or issue found. Maintainer labeled for triage, indicating interest. The proposed changes are actionable and testable."
   },
+  "a233f0ab9da49fe8ad103d4b0e9412dc34e1de9f0929fc25241509f010457cd4": {
+    "confidence": 0.95,
+    "contradictions": [
+      "algorithm_evidence claims parameter_efficient_finetuning but issue body shows no such mechanism"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "sandbox port allocation or retry logic"
+    ],
+    "risks": [
+      "May require environment-specific Docker configuration; not a code-level algorithm fix."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce by occupying the port and attempting sandbox creation; verify error handling or port selection."
+    ],
+    "unknowns": [
+      "None; the issue is clearly operational."
+    ],
+    "why": "The issue is a Docker port binding conflict in the OpenSandbox integration, not an LLM algorithm defect. The track requires concrete training objectives or numerical methods; this is operational infrastructure."
+  },
   "a237d1a2e86007dc2fff87a8c2272726ab0801312d80ced640d2f349f530d192": {
     "confidence": 0.9,
     "contradictions": [],
@@ -39930,6 +39989,33 @@
       "Whether maintainers will provide the required artifacts and legal audio; no active assignee or confirmed provisioning plan."
     ],
     "why": "The issue is an evidence/ops completion task, not a code contribution. The implementation gap is already closed by commit 23b875ff7f8, and the remaining work requires human-provided artifacts (ASR bundle, fused library) and legal audio staging. No new code change is actionable without those prerequisites."
+  },
+  "af2972684a884a641f4ac0773b64caa129e783914c0659ab52bfb1b4a8ab0ac7": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Agent Canvas to Claude Code ACP session/profile bridge",
+      "Skill projection logic for enabled/disabled skills"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different implementation approach",
+      "Risk of unintended behavior changes for other ACP providers if not carefully scoped"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add an automated regression test that creates a Claude Code ACP session and verifies enabled skill instructions are present in agent_context.skills, and that disabled skills are absent."
+    ],
+    "unknowns": [
+      "No explicit maintainer design confirmation, but not blocking given clear root cause and acceptance criteria."
+    ],
+    "why": "Issue provides a clear, reproducible bug with exact versions, steps, and boundary evidence showing enabled skills are not passed to Claude Code ACP sessions. Root cause is localized to the Agent Canvas to ACP session/profile bridge. Acceptance criteria include a cross-boundary regression test, making it actionable."
   },
   "af31d73f4d4fd772051ae5ca0f5e4e48e62dda0d18e955cf3073c4d44154753a": {
     "confidence": 0.85,
