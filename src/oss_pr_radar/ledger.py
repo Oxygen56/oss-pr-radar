@@ -13186,6 +13186,21 @@ class RadarLedger:
                     continuation_clauses.append(
                         "json_type(payload_json,'$.sourcePublicationRequestId') IS NULL"
                     )
+                if authority_id is None:
+                    continuation_clauses.append(
+                        """EXISTS (
+                          SELECT 1 FROM events AS authority
+                          WHERE authority.opportunity_key=events.opportunity_key
+                            AND authority.event_type='TASK_RESULT_AUTHORITY_BOUND'
+                            AND json_extract(authority.payload_json,'$.taskId')=?
+                            AND json_extract(authority.payload_json,'$.threadId')=?
+                            AND json_extract(authority.payload_json,'$.sourceResultEventId')=?
+                            AND json_extract(
+                                  authority.payload_json,'$.continuationDedupeKey'
+                                )=events.dedupe_key
+                        )"""
+                    )
+                    continuation_params.extend((task_id, thread_id, int(result_row["id"])))
                 continuation_row = connection.execute(
                     f"""SELECT * FROM events WHERE {" AND ".join(continuation_clauses)}
                         ORDER BY id DESC LIMIT 1""",

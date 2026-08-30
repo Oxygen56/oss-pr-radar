@@ -13187,6 +13187,47 @@ def test_managed_replay_restores_tombstone_continuation_for_context_recovery(mon
 
     second_previous_digest = replacement_after_refresh["evidence_digest"]
     second_previous_receipt = replacement_after_refresh["request"]["probeReceipt"]
+    projection_value = dict(value)
+    projection_value["commitSha"] = desired_head
+    projection_value["headSha"] = desired_head
+    projection_value["codePathTombstoneReceipt"] = refreshed["codePathTombstoneReceipt"]
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=request["resultDigest"],
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        **MODULE._task_result_tombstone_continuation_kwargs(
+            refreshed,
+            projection_value,
+        ),
+    )
+    with store.connect() as connection:
+        projection_continuation = connection.execute(
+            """SELECT * FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+                 AND json_extract(payload_json,'$.sourceResultEventId')=(
+                   SELECT id FROM events
+                   WHERE opportunity_key='a/b#1'
+                     AND event_type='TASK_RESULT_INGESTED'
+                     AND dedupe_key=?
+                 )
+                 AND json_type(payload_json,'$.sourcePublicationRequestId') IS NULL
+               ORDER BY id DESC LIMIT 1""",
+            (request["resultDigest"],),
+        ).fetchone()
+        assert projection_continuation is not None
+        assert (
+            connection.execute(
+                """SELECT 1 FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='TASK_RESULT_AUTHORITY_BOUND'
+                 AND json_extract(payload_json,'$.continuationDedupeKey')=?""",
+                (projection_continuation["dedupe_key"],),
+            ).fetchone()
+            is None
+        )
     replay_now = parse_time(second_previous_receipt["expiresAt"]) + timedelta(minutes=1)
     store.block_publication_request(
         replayed["replacementRequestId"],
