@@ -3324,6 +3324,35 @@
     ],
     "why": "Issue provides detailed root-cause analysis with code anchors and a concrete reproduction path. Recent comments indicate the hydration bug may already be fixed on the default branch, but the issue also identifies additional bugs (env var resolution, scope over-request) that remain actionable. The candidate is a valuable, actionable contribution opportunity."
   },
+  "0f6d3819c249a52356b55d61c94a6d44f07ad61f8e287b37789fce23756ecc4b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #7170 is closed but references the issue and has overlapping code changes; its status is unclear."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "server/dashboard/src/utils/api.ts",
+      "server/dashboard/entrypoint.sh",
+      "server/dashboard/.env.example"
+    ],
+    "risks": [
+      "Potential overlap with PR #7170 which is closed but may be reopened; need to ensure no duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that verifies the dashboard uses a relative API path or localhost when NEXT_PUBLIC_API_URL is set to a Docker-internal host, and that login requests are sent to the correct origin."
+    ],
+    "unknowns": [
+      "Whether PR #7170 will be reopened or accepted, and whether maintainers prefer a different fix approach."
+    ],
+    "why": "The issue provides a clear root cause: NEXT_PUBLIC_API_URL is inlined at build time and host.docker.internal is not resolvable from the browser. It includes reproduction steps, expected vs actual behavior, and evidence that the API is healthy. A related PR #7170 directly addresses the same code path but lacks tests, so a new contribution with regression tests is actionable."
+  },
   "0f72b5c1bcbdc04106ba98a906ae3a6167dbaaaedf9c075c0be8f098c42abbc7": {
     "confidence": 0.85,
     "contradictions": [],
@@ -14805,6 +14834,34 @@
       "Maintainer interest in fixing this specific issue"
     ],
     "why": "Issue reports a user-visible regression in LiveKit inference timeouts since mid-July, with public reproduction steps and session links. No competing PR or issue found. The bug is in the inference path, which is critical for real-time voice agents. The root cause is not yet identified, but the issue provides enough signal to start a reproducible investigation."
+  },
+  "42dc81c733d8103f5f041231018c4b6d0083bf899b61b8cb3dd1305e76751154": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/multimodal/processors/glm4v.py",
+      "python/sglang/srt/multimodal/processors/base_processor.py"
+    ],
+    "risks": [
+      "Potential overlap with PR #36833; need to compare implementations to avoid duplication.",
+      "Changing attention_mask to None may affect padded batch scenarios if future changes introduce padding at this call site."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test with noncanonical pretokenized IDs plus image, verifying exact-ID preservation and MRoPE position generation.",
+      "Run existing GLM processor tests and the reproduction script from the issue."
+    ],
+    "unknowns": [
+      "Whether PR #36833 already fully fixes the issue or if additional changes are needed."
+    ],
+    "why": "The issue provides a clear root cause: stale retokenized attention_mask passed to GLM MRoPE after exact-ID restoration, with a minimal reproduction and a concrete fix (pass attention_mask=None). The proposed fix is behavior-preserving and aligns with existing PR #36833. The issue is actionable and technically valuable."
   },
   "42e0dd01106156e1c1a8805e7769617f8a672e7ce908f26e50013fded446e215": {
     "confidence": 0.85,
@@ -27036,6 +27093,31 @@
       "Availability of SM89 hardware for testing"
     ],
     "why": "The issue identifies a concrete runtime bug with reproducible commands and code-level anchors (gdn_backend.py:559, AWQ dtype mismatch, CUDA graph hangs). It involves quantization numerics and model architecture, satisfying the llm_algorithm track. The root cause is clear: dtype mismatch in AWQ path and missing fast path for hybrid GDN on SM89. Validation path is concrete via reproduction commands and potential numerical tests."
+  },
+  "72d0326c71307d687265ff726b9eb8440664c8e84d24366a34c6b2a90245ab5e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "packages/rag/src/document/transformers/token.ts",
+      "FileService.replaceValuesInFile() implementation"
+    ],
+    "risks": [
+      "Potential behavior change if existing code relies on dollar substitution; need to ensure only intended replacements are affected."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests covering all special dollar replacement patterns ($&, $$, $`, $') using the provided minimal reproduction steps."
+    ],
+    "unknowns": [
+      "Exact file path of FileService implementation; whether existing tests cover this behavior."
+    ],
+    "why": "Issue clearly identifies a concrete bug in FileService.replaceValuesInFile() where dollar patterns in replacement strings are interpreted by String.prototype.replaceAll, causing silent corruption. Root cause is well-defined and a minimal fix using a replacement callback is proposed. The issue includes a minimal reproduction and expected/actual behavior, making it actionable."
   },
   "733337bcf3c87277414f60dd1315f1676fd748dcac6334cf725cfd865868f68b": {
     "confidence": 0.6,
