@@ -56312,6 +56312,35 @@
     ],
     "why": "Issue provides a clear user-visible bug with multiple configurations isolating the failure to the shared audio routing infrastructure. Maintainer has requested a specific reproduction (record={\"audio\": true}) and the reporter provided evidence showing audio stops reaching the session, confirming the root cause is in the track subscription or audio routing. This is actionable for a code fix."
   },
+  "ec95a467b478871649522688eeea2001ffcbdb7dea0c8f3aabb75c6000368437": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "KV cache sizing logic in scheduler",
+      "async scheduling in-flight token bound",
+      "recycling-aware KV cache allocation"
+    ],
+    "risks": [
+      "Fix may reduce async scheduling overlap, impacting throughput.",
+      "Need to ensure correctness for sliding-window/chunked-local blocks during async batches."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided vllm serve command and Gemma4 model on a GPU with 96GB VRAM, comparing v0.25.1 and v0.26.0 KV cache memory usage.",
+      "Add a regression test that verifies KV cache block allocation for sliding-window and full-attention layers under async scheduling with max_num_batched_tokens=32768."
+    ],
+    "unknowns": [
+      "Exact fix implementation details and maintainer preference."
+    ],
+    "why": "The issue reports a concrete KV cache size regression for Gemma4 between v0.25.1 and v0.26.0, with detailed reproduction commands and logs. A commenter traced the root cause to PR #47728's async scheduling change, providing a precise calculation of the increased block allocation. This is a clear, actionable algorithm-level bug with a specific validation path."
+  },
   "ec9f83ed4bdeb5e8eef46a9e2a7e580cb4a6c448e892d97006784fb336a77bc3": {
     "confidence": 0.7,
     "contradictions": [
