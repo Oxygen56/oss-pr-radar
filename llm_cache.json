@@ -9816,6 +9816,36 @@
     ],
     "why": "Issue provides a precise root cause (getParentSpan skips only internal spans, not excluded ones), a minimal reproduction, and a suggested fix. Maintainer confirmed and reopened, indicating interest. No competing PR found."
   },
+  "2b6afa7fad54866ad8eaf05b92bc6f7cdee1389d28f360a39a6eee0061dc3e17": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue states that turboquant KV without MTP works fine, but the open PR #53406 claims to fix the issue by not FULL-capturing spec-decode batches; this may be a different root cause or incomplete fix."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/attention/backends/turboquant_attn.py",
+      "vllm/v1/worker/gpu_model_runner.py",
+      "vllm/model_executor/layers/quantization/fp8.py"
+    ],
+    "risks": [
+      "Potential overlap with existing open PRs #53406 and #53410; need to ensure independent implementation or coordinate. Also, the issue mentions a second failure (K1 crash) that may require separate handling."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided command on sm120 hardware, then run a controlled experiment comparing fp8 vs turboquant KV with MTP K3 on a long prompt, measuring max consecutive repeat and needle recall. Add a regression test that asserts no repetition collapse for turboquant KV with MTP, possibly using a smaller model or synthetic data."
+    ],
+    "unknowns": [
+      "Whether the existing open PRs fully resolve the issue or if a new contribution is needed; the maintainer's preferred approach is unknown."
+    ],
+    "why": "The issue provides a detailed, reproducible bug with clear root-cause evidence: MTP speculative decoding with turboquant KV cache on sm120 causes repetition collapse, while fp8 KV works. The evidence includes exact reproduction commands, a table of results, and ruled-out hypotheses. The track is llm_algorithm with concrete mechanisms (model_architecture, numerics_quantization, kernel_algorithm) and a validation path via reference-vs-implementation comparison. Although there are open PRs that may overlap, the issue itself is actionable and not blocked by missing facts."
+  },
   "2bd27863d39fa51332d0dac529218d24971ac99bb7012d10abf057dd4fb06ae0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -36501,6 +36531,33 @@
     ],
     "why": "Issue reports a clear crash with root cause and repro, but the deterministic gate says HUMAN_REVIEW and the related issue audit timed out. An existing draft PR (#50894) directly addresses the bug but has failed CI and is incomplete, so a better PR may be possible. However, maintainer design preference and PR status need confirmation."
   },
+  "9b93baed1d28ffdbc7e2c137544f63f8db631a5f0bd5b5ebd2ecc852d848baee": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Add a WAL callback adapter to smolagents or document its usage",
+      "Possibly extend step_callbacks API to support persistence hooks"
+    ],
+    "risks": [
+      "Potential API design changes to step_callbacks may be needed",
+      "Dependency on external LetItLoop library may not be desired; maintainers may prefer a built-in implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a test that runs a multi-step agent, kills the process mid-run, restarts with auto_resume=True, and asserts that the agent resumes from the last checkpoint without re-executing non-idempotent tools."
+    ],
+    "unknowns": [
+      "Maintainer interest in integrating external library vs. building native support",
+      "Exact behavior of step_callbacks and whether they can support persistence without breaking changes"
+    ],
+    "why": "The issue clearly identifies a real gap in smolagents: lack of crash-resilience for multi-step agent runs. It proposes a concrete integration via step_callbacks, with a reference implementation and tests in a public repo. The validation path is clear: add a test that simulates process termination and verifies state restoration and no duplicate tool calls."
+  },
   "9b97eed71f65745c6205c797395e748466be396b2e6aaa9c075854b506242e1a": {
     "confidence": 0.7,
     "contradictions": [
@@ -40926,6 +40983,31 @@
       "Whether maintainers have a preferred fix approach."
     ],
     "why": "Issue provides a high-probability concurrent reproduction, clear expected behavior, and code anchors in the streaming path. Root cause is not pinpointed but the evidence is sufficient to start a concrete fix and regression test."
+  },
+  "b0862cf5e28ef439465d8d2891df3cd6ade8462ee6cbc0c19a5bc91dd639525b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "sm120_paged_mqa_logits.cuh",
+      "sm120_fp8_paged_mqa_logits.cuh",
+      "varlen kernel path"
+    ],
+    "risks": [
+      "Root cause may be in vLLM integration rather than DeepGEMM; fix may require coordination with vLLM; performance regression may be due to expected scheduling behavior."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with 2 sequences of ~50K tokens on sm_121a; run with compute-sanitizer to confirm illegal address; test with reduced smem usage or adjusted persistent_topk size; benchmark uniform path batch 2 vs batch 1 to verify throughput regression."
+    ],
+    "unknowns": [
+      "Exact tensor shapes and kernel launch parameters; whether the issue reproduces on other architectures; maintainer confirmation of root cause."
+    ],
+    "why": "Issue reports a reproducible illegal memory access in the varlen path of paged_mqa_logits on sm_121a, with a concrete code path and a plausible root cause (smem size assumptions). The uniform path performance regression is also documented. Although root cause is not fully confirmed, the evidence supports actionable investigation and testing."
   },
   "b09fcb09043bda3c2e804d6c78d9bb3a2225d299d5bc9695a96f659bbec8399c": {
     "confidence": 0.85,
