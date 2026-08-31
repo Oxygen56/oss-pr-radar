@@ -32,6 +32,7 @@ WATCHDOG_WORKER = "scheduler-watchdog"
 WATCHDOG_LABEL = "com.oss-pr-radar.scheduler-watchdog"
 ACTIVE_RUN_STATUSES = frozenset({"queued", "in_progress", "waiting", "requested", "pending"})
 MAX_RETAINED_SLOTS = 48
+NATURAL_SCHEDULE_CADENCE_HOURS = 1.0
 
 RunLister = Callable[[str, str], list[dict[str, Any]]]
 DispatchRunner = Callable[[str, str, str, float, int | None], None]
@@ -107,6 +108,29 @@ def _latest_natural(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
         key=lambda item: _run_time(item) or datetime.min.replace(tzinfo=UTC),
         default=None,
     )
+
+
+def _natural_schedule_health(
+    run: dict[str, Any] | None,
+    *,
+    now: datetime,
+    window_hours: float,
+) -> tuple[bool, bool, bool, float]:
+    """Return status, freshness, health, and the freshness window in hours.
+
+    GitHub's natural scheduler is hourly, so a canary is never stale before
+    one complete cadence has elapsed.  A larger scan window deliberately
+    widens that tolerance, while a fallback ``workflow_dispatch`` can never
+    enter this calculation because ``run`` comes only from ``_latest_natural``.
+    """
+
+    freshness_hours = max(NATURAL_SCHEDULE_CADENCE_HOURS, float(window_hours))
+    successful = bool(
+        run and run.get("status") == "completed" and run.get("conclusion") == "success"
+    )
+    created = _run_time(run) if run else None
+    fresh = bool(created and now - timedelta(hours=freshness_hours) <= created <= now)
+    return successful, fresh, successful and fresh, freshness_hours
 
 
 def _state_path(root: Path) -> Path:
@@ -242,10 +266,12 @@ def watchdog_cycle(
             slots = dict(state.get("slots") or {})
             runs = list_runs(repo, workflow)
             natural = _latest_natural(runs)
-            natural_success = bool(
-                natural
-                and natural.get("status") == "completed"
-                and natural.get("conclusion") == "success"
+            natural_success, natural_fresh, natural_healthy, freshness_hours = (
+                _natural_schedule_health(
+                    natural,
+                    now=current,
+                    window_hours=window_hours,
+                )
             )
             state.update(
                 {
@@ -260,6 +286,10 @@ def watchdog_cycle(
                         "observed": natural is not None,
                         "latestRun": _run_summary(natural) if natural else None,
                         "latestRunSuccessful": natural_success,
+                        "latestRunFresh": natural_fresh,
+                        "freshnessWindowHours": freshness_hours,
+                        "freshnessCutoffAt": _iso_z(current - timedelta(hours=freshness_hours)),
+                        "healthy": natural_healthy,
                         "sourceEvent": "schedule",
                     },
                 }
@@ -291,7 +321,7 @@ def watchdog_cycle(
                     "fallbackKey": claim_key,
                     "coverageKind": entry["coverageKind"],
                     "run": entry["run"],
-                    "githubNaturalScheduleHealthy": natural_success,
+                    "githubNaturalScheduleHealthy": natural_healthy,
                 }
 
             if existing is not None:
@@ -308,7 +338,7 @@ def watchdog_cycle(
                     "slotAt": slot_at,
                     "fallbackKey": claim_key,
                     "claimState": existing.get("state"),
-                    "githubNaturalScheduleHealthy": natural_success,
+                    "githubNaturalScheduleHealthy": natural_healthy,
                 }
 
             guard = effect_guard(root, runtime_ledger_path(root))
@@ -325,7 +355,7 @@ def watchdog_cycle(
                         "slotAt": slot_at,
                         "fallbackKey": claim_key,
                         "diskPressureGate": gate,
-                        "githubNaturalScheduleHealthy": natural_success,
+                        "githubNaturalScheduleHealthy": natural_healthy,
                     }
                 # Close the race with a natural run or the controller after
                 # obtaining the shared outbound-effect lock.
@@ -351,7 +381,7 @@ def watchdog_cycle(
                         "fallbackKey": claim_key,
                         "coverageKind": entry["coverageKind"],
                         "run": entry["run"],
-                        "githubNaturalScheduleHealthy": natural_success,
+                        "githubNaturalScheduleHealthy": natural_healthy,
                     }
 
                 baseline_ids = sorted(
@@ -396,7 +426,7 @@ def watchdog_cycle(
                         "slotAt": slot_at,
                         "fallbackKey": claim_key,
                         "error": entry["lastError"],
-                        "githubNaturalScheduleHealthy": natural_success,
+                        "githubNaturalScheduleHealthy": natural_healthy,
                     }
 
                 entry.update(
@@ -418,7 +448,7 @@ def watchdog_cycle(
                     "action": "fallback_requested",
                     "slotAt": slot_at,
                     "fallbackKey": claim_key,
-                    "githubNaturalScheduleHealthy": natural_success,
+                    "githubNaturalScheduleHealthy": natural_healthy,
                 }
     except RuntimeLockBusy:
         return {

@@ -540,6 +540,9 @@ Radar ledger, scanner state, task WIP slot, task contexts, controller command,
 or quality metrics; only the user's common GitHub identity and normal repository
 policies are shared.
 `githubNaturalScheduleHealthy` refers only to GitHub Actions cron delivery;
+the scheduler watchdog requires the latest cron run to be successful and no
+older than `max(1 hour, window_hours)`, so an old success or a fresh fallback
+cannot keep this signal green.
 `operationalHealthy` also accepts a recent successful or currently active
 manual/fallback scan. Historical rolling-window gaps are reported separately in
 `githubNaturalScheduleWarnings`; they do not describe a current outage or

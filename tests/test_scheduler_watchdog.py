@@ -96,7 +96,81 @@ def test_natural_run_is_recorded_only_as_canary_and_does_not_suppress_fallback(
     assert len(dispatched) == 1
     state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
     assert state["naturalScheduleCanary"]["latestRunSuccessful"] is True
+    assert state["naturalScheduleCanary"]["latestRunFresh"] is True
+    assert state["naturalScheduleCanary"]["freshnessWindowHours"] == 2.0
+    assert state["naturalScheduleCanary"]["healthy"] is True
     assert state["naturalScheduleCanary"]["latestRun"]["event"] == "schedule"
+
+
+def test_stale_successful_natural_run_is_unhealthy_and_does_not_suppress_fallback(
+    tmp_path, monkeypatch
+):
+    root = _root(tmp_path, monkeypatch)
+    dispatched = []
+    result = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [
+            _run(
+                event="schedule",
+                run_id=70,
+                created_at="2026-08-30T20:46:00Z",
+            )
+        ],
+        dispatch=lambda *args: dispatched.append(args),
+        effect_guard=_guard,
+    )
+
+    assert result["action"] == "fallback_requested"
+    assert result["githubNaturalScheduleHealthy"] is False
+    assert len(dispatched) == 1
+    state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
+    assert state["naturalScheduleCanary"]["latestRunSuccessful"] is True
+    assert state["naturalScheduleCanary"]["latestRunFresh"] is False
+    assert state["naturalScheduleCanary"]["healthy"] is False
+
+
+def test_larger_scan_window_widens_natural_canary_freshness_tolerance(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    result = _watchdog(
+        root,
+        now=NOW,
+        window_hours=3.0,
+        list_runs=lambda _repo, _workflow: [
+            _run(
+                event="schedule",
+                run_id=71,
+                created_at="2026-08-31T01:01:00Z",
+            )
+        ],
+        dispatch=lambda *_args: None,
+        effect_guard=_guard,
+    )
+
+    assert result["githubNaturalScheduleHealthy"] is True
+    state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
+    assert state["naturalScheduleCanary"]["freshnessWindowHours"] == 3.0
+    assert state["naturalScheduleCanary"]["latestRunFresh"] is True
+
+
+def test_fresh_successful_dispatch_only_run_never_marks_natural_schedule_healthy(
+    tmp_path, monkeypatch
+):
+    root = _root(tmp_path, monkeypatch)
+    result = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [_run(event="workflow_dispatch", run_id=72)],
+        dispatch=lambda *_args: pytest.fail("covered slot must not dispatch"),
+        effect_guard=_guard,
+    )
+
+    assert result["action"] == "covered"
+    assert result["githubNaturalScheduleHealthy"] is False
+    state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
+    assert state["naturalScheduleCanary"]["observed"] is False
+    assert state["naturalScheduleCanary"]["latestRun"] is None
+    assert state["naturalScheduleCanary"]["healthy"] is False
 
 
 def test_active_natural_canary_does_not_suppress_fallback(tmp_path, monkeypatch):
