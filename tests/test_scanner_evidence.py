@@ -54,6 +54,7 @@ def test_resolve_probe_code_paths_binds_camel_case_symbol_to_verified_repository
     assert scanner.resolve_probe_code_paths(
         ["`AudioRecognition`", "apps/daemon/src/server.ts"],
         [
+            "apps/daemon/src/server.ts",
             "livekit-agents/tests/voice/audio_recognition.py",
             "livekit-agents/livekit/agents/voice/audio_recognition.py",
             "livekit-agents/livekit/agents/voice/agent_activity.py",
@@ -63,6 +64,49 @@ def test_resolve_probe_code_paths_binds_camel_case_symbol_to_verified_repository
         "livekit-agents/livekit/agents/voice/audio_recognition.py",
         "livekit-agents/tests/voice/audio_recognition.py",
     ]
+
+
+def test_resolve_probe_code_paths_binds_real_multi_scrobbler_anchors_to_tree():
+    anchors = [
+        "github.com/FoxxMD/multi-scrobbler/blob/232c802b44abda301f0f61840200e66054717b4b/src/backend/common/vendor/atproto/AbstractATProtoApiClient.ts",
+        "CWD/src/backend/common/vendor/atproto/AbstractATProtoApiClient.ts",
+        "CWD/src/backend/common/vendor/teal/TealApiClient.ts",
+        "CWD/src/backend/scrobblers/TealfmScrobbler.ts",
+        "CWD/src/backend/scrobblers/AbstractScrobbleClient.ts",
+        "CWD/src/backend/scrobblers/AbstractHistoricalScrobbleClient.ts",
+        "CWD/node_modules/drizzle-orm/node-sqlite/session.js",
+        "CWD/node_modules/drizzle-orm/sqlite-core/query-builders/insert.js",
+    ]
+    tree_paths = [
+        "src/backend/common/vendor/atproto/AbstractATProtoApiClient.ts",
+        "src/backend/common/vendor/teal/TealApiClient.ts",
+        "src/backend/scrobblers/TealfmScrobbler.ts",
+        "src/backend/scrobblers/AbstractScrobbleClient.ts",
+        "src/backend/scrobblers/AbstractHistoricalScrobbleClient.ts",
+        "src/frontend/AbstractScrobbleClient.ts",
+    ]
+
+    assert (
+        scanner.resolve_probe_code_paths(
+            anchors,
+            tree_paths,
+            repo="FoxxMD/multi-scrobbler",
+        )
+        == tree_paths[:5]
+    )
+
+
+def test_resolve_probe_code_paths_rejects_blob_url_for_another_repository():
+    assert (
+        scanner.resolve_probe_code_paths(
+            [
+                "https://github.com/other/project/blob/main/src/backend/common/vendor/atproto/AbstractATProtoApiClient.ts"
+            ],
+            ["src/backend/common/vendor/atproto/AbstractATProtoApiClient.ts"],
+            repo="FoxxMD/multi-scrobbler",
+        )
+        == []
+    )
 
 
 def test_semantic_review_retry_replaces_pre_llm_candidate_outcome():
