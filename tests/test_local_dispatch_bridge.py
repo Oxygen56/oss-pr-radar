@@ -15467,6 +15467,146 @@ def test_published_fix_ready_file_repairs_current_result_and_binds_pr(tmp_path):
     assert context["resultDigest"] == reviewed_digest
 
 
+@pytest.mark.parametrize("advanced_stage", ["CI_GREEN", "MAINTAINER_ACCEPTED"])
+def test_published_fix_ready_replay_preserves_immutable_binding_stage(tmp_path, advanced_stage):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    reviewed_value = json.loads(result_path.read_text(encoding="utf-8"))
+    reviewed_value["independentReview"] = MODULE.controller_review_result(
+        MODULE.ROOT, reviewed_value
+    )
+    result_path.write_text(json.dumps(reviewed_value), encoding="utf-8")
+    managed, _context, _pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    result_digest = MODULE._task_result_digest(value, result_path.read_bytes())
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert first["ok"] is True, first["errors"]
+    assert managed.current_published_result_for_task("intent-1")["stage"] == "PR_OPEN"
+
+    store.record_stage("a/b#1", advanced_stage, evidence={"checks": "green"})
+    replayed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert replayed["ok"] is True, replayed["errors"]
+    assert replayed["ignored"] == [{"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}]
+    restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert restored["stage"] == advanced_stage
+    assert managed.current_published_result_for_task("intent-1")["stage"] == "PR_OPEN"
+    with managed._connection() as connection:
+        binding_rows = connection.execute(
+            """SELECT payload_json FROM managed_lifecycle_events
+               WHERE event_type='PUBLISHED_TASK_RESULT_BOUND'
+                 AND task_id='intent-1' AND pr_key='a/b#9'"""
+        ).fetchall()
+        result_rows = connection.execute(
+            """SELECT worker_state FROM managed_results
+               WHERE task_id='intent-1' AND pr_key='a/b#9'"""
+        ).fetchall()
+    assert [json.loads(row["payload_json"])["stage"] for row in binding_rows] == ["PR_OPEN"]
+    assert [row["worker_state"] for row in result_rows] == ["PR_OPEN"]
+    with store.connect() as connection:
+        marker_rows = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PUBLISHED_TASK_RESULT_BACKFILLED'
+                 AND dedupe_key=?""",
+            (result_digest,),
+        ).fetchall()
+    assert [json.loads(row["payload_json"])["stage"] for row in marker_rows] == ["PR_OPEN"]
+
+
+def test_published_fix_ready_first_binding_uses_current_lifecycle_stage(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    reviewed_value = json.loads(result_path.read_text(encoding="utf-8"))
+    reviewed_value["independentReview"] = MODULE.controller_review_result(
+        MODULE.ROOT, reviewed_value
+    )
+    result_path.write_text(json.dumps(reviewed_value), encoding="utf-8")
+    managed, _context, _pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        degrade_stage=False,
+    )
+    store.record_stage("a/b#1", "CI_GREEN", evidence={"checks": "green"})
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True, first["errors"]
+    assert managed.current_published_result_for_task("intent-1")["stage"] == "CI_GREEN"
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT event_type,payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type IN (
+                   'PUBLISHED_TASK_RESULT_BACKFILLED','TASK_RESULT_INGESTED'
+                 )
+               ORDER BY event_type"""
+        ).fetchall()
+    assert {row["event_type"]: json.loads(row["payload_json"])["stage"] for row in rows} == {
+        "PUBLISHED_TASK_RESULT_BACKFILLED": "CI_GREEN",
+        "TASK_RESULT_INGESTED": "CI_GREEN",
+    }
+
+
+def test_published_fix_ready_replay_repairs_missing_marker_with_binding_stage(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    reviewed_value = json.loads(result_path.read_text(encoding="utf-8"))
+    reviewed_value["independentReview"] = MODULE.controller_review_result(
+        MODULE.ROOT, reviewed_value
+    )
+    result_path.write_text(json.dumps(reviewed_value), encoding="utf-8")
+    managed, _context, _pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    result_digest = MODULE._task_result_digest(value, result_path.read_bytes())
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert first["ok"] is True, first["errors"]
+
+    store.record_stage("a/b#1", "CI_GREEN", evidence={"checks": "green"})
+    with store.connect() as connection:
+        connection.execute(
+            """DELETE FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type IN (
+                   'PUBLISHED_TASK_RESULT_BACKFILLED','TASK_RESULT_INGESTED'
+                 )
+                 AND dedupe_key=?""",
+            (result_digest,),
+        )
+
+    replayed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert replayed["ok"] is True, replayed["errors"]
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "CI_GREEN"
+    )
+    assert managed.current_published_result_for_task("intent-1")["stage"] == "PR_OPEN"
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT event_type,payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type IN (
+                   'PUBLISHED_TASK_RESULT_BACKFILLED','TASK_RESULT_INGESTED'
+                 )
+                 AND dedupe_key=?""",
+            (result_digest,),
+        ).fetchall()
+    assert {row["event_type"]: json.loads(row["payload_json"])["stage"] for row in rows} == {
+        "PUBLISHED_TASK_RESULT_BACKFILLED": "PR_OPEN",
+        "TASK_RESULT_INGESTED": "PR_OPEN",
+    }
+
+
 @pytest.mark.parametrize(
     "missing_binding",
     ["reproductionReceipt", "resultDigest", "independentReview"],

@@ -16126,10 +16126,37 @@ def _backfill_authoritative_fix_ready_result(
         or task_provenance.get("probeReceiptDigest") != durable_receipt.get("receiptDigest")
     ):
         return None
+    # A published-result binding is an immutable snapshot of the exact result,
+    # PR, and head that were first connected.  Live PR lifecycle progress is
+    # tracked separately by the legacy stage and managed CI/maintainer records.
+    # Reusing restored_stage for an exact existing binding would turn a
+    # legitimate PR_OPEN -> CI_GREEN transition into a conflicting rewrite of
+    # that binding event.  A first binding still snapshots the current stage.
+    binding_stage = restored_stage
+    context_publication = (
+        context.get("publicationReceipt")
+        if isinstance(context.get("publicationReceipt"), dict)
+        else {}
+    )
+    current_published = managed_adapter.ledger.current_published_result_for_task(task_id)
+    if current_published is not None and all(
+        current_published.get(field) == expected
+        for field, expected in {
+            "prKey": str(published_pr["pr_key"]),
+            "prUrl": str(published_pr["pr_url"]),
+            "publicationCommitSha": str(context_publication.get("commitSha") or ""),
+            "headSha": head_sha,
+            "commitSha": commit_sha,
+            "resultDigest": result_digest,
+        }.items()
+    ):
+        current_binding_stage = str(current_published.get("stage") or "")
+        if current_binding_stage in PUBLISHED_RESULT_STAGES:
+            binding_stage = current_binding_stage
     published_value = dict(value)
     published_value.update(
         {
-            "stage": restored_stage,
+            "stage": binding_stage,
             "prUrl": str(published_pr["pr_url"]),
             "headSha": head_sha,
             "commitSha": commit_sha,
@@ -16149,14 +16176,14 @@ def _backfill_authoritative_fix_ready_result(
         task_id=task_id,
         thread_id=str(candidate["threadId"]),
         digest=result_digest,
-        stage=restored_stage,
+        stage=binding_stage,
         pr_url=str(published_pr["pr_url"]),
         head_sha=head_sha,
     )
     store.record_task_result_ingested(
         str(candidate["key"]),
         digest=result_digest,
-        stage=restored_stage,
+        stage=binding_stage,
         task_id=task_id,
         thread_id=str(candidate["threadId"]),
         **_recovered_task_result_tombstone_continuation_kwargs(
