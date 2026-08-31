@@ -92,7 +92,7 @@ def test_natural_run_is_recorded_only_as_canary_and_does_not_suppress_fallback(
     )
 
     assert result["action"] == "fallback_requested"
-    assert result["githubNaturalScheduleHealthy"] is False
+    assert result["githubNaturalScheduleHealthy"] is True
     assert len(dispatched) == 1
     state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
     assert state["naturalScheduleCanary"]["latestRunSuccessful"] is True
@@ -194,6 +194,7 @@ def test_timeout_consumes_same_fallback_key_and_later_cycles_only_reconcile(tmp_
     assert first["action"] == "dispatch_uncertain"
     assert second["action"] == "reconciling"
     assert second["fallbackKey"] == first["fallbackKey"]
+    assert second["githubNaturalScheduleHealthy"] is False
     assert attempts == ["attempt"]
 
 
@@ -254,6 +255,7 @@ def test_late_natural_run_cannot_replace_fallback_evidence_or_trigger_again(tmp_
     assert first["action"] == "fallback_requested"
     assert second["action"] == "reconciling"
     assert second["fallbackKey"] == first["fallbackKey"]
+    assert second["githubNaturalScheduleHealthy"] is True
     assert attempts == ["fallback"]
     state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
     slot = state["slots"][first["fallbackKey"]]

@@ -242,6 +242,11 @@ def watchdog_cycle(
             slots = dict(state.get("slots") or {})
             runs = list_runs(repo, workflow)
             natural = _latest_natural(runs)
+            natural_success = bool(
+                natural
+                and natural.get("status") == "completed"
+                and natural.get("conclusion") == "success"
+            )
             state.update(
                 {
                     "repo": repo,
@@ -254,11 +259,7 @@ def watchdog_cycle(
                     "naturalScheduleCanary": {
                         "observed": natural is not None,
                         "latestRun": _run_summary(natural) if natural else None,
-                        "latestRunSuccessful": bool(
-                            natural
-                            and natural.get("status") == "completed"
-                            and natural.get("conclusion") == "success"
-                        ),
+                        "latestRunSuccessful": natural_success,
                         "sourceEvent": "schedule",
                     },
                 }
@@ -290,7 +291,7 @@ def watchdog_cycle(
                     "fallbackKey": claim_key,
                     "coverageKind": entry["coverageKind"],
                     "run": entry["run"],
-                    "githubNaturalScheduleHealthy": False,
+                    "githubNaturalScheduleHealthy": natural_success,
                 }
 
             if existing is not None:
@@ -307,7 +308,7 @@ def watchdog_cycle(
                     "slotAt": slot_at,
                     "fallbackKey": claim_key,
                     "claimState": existing.get("state"),
-                    "githubNaturalScheduleHealthy": False,
+                    "githubNaturalScheduleHealthy": natural_success,
                 }
 
             guard = effect_guard(root, runtime_ledger_path(root))
@@ -324,7 +325,7 @@ def watchdog_cycle(
                         "slotAt": slot_at,
                         "fallbackKey": claim_key,
                         "diskPressureGate": gate,
-                        "githubNaturalScheduleHealthy": False,
+                        "githubNaturalScheduleHealthy": natural_success,
                     }
                 # Close the race with a natural run or the controller after
                 # obtaining the shared outbound-effect lock.
@@ -350,7 +351,7 @@ def watchdog_cycle(
                         "fallbackKey": claim_key,
                         "coverageKind": entry["coverageKind"],
                         "run": entry["run"],
-                        "githubNaturalScheduleHealthy": False,
+                        "githubNaturalScheduleHealthy": natural_success,
                     }
 
                 baseline_ids = sorted(
@@ -395,7 +396,7 @@ def watchdog_cycle(
                         "slotAt": slot_at,
                         "fallbackKey": claim_key,
                         "error": entry["lastError"],
-                        "githubNaturalScheduleHealthy": False,
+                        "githubNaturalScheduleHealthy": natural_success,
                     }
 
                 entry.update(
@@ -417,7 +418,7 @@ def watchdog_cycle(
                     "action": "fallback_requested",
                     "slotAt": slot_at,
                     "fallbackKey": claim_key,
-                    "githubNaturalScheduleHealthy": False,
+                    "githubNaturalScheduleHealthy": natural_success,
                 }
     except RuntimeLockBusy:
         return {
