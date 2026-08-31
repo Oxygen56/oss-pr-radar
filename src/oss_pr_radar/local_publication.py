@@ -9,10 +9,13 @@ import os
 import plistlib
 import signal
 import subprocess
+import sys
 import time
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from .operational_auth import require_operational_authorization
 from .release_binding import bind_runtime, runtime_ledger_path, runtime_python
@@ -51,6 +54,7 @@ SENSITIVE_ENVIRONMENT_KEYS = {
     "MODEL_API_KEY",
     "OPENAI_API_KEY",
 }
+SERVICE_NO_PROXY = "localhost,127.0.0.1,::1"
 QUEUE_SYNC_STATE = "local_queue_sync.json"
 QUEUE_IMPORT_LOCK = "queue-import.lock"
 FAST_WORK_LOCK = "fast-worker.lock"
@@ -1505,6 +1509,89 @@ def compact_advance_result(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _validated_service_proxy(value: object) -> str | None:
+    """Return one credential-free proxy URL safe for a launchd argv entry."""
+
+    text = str(value or "")
+    if (
+        not text
+        or text != text.strip()
+        or len(text) > 2048
+        or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in text
+        )
+    ):
+        return None
+    try:
+        parsed = urlsplit(text)
+        port = parsed.port
+    except (TypeError, ValueError):
+        return None
+    if (
+        parsed.scheme.casefold() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    scheme = parsed.scheme.casefold()
+    host = parsed.hostname.casefold()
+    if ":" in host:
+        host = f"[{host}]"
+    if port is not None and port <= 0:
+        return None
+    port = port if port is not None else (443 if scheme == "https" else 80)
+    return f"{scheme}://{host}:{port}"
+
+
+def _system_service_proxy_environment() -> dict[str, str]:
+    """Read stable macOS proxy settings for hermetic launchd workers."""
+
+    if sys.platform != "darwin":
+        return {}
+    loader = getattr(urllib.request, "getproxies_macosx_sysconf", None)
+    if loader is None:
+        raise RuntimeError("system proxy discovery is unavailable")
+    try:
+        configured = loader()
+    except (OSError, RuntimeError, ValueError):
+        raise RuntimeError("system proxy discovery failed") from None
+    if not isinstance(configured, dict):
+        raise RuntimeError("system proxy discovery returned invalid data")
+    values: dict[str, str] = {}
+    for source, target in (
+        ("http", "HTTP_PROXY"),
+        ("https", "HTTPS_PROXY"),
+    ):
+        raw_proxy = configured.get(source)
+        proxy = _validated_service_proxy(raw_proxy)
+        if raw_proxy and not proxy:
+            raise RuntimeError("system proxy configuration is invalid")
+        if proxy:
+            values[target] = proxy
+            values[target.casefold()] = proxy
+    if values:
+        values["NO_PROXY"] = SERVICE_NO_PROXY
+        values["no_proxy"] = SERVICE_NO_PROXY
+    return values
+
+
+def _hermetic_service_environment_arguments(*, home: Path) -> list[str]:
+    environment = {
+        "HOME": str(home),
+        "USER": home.name,
+        "LOGNAME": home.name,
+        "LANG": "en_US.UTF-8",
+        "PATH": SERVICE_PATH,
+        **_system_service_proxy_environment(),
+    }
+    return [f"{key}={value}" for key, value in environment.items()]
+
+
 def launch_agent_spec(
     root: Path,
     *,
@@ -1512,6 +1599,7 @@ def launch_agent_spec(
     home: Path,
     queue_sync_interval_seconds: int = 300,
     runtime_root: Path | None = None,
+    service_environment_arguments: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     code_root = root.resolve()
     runtime_root = (runtime_root or root).resolve()
@@ -1522,11 +1610,11 @@ def launch_agent_spec(
         "ProgramArguments": [
             "/usr/bin/env",
             "-i",
-            f"HOME={home}",
-            f"USER={home.name}",
-            f"LOGNAME={home.name}",
-            "LANG=en_US.UTF-8",
-            f"PATH={SERVICE_PATH}",
+            *(
+                service_environment_arguments
+                if service_environment_arguments is not None
+                else _hermetic_service_environment_arguments(home=home)
+            ),
             str(runtime_python(runtime_root)),
             str(code_root / "scripts" / "local_publication_agent.py"),
             "--root",
@@ -1558,6 +1646,7 @@ def _worker_spec(
     interval_seconds: int,
     home: Path,
     runtime_root: Path | None = None,
+    service_environment_arguments: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     code_root = code_root.resolve()
     runtime_root = (runtime_root or code_root).resolve()
@@ -1567,11 +1656,11 @@ def _worker_spec(
         "ProgramArguments": [
             "/usr/bin/env",
             "-i",
-            f"HOME={home}",
-            f"USER={home.name}",
-            f"LOGNAME={home.name}",
-            "LANG=en_US.UTF-8",
-            f"PATH={SERVICE_PATH}",
+            *(
+                service_environment_arguments
+                if service_environment_arguments is not None
+                else _hermetic_service_environment_arguments(home=home)
+            ),
             str(runtime_python(runtime_root)),
             str(code_root / "scripts" / script),
             "--root",
@@ -1591,6 +1680,7 @@ def slow_launch_agent_spec(
     home: Path,
     interval_seconds: int = 60,
     runtime_root: Path | None = None,
+    service_environment_arguments: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     return _worker_spec(
         root,
@@ -1599,6 +1689,7 @@ def slow_launch_agent_spec(
         interval_seconds=interval_seconds,
         home=home,
         runtime_root=runtime_root,
+        service_environment_arguments=service_environment_arguments,
     )
 
 
@@ -1608,6 +1699,7 @@ def queue_import_launch_agent_spec(
     home: Path,
     interval_seconds: int = 300,
     runtime_root: Path | None = None,
+    service_environment_arguments: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     return _worker_spec(
         root,
@@ -1616,6 +1708,7 @@ def queue_import_launch_agent_spec(
         interval_seconds=interval_seconds,
         home=home,
         runtime_root=runtime_root,
+        service_environment_arguments=service_environment_arguments,
     )
 
 
@@ -1625,6 +1718,7 @@ def scheduler_watchdog_launch_agent_spec(
     home: Path,
     interval_seconds: int = 300,
     runtime_root: Path | None = None,
+    service_environment_arguments: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     return _worker_spec(
         root,
@@ -1633,6 +1727,7 @@ def scheduler_watchdog_launch_agent_spec(
         interval_seconds=interval_seconds,
         home=home,
         runtime_root=runtime_root,
+        service_environment_arguments=service_environment_arguments,
     )
 
 
@@ -1649,16 +1744,33 @@ def worker_specs(
         raise RuntimeError(f"active release is invalid: {evidence.get('error', 'unknown error')}")
     if Path(str(evidence["path"])).resolve() != code_root:
         raise RuntimeError("worker code root is not the active immutable release")
+    service_environment_arguments = tuple(_hermetic_service_environment_arguments(home=home))
     return [
         launch_agent_spec(
             code_root,
             interval_seconds=20,
             home=home,
             runtime_root=runtime_root,
+            service_environment_arguments=service_environment_arguments,
         ),
-        slow_launch_agent_spec(code_root, home=home, runtime_root=runtime_root),
-        queue_import_launch_agent_spec(code_root, home=home, runtime_root=runtime_root),
-        scheduler_watchdog_launch_agent_spec(code_root, home=home, runtime_root=runtime_root),
+        slow_launch_agent_spec(
+            code_root,
+            home=home,
+            runtime_root=runtime_root,
+            service_environment_arguments=service_environment_arguments,
+        ),
+        queue_import_launch_agent_spec(
+            code_root,
+            home=home,
+            runtime_root=runtime_root,
+            service_environment_arguments=service_environment_arguments,
+        ),
+        scheduler_watchdog_launch_agent_spec(
+            code_root,
+            home=home,
+            runtime_root=runtime_root,
+            service_environment_arguments=service_environment_arguments,
+        ),
     ]
 
 

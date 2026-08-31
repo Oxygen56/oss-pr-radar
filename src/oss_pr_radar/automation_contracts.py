@@ -46,7 +46,12 @@ CUTOVER_ORDER = (
 )
 
 
-def build_contracts(runtime_root: Path, *, home: Path | None = None) -> dict[str, Any]:
+def build_contracts(
+    runtime_root: Path,
+    *,
+    home: Path | None = None,
+    specs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     binding = bind_runtime(runtime_root)
     root = runtime_root.resolve()
     python = str(runtime_python(root))
@@ -57,13 +62,18 @@ def build_contracts(runtime_root: Path, *, home: Path | None = None) -> dict[str
     # release represented by ``binding.code_root``.
     code = str(binding.code_root)
     automation_code = str(root / "current-release")
+    selected_specs = (
+        specs
+        if specs is not None
+        else worker_specs(binding.code_root, home=home or Path.home(), runtime_root=root)
+    )
     workers = {
         spec["Label"]: {
             "command": spec["ProgramArguments"],
             "workdir": spec["WorkingDirectory"],
             "status": "configured",
         }
-        for spec in worker_specs(binding.code_root, home=home or Path.home(), runtime_root=root)
+        for spec in selected_specs
     }
     cutover = code + "/scripts/stage7_cutover.py"
     acceptance = code + "/scripts/stage7_acceptance.py"

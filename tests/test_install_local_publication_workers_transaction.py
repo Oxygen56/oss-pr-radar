@@ -1411,6 +1411,53 @@ def test_ensure_requires_exact_loaded_launchd_command_and_workdir(
         assert fake.counts == {"bootstrap": 0, "kickstart": 0}
 
 
+def test_ensure_refuses_proxy_spec_drift_before_inspecting_or_mutating_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    old_specs = specs(tmp_path)
+    new_specs = []
+    for spec in old_specs:
+        changed = dict(spec)
+        changed["ProgramArguments"] = [
+            *spec["ProgramArguments"][:2],
+            "HTTPS_PROXY=http://127.0.0.1:7898",
+            *spec["ProgramArguments"][2:],
+        ]
+        new_specs.append(changed)
+    original_bytes = {}
+    for spec in old_specs:
+        path = plist_path(home, str(spec["Label"]))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(plistlib.dumps(spec, fmt=plistlib.FMT_XML))
+        path.chmod(0o600)
+        original_bytes[path] = path.read_bytes()
+    auth = {
+        "state": "ACTIVE",
+        "workerConfigDigest": INSTALL.worker_spec_digest(old_specs),
+    }
+    monkeypatch.setattr(
+        INSTALL, "require_operational_authorization", lambda *_args, **_kwargs: auth
+    )
+    monkeypatch.setattr(
+        INSTALL,
+        "_snapshot_workers",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("worker state must not be inspected after authorization drift")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="controlled restage required"):
+        INSTALL.ensure_workers(
+            new_specs,
+            home=home,
+            domain=f"gui/{os.getuid()}",
+            runtime_root=tmp_path / "runtime",
+        )
+
+    assert {path: path.read_bytes() for path in original_bytes} == original_bytes
+
+
 def test_two_complete_stage_transactions_have_one_receipt_and_one_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -214,12 +214,22 @@ def _automation_entry(
     }
 
 
-def _actual_workers(runtime_root: Path, home: Path, contracts: dict[str, Any]) -> dict[str, Any]:
-    specs = worker_specs(
-        Path(contracts["release"]["codeRoot"]), home=home, runtime_root=runtime_root
+def _actual_workers(
+    runtime_root: Path,
+    home: Path,
+    contracts: dict[str, Any],
+    *,
+    specs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    selected_specs = (
+        specs
+        if specs is not None
+        else worker_specs(
+            Path(contracts["release"]["codeRoot"]), home=home, runtime_root=runtime_root
+        )
     )
     result: dict[str, Any] = {}
-    for spec in specs:
+    for spec in selected_specs:
         label = str(spec["Label"])
         path = home / "Library" / "LaunchAgents" / f"{label}.plist"
         if path.is_symlink() or not path.is_file():
@@ -246,6 +256,7 @@ def derive_automation_snapshot(
     *,
     home: Path | None = None,
     observed_at: str | None = None,
+    specs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Parse actual TOML/plists and derive, but do not sign, snapshot content."""
 
@@ -256,7 +267,12 @@ def derive_automation_snapshot(
         raise ValueError("heartbeat and daily automation TOML paths must be distinct")
     heartbeat_raw, heartbeat_file = _file_metadata(heartbeat_toml, role="heartbeat")
     daily_raw, daily_file = _file_metadata(daily_toml, role="dailyWarRoom")
-    contracts = build_contracts(runtime_root, home=home)
+    selected_specs = (
+        specs
+        if specs is not None
+        else worker_specs(binding.code_root, home=home, runtime_root=runtime_root)
+    )
+    contracts = build_contracts(runtime_root, home=home, specs=selected_specs)
     heartbeat = _automation_entry(
         _automation_section(heartbeat_raw, heartbeat_toml),
         role="heartbeat",
@@ -284,7 +300,7 @@ def derive_automation_snapshot(
         "sourceFiles": [heartbeat_file, daily_file],
         "heartbeat": heartbeat,
         "dailyWarRoom": daily,
-        "workers": _actual_workers(runtime_root, home, contracts),
+        "workers": _actual_workers(runtime_root, home, contracts, specs=selected_specs),
     }
 
 

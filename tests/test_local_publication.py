@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from test_ledger import insert_publication_preflight, legal_publication_probe
 
+import oss_pr_radar.local_publication as local_publication
 from oss_pr_radar.ledger import RadarLedger
 from oss_pr_radar.local_publication import (
     PR_FOLLOWUP_REBIND_REQUIRED,
@@ -27,6 +28,7 @@ from oss_pr_radar.local_publication import (
     slow_launch_agent_spec,
     sync_cloud_queue_if_due,
     worker_log_paths,
+    worker_specs,
 )
 from oss_pr_radar.runtime import RuntimeLockBusy
 
@@ -1929,6 +1931,170 @@ def test_worker_specs_are_separate_and_use_expected_intervals(tmp_path):
     assert Path(slow["StandardOutPath"]).name == "local-publication-slow.log"
     assert Path(queue["StandardOutPath"]).name == "queue-importer.log"
     assert Path(watchdog["StandardOutPath"]).name == "scheduler-watchdog.log"
+
+
+def test_workers_pin_system_proxy_inside_hermetic_launch_environment(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_publication.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        local_publication.urllib.request,
+        "getproxies_macosx_sysconf",
+        lambda: {
+            "http": "http://127.0.0.1:7897",
+            "https": "http://127.0.0.1:7897",
+        },
+        raising=False,
+    )
+    home = tmp_path / "home"
+    specs = (
+        launch_agent_spec(tmp_path / "radar", interval_seconds=20, home=home),
+        slow_launch_agent_spec(tmp_path / "radar", home=home),
+        queue_import_launch_agent_spec(tmp_path / "radar", home=home),
+        scheduler_watchdog_launch_agent_spec(tmp_path / "radar", home=home),
+    )
+    expected = [
+        f"HOME={home}",
+        f"USER={home.name}",
+        f"LOGNAME={home.name}",
+        "LANG=en_US.UTF-8",
+        f"PATH={local_publication.SERVICE_PATH}",
+        "HTTP_PROXY=http://127.0.0.1:7897",
+        "http_proxy=http://127.0.0.1:7897",
+        "HTTPS_PROXY=http://127.0.0.1:7897",
+        "https_proxy=http://127.0.0.1:7897",
+        f"NO_PROXY={local_publication.SERVICE_NO_PROXY}",
+        f"no_proxy={local_publication.SERVICE_NO_PROXY}",
+    ]
+
+    for spec in specs:
+        arguments = spec["ProgramArguments"]
+        assert arguments[:2] == ["/usr/bin/env", "-i"]
+        assert arguments[2 : 2 + len(expected)] == expected
+        script_index = next(
+            index for index, argument in enumerate(arguments) if str(argument).endswith(".py")
+        )
+        assert all(arguments.index(item) < script_index for item in expected)
+
+
+def test_worker_specs_sample_system_proxy_once(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_publication.sys, "platform", "darwin")
+    calls = []
+
+    def system_proxies():
+        calls.append(True)
+        return {"http": "http://127.0.0.1:7897", "https": "http://127.0.0.1:7897"}
+
+    monkeypatch.setattr(
+        local_publication.urllib.request,
+        "getproxies_macosx_sysconf",
+        system_proxies,
+        raising=False,
+    )
+    code_root = tmp_path / "release"
+    runtime_root = tmp_path / "runtime"
+    monkeypatch.setattr(
+        local_publication,
+        "active_release_evidence",
+        lambda _root: {"valid": True, "path": str(code_root.resolve())},
+    )
+
+    specs = worker_specs(code_root, home=tmp_path / "home", runtime_root=runtime_root)
+
+    assert len(calls) == 1
+    environments = [
+        tuple(argument for argument in spec["ProgramArguments"] if "PROXY=" in argument)
+        for spec in specs
+    ]
+    assert len(set(environments)) == 1
+    assert environments[0] == (
+        "HTTP_PROXY=http://127.0.0.1:7897",
+        "HTTPS_PROXY=http://127.0.0.1:7897",
+        f"NO_PROXY={local_publication.SERVICE_NO_PROXY}",
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "http://user:secret@proxy.example:8080",
+        "http://proxy.example:bad-port",
+        "http://proxy.example:8080/path",
+        "http://proxy.example:8080?token=secret",
+        "http://proxy.example:8080#fragment",
+        "http://exa mple.com:8080",
+        " http://proxy.example:8080",
+        "http://proxy.example:8080 ",
+        "http://proxy.example:8080\t",
+        "http://proxy.example:8080\n",
+        "http://proxy.example:0",
+        "socks5h://proxy.example:1080",
+    ],
+)
+def test_service_proxy_rejects_unsafe_or_unsupported_values(value):
+    assert local_publication._validated_service_proxy(value) is None
+
+
+def test_service_proxy_environment_fails_closed_for_unsafe_http(monkeypatch):
+    monkeypatch.setattr(local_publication.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        local_publication.urllib.request,
+        "getproxies_macosx_sysconf",
+        lambda: {
+            "http": "http://user:secret@proxy.example:8080",
+            "https": "http://proxy.example:8443",
+            "socks": "http://127.0.0.1:1080",
+        },
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError, match="system proxy configuration is invalid"):
+        local_publication._system_service_proxy_environment()
+
+
+def test_system_proxy_discovery_fails_closed_on_darwin(monkeypatch):
+    monkeypatch.setattr(local_publication.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        local_publication.urllib.request,
+        "getproxies_macosx_sysconf",
+        lambda: (_ for _ in ()).throw(OSError("sensitive detail")),
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError, match="system proxy discovery failed") as error:
+        local_publication._system_service_proxy_environment()
+
+    assert "sensitive detail" not in str(error.value)
+
+
+def test_non_darwin_service_spec_does_not_probe_macos_proxy(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_publication.sys, "platform", "linux")
+    monkeypatch.setattr(
+        local_publication.urllib.request,
+        "getproxies_macosx_sysconf",
+        lambda: (_ for _ in ()).throw(AssertionError("must not be called")),
+        raising=False,
+    )
+
+    root = tmp_path / "radar"
+    home = tmp_path / "home"
+    specs = (
+        launch_agent_spec(root, interval_seconds=20, home=home),
+        slow_launch_agent_spec(root, home=home),
+        queue_import_launch_agent_spec(root, home=home),
+        scheduler_watchdog_launch_agent_spec(root, home=home),
+    )
+
+    for spec in specs:
+        arguments = spec["ProgramArguments"]
+        assert arguments[:7] == [
+            "/usr/bin/env",
+            "-i",
+            f"HOME={home}",
+            f"USER={home.name}",
+            f"LOGNAME={home.name}",
+            "LANG=en_US.UTF-8",
+            f"PATH={local_publication.SERVICE_PATH}",
+        ]
+        assert not any("PROXY=" in argument for argument in arguments)
 
 
 def test_due_cloud_queue_sync_imports_and_lists_pending_work(tmp_path):

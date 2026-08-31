@@ -564,8 +564,10 @@ def ensure_workers(
 ) -> dict[str, object]:
     """Keep correctly loaded workers running, or repair them under authorization."""
 
-    require_operational_authorization(runtime_root)
+    authorization = require_operational_authorization(runtime_root)
     _validate_specs(specs)
+    if authorization.get("workerConfigDigest") != worker_spec_digest(specs):
+        raise RuntimeError("worker configuration changed; controlled restage required")
     snapshots = _snapshot_workers(specs, home=home, domain=domain)
     if all(
         snapshot.loaded

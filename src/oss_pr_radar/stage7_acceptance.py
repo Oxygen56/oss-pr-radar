@@ -572,8 +572,28 @@ def check(
             "error": str(exc),
         }
     home = home or Path.home()
+    event_lane_health = {
+        "required": False,
+        "skipped": True,
+        "expectedLabels": list(EVENT_LANE_LABELS),
+        "healthy": True,
+        "schemaVersion": None,
+        "checkedAt": None,
+        "operationalAuthorizationValid": None,
+        "lanes": {},
+        "error": None,
+    }
+    if strict and require_workers_loaded:
+        # This is the longest live audit in final acceptance. Run it before
+        # taking the single worker/proxy snapshot used by every later check.
+        event_lane_health = _event_lane_health(
+            runtime_root,
+            code_root=binding.code_root,
+            home=home,
+            runner=event_lane_health_runner,
+        )
     specs = worker_specs(binding.code_root, home=home, runtime_root=runtime_root)
-    contracts = build_contracts(runtime_root, home=home)
+    contracts = build_contracts(runtime_root, home=home, specs=specs)
     expected_workers = {spec["Label"]: spec for spec in specs}
     contract_workers = contracts["workers"]
     contract_match = set(expected_workers) == set(contract_workers) and all(
@@ -810,6 +830,7 @@ def check(
                         source_paths["dailyWarRoom"],
                         home=home,
                         observed_at=str(actual_automation["observedAt"]),
+                        specs=specs,
                     )
                     for key in (
                         "schema",
@@ -828,27 +849,6 @@ def check(
                             automation_evidence_ok = False
             except (OSError, json.JSONDecodeError, ValueError):
                 automation_evidence_ok = False
-    event_lane_health = {
-        "required": False,
-        "skipped": True,
-        "expectedLabels": list(EVENT_LANE_LABELS),
-        "healthy": True,
-        "schemaVersion": None,
-        "checkedAt": None,
-        "operationalAuthorizationValid": None,
-        "lanes": {},
-        "error": None,
-    }
-    if strict and require_workers_loaded:
-        # This is the longest live audit in final acceptance.  Run it before
-        # sampling worker, deployment, disk, and authorization state so any
-        # cutover during the audit invalidates the later release-bound checks.
-        event_lane_health = _event_lane_health(
-            runtime_root,
-            code_root=binding.code_root,
-            home=home,
-            runner=event_lane_health_runner,
-        )
     runtime_state = read_json(runtime_root / "state" / "runtime-health.json", {})
     runtime_state = runtime_state if isinstance(runtime_state, dict) else {}
     launch_outputs: dict[str, str] = {}

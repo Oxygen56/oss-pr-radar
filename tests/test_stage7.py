@@ -2222,6 +2222,70 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     assert check(runtime, home=tmp_path / "home", strict=False)["ok"] is True
 
 
+def test_stage7_reuses_one_proxy_snapshot_for_contract_and_digest(tmp_path, monkeypatch):
+    import oss_pr_radar.local_publication as local_publication_module
+
+    monkeypatch.setattr(local_publication_module.sys, "platform", "darwin")
+    calls: list[int] = []
+
+    def changing_system_proxy():
+        port = 7897 if not calls else 7898
+        calls.append(port)
+        return {
+            "http": f"http://127.0.0.1:{port}",
+            "https": f"http://127.0.0.1:{port}",
+        }
+
+    monkeypatch.setattr(
+        local_publication_module.urllib.request,
+        "getproxies_macosx_sysconf",
+        changing_system_proxy,
+        raising=False,
+    )
+    runtime = _runtime(tmp_path)
+
+    acceptance = check(runtime, home=tmp_path / "home", strict=False)
+
+    assert calls == [7897]
+    assert acceptance["ok"] is True
+    assert acceptance["automationContractsMatch"] is True
+    digest_specs = []
+    for report in acceptance["workers"]:
+        assert "HTTP_PROXY=http://127.0.0.1:7897" in report["expectedCommand"]
+        assert "HTTPS_PROXY=http://127.0.0.1:7897" in report["expectedCommand"]
+        assert not any(":7898" in argument for argument in report["expectedCommand"])
+        digest_specs.append(
+            {
+                "Label": report["label"],
+                "ProgramArguments": report["expectedCommand"],
+                "WorkingDirectory": report["expectedWorkdir"],
+            }
+        )
+    assert acceptance["workerSpecDigest"] == worker_spec_digest(digest_specs)
+
+
+def test_stage7_final_event_audit_precedes_worker_proxy_snapshot(tmp_path, monkeypatch):
+    import oss_pr_radar.stage7_acceptance as acceptance_module
+
+    order: list[str] = []
+
+    def event_health(*_args, **_kwargs):
+        order.append("event-audit")
+        return {"required": True, "healthy": True}
+
+    def stop_at_specs(*_args, **_kwargs):
+        order.append("worker-proxy-snapshot")
+        raise RuntimeError("stop after ordering observation")
+
+    monkeypatch.setattr(acceptance_module, "_event_lane_health", event_health)
+    monkeypatch.setattr(acceptance_module, "worker_specs", stop_at_specs)
+
+    with pytest.raises(RuntimeError, match="stop after ordering observation"):
+        check(_runtime(tmp_path), home=tmp_path / "home")
+
+    assert order == ["event-audit", "worker-proxy-snapshot"]
+
+
 def test_automation_commands_follow_current_release_pointer(tmp_path):
     runtime = _runtime(tmp_path)
     contracts = build_contracts(runtime)
