@@ -2060,13 +2060,7 @@ def test_worker_binding_auth_gap_repair_requeues_root_and_coalesces_recovery(tmp
     second = worker._repair_exhausted_worker_binding_failures(tmp_path, lane)
 
     assert first == {"status": "applied", "requeued": 1, "coalesced": 1}
-    assert second == {
-        "status": "already_applied",
-        "requeued": 0,
-        "coalesced": 0,
-        "previousRequeued": 1,
-        "previousCoalesced": 1,
-    }
+    assert second == {"status": "applied", "requeued": 0, "coalesced": 0}
     with lane.connect() as db:
         root_row = db.execute(
             "SELECT status,attempts,payload_json FROM event_lane_events WHERE event_id=?",
@@ -2098,6 +2092,52 @@ def test_worker_binding_auth_gap_repair_requeues_root_and_coalesces_recovery(tmp
         ).fetchone()
     assert dict(revived) == {"status": "pending", "attempts": 0}
     assert lane.handler_turn(recovery_id) is None
+
+
+def test_worker_binding_auth_gap_repair_retries_after_exhausted_lease_expires(
+    tmp_path, monkeypatch
+):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    key = "agentscope-ai/agentscope#leased-auth-gap"
+    event_id = "leased-auth-gap"
+    assert lane.append({"eventId": event_id, "eventKey": key, "kind": "issue_update"})
+    _exhaust_with_worker_binding_error(worker, lane, event_id, key)
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET status='leased',lease_until=?,lease_owner=?,"
+            "lease_token=? WHERE event_id=?",
+            (10.0, "old-worker", "old-lease", event_id),
+        )
+    monkeypatch.setattr(
+        worker, "require_operational_authorization", lambda _root: _active_authorization()
+    )
+
+    before_expiry = worker._repair_exhausted_worker_binding_failures(tmp_path, lane)
+    assert before_expiry == {"status": "applied", "requeued": 0, "coalesced": 0}
+    with lane.connect() as db:
+        leased = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id=?", (event_id,)
+        ).fetchone()
+    assert dict(leased) == {"status": "leased", "attempts": lane.max_attempts}
+
+    assert lane.expire_claims(now=11.0) == 1
+    after_expiry = worker._repair_exhausted_worker_binding_failures(tmp_path, lane)
+
+    assert after_expiry == {"status": "applied", "requeued": 1, "coalesced": 0}
+    with lane.connect() as db:
+        repaired = db.execute(
+            "SELECT status,attempts,lease_owner,lease_token FROM event_lane_events "
+            "WHERE event_id=?",
+            (event_id,),
+        ).fetchone()
+    assert dict(repaired) == {
+        "status": "pending",
+        "attempts": 0,
+        "lease_owner": None,
+        "lease_token": None,
+    }
+    assert lane.handler_turn(event_id) is None
 
 
 def test_worker_binding_auth_gap_repair_requeues_recovery_only_and_fails_closed(

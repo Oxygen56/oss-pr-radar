@@ -34,6 +34,13 @@ STAGED_WORKER_RECEIPT_FILENAME = "staged-worker-receipt.json"
 WORKER_STAGING_LOCK_FILENAME = ".worker-staging.lock"
 WORKER_STAGING_AUTH_TTL = timedelta(minutes=5)
 WORKER_STAGING_MAX_EVIDENCE_AGE = timedelta(minutes=10)
+_CORE_WORKER_LABELS = frozenset(
+    {
+        "com.oss-pr-radar.local-publication",
+        "com.oss-pr-radar.local-publication-slow",
+        "com.oss-pr-radar.queue-importer",
+    }
+)
 
 
 def authorization_path(runtime_root: Path) -> Path:
@@ -893,8 +900,8 @@ def issue_operational_authorization(
 def _verify_worker_plist_bindings(bindings: object) -> bool:
     # An inactive event-lane release consumes the authorization issued by the
     # current active release.  The active worker set may grow over time, so the
-    # signed binding is self-describing; require a non-empty, internally
-    # consistent set instead of baking a historical worker count into readers.
+    # signed binding is self-describing.  Require the historical core workers
+    # while allowing the active release to add future workers.
     if not isinstance(bindings, list) or not bindings:
         return False
     labels: set[str] = set()
@@ -947,7 +954,7 @@ def _verify_worker_plist_bindings(bindings: object) -> bool:
                 return False
         except (OSError, ValueError):
             return False
-    return True
+    return _CORE_WORKER_LABELS.issubset(labels)
 
 
 def verify_operational_authorization(

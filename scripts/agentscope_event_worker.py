@@ -67,7 +67,6 @@ _OPERATIONAL_AUTHORIZATION_GAP_ERRORS = frozenset(
 _WORKER_BINDING_AUTH_ERROR = (
     "operational authorization required: operational authorization worker binding is invalid"
 )
-_AUTH_GAP_REPAIR_STATE_KEY = "agentscope_worker_binding_auth_gap_repair_v1"
 
 
 def _is_operational_authorization_gap(value: object) -> bool:
@@ -131,11 +130,12 @@ def _recovery_source_event_id(event: dict) -> str:
 
 
 def _repair_exhausted_worker_binding_failures(root: Path, lane: EventLane) -> dict[str, object]:
-    """One-time repair for attempts consumed before worker binding became a gap.
+    """Repair exact exhausted rows whose attempts were consumed by an auth gap.
 
     Authorization is verified before opening the lane writer.  The writer then
-    re-reads and conditionally mutates every row in one transaction, so a real
-    or concurrently changed turn can never be mistaken for a pre-turn failure.
+    re-reads and conditionally mutates every row in one transaction.  Row state
+    is the idempotency boundary, so a leased row can be repaired on a later run
+    after it expires without relying on a global completion marker.
     """
     try:
         authorization = require_operational_authorization(root)
@@ -184,26 +184,6 @@ def _repair_exhausted_worker_binding_failures(root: Path, lane: EventLane) -> di
                 "coalesced": 0,
                 "error": "operational authorization binding changed before repair",
             }
-        marker_row = db.execute(
-            "SELECT value_json FROM event_lane_state WHERE key=?",
-            (_AUTH_GAP_REPAIR_STATE_KEY,),
-        ).fetchone()
-        if marker_row is not None:
-            try:
-                marker = json.loads(marker_row["value_json"])
-            except (TypeError, ValueError, json.JSONDecodeError):
-                marker = {}
-            if isinstance(marker, dict) and all(
-                marker.get(key) == value for key, value in binding.items()
-            ):
-                return {
-                    "status": "already_applied",
-                    "requeued": 0,
-                    "coalesced": 0,
-                    "previousRequeued": int(marker.get("requeued") or 0),
-                    "previousCoalesced": int(marker.get("coalesced") or 0),
-                }
-
         rows = db.execute(
             "SELECT e.event_id,e.status,e.attempts,e.payload_json,e.delivered_at,"
             "e.lease_owner,e.lease_token,t.status AS turn_status,t.thread_id,t.turn_id,"
@@ -366,18 +346,6 @@ def _repair_exhausted_worker_binding_failures(root: Path, lane: EventLane) -> di
                 continue
             requeue(event_id)
 
-        marker = {
-            "schemaVersion": "event_lane_worker_binding_auth_gap_repair_v1",
-            **binding,
-            "completedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-            "requeued": requeued,
-            "coalesced": coalesced,
-        }
-        db.execute(
-            "INSERT INTO event_lane_state(key,value_json) VALUES(?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json",
-            (_AUTH_GAP_REPAIR_STATE_KEY, json.dumps(marker, sort_keys=True)),
-        )
     return {"status": "applied", "requeued": requeued, "coalesced": coalesced}
 
 
