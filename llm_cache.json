@@ -39792,6 +39792,37 @@
     ],
     "why": "Issue clearly describes a bug with root cause and reproduction, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#25387) directly targets the same fix but is closed with missing tests and CI failures, requiring maintainer assessment."
   },
+  "ab15c69b7cdbf554b17b4950f334c107b128753cabacd60499b1c2ad2656f71a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue body has garbled text in Expected Behavior, but the acceptance criteria clarify the expected behavior."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Canvas extension installer path resolution logic",
+      "UI validation for Source/Path fields"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach",
+      "Risk of breaking existing full-directory Source installation behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that installs an extension with Source set to parent directory and Path set to internal directory, verifying successful installation or clear error.",
+      "Run existing canvas extension installation tests to ensure no regression."
+    ],
+    "unknowns": [
+      "Exact code location and implementation details of the installer",
+      "Whether the maintainers have a preferred design for Source/Path composition"
+    ],
+    "why": "The issue provides a clear, reproducible bug with expected vs actual behavior, concrete steps, and acceptance criteria. The root cause is likely in the path composition logic for local canvas extension installation. The evidence includes a public repro and a validation path, making it actionable despite the lack of maintainer approval."
+  },
   "ab31a3b0438fbb896e5b59fe8e4b9a12f327e7367f7e9d96988094211bb81382": {
     "confidence": 0.7,
     "contradictions": [],
@@ -41271,6 +41302,37 @@
       "whether the fix is purely backend-side or requires client changes"
     ],
     "why": "Issue provides a minimal curl repro, control models, and multiple independent confirmations; root cause is isolated to the Ox Alpha free model's tool path on both Zen routes. The failure is reproducible and specific, making it actionable for a code fix."
+  },
+  "b14b9d6edf1650cfbd3bd1ec097cd4c94526a4a61302c6b407a7f98a7344fb9a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR 22471 is merged and semantically overlaps but does not reference the issue, and its root cause coverage is marked false."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/server/src/server/handlers/agents.ts",
+      "packages/core/src/agent/agent.ts"
+    ],
+    "risks": [
+      "Potential behavior change if the fix alters version resolution semantics for projects that do have an editor configured.",
+      "Merged PR 22471 may already address part of the issue, requiring coordination to avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a test that starts a Mastra server without editor package, makes an HTTP agent call, and asserts no error-level log is emitted.",
+      "Run targeted unit tests for the modified server handler and agent execution paths."
+    ],
+    "unknowns": [
+      "Whether PR 22471 fully resolves the issue or only partially addresses it.",
+      "Maintainer preference among the three suggested fix approaches."
+    ],
+    "why": "Issue provides a clear root cause (server injects default version status without checking editor presence, causing guaranteed per-request error log) and a concrete reproduction path. The suggested fixes are actionable and minimal. Although a merged PR (22471) exists with semantic overlap, it does not reference this issue and may not fully cover the root cause, so the issue remains actionable."
   },
   "b159bd459cbc9560724ee69550ec7a99e0a8f2db84cc5a5e1e5123b94d753522": {
     "confidence": 0.85,
