@@ -15,7 +15,36 @@ from oss_pr_radar.managed_lifecycle import ManagedLedger
 ROOT = Path(__file__).parents[1]
 
 
-def test_scheduled_workflow_uses_only_the_versioned_war_room_actionable_path():
+def test_natural_schedule_is_canary_only_and_full_chain_is_dispatch_only():
+    workflow = (ROOT / ".github/workflows/radar.yml").read_text(encoding="utf-8")
+    canary = workflow.split("\n  schedule-canary:\n", 1)[1].split("\n  watch:\n", 1)[0]
+    assert "if: github.event_name == 'schedule'" in canary
+    assert "Record natural schedule canary" in canary
+    for forbidden in (
+        "actions/checkout",
+        "python ",
+        "state_branch.py",
+        "scanner",
+        "notify",
+    ):
+        assert forbidden not in canary
+
+    jobs = (
+        ("watch", "pr-followup"),
+        ("pr-followup", "scan"),
+        ("scan", "build-state"),
+        ("build-state", "persist-pending"),
+        ("persist-pending", "notify"),
+        ("notify", "persist-receipt"),
+        ("persist-receipt", None),
+    )
+    for job, next_job in jobs:
+        start = workflow.index(f"\n  {job}:\n")
+        end = workflow.index(f"\n  {next_job}:\n", start) if next_job else len(workflow)
+        assert "github.event_name == 'workflow_dispatch'" in workflow[start:end]
+
+
+def test_full_workflow_uses_only_the_versioned_war_room_actionable_path():
     workflow = (ROOT / ".github/workflows/radar.yml").read_text(encoding="utf-8")
     assert "export_war_room_projection.py" in workflow
     assert "send_war_room_outbox.py" in workflow

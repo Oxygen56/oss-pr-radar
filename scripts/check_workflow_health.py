@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent freshness watchdog for natural GitHub Actions scheduling."""
+"""Read-only health checks for the schedule canary and full remote scans."""
 
 from __future__ import annotations
 
@@ -18,14 +18,10 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from oss_pr_radar.notifier import FeishuClient  # noqa: E402
 from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
-from oss_pr_radar.outbound_pause import outbound_effect_guard  # noqa: E402
 from oss_pr_radar.release_binding import bind_runtime, runtime_ledger_path  # noqa: E402
 from oss_pr_radar.util import parse_time, sha256_json  # noqa: E402
 
-_OUTBOUND_LOCK_FD: int | None = None
-
-
-_RELEVANT_EVENTS = {"schedule", "workflow_dispatch"}
+_FULL_SCAN_EVENT = "workflow_dispatch"
 _STATE_JOBS = {"build-state", "persist-pending", "persist-receipt"}
 _MANAGED_FOLLOWUP_MAX_AGE = timedelta(minutes=150)
 
@@ -48,7 +44,6 @@ def github_json(path: str) -> object:
                 capture_output=True,
                 text=True,
                 timeout=30,
-                pass_fds=(_OUTBOUND_LOCK_FD,) if _OUTBOUND_LOCK_FD is not None else (),
             )
             if completed.returncode == 0:
                 return json.loads(completed.stdout)
@@ -71,7 +66,7 @@ def workflow_component_health(repo: str, workflow_runs: list[dict]) -> dict:
     completed = [
         item
         for item in workflow_runs
-        if item.get("event") in _RELEVANT_EVENTS
+        if item.get("event") == _FULL_SCAN_EVENT
         and item.get("status") == "completed"
         and item.get("conclusion") != "cancelled"
         and item.get("id")
@@ -145,7 +140,7 @@ def github_actions_external_blocker(repo: str, workflow_runs: list[dict]) -> dic
         (
             parse_time(str(item.get("updated_at") or item.get("created_at")))
             for item in workflow_runs
-            if item.get("event") in {"schedule", "workflow_dispatch"}
+            if item.get("event") == _FULL_SCAN_EVENT
             and item.get("conclusion") == "success"
             and (item.get("updated_at") or item.get("created_at"))
         ),
@@ -155,7 +150,7 @@ def github_actions_external_blocker(repo: str, workflow_runs: list[dict]) -> dic
         (
             item
             for item in workflow_runs
-            if item.get("event") in {"schedule", "workflow_dispatch"}
+            if item.get("event") == _FULL_SCAN_EVENT
             and item.get("conclusion") == "failure"
             and item.get("id")
             and (
@@ -403,12 +398,10 @@ def effective_scan_freshness(
     active_grace: timedelta = timedelta(minutes=50),
     component_health: dict | None = None,
 ) -> dict:
-    """Treat a recent fallback run as healthy and avoid duplicate repairs."""
+    """Assess only full workflow-dispatch scans; schedule runs are canaries."""
 
     current = (now or datetime.now(UTC)).astimezone(UTC)
-    relevant = [
-        item for item in workflow_runs if item.get("event") in {"schedule", "workflow_dispatch"}
-    ]
+    relevant = [item for item in workflow_runs if item.get("event") == _FULL_SCAN_EVENT]
     successful = [item for item in relevant if item.get("conclusion") == "success"]
     active = [
         item
@@ -451,61 +444,12 @@ def effective_scan_freshness(
     }
 
 
-def dispatch_scan(
-    repo: str,
-    ref: str,
-    *,
-    runtime_root: Path,
-    window_hours: float = 2.0,
-    max_age_minutes: int = 110,
-) -> bool:
-    """Dispatch once under the outbound guard; return false if another repair won."""
-
-    global _OUTBOUND_LOCK_FD
-    with outbound_effect_guard(runtime_root, runtime_ledger_path(runtime_root)) as effect_lock:
-        _OUTBOUND_LOCK_FD = effect_lock.fileno()
-        try:
-            latest = effective_scan_freshness(
-                runs(repo),
-                max_age=timedelta(minutes=max(15, max_age_minutes)),
-            )
-            if latest["fresh"]:
-                return False
-            completed = subprocess.run(
-                [
-                    "gh",
-                    "workflow",
-                    "run",
-                    "radar.yml",
-                    "--repo",
-                    repo,
-                    "--ref",
-                    ref,
-                    "-f",
-                    f"window_hours={window_hours:g}",
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                pass_fds=(effect_lock.fileno(),),
-            )
-            if completed.returncode != 0:
-                raise RuntimeError((completed.stderr or completed.stdout)[:300])
-            return True
-        finally:
-            _OUTBOUND_LOCK_FD = None
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", default="Oxygen56/oss-pr-radar")
     parser.add_argument("--runtime-root", type=Path, default=None)
     parser.add_argument("--code-root", type=Path, default=None)
     parser.add_argument("--notify", action="store_true")
-    parser.add_argument("--repair", action="store_true")
-    parser.add_argument("--dry-run-repair", action="store_true")
-    parser.add_argument("--ref", default="main")
     parser.add_argument("--max-effective-age-minutes", type=int, default=110)
     parser.add_argument("--coverage-window-hours", type=int, default=12)
     args = parser.parse_args()
@@ -522,13 +466,13 @@ def main() -> int:
                 )
             )
             return 2
-    if args.repair or args.notify:
+    if args.notify:
         if args.runtime_root is None:
             print(
                 json.dumps(
                     {
                         "ok": False,
-                        "error": "--runtime-root is required for repair or notify",
+                        "error": "--runtime-root is required for notify",
                     }
                 )
             )
@@ -550,15 +494,6 @@ def main() -> int:
     component_health = workflow_component_health(args.repo, workflow_runs)
     result["componentHealth"] = component_health
     external_blocker = github_actions_external_blocker(args.repo, workflow_runs)
-    if external_blocker:
-        code = str(external_blocker["code"])
-        if code not in result["issues"]:
-            result["issues"].append(code)
-        result["healthy"] = False
-        result["githubNaturalScheduleHealthy"] = False
-        result["githubNaturalScheduleIssues"] = result["issues"]
-        result["naturalScheduleHealthy"] = False
-        result["naturalScheduleIssues"] = result["issues"]
     result["githubActionsExternalBlocker"] = external_blocker
     managed_coverage = (
         runtime_managed_followup_coverage(args.runtime_root)
@@ -578,57 +513,37 @@ def main() -> int:
         max_age=timedelta(minutes=max(15, args.max_effective_age_minutes)),
         component_health=component_health,
     )
-    repair_triggered = False
-    repair_reconciled = False
-    repair_would_trigger = False
-    repair_error = None
-    repair_suppressed_reason = None
-    if args.repair and not effective["fresh"] and external_blocker:
-        repair_suppressed_reason = external_blocker["code"]
-    elif args.repair and not effective["fresh"]:
-        repair_would_trigger = True
-        if not args.dry_run_repair:
-            try:
-                dispatched = dispatch_scan(
-                    args.repo,
-                    args.ref,
-                    runtime_root=args.runtime_root,
-                    max_age_minutes=args.max_effective_age_minutes,
-                )
-                repair_triggered = dispatched is not False
-                repair_reconciled = dispatched is False
-                if repair_reconciled:
-                    repair_suppressed_reason = "REPAIR_ALREADY_SATISFIED"
-            except PermissionError as exc:
-                repair_suppressed_reason = str(exc)
-            except (RuntimeError, subprocess.SubprocessError) as exc:
-                repair_error = f"{type(exc).__name__}:{str(exc)[:200]}"
     result["effectiveScan"] = effective
-    result["repairTriggered"] = repair_triggered
-    result["repairReconciled"] = repair_reconciled
-    result["repairWouldTrigger"] = repair_would_trigger
-    result["repairError"] = repair_error
-    result["repairSuppressedReason"] = repair_suppressed_reason
+    # Compatibility fields remain read-only. The scheduler watchdog is the sole
+    # owner of workflow-dispatch writes.
+    result["repairTriggered"] = False
+    result["repairReconciled"] = False
+    result["repairWouldTrigger"] = False
+    result["repairError"] = None
+    result["repairSuppressedReason"] = "REPAIR_OWNED_BY_SCHEDULER_WATCHDOG"
+    scan_health_issues = [] if effective["fresh"] else ["EFFECTIVE_SCAN_STALE"]
     result["operationalHealthy"] = bool(
-        (effective["fresh"] or repair_triggered or repair_reconciled)
+        effective["fresh"]
         and component_health.get("healthy") is True
         and managed_coverage.get("healthy") is True
+        and external_blocker is None
     )
     result["operationalIssues"] = list(
         dict.fromkeys(
             [
                 *result["issues"],
+                *scan_health_issues,
                 *(component_health.get("issues") or []),
                 *(managed_coverage.get("issues") or []),
+                *([str(external_blocker["code"])] if external_blocker else []),
             ]
-            + ([f"REPAIR_FAILED:{repair_error}"] if repair_error else [])
         )
     )
     if args.notify and (
-        repair_would_trigger
-        or repair_error
+        not effective["fresh"]
         or component_health.get("healthy") is not True
         or managed_coverage.get("healthy") is not True
+        or external_blocker is not None
     ):
         app_id = os.environ.get("FEISHU_APP_ID")
         app_secret = os.environ.get("FEISHU_APP_SECRET")
@@ -647,10 +562,7 @@ def main() -> int:
                         "tag": "div",
                         "text": {
                             "tag": "lark_md",
-                            "content": "\n".join(
-                                result["operationalIssues"]
-                                + (["FALLBACK_DISPATCH_TRIGGERED"] if repair_triggered else [])
-                            ),
+                            "content": "\n".join(result["operationalIssues"]),
                         },
                     }
                 ],

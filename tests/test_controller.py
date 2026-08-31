@@ -450,7 +450,7 @@ def test_controller_never_promotes_malformed_health_values(tmp_path):
     assert any(item["stage"] == "finalEventLaneHealth" for item in result["finalBlockers"])
 
 
-def test_controller_repairs_after_one_missed_hour_without_tightening_final_health(tmp_path):
+def test_controller_health_checks_are_read_only_with_distinct_freshness_windows(tmp_path):
     health_commands: dict[str, list[str]] = {}
 
     def runner(_root, stage, argv, _allowed, _timeout):
@@ -467,9 +467,9 @@ def test_controller_repairs_after_one_missed_hour_without_tightening_final_healt
     )
 
     assert result["ok"] is True
-    repair = health_commands["workflowHealth"]
-    assert repair[repair.index("--max-effective-age-minutes") + 1] == "90"
-    assert "--repair" in repair
+    initial = health_commands["workflowHealth"]
+    assert initial[initial.index("--max-effective-age-minutes") + 1] == "90"
+    assert "--repair" not in initial
     final = health_commands["finalWorkflowHealth"]
     assert final[final.index("--max-effective-age-minutes") + 1] == "110"
     assert "--repair" not in final

@@ -383,7 +383,7 @@ def test_component_health_checks_each_required_job_below_green_run(monkeypatch):
     assert result["issues"] == []
 
 
-def test_component_health_ignores_newer_cancelled_run(monkeypatch):
+def test_component_health_ignores_schedule_canary_after_cancelled_dispatch(monkeypatch):
     workflow_runs = [
         {
             "id": 8,
@@ -404,31 +404,20 @@ def test_component_health_ignores_newer_cancelled_run(monkeypatch):
             "html_url": "https://github.com/a/b/actions/runs/7",
         },
     ]
-    requested = []
-
-    def fake_json(path):
-        requested.append(path)
-        return {
-            "jobs": [
-                {"name": name, "conclusion": "success"}
-                for name in (
-                    "scan",
-                    "pr-followup",
-                    "build-state",
-                    "persist-pending",
-                    "notify",
-                    "persist-receipt",
-                )
-            ]
-        }
-
-    monkeypatch.setattr(MODULE, "github_json", fake_json)
+    monkeypatch.setattr(
+        MODULE,
+        "github_json",
+        lambda path: pytest.fail(f"schedule canary jobs must not be assessed: {path}"),
+    )
 
     result = MODULE.workflow_component_health("a/b", workflow_runs)
 
-    assert requested == ["repos/a/b/actions/runs/7/jobs?per_page=100"]
-    assert result["runId"] == 7
-    assert result["healthy"] is True
+    assert result == {
+        "assessed": False,
+        "healthy": True,
+        "issues": [],
+        "scanSucceeded": None,
+    }
 
 
 def test_component_health_cancelled_run_does_not_hide_previous_failure(monkeypatch):
@@ -444,7 +433,7 @@ def test_component_health_cancelled_run_does_not_hide_previous_failure(monkeypat
         },
         {
             "id": 8,
-            "event": "schedule",
+            "event": "workflow_dispatch",
             "status": "completed",
             "conclusion": "failure",
             "created_at": "2026-08-04T01:20:00Z",
@@ -515,7 +504,7 @@ def test_component_health_exposes_followup_failure_without_discarding_fresh_scan
     workflow_runs = [
         {
             "id": 8,
-            "event": "schedule",
+            "event": "workflow_dispatch",
             "status": "completed",
             "conclusion": "failure",
             "created_at": "2026-08-04T01:20:00Z",
@@ -558,7 +547,7 @@ def test_github_actions_billing_block_is_detected_from_job_annotation(monkeypatc
     workflow_runs = [
         {
             "id": 42,
-            "event": "schedule",
+            "event": "workflow_dispatch",
             "conclusion": "failure",
             "html_url": "https://github.com/a/b/actions/runs/42",
         }
@@ -598,7 +587,7 @@ def test_historical_billing_block_is_cleared_by_a_later_success(monkeypatch):
     workflow_runs = [
         {
             "id": 43,
-            "event": "schedule",
+            "event": "workflow_dispatch",
             "conclusion": "success",
             "created_at": "2026-08-04T02:00:00Z",
             "updated_at": "2026-08-04T02:10:00Z",
@@ -640,22 +629,30 @@ def test_recent_manual_success_keeps_effective_scan_fresh():
     assert result["recentSuccess"] is True
 
 
-def test_default_freshness_tolerates_normal_github_schedule_jitter():
+def test_late_schedule_canary_does_not_mask_a_stale_full_scan():
     result = MODULE.effective_scan_freshness(
         [
             {
                 "event": "schedule",
                 "status": "completed",
                 "conclusion": "success",
-                "created_at": (NOW - timedelta(minutes=72)).isoformat(),
-                "updated_at": (NOW - timedelta(minutes=66)).isoformat(),
-                "html_url": "https://github.com/a/b/actions/runs/repair-window",
-            }
+                "created_at": (NOW - timedelta(minutes=5)).isoformat(),
+                "updated_at": (NOW - timedelta(minutes=4)).isoformat(),
+                "html_url": "https://github.com/a/b/actions/runs/canary",
+            },
+            {
+                "event": "workflow_dispatch",
+                "status": "completed",
+                "conclusion": "success",
+                "created_at": (NOW - timedelta(hours=3)).isoformat(),
+                "updated_at": (NOW - timedelta(hours=2, minutes=50)).isoformat(),
+                "html_url": "https://github.com/a/b/actions/runs/full-scan",
+            },
         ],
         now=NOW,
     )
 
-    assert result["fresh"] is True
+    assert result["fresh"] is False
     assert result["maxAgeMinutes"] == 110
 
 
@@ -696,11 +693,11 @@ def test_recent_active_run_suppresses_duplicate_repair():
     assert result["recentActive"] is True
 
 
-def test_stale_success_requires_repair():
+def test_stale_full_scan_is_not_fresh():
     result = MODULE.effective_scan_freshness(
         [
             {
-                "event": "schedule",
+                "event": "workflow_dispatch",
                 "status": "completed",
                 "conclusion": "success",
                 "created_at": "2026-08-03T20:00:00Z",
@@ -714,38 +711,7 @@ def test_stale_success_requires_repair():
     assert result["fresh"] is False
 
 
-def test_main_dispatches_one_fallback_for_stale_effective_scan(monkeypatch):
-    stale_runs = [
-        {
-            "event": "schedule",
-            "status": "completed",
-            "conclusion": "success",
-            "created_at": "2020-01-01T00:00:00Z",
-            "updated_at": "2020-01-01T00:10:00Z",
-            "html_url": "https://github.com/a/b/actions/runs/5",
-        }
-    ]
-    dispatched = []
-    monkeypatch.setattr(MODULE, "runs", lambda _repo: stale_runs)
-    monkeypatch.setattr(
-        MODULE,
-        "dispatch_scan",
-        lambda repo, ref, **_kwargs: dispatched.append((repo, ref)),
-    )
-    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
-    monkeypatch.setattr(MODULE, "runtime_managed_followup_coverage", _healthy_managed_followup)
-    monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
-    monkeypatch.setattr(
-        MODULE.sys,
-        "argv",
-        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", "--repair"],
-    )
-
-    assert MODULE.main() == 0
-    assert dispatched == [("Oxygen56/oss-pr-radar", "main")]
-
-
-def test_main_suppresses_fallback_when_outbound_pause_wins_the_race(monkeypatch, capsys):
+def test_main_reports_stale_scan_without_dispatching_a_repair(monkeypatch, capsys):
     stale_runs = [
         {
             "event": "schedule",
@@ -759,39 +725,42 @@ def test_main_suppresses_fallback_when_outbound_pause_wins_the_race(monkeypatch,
     monkeypatch.setattr(MODULE, "runs", lambda _repo: stale_runs)
     monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(MODULE, "runtime_managed_followup_coverage", _healthy_managed_followup)
-    monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
-    monkeypatch.setattr(
-        MODULE,
-        "dispatch_scan",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError("GITHUB_OUTBOUND_PAUSED")),
-    )
     monkeypatch.setattr(
         MODULE.sys,
         "argv",
-        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", "--repair"],
+        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime"],
     )
 
     assert MODULE.main() == 2
     result = json.loads(capsys.readouterr().out)
+    assert result["effectiveScan"]["fresh"] is False
     assert result["repairTriggered"] is False
-    assert result["repairError"] is None
-    assert result["repairSuppressedReason"] == "GITHUB_OUTBOUND_PAUSED"
+    assert result["repairWouldTrigger"] is False
+    assert result["repairSuppressedReason"] == "REPAIR_OWNED_BY_SCHEDULER_WATCHDOG"
+    assert not hasattr(MODULE, "dispatch_scan")
 
 
-def test_main_suppresses_futile_repair_when_actions_billing_is_blocked(monkeypatch, capsys):
-    failed_runs = [
+def test_dispatch_blocker_does_not_poison_natural_canary_health(monkeypatch, capsys):
+    recent_runs = [
         {
-            "id": 42,
             "event": "schedule",
             "status": "completed",
+            "conclusion": "success",
+            "created_at": datetime.now(UTC).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
+            "html_url": "https://github.com/a/b/actions/runs/canary",
+        },
+        {
+            "id": 42,
+            "event": "workflow_dispatch",
+            "status": "completed",
             "conclusion": "failure",
-            "created_at": "2026-08-04T01:00:00Z",
-            "updated_at": "2026-08-04T01:01:00Z",
+            "created_at": datetime.now(UTC).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
             "html_url": "https://github.com/a/b/actions/runs/42",
-        }
+        },
     ]
-    dispatched = []
-    monkeypatch.setattr(MODULE, "runs", lambda _repo: failed_runs)
+    monkeypatch.setattr(MODULE, "runs", lambda _repo: recent_runs)
     monkeypatch.setattr(
         MODULE,
         "workflow_component_health",
@@ -811,26 +780,20 @@ def test_main_suppresses_futile_repair_when_actions_billing_is_blocked(monkeypat
             "message": "spending limit needs to be increased",
         },
     )
-    monkeypatch.setattr(
-        MODULE,
-        "dispatch_scan",
-        lambda repo, ref, **_kwargs: dispatched.append((repo, ref)),
-    )
     monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(MODULE, "runtime_managed_followup_coverage", _healthy_managed_followup)
-    monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
     monkeypatch.setattr(
         MODULE.sys,
         "argv",
-        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", "--repair"],
+        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime"],
     )
 
     assert MODULE.main() == 2
     result = json.loads(capsys.readouterr().out)
-    assert dispatched == []
-    assert result["repairTriggered"] is False
-    assert result["repairWouldTrigger"] is False
-    assert result["repairSuppressedReason"] == "GITHUB_ACTIONS_BILLING_BLOCKED"
+    assert result["githubNaturalScheduleHealthy"] is True
+    assert result["githubNaturalScheduleIssues"] == []
+    assert result["operationalHealthy"] is False
+    assert "GITHUB_ACTIONS_BILLING_BLOCKED" in result["operationalIssues"]
 
 
 def test_component_degradation_is_unhealthy_without_repeating_a_successful_scan(
@@ -853,37 +816,26 @@ def test_component_degradation_is_unhealthy_without_repeating_a_successful_scan(
         "runUpdatedAt": failed_run["updated_at"],
         "runUrl": failed_run["html_url"],
     }
-    dispatched = []
     monkeypatch.setattr(MODULE, "runs", lambda _repo: [failed_run])
     monkeypatch.setattr(MODULE, "workflow_component_health", lambda *_args: component)
     monkeypatch.setattr(MODULE, "github_actions_external_blocker", lambda *_args: None)
-    monkeypatch.setattr(
-        MODULE,
-        "dispatch_scan",
-        lambda repo, ref, **_kwargs: dispatched.append((repo, ref)),
-    )
     monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(MODULE, "runtime_managed_followup_coverage", _healthy_managed_followup)
-    monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
     monkeypatch.setattr(
         MODULE.sys,
         "argv",
-        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", "--repair"],
+        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime"],
     )
 
     assert MODULE.main() == 2
     result = json.loads(capsys.readouterr().out)
-    assert dispatched == []
     assert result["effectiveScan"]["fresh"] is True
     assert result["repairWouldTrigger"] is False
     assert result["operationalHealthy"] is False
     assert "PR_FOLLOWUP_DEGRADED" in result["operationalIssues"]
 
 
-@pytest.mark.parametrize("flag", ["--repair", "--notify"])
-def test_health_external_actions_require_authorization_before_github_or_feishu(
-    monkeypatch, capsys, flag
-):
+def test_health_external_actions_require_authorization_before_github_or_feishu(monkeypatch, capsys):
     monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(
         MODULE,
@@ -898,7 +850,7 @@ def test_health_external_actions_require_authorization_before_github_or_feishu(
     monkeypatch.setattr(
         MODULE.sys,
         "argv",
-        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", flag],
+        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", "--notify"],
     )
 
     assert MODULE.main() == 2
@@ -928,6 +880,48 @@ def test_health_rejects_wrong_runtime_binding_before_github_or_feishu(monkeypatc
     result = json.loads(capsys.readouterr().out)
     assert result["ok"] is False
     assert "runtime binding" in result["error"]
+
+
+def test_notify_surfaces_a_stale_full_scan_even_when_canary_is_fresh(monkeypatch, capsys):
+    canary = {
+        "id": 7,
+        "event": "schedule",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": (datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
+        "updated_at": (datetime.now(UTC) - timedelta(minutes=9)).isoformat(),
+        "html_url": "https://github.com/a/b/actions/runs/canary",
+    }
+    sent = []
+
+    class Client:
+        def __init__(self, *_args):
+            pass
+
+        def send_card(self, card, *, idempotency_key):
+            sent.append((card, idempotency_key))
+
+    monkeypatch.setattr(MODULE, "runs", lambda _repo: [canary])
+    monkeypatch.setattr(MODULE, "github_actions_external_blocker", lambda *_args: None)
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(MODULE, "require_operational_authorization", lambda _root: None)
+    monkeypatch.setattr(MODULE, "runtime_managed_followup_coverage", _healthy_managed_followup)
+    monkeypatch.setattr(MODULE, "FeishuClient", Client)
+    for name in ("FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_CHAT_ID"):
+        monkeypatch.setenv(name, name.casefold())
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", "--notify"],
+    )
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["githubNaturalScheduleHealthy"] is True
+    assert result["effectiveScan"]["fresh"] is False
+    assert "EFFECTIVE_SCAN_STALE" in result["operationalIssues"]
+    assert len(sent) == 1
+    assert "EFFECTIVE_SCAN_STALE" in json.dumps(sent[0][0])
 
 
 def test_notify_includes_managed_followup_coverage_failure(monkeypatch, capsys):
@@ -1002,3 +996,4 @@ def test_health_help_has_no_auth_bypass_option():
     assert completed.returncode == 0
     assert "skip-auth" not in completed.stdout
     assert "allow-unreleased-code" not in completed.stdout
+    assert "--repair" not in completed.stdout
