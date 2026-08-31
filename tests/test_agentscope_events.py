@@ -141,6 +141,7 @@ def test_operational_authorization_gap_classifier_is_cutover_only():
         "operational authorization ledger pointer is invalid",
         "operational authorization ledger binding mismatch",
         "operational authorization is not yet valid",
+        "operational authorization worker binding is invalid",
     )
     permanent = (
         "operational authorization schema is invalid",
@@ -1995,6 +1996,253 @@ def test_authorization_gap_refund_rejection_preserves_lease_and_reservation(tmp_
         "lease_token": "replacement-token",
     }
     assert lane.handler_turn(event["eventId"])["status"] == "reserved"
+
+
+def _active_authorization() -> dict[str, str]:
+    return {
+        "state": "ACTIVE",
+        "releaseId": "release-4-workers",
+        "releaseHead": "a" * 40,
+        "releaseManifestSha256": "b" * 64,
+        "ledgerTarget": "ledger-releases/ledger.sqlite3",
+    }
+
+
+def _exhaust_with_worker_binding_error(worker, lane: EventLane, event_id: str, key: str) -> None:
+    lane.reserve_handler_turn(key, event_id, f"client:{event_id}")
+    error = _authorization_bridge_error(
+        "agentscope-event-create",
+        "operational authorization worker binding is invalid",
+    )
+    assert lane.release_handler_reservation(
+        event_id,
+        {"error": f"RuntimeError:{error}\n"},
+        reason="handler_start_exception",
+    )
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET status='needs_reconcile',attempts=? WHERE event_id=?",
+            (lane.max_attempts, event_id),
+        )
+
+
+def test_worker_binding_auth_gap_repair_requeues_root_and_coalesces_recovery(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    key = "agentscope-ai/agentscope#42"
+    root_id = "github:agentscope-ai/agentscope:42:issue_update:auth-gap"
+    recovery_id = worker._outcome_recovery_event_id(root_id)
+    root = {
+        "eventId": root_id,
+        "eventKey": key,
+        "repo": "agentscope-ai/agentscope",
+        "number": 42,
+        "kind": "issue_update",
+        "terminalReason": "lease_attempts_exhausted",
+    }
+    recovery = {
+        "eventId": recovery_id,
+        "eventKey": key,
+        "kind": "outcome_reconcile",
+        "rootEventId": root_id,
+        "eventIdSource": root_id,
+        "payload": {"eventId": root_id, "rootEventId": root_id, "publicKey": key},
+    }
+    assert lane.append(root)
+    assert lane.append(recovery, priority=250)
+    _exhaust_with_worker_binding_error(worker, lane, root_id, key)
+    _exhaust_with_worker_binding_error(worker, lane, recovery_id, key)
+    monkeypatch.setattr(
+        worker, "require_operational_authorization", lambda _root: _active_authorization()
+    )
+
+    first = worker._repair_exhausted_worker_binding_failures(tmp_path, lane)
+    second = worker._repair_exhausted_worker_binding_failures(tmp_path, lane)
+
+    assert first == {"status": "applied", "requeued": 1, "coalesced": 1}
+    assert second == {
+        "status": "already_applied",
+        "requeued": 0,
+        "coalesced": 0,
+        "previousRequeued": 1,
+        "previousCoalesced": 1,
+    }
+    with lane.connect() as db:
+        root_row = db.execute(
+            "SELECT status,attempts,payload_json FROM event_lane_events WHERE event_id=?",
+            (root_id,),
+        ).fetchone()
+        recovery_row = db.execute(
+            "SELECT status,attempts,payload_json FROM event_lane_events WHERE event_id=?",
+            (recovery_id,),
+        ).fetchone()
+        recovery_turn = db.execute(
+            "SELECT status,thread_id,turn_id FROM event_lane_turns WHERE event_id=?",
+            (recovery_id,),
+        ).fetchone()
+    assert root_row["status"] == "pending" and root_row["attempts"] == 0
+    assert lane.handler_turn(root_id) is None
+    assert json.loads(root_row["payload_json"])["authorizationGapRepair"]["state"] == "requeued"
+    assert recovery_row["status"] == "coalesced" and recovery_row["attempts"] == 3
+    assert dict(recovery_turn) == {"status": "superseded", "thread_id": "", "turn_id": None}
+    assert (
+        json.loads(recovery_row["payload_json"])["authorizationGapRepair"]["state"] == "superseded"
+    )
+    assert worker._enqueue_unresolved_outcome_recoveries(lane)["inserted"] == 0
+
+    assert worker._revive_superseded_auth_gap_recovery(lane, recovery) is True
+    assert worker._revive_superseded_auth_gap_recovery(lane, recovery) is False
+    with lane.connect() as db:
+        revived = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id=?", (recovery_id,)
+        ).fetchone()
+    assert dict(revived) == {"status": "pending", "attempts": 0}
+    assert lane.handler_turn(recovery_id) is None
+
+
+def test_worker_binding_auth_gap_repair_requeues_recovery_only_and_fails_closed(
+    tmp_path, monkeypatch
+):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    key = "agentscope-ai/agentscope#43"
+    root_id = "root-with-real-turn"
+    recovery_id = worker._outcome_recovery_event_id(root_id)
+    assert lane.append({"eventId": root_id, "eventKey": key, "kind": "issue_update"})
+    lane.reserve_handler_turn(key, root_id, "client:real")
+    lane.bind_handler_turn(key, root_id, "thread-real", "turn-real", {}, status="needs_reconcile")
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET status='needs_reconcile',attempts=? WHERE event_id=?",
+            (lane.max_attempts, root_id),
+        )
+    assert lane.append(
+        {
+            "eventId": recovery_id,
+            "eventKey": key,
+            "kind": "outcome_reconcile",
+            "rootEventId": root_id,
+            "payload": {"rootEventId": root_id, "publicKey": key},
+        },
+        priority=250,
+    )
+    _exhaust_with_worker_binding_error(worker, lane, recovery_id, key)
+    other_id = "other-error"
+    assert lane.append({"eventId": other_id, "eventKey": key, "kind": "issue_update"})
+    lane.reserve_handler_turn(key, other_id, "client:other")
+    assert lane.release_handler_reservation(
+        other_id,
+        {"error": "RuntimeError:unrelated"},
+        reason="handler_start_exception",
+    )
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET status='needs_reconcile',attempts=? WHERE event_id=?",
+            (lane.max_attempts, other_id),
+        )
+    monkeypatch.setattr(
+        worker, "require_operational_authorization", lambda _root: _active_authorization()
+    )
+
+    result = worker._repair_exhausted_worker_binding_failures(tmp_path, lane)
+
+    assert result == {"status": "applied", "requeued": 1, "coalesced": 0}
+    with lane.connect() as db:
+        root_row = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id=?", (root_id,)
+        ).fetchone()
+        recovery_row = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id=?", (recovery_id,)
+        ).fetchone()
+        other_row = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id=?", (other_id,)
+        ).fetchone()
+    assert dict(root_row) == {"status": "needs_reconcile", "attempts": 3}
+    assert dict(recovery_row) == {"status": "pending", "attempts": 0}
+    assert dict(other_row) == {"status": "needs_reconcile", "attempts": 3}
+    assert lane.handler_turn(root_id)["turn_id"] == "turn-real"
+    assert lane.handler_turn(other_id)["status"] == "needs_reconcile"
+
+
+def test_worker_binding_auth_gap_repair_requires_verified_active_authorization(
+    tmp_path, monkeypatch
+):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    key = "agentscope-ai/agentscope#44"
+    event_id = "auth-not-verified"
+    assert lane.append({"eventId": event_id, "eventKey": key, "kind": "issue_update"})
+    _exhaust_with_worker_binding_error(worker, lane, event_id, key)
+    monkeypatch.setattr(
+        worker,
+        "require_operational_authorization",
+        lambda _root: (_ for _ in ()).throw(RuntimeError("authentication failed")),
+    )
+
+    result = worker._repair_exhausted_worker_binding_failures(tmp_path, lane)
+
+    assert result["status"] == "authorization_unavailable"
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id=?", (event_id,)
+        ).fetchone()
+    assert dict(row) == {"status": "needs_reconcile", "attempts": 3}
+    assert lane.handler_turn(event_id)["status"] == "needs_reconcile"
+
+
+def test_worker_binding_auth_gap_repair_keeps_mixed_recovery_chain_fail_closed(
+    tmp_path, monkeypatch
+):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    key = "agentscope-ai/agentscope#45"
+    root_id = "mixed-root"
+    exact_recovery = worker._outcome_recovery_event_id(root_id)
+    other_recovery = "outcome-reconcile:agentscope:mixed-other"
+    assert lane.append({"eventId": root_id, "eventKey": key, "kind": "issue_update"})
+    assert lane.append(
+        {
+            "eventId": exact_recovery,
+            "eventKey": key,
+            "kind": "outcome_reconcile",
+            "rootEventId": root_id,
+        },
+        priority=250,
+    )
+    assert lane.append(
+        {
+            "eventId": other_recovery,
+            "eventKey": key,
+            "kind": "outcome_reconcile",
+            "rootEventId": root_id,
+        },
+        priority=250,
+    )
+    _exhaust_with_worker_binding_error(worker, lane, root_id, key)
+    _exhaust_with_worker_binding_error(worker, lane, exact_recovery, key)
+    lane.reserve_handler_turn(key, other_recovery, "client:other-recovery")
+    assert lane.release_handler_reservation(
+        other_recovery,
+        {"error": "RuntimeError:other failure"},
+        reason="handler_start_exception",
+    )
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET status='needs_reconcile',attempts=? WHERE event_id=?",
+            (lane.max_attempts, other_recovery),
+        )
+    monkeypatch.setattr(
+        worker, "require_operational_authorization", lambda _root: _active_authorization()
+    )
+
+    result = worker._repair_exhausted_worker_binding_failures(tmp_path, lane)
+
+    assert result == {"status": "applied", "requeued": 0, "coalesced": 0}
+    with lane.connect() as db:
+        rows = db.execute(
+            "SELECT event_id,status,attempts FROM event_lane_events ORDER BY event_id"
+        ).fetchall()
+    assert all(row["status"] == "needs_reconcile" and row["attempts"] == 3 for row in rows)
 
 
 def test_permanent_authorization_failure_keeps_retry_budget_semantics(tmp_path, monkeypatch):

@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import plistlib
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -73,6 +74,15 @@ def install(
     temporary.write_bytes(plistlib.dumps(value, fmt=plistlib.FMT_XML, sort_keys=False))
     os.chmod(temporary, 0o600)
     temporary.replace(path)
+    metadata = path.lstat()
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_uid != os.getuid()
+        or plistlib.loads(path.read_bytes()) != value
+    ):
+        raise RuntimeError("staged AgentScope event worker plist verification failed")
     service = f"gui/{os.getuid()}/{LABEL}"
     if load:
         subprocess.run(["launchctl", "bootout", service], check=False, capture_output=True)
@@ -86,12 +96,29 @@ def main() -> int:
     parser.add_argument("--code-root", type=Path, required=True)
     parser.add_argument("--manifest-sha256")
     parser.add_argument("--print-spec", action="store_true")
+    parser.add_argument(
+        "--stage",
+        action="store_true",
+        help="write and validate the LaunchAgent plist without loading it",
+    )
     args = parser.parse_args()
     try:
         result = (
-            {"ok": True, "spec": spec(args.runtime_root, code_root=args.code_root, manifest_sha256=args.manifest_sha256)}
+            {
+                "ok": True,
+                "spec": spec(
+                    args.runtime_root,
+                    code_root=args.code_root,
+                    manifest_sha256=args.manifest_sha256,
+                ),
+            }
             if args.print_spec
-            else install(args.runtime_root, code_root=args.code_root, manifest_sha256=args.manifest_sha256)
+            else install(
+                args.runtime_root,
+                code_root=args.code_root,
+                manifest_sha256=args.manifest_sha256,
+                load=not args.stage,
+            )
         )
         print(json.dumps(result, sort_keys=True))
         return 0

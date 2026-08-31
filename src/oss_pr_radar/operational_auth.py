@@ -891,14 +891,46 @@ def issue_operational_authorization(
 
 
 def _verify_worker_plist_bindings(bindings: object) -> bool:
-    if not isinstance(bindings, list) or len(bindings) != 3:
+    # An inactive event-lane release consumes the authorization issued by the
+    # current active release.  The active worker set may grow over time, so the
+    # signed binding is self-describing; require a non-empty, internally
+    # consistent set instead of baking a historical worker count into readers.
+    if not isinstance(bindings, list) or not bindings:
         return False
     labels: set[str] = set()
+    paths: set[str] = set()
+    required = {
+        "label",
+        "plistPath",
+        "plistSha256",
+        "mode",
+        "ownerUid",
+        "regular",
+        "symlink",
+    }
     for item in bindings:
-        if not isinstance(item, dict) or item.get("label") in labels:
+        if not isinstance(item, dict) or not required.issubset(item):
             return False
-        labels.add(str(item.get("label")))
-        path = Path(str(item.get("plistPath")))
+        label = item.get("label")
+        plist_path = item.get("plistPath")
+        plist_sha256 = item.get("plistSha256")
+        if (
+            not isinstance(label, str)
+            or not label
+            or label.strip() != label
+            or not isinstance(plist_path, str)
+            or not plist_path
+            or not isinstance(plist_sha256, str)
+            or len(plist_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in plist_sha256)
+            or type(item.get("ownerUid")) is not int
+            or label in labels
+            or plist_path in paths
+        ):
+            return False
+        labels.add(label)
+        paths.add(plist_path)
+        path = Path(plist_path)
         try:
             metadata = path.lstat()
             if (

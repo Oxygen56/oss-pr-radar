@@ -22,6 +22,7 @@ from oss_pr_radar.agentscope_events import (  # noqa: E402
     github_event_effective_time,
 )
 from oss_pr_radar.local_publication import run_bridge  # noqa: E402
+from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
 from scripts.migrate_event_recovery_chains import (  # noqa: E402
     _declared_lineage_ids,
     _event_source,
@@ -59,9 +60,14 @@ _OPERATIONAL_AUTHORIZATION_GAP_ERRORS = frozenset(
             "operational authorization ledger pointer is invalid",
             "operational authorization ledger binding mismatch",
             "operational authorization is not yet valid",
+            "operational authorization worker binding is invalid",
         )
     }
 )
+_WORKER_BINDING_AUTH_ERROR = (
+    "operational authorization required: operational authorization worker binding is invalid"
+)
+_AUTH_GAP_REPAIR_STATE_KEY = "agentscope_worker_binding_auth_gap_repair_v1"
 
 
 def _is_operational_authorization_gap(value: object) -> bool:
@@ -89,6 +95,336 @@ def _is_operational_authorization_gap(value: object) -> bool:
         and envelope.get("ok") is False
         and envelope.get("error") in _OPERATIONAL_AUTHORIZATION_GAP_ERRORS
     )
+
+
+def _is_exact_exhausted_worker_binding_receipt(value: object) -> bool:
+    """Match only the historical pre-turn failure shape produced by this lane."""
+    if not isinstance(value, dict) or set(value) != {"error", "terminalReason"}:
+        return False
+    if value.get("terminalReason") != "handler_start_exception":
+        return False
+    error = value.get("error")
+    prefix = "RuntimeError:agentscope-event-create: "
+    if not isinstance(error, str) or not error.startswith(prefix):
+        return False
+    try:
+        envelope = json.loads(error[len(prefix) :])
+    except json.JSONDecodeError:
+        return False
+    return (
+        isinstance(envelope, dict)
+        and set(envelope) == {"ok", "error"}
+        and envelope.get("ok") is False
+        and envelope.get("error") == _WORKER_BINDING_AUTH_ERROR
+    )
+
+
+def _recovery_source_event_id(event: dict) -> str:
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    return str(
+        event.get("rootEventId")
+        or payload.get("rootEventId")
+        or event.get("eventIdSource")
+        or payload.get("eventId")
+        or ""
+    )
+
+
+def _repair_exhausted_worker_binding_failures(root: Path, lane: EventLane) -> dict[str, object]:
+    """One-time repair for attempts consumed before worker binding became a gap.
+
+    Authorization is verified before opening the lane writer.  The writer then
+    re-reads and conditionally mutates every row in one transaction, so a real
+    or concurrently changed turn can never be mistaken for a pre-turn failure.
+    """
+    try:
+        authorization = require_operational_authorization(root)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return {
+            "status": "authorization_unavailable",
+            "requeued": 0,
+            "coalesced": 0,
+            "error": f"{type(exc).__name__}:{str(exc)[:300]}",
+        }
+    if authorization.get("state") != "ACTIVE":
+        return {
+            "status": "authorization_unavailable",
+            "requeued": 0,
+            "coalesced": 0,
+            "error": "operational authorization is not active",
+        }
+    binding = {
+        "releaseId": str(authorization.get("releaseId") or ""),
+        "releaseHead": str(authorization.get("releaseHead") or ""),
+        "releaseManifestSha256": str(authorization.get("releaseManifestSha256") or ""),
+        "ledgerTarget": str(authorization.get("ledgerTarget") or ""),
+    }
+    if not all(binding.values()):
+        return {
+            "status": "authorization_unavailable",
+            "requeued": 0,
+            "coalesced": 0,
+            "error": "operational authorization repair binding is incomplete",
+        }
+
+    with lane.writer() as db:
+        try:
+            current_authorization = require_operational_authorization(root)
+        except (OSError, RuntimeError, ValueError) as exc:
+            return {
+                "status": "authorization_changed",
+                "requeued": 0,
+                "coalesced": 0,
+                "error": f"{type(exc).__name__}:{str(exc)[:300]}",
+            }
+        if any(current_authorization.get(key) != value for key, value in binding.items()):
+            return {
+                "status": "authorization_changed",
+                "requeued": 0,
+                "coalesced": 0,
+                "error": "operational authorization binding changed before repair",
+            }
+        marker_row = db.execute(
+            "SELECT value_json FROM event_lane_state WHERE key=?",
+            (_AUTH_GAP_REPAIR_STATE_KEY,),
+        ).fetchone()
+        if marker_row is not None:
+            try:
+                marker = json.loads(marker_row["value_json"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                marker = {}
+            if isinstance(marker, dict) and all(
+                marker.get(key) == value for key, value in binding.items()
+            ):
+                return {
+                    "status": "already_applied",
+                    "requeued": 0,
+                    "coalesced": 0,
+                    "previousRequeued": int(marker.get("requeued") or 0),
+                    "previousCoalesced": int(marker.get("coalesced") or 0),
+                }
+
+        rows = db.execute(
+            "SELECT e.event_id,e.status,e.attempts,e.payload_json,e.delivered_at,"
+            "e.lease_owner,e.lease_token,t.status AS turn_status,t.thread_id,t.turn_id,"
+            "t.receipt_json FROM event_lane_events e "
+            "LEFT JOIN event_lane_turns t USING(event_id)"
+        ).fetchall()
+        records: dict[str, dict[str, object]] = {}
+        for row in rows:
+            try:
+                event = json.loads(row["payload_json"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                event = {}
+            try:
+                receipt = json.loads(row["receipt_json"] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                receipt = {}
+            event_id = str(row["event_id"])
+            is_recovery = event_id.startswith("outcome-reconcile:") or (
+                isinstance(event, dict) and event.get("kind") == "outcome_reconcile"
+            )
+            eligible = bool(
+                isinstance(event, dict)
+                and str(row["status"] or "") in {"pending", "needs_reconcile"}
+                and int(row["attempts"] or 0) >= lane.max_attempts
+                and str(row["turn_status"] or "") == "needs_reconcile"
+                and not str(row["thread_id"] or "")
+                and not str(row["turn_id"] or "")
+                and _is_exact_exhausted_worker_binding_receipt(receipt)
+            )
+            records[event_id] = {
+                "row": row,
+                "event": event if isinstance(event, dict) else {},
+                "eligible": eligible,
+                "isRecovery": is_recovery,
+            }
+
+        def root_event_id(event_id: str) -> str:
+            current = str(event_id)
+            visited: set[str] = set()
+            while current and current not in visited:
+                visited.add(current)
+                record = records.get(current)
+                if record is None or not record["isRecovery"]:
+                    return current
+                source = _recovery_source_event_id(record["event"])
+                if not source:
+                    return current
+                current = source
+            return current or str(event_id)
+
+        recovery_by_root: dict[str, list[str]] = {}
+        for event_id, record in records.items():
+            if record["isRecovery"]:
+                recovery_by_root.setdefault(root_event_id(event_id), []).append(event_id)
+
+        now = datetime.now(UTC).timestamp()
+        requeued = 0
+        coalesced = 0
+        repaired_roots: set[str] = set()
+        coalesced_recoveries: set[str] = set()
+
+        def requeue(event_id: str) -> None:
+            nonlocal requeued
+            record = records[event_id]
+            row = record["row"]
+            event = dict(record["event"])
+            for key in ("terminalReason", "recoveryExhausted", "recoveryAttempts"):
+                event.pop(key, None)
+            event["authorizationGapRepair"] = {
+                "schemaVersion": "event_lane_worker_binding_auth_gap_repair_v1",
+                "state": "requeued",
+                **binding,
+            }
+            changed = db.execute(
+                "UPDATE event_lane_events SET status='pending',attempts=0,payload_json=?,"
+                "delivered_at=NULL,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+                "WHERE event_id=? AND status=? AND attempts=? AND payload_json=?",
+                (
+                    json.dumps(event, sort_keys=True),
+                    event_id,
+                    str(row["status"]),
+                    int(row["attempts"] or 0),
+                    str(row["payload_json"]),
+                ),
+            )
+            removed = db.execute(
+                "DELETE FROM event_lane_turns WHERE event_id=? AND status='needs_reconcile' "
+                "AND thread_id='' AND (turn_id IS NULL OR turn_id='') AND receipt_json=?",
+                (event_id, str(row["receipt_json"])),
+            )
+            if changed.rowcount != 1 or removed.rowcount != 1:
+                raise RuntimeError("authorization gap repair row changed during requeue")
+            requeued += 1
+
+        def coalesce(recovery_id: str, root_id: str) -> None:
+            nonlocal coalesced
+            record = records[recovery_id]
+            row = record["row"]
+            event = dict(record["event"])
+            event["terminalReason"] = "prestart_authorization_gap_superseded"
+            event["authorizationGapRepair"] = {
+                "schemaVersion": "event_lane_worker_binding_auth_gap_repair_v1",
+                "state": "superseded",
+                "rootEventId": root_id,
+                **binding,
+            }
+            changed = db.execute(
+                "UPDATE event_lane_events SET status='coalesced',payload_json=?,delivered_at=?,"
+                "lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+                "WHERE event_id=? AND status=? AND attempts=? AND payload_json=?",
+                (
+                    json.dumps(event, sort_keys=True),
+                    now,
+                    recovery_id,
+                    str(row["status"]),
+                    int(row["attempts"] or 0),
+                    str(row["payload_json"]),
+                ),
+            )
+            superseded = db.execute(
+                "UPDATE event_lane_turns SET status='superseded' WHERE event_id=? "
+                "AND status='needs_reconcile' AND thread_id='' "
+                "AND (turn_id IS NULL OR turn_id='') AND receipt_json=?",
+                (recovery_id, str(row["receipt_json"])),
+            )
+            if changed.rowcount != 1 or superseded.rowcount != 1:
+                raise RuntimeError("authorization gap recovery changed during coalescing")
+            coalesced += 1
+
+        for event_id, record in records.items():
+            if record["isRecovery"] or not record["eligible"]:
+                continue
+            linked = [
+                recovery_id
+                for recovery_id in recovery_by_root.get(event_id, [])
+                if str(records[recovery_id]["row"]["status"] or "") != "coalesced"
+            ]
+            if any(not records[recovery_id]["eligible"] for recovery_id in linked):
+                continue
+            requeue(event_id)
+            repaired_roots.add(event_id)
+            for recovery_id in linked:
+                coalesce(recovery_id, event_id)
+                coalesced_recoveries.add(recovery_id)
+
+        for event_id, record in records.items():
+            if (
+                not record["isRecovery"]
+                or not record["eligible"]
+                or event_id in coalesced_recoveries
+            ):
+                continue
+            root_id = root_event_id(event_id)
+            if root_id in repaired_roots:
+                continue
+            root_record = records.get(root_id)
+            if root_record is not None and root_record["eligible"]:
+                # The root was deliberately left untouched because another
+                # linked recovery did not satisfy the exact pre-turn proof.
+                continue
+            requeue(event_id)
+
+        marker = {
+            "schemaVersion": "event_lane_worker_binding_auth_gap_repair_v1",
+            **binding,
+            "completedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "requeued": requeued,
+            "coalesced": coalesced,
+        }
+        db.execute(
+            "INSERT INTO event_lane_state(key,value_json) VALUES(?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json",
+            (_AUTH_GAP_REPAIR_STATE_KEY, json.dumps(marker, sort_keys=True)),
+        )
+    return {"status": "applied", "requeued": requeued, "coalesced": coalesced}
+
+
+def _revive_superseded_auth_gap_recovery(lane: EventLane, event: dict) -> bool:
+    """Reuse the stable recovery identity if the retried root later truly needs it."""
+    event_id = str(event.get("eventId") or "")
+    root_id = _recovery_source_event_id(event)
+    if not event_id or not root_id:
+        return False
+    with lane.writer() as db:
+        row = db.execute(
+            "SELECT e.status,e.payload_json,t.status AS turn_status,t.thread_id,t.turn_id "
+            "FROM event_lane_events e LEFT JOIN event_lane_turns t USING(event_id) "
+            "WHERE e.event_id=?",
+            (event_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            existing = json.loads(row["payload_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return False
+        repair = existing.get("authorizationGapRepair") if isinstance(existing, dict) else None
+        if (
+            str(row["status"] or "") != "coalesced"
+            or str(row["turn_status"] or "") != "superseded"
+            or str(row["thread_id"] or "")
+            or str(row["turn_id"] or "")
+            or not isinstance(repair, dict)
+            or repair.get("state") != "superseded"
+            or repair.get("rootEventId") != root_id
+        ):
+            return False
+        changed = db.execute(
+            "UPDATE event_lane_events SET status='pending',attempts=0,payload_json=?,"
+            "delivered_at=NULL,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+            "WHERE event_id=? AND status='coalesced' AND payload_json=?",
+            (json.dumps(event, sort_keys=True), event_id, str(row["payload_json"])),
+        )
+        removed = db.execute(
+            "DELETE FROM event_lane_turns WHERE event_id=? AND status='superseded' "
+            "AND thread_id='' AND (turn_id IS NULL OR turn_id='')",
+            (event_id,),
+        )
+        if changed.rowcount != 1 or removed.rowcount != 1:
+            raise RuntimeError("superseded authorization recovery changed during revival")
+        return True
 
 
 def _outcome_recovery_event_id(root_event_id: str) -> str:
@@ -241,7 +577,9 @@ def _enqueue_unresolved_outcome_recoveries(lane: EventLane) -> dict[str, int]:
                 "reason": reason,
             },
         }
-        if lane.append(recovery, priority=250):
+        if lane.append(recovery, priority=250) or _revive_superseded_auth_gap_recovery(
+            lane, recovery
+        ):
             inserted += 1
         else:
             existing += 1
@@ -744,23 +1082,22 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
                     outcome=outcome,
                 )
             else:
-                lane.append(
-                    {
-                        "eventId": _outcome_recovery_event_id(root_event_id),
-                        "kind": "outcome_reconcile",
-                        "eventKey": str(row["event_key"]),
+                recovery = {
+                    "eventId": _outcome_recovery_event_id(root_event_id),
+                    "kind": "outcome_reconcile",
+                    "eventKey": str(row["event_key"]),
+                    "rootEventId": root_event_id,
+                    "eventIdSource": str(row["event_id"]),
+                    "payload": {
+                        "eventId": root_event_id,
                         "rootEventId": root_event_id,
-                        "eventIdSource": str(row["event_id"]),
-                        "payload": {
-                            "eventId": root_event_id,
-                            "rootEventId": root_event_id,
-                            "publicKey": str(row["event_key"]),
-                            "outcome": outcome,
-                            "reason": "invalid_or_missing_outcome",
-                        },
+                        "publicKey": str(row["event_key"]),
+                        "outcome": outcome,
+                        "reason": "invalid_or_missing_outcome",
                     },
-                    priority=250,
-                )
+                }
+                if not lane.append(recovery, priority=250):
+                    _revive_superseded_auth_gap_recovery(lane, recovery)
         elif outcome_state == "design_wait":
             lane.mark_design_wait(str(row["event_id"]))
             until = outcome.get("waitUntil")
@@ -941,6 +1278,7 @@ def run_once(
         namespace=RECOVERY_EVENT_NAMESPACE,
         apply=True,
     )
+    authorization_gap_repair = _repair_exhausted_worker_binding_failures(root, lane)
     recovery_queue = _enqueue_unresolved_outcome_recoveries(lane)
     poll = GitHubIssuePoller(state / "agentscope-poll.json")
     had_poll_state = (state / "agentscope-poll.json").exists()
@@ -1072,6 +1410,7 @@ def run_once(
         "turnsExpired": turns_expired,
         "recoveryMigration": recovery_migration,
         "recoveryQueue": recovery_queue,
+        "authorizationGapRepair": authorization_gap_repair,
         "centralTaskBusy": central_task_busy,
         "fullReconciliation": bool(full_result is not None),
         "fullReconciliationDegraded": bool(
