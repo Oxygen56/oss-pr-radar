@@ -14080,6 +14080,38 @@
     ],
     "why": "Issue clearly identifies a race condition in workflow resume with public repro and production evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer has not confirmed the preferred fix direction (storage-backed CAS vs in-process mitigation)."
   },
+  "3f1e1279dabed069a6254a490652d6dbb323b2c3f5119d263e57b9f1973b04d3": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "OffloadingSpec",
+      "GroupOffloadConfig",
+      "scheduler sites (storable_chunks, update_state_after_alloc, _update_req_states, _build_store_jobs, resolve_mamba_align_size, from_spec)"
+    ],
+    "risks": [
+      "Potential interaction with open PR #51886 (retention interval) and other related issues (#38261, #44865) may require design alignment.",
+      "Per-group chunking may increase scheduler overhead at long context, as noted in the comment; performance regression possible."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the assertion failure with GLM-5.3-Flash configuration (TP=2, tail_cache 4-token blocks, tokens_per_hash=64) and verify the fix allows OffloadingConnector to enable.",
+      "Run existing KV offloading tests and add a regression test for per-group blocks_per_chunk with mixed block sizes."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer this minimal approach over the more general planner (#38261) or per-group descriptor reshaping (#44865).",
+      "Exact patch portability to current main branch (patch is against a deployed snapshot)."
+    ],
+    "why": "The issue identifies a concrete root cause: the global scalar `blocks_per_chunk` assumes uniform block sizes, causing assertion failure for hybrid models like GLM-5.3-Flash. It proposes a minimal per-group implementation with code anchors and a production-validated patch, and provides a clear validation path via the existing deployment and test scenarios."
+  },
   "3f1f155c0e59675a89bbd87076a70d6566372f24b30d04a3e6ad079926d51d4f": {
     "confidence": 0.6,
     "contradictions": [],
@@ -23343,6 +23375,34 @@
       "Whether maintainers will accept the backport PR and cut a patch release; no explicit maintainer approval or assignment is present."
     ],
     "why": "The issue clearly identifies a bug in the 3.x branch where the expected audience for private_key_jwt has a doubled slash, causing all such clients to be rejected. A backport PR (#4783) already exists and is technically complete, but was auto-closed due to a missing issue link. The deterministic gate requires HUMAN_REVIEW, and the existing PR needs maintainer action to reopen/merge. This is not a new candidate but a duplicate of an existing PR that requires maintainer intervention."
+  },
+  "630924ca2dd71c332887a84837d993a838b4dc0ad2bfe38f0a3fae88aab02191": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "QSAIndexer.select_mask mask construction",
+      "sequence parallel handling in sparse attention path"
+    ],
+    "risks": [
+      "Potential performance impact if mask construction becomes less efficient",
+      "Need to ensure compatibility with other attention backends and sequence parallel variants"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with Qwen3.8-Flash-Next, TP=2, sequence_parallel=true, long sequences; verify no shape mismatch in get_full_mask",
+      "Add a unit test for QSAIndexer.select_mask with sequence parallel sharding to ensure mask dimensions match full sequence length"
+    ],
+    "unknowns": [
+      "Exact implementation details of QSAIndexer.select_mask and how sequence parallel sharding is applied"
+    ],
+    "why": "Issue provides a concrete traceback showing a shape mismatch in TE get_full_mask when sequence_parallel is enabled, with a clear root cause: QSAIndexer.select_mask builds a mask on the sequence-parallel (s/TP) sequence length, which is incompatible with the full mask expected by TE. The bug is reproducible with a specific configuration and code path, and the fix is actionable: adjust mask construction to account for sequence parallel sharding."
   },
   "63307b5fcd9b4954f3fcc7b3e1445811139e0fdfdff080f3969d58827c617dd3": {
     "confidence": 0.8,
@@ -46682,6 +46742,39 @@
       "No maintainer confirmation on accepting the fix, but the issue is clear and the change is minimal."
     ],
     "why": "The issue identifies a clear dependency pin that breaks Python 3.14 installs in air-gapped environments, with a minimal fix (relaxing the upper bound) and verified API compatibility. This is a concrete, actionable bug fix with high user impact."
+  },
+  "c6fd7003f9a7fa5acac99875bdc22c36da77bc54acd1239b427ab500779b9a3b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "KV offloading scheduler hooks",
+      "manager-level offload exclusion policy",
+      "hit_rollback_tokens configuration"
+    ],
+    "risks": [
+      "Potential maintainer design preference for KVCacheSpec-level attribute vs config",
+      "Exclusion generalization to drafter groups may have performance impact not yet measured"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test using GLM-5.3-Flash tail_cache with external hits to reproduce the assert failure",
+      "Run existing KV offloading tests and add regression tests for hit-boundary rollback and exclusion behavior"
+    ],
+    "unknowns": [
+      "Exact reproduction steps not provided in issue",
+      "Whether maintainers prefer a different implementation shape"
+    ],
+    "why": "The issue provides a detailed root cause analysis with three specific failure modes, a concrete proposed change with code hooks and gists, and validation via 30/30 restore tests. The evidence includes code anchors and a clear validation path, making it actionable despite lacking a public repro."
   },
   "c72257b7c87494da16baba2be32ec0ca794aa72c5b5aaa13a60fcbee659f51ca": {
     "confidence": 0.85,
