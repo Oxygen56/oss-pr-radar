@@ -66,6 +66,27 @@ def test_offer_to_send_small_pr_is_an_active_claim():
     assert "happy to send a small PR" in signals[0].excerpt
 
 
+def test_maintainer_commitment_to_figure_out_fix_is_an_active_claim():
+    signals = detect_claims(
+        [
+            comment(
+                "Thanks for the report! I'll definitely get this figured out "
+                "before the upcoming release.",
+                author="FoxxMD",
+                association="OWNER",
+                created_at="2026-08-30T16:20:25Z",
+            )
+        ],
+        current_actor="Oxygen56",
+    )
+
+    assert len(signals) == 1
+    assert signals[0].author == "FoxxMD"
+    assert signals[0].association == "OWNER"
+    assert signals[0].kind == "active_claim"
+    assert "get this figured out" in signals[0].excerpt
+
+
 def test_later_explicit_retraction_clears_same_author_claim():
     signals = detect_claims(
         [
