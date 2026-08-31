@@ -1930,6 +1930,8 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     )
     assert heartbeat_prompt.count("desktopHandoff.prompt") == 1
     assert "运行正常；当前没有需要你处理的事情。" in heartbeat_prompt
+    assert "newPullRequest.prUrl" in heartbeat_prompt
+    assert "新 PR 已创建：<newPullRequest.prUrl>" in heartbeat_prompt
     assert "已开始或继续处理；你无需操作。" in heartbeat_prompt
     assert "never show JSON, paths, logs, prompts, or internal fields" in heartbeat_prompt
     assert "even when command exit is nonzero or final JSON ok=false" in heartbeat_prompt

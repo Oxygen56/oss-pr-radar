@@ -1258,6 +1258,51 @@ def test_compact_controller_result_exposes_one_desktop_handoff():
     assert "startupBlocker" not in compact
 
 
+def test_compact_controller_result_exposes_one_new_pull_request_notice():
+    result = {
+        "ok": True,
+        "checkedAt": "2026-08-31T00:00:00Z",
+        "summary": {"drainAction": "none"},
+        "failures": [],
+        "finalBlockers": [],
+        "stages": {
+            "controllerPublicationNotice": {
+                "ok": True,
+                "notice": {
+                    "key": "a/b#1",
+                    "prUrl": "https://github.com/a/b/pull/9",
+                    "publishedAt": "2026-08-31T00:00:00Z",
+                },
+            }
+        },
+    }
+
+    compact = compact_controller_result(result)
+
+    assert compact["newPullRequest"] == {
+        "key": "a/b#1",
+        "prUrl": "https://github.com/a/b/pull/9",
+        "publishedAt": "2026-08-31T00:00:00Z",
+    }
+
+
+def test_pending_pull_request_notice_is_not_safe_for_completed_result_reuse():
+    from oss_pr_radar.controller import _controller_result_has_pending_publication_notice
+
+    assert _controller_result_has_pending_publication_notice(
+        {
+            "stages": {
+                "controllerPublicationNotice": {
+                    "notice": {"prUrl": "https://github.com/a/b/pull/9"}
+                }
+            }
+        }
+    )
+    assert not _controller_result_has_pending_publication_notice(
+        {"stages": {"controllerPublicationNotice": {"notice": None}}}
+    )
+
+
 def test_compact_controller_result_exposes_safe_release_binding_mismatch():
     result = {
         "ok": False,

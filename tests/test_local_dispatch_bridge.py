@@ -26555,6 +26555,126 @@ def test_publication_feedback_list_reconciles_stale_archived_history(monkeypatch
     ]
 
 
+def test_controller_publication_notice_reconciles_visible_reply_then_reserves_next(
+    monkeypatch, tmp_path
+):
+    first_url = "https://github.com/a/b/pull/9"
+    second_url = "https://github.com/c/d/pull/10"
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "agent_message",
+                    "message": MODULE.controller_publication_notice_text(first_url),
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    thread_db = tmp_path / "state.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, archived INTEGER, rollout_path TEXT)"
+        )
+        connection.execute("INSERT INTO threads VALUES ('heartbeat',0,?)", (str(rollout),))
+
+    committed = []
+    reserved = []
+
+    class Store:
+        def __init__(self):
+            self.unresolved = [
+                {
+                    "key": "a/b#1",
+                    "prUrl": first_url,
+                    "publishedAt": "2026-08-31T00:00:00Z",
+                    "reservationNonce": "notice-1",
+                }
+            ]
+
+        def unresolved_controller_publication_notices(self):
+            return list(self.unresolved)
+
+        def commit_controller_publication_notice(self, **kwargs):
+            committed.append(kwargs)
+            self.unresolved = []
+
+        def controller_publication_notice_candidates(self):
+            return [
+                {
+                    "key": "c/d#2",
+                    "prUrl": second_url,
+                    "publishedAt": "2026-08-31T01:00:00Z",
+                }
+            ]
+
+        def reserve_controller_publication_notice(self, **kwargs):
+            reserved.append(kwargs)
+            return {
+                "key": "c/d#2",
+                "prUrl": second_url,
+                "publishedAt": "2026-08-31T01:00:00Z",
+                "reservationNonce": "notice-2",
+            }
+
+    store = Store()
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "HEARTBEAT_TARGET_THREAD_ID", "heartbeat")
+
+    result = MODULE.controller_publication_notice(SimpleNamespace(ledger=tmp_path / "ledger"))
+
+    assert committed == [{"reservation_nonce": "notice-1", "pr_url": first_url}]
+    assert reserved == [{"pr_url": second_url}]
+    assert result["notice"] == {
+        "key": "c/d#2",
+        "prUrl": second_url,
+        "publishedAt": "2026-08-31T01:00:00Z",
+    }
+
+
+def test_controller_publication_notice_replays_unacknowledged_reservation(
+    monkeypatch, tmp_path
+):
+    pr_url = "https://github.com/a/b/pull/9"
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text("", encoding="utf-8")
+    thread_db = tmp_path / "state.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, archived INTEGER, rollout_path TEXT)"
+        )
+        connection.execute("INSERT INTO threads VALUES ('heartbeat',0,?)", (str(rollout),))
+
+    class Store:
+        def unresolved_controller_publication_notices(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "prUrl": pr_url,
+                    "publishedAt": "2026-08-31T00:00:00Z",
+                    "reservationNonce": "notice-1",
+                }
+            ]
+
+        def commit_controller_publication_notice(self, **_kwargs):
+            raise AssertionError("an invisible reply must not advance the cursor")
+
+        def controller_publication_notice_candidates(self):
+            raise AssertionError("the existing reservation must be replayed")
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "HEARTBEAT_TARGET_THREAD_ID", "heartbeat")
+
+    result = MODULE.controller_publication_notice(SimpleNamespace(ledger=tmp_path / "ledger"))
+
+    assert result["notice"]["prUrl"] == pr_url
+
+
 def test_event_drain_prioritizes_visible_publication_feedback(monkeypatch, tmp_path):
     monkeypatch.setattr(
         MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}

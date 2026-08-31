@@ -14265,6 +14265,39 @@ class RadarLedger:
                 ),
             )
 
+    def mark_pull_request_creation_attempt(self, *, effect_id: str, permit_id: str) -> None:
+        """Persist the boundary immediately before a real PR-create call."""
+
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT e.status,e.action,e.result_json,r.opportunity_key,
+                          json_extract(r.request_json,'$.publicationKind') AS publication_kind
+                   FROM publication_effects e
+                   JOIN publication_permits p ON p.permit_id=e.permit_id
+                   JOIN publication_requests r ON r.request_id=p.request_id
+                   WHERE e.effect_id=? AND e.permit_id=?""",
+                (effect_id, permit_id),
+            ).fetchone()
+            if row is None or row["action"] != "create_pr":
+                raise LedgerError("pull-request creation effect is unavailable")
+            if row["status"] not in {"ATTEMPTED", "RECONCILE_REQUIRED"}:
+                raise LedgerError("pull-request creation effect is not attemptable")
+            if row["publication_kind"] != "PR_CREATE":
+                raise LedgerError("pull-request creation attempt is not a new publication")
+            require_quarantine_clear(
+                connection,
+                opportunity_key=str(row["opportunity_key"]),
+                operation="pull-request creation attempt",
+            )
+            prior = json.loads(row["result_json"] or "{}")
+            prior["creationAttempted"] = True
+            connection.execute(
+                """UPDATE publication_effects SET result_json=?,updated_at=?
+                   WHERE effect_id=?""",
+                (canonical_json(prior), now, effect_id),
+            )
+
     def _retire_pr_followup_snapshot_after_publication(
         self,
         connection: sqlite3.Connection,
@@ -14425,6 +14458,179 @@ class RadarLedger:
             }
             for row in rows
         ]
+
+    def controller_publication_notice_candidates(self) -> list[dict[str, Any]]:
+        """Return newly-created PRs not yet shown by the controller heartbeat."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.issue_url,
+                          json_extract(opened.payload_json,'$.prUrl') AS pr_url,
+                          opened.created_at AS published_at
+                   FROM opportunities o
+                   JOIN events opened ON opened.id=(
+                     SELECT MAX(e.id) FROM events e
+                     WHERE e.opportunity_key=o.key AND e.event_type='PR_OPEN'
+                   )
+                   WHERE json_extract(opened.payload_json,'$.prUrl') IS NOT NULL
+                     AND EXISTS (
+                       SELECT 1 FROM publication_requests request
+                       JOIN publication_permits permit
+                         ON permit.request_id=request.request_id
+                       JOIN publication_effects effect
+                         ON effect.permit_id=permit.permit_id
+                       WHERE request.opportunity_key=o.key
+                         AND permit.pr_url=json_extract(opened.payload_json,'$.prUrl')
+                         AND json_extract(request.request_json,'$.publicationKind')='PR_CREATE'
+                         AND effect.action='create_pr'
+                         AND effect.status='SUCCEEDED'
+                         AND json_extract(effect.result_json,'$.created')=1
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=o.key
+                         AND sent.event_type='CONTROLLER_PUBLICATION_NOTICE_SENT'
+                         AND sent.dedupe_key=json_extract(opened.payload_json,'$.prUrl')
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events reserved
+                       WHERE reserved.opportunity_key=o.key
+                         AND reserved.event_type='CONTROLLER_PUBLICATION_NOTICE_RESERVED'
+                         AND json_extract(reserved.payload_json,'$.prUrl')=
+                             json_extract(opened.payload_json,'$.prUrl')
+                     )
+                   ORDER BY opened.created_at,opened.id"""
+            ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "issueUrl": row["issue_url"],
+                "prUrl": row["pr_url"],
+                "publishedAt": row["published_at"],
+            }
+            for row in rows
+        ]
+
+    def unresolved_controller_publication_notices(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT o.key,o.issue_url,
+                          json_extract(reserved.payload_json,'$.prUrl') AS pr_url,
+                          json_extract(reserved.payload_json,'$.publishedAt') AS published_at,
+                          reserved.dedupe_key AS reservation_nonce,
+                          reserved.created_at AS reserved_at
+                   FROM events reserved
+                   JOIN opportunities o ON o.key=reserved.opportunity_key
+                   WHERE reserved.event_type='CONTROLLER_PUBLICATION_NOTICE_RESERVED'
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events sent
+                       WHERE sent.opportunity_key=reserved.opportunity_key
+                         AND sent.event_type='CONTROLLER_PUBLICATION_NOTICE_SENT'
+                         AND sent.dedupe_key=json_extract(reserved.payload_json,'$.prUrl')
+                     )
+                   ORDER BY reserved.created_at,reserved.id"""
+            ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "issueUrl": row["issue_url"],
+                "prUrl": row["pr_url"],
+                "publishedAt": row["published_at"],
+                "reservationNonce": row["reservation_nonce"],
+                "reservedAt": row["reserved_at"],
+            }
+            for row in rows
+        ]
+
+    def reserve_controller_publication_notice(self, *, pr_url: str) -> dict[str, Any]:
+        now = iso_z(datetime.now(UTC))
+        nonce = sha256_text(f"controller-publication-notice|{pr_url}|{now}")
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT o.key,o.issue_url,opened.created_at AS published_at
+                   FROM opportunities o
+                   JOIN events opened ON opened.opportunity_key=o.key
+                    AND opened.event_type='PR_OPEN'
+                    AND json_extract(opened.payload_json,'$.prUrl')=?
+                   WHERE NOT EXISTS (
+                     SELECT 1 FROM events sent
+                     WHERE sent.opportunity_key=o.key
+                       AND sent.event_type='CONTROLLER_PUBLICATION_NOTICE_SENT'
+                       AND sent.dedupe_key=?
+                   )
+                     AND EXISTS (
+                       SELECT 1 FROM publication_requests request
+                       JOIN publication_permits permit
+                         ON permit.request_id=request.request_id
+                       JOIN publication_effects effect
+                         ON effect.permit_id=permit.permit_id
+                       WHERE request.opportunity_key=o.key
+                         AND permit.pr_url=?
+                         AND json_extract(request.request_json,'$.publicationKind')='PR_CREATE'
+                         AND effect.action='create_pr'
+                         AND effect.status='SUCCEEDED'
+                         AND json_extract(effect.result_json,'$.created')=1
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events reserved
+                       WHERE reserved.opportunity_key=o.key
+                         AND reserved.event_type='CONTROLLER_PUBLICATION_NOTICE_RESERVED'
+                         AND json_extract(reserved.payload_json,'$.prUrl')=?
+                   )
+                   ORDER BY opened.id DESC LIMIT 1""",
+                (pr_url, pr_url, pr_url, pr_url),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("controller publication notice is stale or already reserved")
+            self._event(
+                connection,
+                row["key"],
+                "CONTROLLER_PUBLICATION_NOTICE_RESERVED",
+                nonce,
+                {"prUrl": pr_url, "publishedAt": row["published_at"]},
+                now,
+            )
+        return {
+            "key": row["key"],
+            "issueUrl": row["issue_url"],
+            "prUrl": pr_url,
+            "publishedAt": row["published_at"],
+            "reservationNonce": nonce,
+            "reservedAt": now,
+        }
+
+    def commit_controller_publication_notice(
+        self, *, reservation_nonce: str, pr_url: str
+    ) -> None:
+        now = iso_z(datetime.now(UTC))
+        with self.transaction() as connection:
+            row = connection.execute(
+                """SELECT opportunity_key FROM events
+                   WHERE event_type='CONTROLLER_PUBLICATION_NOTICE_RESERVED'
+                     AND dedupe_key=?
+                     AND json_extract(payload_json,'$.prUrl')=?
+                   LIMIT 1""",
+                (reservation_nonce, pr_url),
+            ).fetchone()
+            if row is None:
+                raise LedgerError("controller publication notice reservation is unavailable")
+            existing = connection.execute(
+                """SELECT 1 FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='CONTROLLER_PUBLICATION_NOTICE_SENT'
+                     AND dedupe_key=? LIMIT 1""",
+                (row["opportunity_key"], pr_url),
+            ).fetchone()
+            if existing is not None:
+                return
+            self._event(
+                connection,
+                row["opportunity_key"],
+                "CONTROLLER_PUBLICATION_NOTICE_SENT",
+                pr_url,
+                {"prUrl": pr_url, "reservationNonce": reservation_nonce},
+                now,
+            )
 
     def unresolved_publication_feedback(self) -> list[dict[str, Any]]:
         with self.connect() as connection:

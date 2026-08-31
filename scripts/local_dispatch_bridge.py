@@ -35,6 +35,7 @@ from oss_pr_radar.action_guard import (  # noqa: E402
     ledger_action_guard_root,
     opportunity_action_guard,
 )
+from oss_pr_radar.automation_contracts import HEARTBEAT_TARGET_THREAD_ID  # noqa: E402
 from oss_pr_radar.decision import authorize  # noqa: E402
 from oss_pr_radar.dispatch import (  # noqa: E402
     DispatchSigner,
@@ -385,6 +386,20 @@ def publication_feedback_link_visible(rollout_path: str | None, pr_url: str) -> 
     """Treat any already-visible exact PR link as sufficient for legacy reconciliation."""
 
     return bool(PULL_URL.fullmatch(pr_url) and pr_url in latest_agent_message(rollout_path))
+
+
+def controller_publication_notice_text(pr_url: str) -> str:
+    if not PULL_URL.fullmatch(pr_url):
+        raise RuntimeError("controller publication notice has an invalid PR URL")
+    return f"新 PR 已创建：{pr_url}\n你无需操作。"
+
+
+def controller_publication_notice_materialized(
+    rollout_path: str | None, pr_url: str
+) -> bool:
+    """Require the exact heartbeat reply before advancing its durable cursor."""
+
+    return latest_agent_message(rollout_path) == controller_publication_notice_text(pr_url)
 
 
 class ValidationPrefetchError(RuntimeError):
@@ -12914,6 +12929,65 @@ def publication_feedback_list(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def controller_publication_notice(args: argparse.Namespace) -> dict[str, Any]:
+    """Reconcile or reserve one durable new-PR notice for the heartbeat reply."""
+
+    store = ledger(args.ledger)
+    if not THREAD_DB.is_file():
+        return {
+            "ok": False,
+            "notice": None,
+            "reconciled": [],
+            "error": "heartbeat_thread_store_unavailable",
+        }
+    connection = sqlite3.connect(THREAD_DB)
+    try:
+        row = connection.execute(
+            "SELECT archived,rollout_path FROM threads WHERE id=?",
+            (HEARTBEAT_TARGET_THREAD_ID,),
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None or int(row[0] or 0) != 0 or not row[1]:
+        return {
+            "ok": False,
+            "notice": None,
+            "reconciled": [],
+            "error": "heartbeat_thread_unavailable",
+        }
+
+    rollout_path = str(row[1])
+    reconciled: list[dict[str, Any]] = []
+    for item in store.unresolved_controller_publication_notices():
+        pr_url = str(item.get("prUrl") or "")
+        if not controller_publication_notice_materialized(rollout_path, pr_url):
+            continue
+        store.commit_controller_publication_notice(
+            reservation_nonce=str(item["reservationNonce"]),
+            pr_url=pr_url,
+        )
+        reconciled.append({"key": item["key"], "prUrl": pr_url})
+
+    unresolved = store.unresolved_controller_publication_notices()
+    if unresolved:
+        notice = unresolved[0]
+    else:
+        candidates = store.controller_publication_notice_candidates()
+        notice = (
+            store.reserve_controller_publication_notice(pr_url=str(candidates[0]["prUrl"]))
+            if candidates
+            else None
+        )
+    public_notice = None
+    if notice is not None:
+        public_notice = {
+            "key": notice["key"],
+            "prUrl": notice["prUrl"],
+            "publishedAt": notice["publishedAt"],
+        }
+    return {"ok": True, "notice": public_notice, "reconciled": reconciled}
+
+
 def publication_feedback_reserve(args: argparse.Namespace) -> dict[str, Any]:
     candidate = ledger(args.ledger).reserve_publication_feedback(
         thread_id=args.thread_id,
@@ -20605,6 +20679,7 @@ def main() -> int:
     subparsers.add_parser("context-sync")
     subparsers.add_parser("reproduction-probe")
     subparsers.add_parser("publication-feedback-list")
+    subparsers.add_parser("controller-publication-notice")
     publication_feedback_reserve_parser = subparsers.add_parser("publication-feedback-reserve")
     publication_feedback_reserve_parser.add_argument("--thread-id", required=True)
     publication_feedback_reserve_parser.add_argument("--pr-url", required=True)
@@ -20867,6 +20942,8 @@ def main() -> int:
         result = implementation_followup_deliver(args)
     elif args.operation == "publication-feedback-list":
         result = publication_feedback_list(args)
+    elif args.operation == "controller-publication-notice":
+        result = controller_publication_notice(args)
     elif args.operation == "publication-feedback-reserve":
         result = publication_feedback_reserve(args)
     elif args.operation == "publication-feedback-deliver":

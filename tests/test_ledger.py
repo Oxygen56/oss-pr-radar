@@ -284,6 +284,54 @@ def insert_publication_preflight(
         )
 
 
+def insert_succeeded_pr_creation(
+    store: RadarLedger,
+    *,
+    pr_url: str,
+    created: bool,
+    request_id: str = "notice-request-1",
+    permit_id: str = "notice-permit-1",
+    effect_id: str = "notice-effect-1",
+) -> None:
+    now = iso_z(datetime.now(UTC))
+    expires_at = iso_z(datetime.now(UTC) + timedelta(minutes=10))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES (?,'a/b#1','thread-1',?,'fix/runtime','/tmp/worktree',
+                       'notice-evidence','CONSUMED',?,?,?)""",
+            (
+                request_id,
+                "b" * 40,
+                json.dumps({"publicationKind": "PR_CREATE"}),
+                now,
+                now,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES (?,?,'https://github.com/a/b/issues/1',?,'fix/runtime','CONSUMED',
+                       ?,?,'{}',?,?)""",
+            (permit_id, request_id, "b" * 40, expires_at, pr_url, now, now),
+        )
+        connection.execute(
+            """INSERT INTO publication_effects
+               (effect_id,permit_id,action,request_digest,status,result_json,created_at,updated_at)
+               VALUES (?,?,'create_pr','notice-digest','SUCCEEDED',?,?,?)""",
+            (
+                effect_id,
+                permit_id,
+                json.dumps({"ok": True, "prUrl": pr_url, "created": created}),
+                now,
+                now,
+            ),
+        )
+
+
 def test_lease_is_exclusive_and_commit_is_idempotent(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     assert store.enqueue(intent()) is True
@@ -6801,8 +6849,12 @@ def test_publication_feedback_is_reserved_retried_and_sent_once(tmp_path):
         worktree_path="/tmp/worktree",
     )
     pr_url = "https://github.com/a/b/pull/9"
-    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": pr_url}, dedupe_key=pr_url)
-
+    store.record_stage(
+        "a/b#1",
+        "PR_OPEN",
+        evidence={"prUrl": pr_url},
+        dedupe_key=pr_url,
+    )
     candidate = store.publication_feedback_candidates()[0]
     reserved = store.reserve_publication_feedback(
         thread_id=candidate["threadId"],
@@ -6832,6 +6884,69 @@ def test_publication_feedback_is_reserved_retried_and_sent_once(tmp_path):
     )
     assert store.publication_feedback_candidates() == []
     assert store.unresolved_publication_feedback() == []
+
+
+def test_controller_publication_notice_replays_until_visible_ack(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    pr_url = "https://github.com/a/b/pull/9"
+    store.record_stage(
+        "a/b#1",
+        "PR_OPEN",
+        evidence={"prUrl": pr_url},
+        dedupe_key=pr_url,
+    )
+    insert_succeeded_pr_creation(store, pr_url=pr_url, created=True)
+
+    candidate = store.controller_publication_notice_candidates()[0]
+    reserved = store.reserve_controller_publication_notice(pr_url=candidate["prUrl"])
+
+    assert store.controller_publication_notice_candidates() == []
+    assert store.unresolved_controller_publication_notices()[0]["prUrl"] == pr_url
+    store.commit_controller_publication_notice(
+        reservation_nonce=reserved["reservationNonce"],
+        pr_url=pr_url,
+    )
+    assert store.controller_publication_notice_candidates() == []
+    assert store.unresolved_controller_publication_notices() == []
+
+
+def test_controller_publication_notice_excludes_existing_pr_reconciliation(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.record_stage(
+        "a/b#1",
+        "PR_OPEN",
+        evidence={"prUrl": "https://github.com/a/b/pull/9"},
+    )
+    insert_succeeded_pr_creation(
+        store,
+        pr_url="https://github.com/a/b/pull/9",
+        created=False,
+    )
+
+    assert store.controller_publication_notice_candidates() == []
+
+
+def test_pull_request_creation_attempt_marker_is_durable(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    insert_publication_preflight(store)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id='request-1'",
+            (json.dumps({"publicationKind": "PR_CREATE"}),),
+        )
+        connection.execute(
+            "UPDATE publication_effects SET action='create_pr' WHERE effect_id='effect-1'"
+        )
+
+    store.mark_pull_request_creation_attempt(effect_id="effect-1", permit_id="permit-1")
+
+    with store.connect() as connection:
+        value = connection.execute(
+            "SELECT result_json FROM publication_effects WHERE effect_id='effect-1'"
+        ).fetchone()[0]
+    assert json.loads(value) == {"creationAttempted": True}
 
 
 def test_pr_followup_task_drift_rebinds_wake_and_invalidates_preparation(tmp_path):

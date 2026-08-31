@@ -126,9 +126,25 @@ def _external_effects(
     ]
     drain = stages.get("drain")
     drain = drain if isinstance(drain, dict) else {}
+    controller_notice = stages.get("controllerPublicationNotice")
+    controller_notice = controller_notice if isinstance(controller_notice, dict) else {}
+    notice = controller_notice.get("notice")
+    notice = notice if isinstance(notice, dict) else None
     return {
         "summaryAvailable": True,
-        "github": {"publishedCount": len(published), "published": published[:50]},
+        "github": {
+            "publishedCount": len(published),
+            "published": published[:50],
+            "publicationNotice": (
+                {
+                    key: notice[key]
+                    for key in ("key", "prUrl", "publishedAt")
+                    if notice.get(key) is not None
+                }
+                if notice
+                else None
+            ),
+        },
         "feishu": {
             "notifiedCount": len(notified),
             "notified": notified[:50],

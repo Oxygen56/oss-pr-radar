@@ -345,6 +345,7 @@ def controller_cycle(
         allowed_codes={0, 2},
         require_ok=False,
     )
+    bridge("controllerPublicationNotice", "controller-publication-notice")
 
     final_blockers = _final_blockers(stages)
     stages["absenceReconcile"] = managed_adapter.reconcile_pending_absences(GitHubAbsenceQueries())
@@ -666,8 +667,12 @@ def run_locked_controller_cycle(
                     command_digest=command_digest,
                     max_age_seconds=CONTROLLER_COMPLETED_REUSE_SECONDS,
                 )
-                if previous is not None and _cached_disk_pressure_semantics_match(
-                    previous, read_disk_pressure_gate_health(root)
+                if (
+                    previous is not None
+                    and not _controller_result_has_pending_publication_notice(previous)
+                    and _cached_disk_pressure_semantics_match(
+                        previous, read_disk_pressure_gate_health(root)
+                    )
                 ):
                     return previous
                 recovered = _recover_finished_running_marker(
@@ -787,6 +792,12 @@ def _cached_disk_pressure_semantics_match(
         current_health.get("blocked"),
         current_health.get("reason"),
     )
+
+
+def _controller_result_has_pending_publication_notice(result: dict[str, Any]) -> bool:
+    stages = result.get("stages") if isinstance(result.get("stages"), dict) else {}
+    notice_stage = stages.get("controllerPublicationNotice")
+    return bool(isinstance(notice_stage, dict) and isinstance(notice_stage.get("notice"), dict))
 
 
 def _read_controller_lock_marker(lock) -> dict[str, Any] | None:
@@ -944,6 +955,7 @@ def compact_controller_result(
     ):
         local_disk_blocker = _disk_pressure_blocker_queue(stages.get("diskPressureGate"))
     desktop_handoff = _pending_desktop_handoff(stages)
+    publication_notice = (stages.get("controllerPublicationNotice") or {}).get("notice")
     summary = dict(result.get("summary") or {})
     if "finalLocalAgentStatus" in stages:
         # The final status stage is authoritative; do not preserve an optimistic
@@ -975,6 +987,12 @@ def compact_controller_result(
     }
     if desktop_handoff is not None:
         compact["desktopHandoff"] = desktop_handoff
+    if isinstance(publication_notice, dict) and publication_notice.get("prUrl"):
+        compact["newPullRequest"] = {
+            key: publication_notice[key]
+            for key in ("key", "prUrl", "publishedAt")
+            if publication_notice.get(key) is not None
+        }
     startup_blocker = _safe_startup_blocker(result)
     if startup_blocker is not None:
         compact["startupBlocker"] = startup_blocker

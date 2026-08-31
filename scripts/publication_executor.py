@@ -734,6 +734,11 @@ def _create_pr_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[st
         result = {"ok": False, "reason": "EXISTING_PR_HEAD_MISMATCH", "pr": found}
         store.complete_publication_effect(effect["effect_id"], status="FAILED", result=result)
         raise RuntimeError("existing PR head does not match the permitted commit")
+    try:
+        prior_effect_result = json.loads(str(effect.get("result_json") or "{}"))
+    except json.JSONDecodeError:
+        prior_effect_result = {}
+    creation_attempted = prior_effect_result.get("creationAttempted") is True
     metadata_updated = False
     metadata_reconciled = False
     if found and publication_request.get("publicationKind") == "PR_UPDATE":
@@ -786,6 +791,13 @@ def _create_pr_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[st
         raise RuntimeError("previous PR creation attempt is not visible for the exact head branch")
     proc = None
     if not found and (state == "new" or retry_create):
+        if publication_request.get("publicationKind") != "PR_CREATE":
+            raise RuntimeError("only a new-publication request may create a PR")
+        store.mark_pull_request_creation_attempt(
+            effect_id=str(effect["effect_id"]),
+            permit_id=args.permit_id,
+        )
+        creation_attempted = True
         proc = run(
             [
                 "gh",
@@ -833,6 +845,7 @@ def _create_pr_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[st
             result = {
                 "ok": False,
                 "reason": "PR_RECONCILIATION_FAILED",
+                "creationAttempted": creation_attempted,
                 "detail": str(exc)[:300],
             }
             store.complete_publication_effect(
@@ -842,6 +855,10 @@ def _create_pr_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[st
     if found and found.get("headRefOid") == args.commit_sha:
         result = {
             "ok": True,
+            "created": bool(
+                publication_request.get("publicationKind") == "PR_CREATE"
+                and creation_attempted
+            ),
             "reconciled": bool(proc and proc.returncode != 0) or metadata_reconciled,
             "metadataUpdated": metadata_updated,
             "prUrl": found["url"],
@@ -857,6 +874,7 @@ def _create_pr_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[st
     result = {
         "ok": False,
         "reason": "PR_CREATION_NOT_RECONCILED",
+        "creationAttempted": creation_attempted,
         "detail": output(proc)[:300] if proc else "not found",
     }
     store.complete_publication_effect(

@@ -117,7 +117,8 @@ def canonical_prompt(role: str, runtime_root: Path, release_command: list[str]) 
             "if it contains desktopHandoff, send desktopHandoff.prompt unchanged exactly once to desktopHandoff.threadId even when command exit is nonzero or final JSON ok=false, because this handoff is the prescribed recovery action; "
             "only after that message-tool send succeeds reply '已开始或继续处理；你无需操作。'; "
             "when there is no desktopHandoff, if the command fails or final JSON ok=false, reply with one plain-Chinese sentence naming only the real user-visible blocker; "
-            "when there is no desktopHandoff and it succeeds, reply exactly '运行正常；当前没有需要你处理的事情。'; "
+            "when there is no desktopHandoff, it succeeds, and final JSON contains newPullRequest.prUrl, validate that value is an https://github.com/<owner>/<repo>/pull/<number> URL and reply with exactly two plain-text lines: first '新 PR 已创建：<newPullRequest.prUrl>' with the placeholder replaced by that exact URL, then '你无需操作。'; "
+            "when there is no desktopHandoff, it succeeds, and there is no newPullRequest, reply exactly '运行正常；当前没有需要你处理的事情。'; "
             f"{final_reply_contract}"
             "never show JSON, paths, logs, prompts, or internal fields."
         )
