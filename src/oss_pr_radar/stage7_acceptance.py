@@ -7,6 +7,8 @@ import json
 import plistlib
 import re
 import sqlite3
+import subprocess
+import sys
 import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -59,6 +61,99 @@ WORKER_MAX_AGE = {
 }
 MAX_EVIDENCE_AGE = timedelta(hours=24)
 MAX_AUTOMATION_AGE = timedelta(minutes=10)
+EVENT_LANE_LABELS = (
+    "com.oss-pr-radar.agentscope-events",
+    "com.oss-pr-radar.nanobot-events",
+)
+EVENT_LANE_HEALTH_SCHEMA = "oss-pr-radar.event-lane-health.v2"
+
+
+def _event_lane_health(
+    runtime_root: Path,
+    *,
+    code_root: Path,
+    home: Path,
+    runner: Any | None = None,
+) -> dict[str, Any]:
+    """Require both independently released event lanes at final acceptance."""
+
+    result: dict[str, Any] = {
+        "required": True,
+        "skipped": False,
+        "expectedLabels": list(EVENT_LANE_LABELS),
+        "healthy": False,
+        "schemaVersion": None,
+        "checkedAt": None,
+        "operationalAuthorizationValid": None,
+        "lanes": {},
+        "error": None,
+    }
+    command = [
+        sys.executable,
+        str(code_root / "scripts" / "event_lane_health.py"),
+        "--root",
+        str(runtime_root),
+        "--home",
+        str(home),
+    ]
+    try:
+        completed = (
+            runner(command)
+            if runner is not None
+            else subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=90,
+            )
+        )
+        return_code = int(completed.returncode)
+        value = json.loads(str(completed.stdout or ""))
+    except Exception as exc:  # noqa: BLE001 - final acceptance must fail closed
+        result["error"] = f"event lane health unavailable: {type(exc).__name__}"
+        return result
+    if not isinstance(value, dict):
+        result["error"] = "event lane health payload must be an object"
+        return result
+    lanes = value.get("lanes")
+    schema_valid = value.get("schemaVersion") == EVENT_LANE_HEALTH_SCHEMA
+    lanes_valid = isinstance(lanes, dict) and set(lanes) == {"agentscope", "nanobot"}
+    healthy = bool(
+        return_code == 0
+        and schema_valid
+        and lanes_valid
+        and value.get("healthy") is True
+        and value.get("operationalAuthorizationValid") is True
+        and all(
+            isinstance(lanes.get(namespace), dict) and lanes[namespace].get("healthy") is True
+            for namespace in ("agentscope", "nanobot")
+        )
+    )
+    result.update(
+        {
+            "healthy": healthy,
+            "schemaVersion": value.get("schemaVersion"),
+            "checkedAt": value.get("checkedAt"),
+            "operationalAuthorizationValid": value.get("operationalAuthorizationValid"),
+            "lanes": {
+                namespace: {
+                    "healthy": lane.get("healthy") is True,
+                    "bindingOk": lane.get("bindingOk") is True,
+                    "launchHealthy": lane.get("launchHealthy") is True,
+                    "databaseHealthy": lane.get("databaseHealthy") is True,
+                    "pollHealthy": lane.get("pollHealthy") is True,
+                    "releaseId": lane.get("releaseId"),
+                }
+                for namespace, lane in lanes.items()
+                if isinstance(lane, dict)
+            }
+            if lanes_valid
+            else {},
+            "error": None if healthy else "event lane health audit failed",
+        }
+    )
+    return result
 
 
 def _publication_pause_snapshot(runtime_root: Path) -> dict[str, Any]:
@@ -460,6 +555,7 @@ def check(
     automation_snapshot: Path | dict[str, Any] | None = None,
     require_workers_loaded: bool = True,
     require_publication_pause: bool | None = None,
+    event_lane_health_runner: Any | None = None,
 ) -> dict[str, Any]:
     """Check a release-bound runtime without performing any external action."""
 
@@ -732,6 +828,27 @@ def check(
                             automation_evidence_ok = False
             except (OSError, json.JSONDecodeError, ValueError):
                 automation_evidence_ok = False
+    event_lane_health = {
+        "required": False,
+        "skipped": True,
+        "expectedLabels": list(EVENT_LANE_LABELS),
+        "healthy": True,
+        "schemaVersion": None,
+        "checkedAt": None,
+        "operationalAuthorizationValid": None,
+        "lanes": {},
+        "error": None,
+    }
+    if strict and require_workers_loaded:
+        # This is the longest live audit in final acceptance.  Run it before
+        # sampling worker, deployment, disk, and authorization state so any
+        # cutover during the audit invalidates the later release-bound checks.
+        event_lane_health = _event_lane_health(
+            runtime_root,
+            code_root=binding.code_root,
+            home=home,
+            runner=event_lane_health_runner,
+        )
     runtime_state = read_json(runtime_root / "state" / "runtime-health.json", {})
     runtime_state = runtime_state if isinstance(runtime_state, dict) else {}
     launch_outputs: dict[str, str] = {}
@@ -952,6 +1069,13 @@ def check(
         retry_reasons.append("acceptance_window_changed_during_check")
     if strict and require_workers_loaded and not disk_pressure_gate_clear:
         retry_reasons.append("disk_pressure_gate_active_or_unavailable")
+    if (
+        strict
+        and require_workers_loaded
+        and event_lane_health.get("required") is True
+        and event_lane_health.get("healthy") is not True
+    ):
+        retry_reasons.append("event_lane_unhealthy_or_unavailable")
     return {
         "schema": "oss-pr-radar.stage7-acceptance.v3",
         "ok": (
@@ -973,6 +1097,9 @@ def check(
             and (not strict or identity_ok)
             and (not strict or current_signing_key_available())
             and (not strict or not require_workers_loaded or operational_authorization_valid)
+            and (
+                not strict or not require_workers_loaded or event_lane_health.get("healthy") is True
+            )
             and (not strict or not require_publication_pause or acceptance_window_ok)
         ),
         "release": {
@@ -1032,6 +1159,7 @@ def check(
         if strict and require_workers_loaded
         else ("preflight" if strict else "development"),
         "operationalAuthorizationValid": operational_authorization_valid,
+        "eventLaneHealth": event_lane_health,
         "stagedWorkerReceiptValid": staged_receipt_valid,
         "operationalAuthorizationEvidenceMatch": operational_authorization_evidence_match,
         "fakeSmoke": not strict,

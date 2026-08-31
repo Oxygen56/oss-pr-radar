@@ -44,6 +44,7 @@ from oss_pr_radar.runtime_audit import WORKER_LABELS
 from oss_pr_radar.stage6_verification import build_verification_manifest
 from oss_pr_radar.stage7_acceptance import (
     _activated_worker_execution_ok,
+    _event_lane_health,
     _managed_counts_append_only,
     _publication_pause_snapshot,
     build_managed_counts_evidence,
@@ -308,6 +309,128 @@ def test_stage7_acceptance_accepts_running_worker_without_last_exit_code():
         )
         is True
     )
+
+
+def test_event_lane_health_is_skipped_outside_strict_final(tmp_path):
+    def must_not_run(_command):
+        raise AssertionError("non-final event lane audit must not run")
+
+    runtime = _runtime(tmp_path)
+    result = check(
+        runtime,
+        home=tmp_path / "home",
+        strict=False,
+        event_lane_health_runner=must_not_run,
+    )
+
+    assert result["eventLaneHealth"]["required"] is False
+    assert result["eventLaneHealth"]["skipped"] is True
+    assert result["eventLaneHealth"]["healthy"] is True
+
+    preflight = check(
+        runtime,
+        home=tmp_path / "home",
+        strict=True,
+        require_workers_loaded=False,
+        event_lane_health_runner=must_not_run,
+    )
+    assert preflight["eventLaneHealth"]["required"] is False
+    assert preflight["eventLaneHealth"]["skipped"] is True
+
+
+def test_event_lane_health_final_audit_fails_closed(tmp_path):
+    healthy = {
+        "schemaVersion": "oss-pr-radar.event-lane-health.v2",
+        "checkedAt": iso_z(utc_now()),
+        "healthy": True,
+        "operationalAuthorizationValid": True,
+        "lanes": {namespace: {"healthy": True} for namespace in ("agentscope", "nanobot")},
+    }
+
+    cases = [
+        subprocess.CompletedProcess([], 2, json.dumps(healthy), ""),
+        subprocess.CompletedProcess(
+            [],
+            0,
+            json.dumps({**healthy, "schemaVersion": "wrong"}),
+            "",
+        ),
+        subprocess.CompletedProcess([], 0, "not-json", ""),
+        *[
+            subprocess.CompletedProcess([], 0, json.dumps(value), "")
+            for value in ([], None, 1, "x")
+        ],
+        subprocess.CompletedProcess(
+            [],
+            0,
+            json.dumps({**healthy, "lanes": {"agentscope": {"healthy": True}}}),
+            "",
+        ),
+    ]
+    for completed in cases:
+        commands = []
+
+        def run(command, completed=completed, commands=commands):
+            commands.append(command)
+            return subprocess.CompletedProcess(
+                command,
+                completed.returncode,
+                completed.stdout,
+                completed.stderr,
+            )
+
+        result = _event_lane_health(
+            tmp_path / "runtime",
+            code_root=tmp_path / "release",
+            home=tmp_path / "home",
+            runner=run,
+        )
+        assert result["required"] is True
+        assert result["healthy"] is False
+        assert commands and "--repair" not in commands[0]
+
+    def timeout(command):
+        raise subprocess.TimeoutExpired(command, timeout=90)
+
+    timed_out = _event_lane_health(
+        tmp_path / "runtime",
+        code_root=tmp_path / "release",
+        home=tmp_path / "home",
+        runner=timeout,
+    )
+    assert timed_out["healthy"] is False
+
+    passed_commands = []
+
+    def pass_audit(command):
+        passed_commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            json.dumps(healthy),
+            "",
+        )
+
+    runtime = tmp_path / "runtime"
+    code_root = tmp_path / "release"
+    home = tmp_path / "home"
+    passed = _event_lane_health(
+        runtime,
+        code_root=code_root,
+        home=home,
+        runner=pass_audit,
+    )
+    assert passed["healthy"] is True
+    assert passed_commands == [
+        [
+            sys.executable,
+            str(code_root / "scripts" / "event_lane_health.py"),
+            "--root",
+            str(runtime),
+            "--home",
+            str(home),
+        ]
+    ]
 
 
 def _source(path: Path, value: str) -> None:
@@ -1049,6 +1172,46 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
 ):
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "stage7-strict-key" * 4)
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    import oss_pr_radar.stage7_acceptance as acceptance_module
+
+    real_event_lane_health = acceptance_module._event_lane_health
+
+    def healthy_event_lane_runner(command):
+        assert "--repair" not in command
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            json.dumps(
+                {
+                    "schemaVersion": "oss-pr-radar.event-lane-health.v2",
+                    "checkedAt": iso_z(utc_now()),
+                    "healthy": True,
+                    "operationalAuthorizationValid": True,
+                    "lanes": {
+                        namespace: {
+                            "healthy": True,
+                            "bindingOk": True,
+                            "launchHealthy": True,
+                            "databaseHealthy": True,
+                            "pollHealthy": True,
+                            "releaseId": f"{namespace}-release",
+                        }
+                        for namespace in ("agentscope", "nanobot")
+                    },
+                }
+            ),
+            "",
+        )
+
+    def fixture_event_lane_health(runtime_root, *, code_root, home, runner=None):
+        return real_event_lane_health(
+            runtime_root,
+            code_root=code_root,
+            home=home,
+            runner=runner or healthy_event_lane_runner,
+        )
+
+    monkeypatch.setattr(acceptance_module, "_event_lane_health", fixture_event_lane_health)
     # This test exercises release/worker evidence, not host capacity.  Keep
     # the shared disk gate deterministic even when the CI host is near its
     # hard threshold while the temporary fixture is being built.
@@ -1298,8 +1461,6 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     assert insufficient_margin["diskRestartSafe"] is False
 
     disk_value["usedFraction"] = 0.93
-    import oss_pr_radar.stage7_acceptance as acceptance_module
-
     real_collect_snapshot = acceptance_module.collect_snapshot
     active_gate_health = {
         "ok": False,
@@ -1479,6 +1640,108 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     assert result["ok"] is True
     assert result["operationalAuthorizationValid"] is True
     assert result["operationalAuthorizationEvidenceMatch"] is True
+
+    health_before_event_audit = health_path.read_bytes()
+
+    def event_health_then_deployment_drift(command):
+        changed = json.loads(health_path.read_text(encoding="utf-8"))
+        changed["deployment"]["releaseVersion"] = "changed-during-event-audit"
+        health_path.write_text(json.dumps(changed), encoding="utf-8")
+        return healthy_event_lane_runner(command)
+
+    drifted_during_event_audit = check(
+        runtime,
+        home=home,
+        launchctl_runner=launchctl,
+        managed_counts_evidence=counts_path,
+        automation_snapshot=automation_path,
+        event_lane_health_runner=event_health_then_deployment_drift,
+    )
+    assert drifted_during_event_audit["ok"] is False
+    assert drifted_during_event_audit["runtimeReleasePolicyIdentityMatch"] is False
+    health_path.write_bytes(health_before_event_audit)
+
+    def missing_event_lane(command):
+        return subprocess.CompletedProcess(
+            command,
+            2,
+            json.dumps(
+                {
+                    "schemaVersion": "oss-pr-radar.event-lane-health.v2",
+                    "checkedAt": now,
+                    "healthy": False,
+                    "operationalAuthorizationValid": True,
+                    "lanes": {"agentscope": {"healthy": True}},
+                }
+            ),
+            "",
+        )
+
+    incomplete_event_topology = check(
+        runtime,
+        home=home,
+        launchctl_runner=launchctl,
+        managed_counts_evidence=counts_path,
+        automation_snapshot=automation_path,
+        event_lane_health_runner=missing_event_lane,
+    )
+    assert incomplete_event_topology["ok"] is False
+    assert "event_lane_unhealthy_or_unavailable" in incomplete_event_topology["retry"]["reasons"]
+
+    healthy_event_payload = {
+        "schemaVersion": "oss-pr-radar.event-lane-health.v2",
+        "checkedAt": now,
+        "healthy": True,
+        "operationalAuthorizationValid": True,
+        "lanes": {
+            namespace: {
+                "healthy": True,
+                "bindingOk": True,
+                "launchHealthy": True,
+                "databaseHealthy": True,
+                "pollHealthy": True,
+                "releaseId": f"{namespace}-release",
+            }
+            for namespace in ("agentscope", "nanobot")
+        },
+    }
+
+    def event_health(exit_code=0, **changes):
+        payload = {**healthy_event_payload, **changes}
+
+        def run(command):
+            return subprocess.CompletedProcess(
+                command,
+                exit_code,
+                json.dumps(payload),
+                "",
+            )
+
+        return run
+
+    event_unhealthy = check(
+        runtime,
+        home=home,
+        launchctl_runner=launchctl,
+        managed_counts_evidence=counts_path,
+        automation_snapshot=automation_path,
+        event_lane_health_runner=event_health(2, healthy=False),
+    )
+    assert event_unhealthy["ok"] is False
+    assert event_unhealthy["eventLaneHealth"]["required"] is True
+    assert event_unhealthy["eventLaneHealth"]["healthy"] is False
+    assert "event_lane_unhealthy_or_unavailable" in event_unhealthy["retry"]["reasons"]
+
+    event_healthy = check(
+        runtime,
+        home=home,
+        launchctl_runner=launchctl,
+        managed_counts_evidence=counts_path,
+        automation_snapshot=automation_path,
+        event_lane_health_runner=event_health(),
+    )
+    assert event_healthy["ok"] is True
+    assert event_healthy["eventLaneHealth"]["healthy"] is True
 
     # The gate observation from collect_snapshot is not authoritative at the
     # final acceptance point.  Activate a durable episode only when the later
