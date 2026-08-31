@@ -14001,6 +14001,387 @@ def _bind_published_pr_authority_fixture(
     return managed, degraded_context, pr_url
 
 
+def _superseded_missing_worktree_result_fixture(tmp_path):
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=worktree,
+    )
+    managed, historical_context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+        degrade_stage=False,
+    )
+    historical_result = json.loads(result_path.read_text(encoding="utf-8"))
+    historical_head = str(historical_result["headSha"])
+    historical_wake = str(historical_context["prFollowup"]["wakeDigest"])
+    managed.record_result(
+        task_id="intent-1",
+        result_digest=sha256_json(
+            {"fixture": "superseded-missing-worktree", "headSha": historical_head}
+        ),
+        worker_state="patched",
+        pr_key=None,
+        head_sha=historical_head,
+        commit_sha=historical_head,
+        validation={"passed": False, "legacy": True},
+        waiting_external=True,
+        source="test-historical-fix-ready",
+        provenance={
+            "stage": "FIX_READY",
+            "issueUrl": "https://github.com/a/b/issues/1",
+        },
+    )
+    with managed._connection() as connection:
+        connection.execute(
+            "UPDATE managed_tasks SET state='IMPLEMENTATION_READY' WHERE task_id='intent-1'"
+        )
+        connection.commit()
+
+    run_git(worktree, "switch", "--detach", str(historical_result["selectedBaseSha"]))
+    (worktree / "runtime.py").write_text(
+        "value = 3\nassert value == 3\n",
+        encoding="utf-8",
+    )
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: publish replacement runtime head")
+    publication_head = run_git(worktree, "rev-parse", "HEAD")
+    assert publication_head != historical_head
+    assert (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", historical_head, publication_head],
+            cwd=worktree,
+            check=False,
+        ).returncode
+        == 1
+    )
+
+    now = iso_z(datetime.now(UTC) + timedelta(minutes=2))
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET commit_sha=?,updated_at=? "
+            "WHERE request_id='published-authority-request'",
+            (publication_head, now),
+        )
+        connection.execute(
+            "UPDATE publication_permits SET commit_sha=?,updated_at=? "
+            "WHERE permit_id='published-authority-permit'",
+            (publication_head, now),
+        )
+    managed.upsert_pr(
+        pr_key="a/b#9",
+        owner="a",
+        repo="b",
+        number=9,
+        head_sha=publication_head,
+        pr_url=pr_url,
+        state="OPEN",
+        auto_created=True,
+        source_kind="MANAGED_PUBLICATION_RECEIPT",
+        source="test-published-authority-new-head",
+    )
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": now,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": publication_head,
+                    "actionDigest": "replacement-published-authority-action",
+                    "taskActionDigest": "replacement-published-authority-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["复核替代后的公开提交"],
+                    "evidence": {
+                        "actionableCheckNames": ["Regression"],
+                        "baseRefName": "main",
+                        "baseSha": str(historical_result["selectedBaseSha"]),
+                    },
+                    "checkedAt": now,
+                }
+            ],
+        }
+    )
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    current_context = json.loads(context_path.read_text(encoding="utf-8"))
+    assert current_context["publicationReceipt"]["commitSha"] == publication_head
+    assert current_context["prFollowup"]["headSha"] == publication_head
+    assert current_context["prFollowup"]["wakeDigest"] != historical_wake
+
+    historical_result.pop("worktreePath")
+    historical_result["contextDigest"] = "f" * 64
+    historical_result["followupDigest"] = historical_wake
+    result_path.write_text(json.dumps(historical_result), encoding="utf-8")
+    shared_path = MODULE.shared_context_path(current_context["issueUrl"])
+    return {
+        "store": store,
+        "managed": managed,
+        "worktree": worktree,
+        "resultPath": result_path,
+        "sharedPath": shared_path,
+        "context": current_context,
+        "value": historical_result,
+        "historicalHead": historical_head,
+        "publicationHead": publication_head,
+        "prUrl": pr_url,
+    }
+
+
+def _record_missing_worktree_quarantine_history(fixture, *, count=2):
+    path = fixture["sharedPath"]
+    context = fixture["context"]
+    for index in range(count):
+        historical = json.loads(json.dumps(context))
+        historical["prFollowup"]["checkedAt"] = iso_z(
+            datetime.now(UTC) + timedelta(minutes=index + 3)
+        )
+        raw = (json.dumps(historical, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
+            "utf-8"
+        )
+        recorded = MODULE._quarantine_shared_context(
+            fixture["store"],
+            path,
+            RuntimeError("published task result mismatch: worktreePath"),
+            raw=raw,
+            source_stat=path.stat(),
+        )
+        assert recorded is not None
+        assert recorded["new"] is True
+
+
+def test_superseded_fix_ready_missing_worktree_is_ignored_and_clears_exact_history(
+    tmp_path,
+):
+    fixture = _superseded_missing_worktree_result_fixture(tmp_path)
+    _record_missing_worktree_quarantine_history(fixture)
+    result_bytes = fixture["resultPath"].read_bytes()
+    assert len(fixture["store"].active_task_quarantines("a/b#1")) == 2
+
+    recovered = MODULE.recover_shared_task_contexts(fixture["store"])
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    assert recovered["resultReceiptsRestored"] == 0
+    assert fixture["store"].active_task_quarantines("a/b#1") == []
+    assert fixture["resultPath"].read_bytes() == result_bytes
+    with fixture["store"].connect() as connection:
+        cleared = connection.execute(
+            """SELECT clear_payload_json FROM task_quarantines
+               WHERE opportunity_key='a/b#1' ORDER BY quarantine_id"""
+        ).fetchall()
+    assert len(cleared) == 2
+    for row in cleared:
+        evidence = json.loads(row["clear_payload_json"])
+        assert evidence["repair"] == "SUPERSEDED_FIX_READY_RESULT_IGNORED"
+        assert evidence["resultHeadSha"] == fixture["historicalHead"]
+        assert evidence["publicationHeadSha"] == fixture["publicationHead"]
+        assert evidence["prUrl"] == fixture["prUrl"]
+
+    repeated_recovery = MODULE.recover_shared_task_contexts(fixture["store"])
+    assert repeated_recovery["errors"] == []
+    assert repeated_recovery["quarantined"] == []
+    assert repeated_recovery["resultReceiptsRestored"] == 0
+
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=fixture["store"].path))
+    assert ingested["ok"] is True, ingested["errors"]
+    assert ingested["ingested"] == []
+    assert ingested["ignored"] == [
+        {
+            "key": "a/b#1",
+            "reason": "MANAGED_PUBLISHED_PR_SUPERSEDED_FIX_READY",
+        }
+    ]
+    assert fixture["resultPath"].read_bytes() == result_bytes
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "explicit-worktree",
+        "null-worktree",
+        "current-result",
+        "current-head",
+        "random-head",
+        "managed-thread",
+        "managed-authorization",
+        "managed-pr-head",
+    ],
+)
+def test_missing_worktree_supersession_requires_every_exact_authority_binding(
+    tmp_path,
+    tamper,
+):
+    fixture = _superseded_missing_worktree_result_fixture(tmp_path)
+    value = dict(fixture["value"])
+    if tamper == "explicit-worktree":
+        value["worktreePath"] = "/tmp/not-the-bound-worktree"
+    elif tamper == "null-worktree":
+        value["worktreePath"] = None
+    elif tamper == "current-result":
+        value["contextDigest"] = fixture["context"]["contextDigest"]
+        value["followupDigest"] = fixture["context"]["prFollowup"]["wakeDigest"]
+    elif tamper == "current-head":
+        value["headSha"] = fixture["publicationHead"]
+        value["commitSha"] = fixture["publicationHead"]
+    elif tamper == "random-head":
+        value["headSha"] = "d" * 40
+        value["commitSha"] = "d" * 40
+    elif tamper == "managed-thread":
+        with fixture["managed"]._connection() as connection:
+            connection.execute(
+                "UPDATE managed_tasks SET thread_id='other-thread' WHERE task_id='intent-1'"
+            )
+            connection.commit()
+    elif tamper == "managed-authorization":
+        task = fixture["managed"].read_task("intent-1")
+        provenance = json.loads(task["provenance_json"])
+        provenance["probeReceiptDigest"] = "0" * 64
+        with fixture["managed"]._connection() as connection:
+            connection.execute(
+                "UPDATE managed_tasks SET provenance_json=? WHERE task_id='intent-1'",
+                (json.dumps(provenance, sort_keys=True),),
+            )
+            connection.commit()
+    else:
+        fixture["managed"].upsert_pr(
+            pr_key="a/b#9",
+            owner="a",
+            repo="b",
+            number=9,
+            head_sha="e" * 40,
+            pr_url=fixture["prUrl"],
+            state="OPEN",
+            auto_created=True,
+            source_kind="MANAGED_PUBLICATION_RECEIPT",
+            source="test-tampered-published-head",
+        )
+    fixture["resultPath"].write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="published task result mismatch: worktreePath"):
+        MODULE._recoverable_published_result(
+            fixture["context"],
+            store=fixture["store"],
+            context_path=fixture["sharedPath"],
+        )
+
+
+def test_unpublished_missing_worktree_result_remains_fail_closed(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.pop("worktreePath")
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is False
+    assert result["ingested"] == []
+    assert any(
+        item["key"] == "a/b#1" and item["error"] == "task result mismatch: worktreePath"
+        for item in result["errors"]
+    )
+
+
+def test_missing_worktree_stale_ignore_requires_verified_shared_context(tmp_path):
+    fixture = _superseded_missing_worktree_result_fixture(tmp_path)
+    local_context_path = fixture["worktree"] / MODULE.TASK_PRIVATE_DIR / "task-context.json"
+    local_context = json.loads(local_context_path.read_text(encoding="utf-8"))
+    local_context["titleTime"] = "tampered-local-only"
+    local_context_path.write_text(json.dumps(local_context), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=fixture["store"].path))
+
+    assert result["ok"] is False
+    assert result["ingested"] == []
+    assert "ignored" not in result
+    assert any(
+        item["key"] == "a/b#1" and item["error"] == "task result mismatch: worktreePath"
+        for item in result["errors"]
+    )
+
+
+def test_superseded_missing_worktree_does_not_clear_tampered_quarantine_artifact(
+    tmp_path,
+):
+    fixture = _superseded_missing_worktree_result_fixture(tmp_path)
+    _record_missing_worktree_quarantine_history(fixture, count=1)
+    gate = fixture["store"].active_task_quarantines("a/b#1")[0]
+    artifact_path = Path(gate["payload"]["artifactPath"])
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    artifact["originalMode"] = 0o640
+    artifact_path.write_text(
+        json.dumps(artifact, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    recovered = MODULE.recover_shared_task_contexts(fixture["store"])
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    remaining = fixture["store"].active_task_quarantines("a/b#1")
+    assert len(remaining) == 1
+    assert remaining[0]["dedupeKey"] == gate["dedupeKey"]
+
+
+def test_superseded_missing_worktree_clears_generation_and_preserves_unrelated_gate(
+    tmp_path,
+):
+    fixture = _superseded_missing_worktree_result_fixture(tmp_path)
+    historical = json.loads(json.dumps(fixture["context"]))
+    historical["prFollowup"]["checkedAt"] = iso_z(datetime.now(UTC) + timedelta(minutes=3))
+    raw = (json.dumps(historical, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
+        "utf-8"
+    )
+    first = MODULE._quarantine_shared_context(
+        fixture["store"],
+        fixture["sharedPath"],
+        RuntimeError("published task result mismatch: worktreePath"),
+        raw=raw,
+        source_stat=fixture["sharedPath"].stat(),
+    )
+    assert first is not None
+    first_gate = fixture["store"].active_task_quarantines("a/b#1")[0]
+    fixture["store"].clear_task_quarantine_member_exact(
+        "a/b#1",
+        reason=first_gate["reason"],
+        dedupe_key=first_gate["dedupeKey"],
+        payload_digest=first_gate["payloadDigest"],
+        evidence={"revalidated": True, "repair": "TEST_REOBSERVATION"},
+    )
+    repeated = MODULE._quarantine_shared_context(
+        fixture["store"],
+        fixture["sharedPath"],
+        RuntimeError("published task result mismatch: worktreePath"),
+        raw=raw,
+        source_stat=fixture["sharedPath"].stat(),
+    )
+    assert repeated is not None
+    generation_gate = fixture["store"].active_task_quarantines("a/b#1")[0]
+    assert generation_gate["dedupeKey"].endswith("|generation=2")
+    fixture["store"].record_shared_context_quarantine(
+        key="a/b#1",
+        reason="SHARED_CONTEXT_INVALID",
+        dedupe_key="unrelated-context-gate",
+        payload={"error": "a different shared context failure"},
+        created_at=iso_z(datetime.now(UTC)),
+    )
+
+    recovered = MODULE.recover_shared_task_contexts(fixture["store"])
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    remaining = fixture["store"].active_task_quarantines("a/b#1")
+    assert [(item["dedupeKey"], item["payload"]["error"]) for item in remaining] == [
+        ("unrelated-context-gate", "a different shared context failure")
+    ]
+
+
 def _durable_scope_fixture(
     tmp_path: Path,
     *,

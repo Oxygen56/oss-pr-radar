@@ -2528,8 +2528,171 @@ def _verified_shared_task_context_from_raw(
     return context, source_updated_at
 
 
+def _superseded_fix_ready_missing_worktree_authority(
+    managed_ledger: ManagedLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    worktree: Path,
+) -> dict[str, Any] | None:
+    """Return exact authority for one historical result-envelope omission.
+
+    A missing identity field is normally fatal.  The only safe exception is a
+    legacy ``FIX_READY`` result that is demonstrably older than the current
+    published PR projection.  Nothing from the incomplete result is consumed;
+    the durable managed task and finalized PR reservation merely prove that
+    the stale file no longer has lifecycle authority.
+    """
+
+    if "worktreePath" in value or value.get("stage") != "FIX_READY":
+        return None
+    if value.get("handoffMode") != "controller_commit_complete":
+        return None
+    key = str(candidate.get("key") or "")
+    issue_url = str(candidate.get("issueUrl") or "")
+    thread_id = str(candidate.get("threadId") or "")
+    task_id = str(candidate.get("intentId") or context.get("intentId") or "")
+    worktree_path = str(worktree)
+    if (
+        not key
+        or not issue_url
+        or not thread_id
+        or not task_id
+        or str(candidate.get("stage") or context.get("stage") or "") not in PUBLISHED_TASK_STAGES
+        or str(context.get("stage") or "") not in PUBLISHED_TASK_STAGES
+    ):
+        return None
+    expected_result_identity = {
+        "schemaVersion": TASK_RESULT_SCHEMA,
+        "key": key,
+        "issueUrl": issue_url,
+        "taskId": task_id,
+        "threadId": thread_id,
+    }
+    if any(value.get(name) != expected for name, expected in expected_result_identity.items()):
+        return None
+    expected_context_identity = {
+        "key": key,
+        "issueUrl": issue_url,
+        "intentId": task_id,
+        "threadId": thread_id,
+        "worktreePath": worktree_path,
+    }
+    if any(context.get(name) != expected for name, expected in expected_context_identity.items()):
+        return None
+
+    current_context_digest = str(context.get("contextDigest") or "")
+    result_context_digest = str(value.get("contextDigest") or "")
+    result_head = str(value.get("headSha") or "")
+    result_commit = str(value.get("commitSha") or "")
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", current_context_digest) is None
+        or re.fullmatch(r"[0-9a-f]{64}", result_context_digest) is None
+        or re.fullmatch(r"[0-9a-f]{40}", result_head) is None
+        or result_commit != result_head
+    ):
+        return None
+
+    receipt = context.get("publicationReceipt")
+    if not isinstance(receipt, dict):
+        return None
+    pr_url = str(receipt.get("prUrl") or "")
+    publication_head = str(receipt.get("commitSha") or "")
+    if (
+        PULL_URL.fullmatch(pr_url) is None
+        or re.fullmatch(r"[0-9a-f]{40}", publication_head) is None
+    ):
+        return None
+    if result_head == publication_head:
+        return None
+
+    followup = context.get("prFollowup")
+    if not isinstance(followup, dict):
+        return None
+    current_wake = str(followup.get("wakeDigest") or "")
+    result_wake = str(value.get("followupDigest") or "")
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", current_wake) is None
+        or re.fullmatch(r"[0-9a-f]{64}", result_wake) is None
+        or result_wake == current_wake
+        or followup.get("prUrl") != pr_url
+        or followup.get("headSha") != publication_head
+    ):
+        return None
+
+    managed_task = managed_ledger.read_task(task_id)
+    if (
+        managed_task is None
+        or managed_task.get("readSource") != "managed"
+        or managed_task.get("opportunity_key") != key
+        or managed_task.get("thread_id") != thread_id
+        or managed_task.get("worktree_path") != worktree_path
+        or managed_task.get("state") not in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}
+    ):
+        return None
+    issue_match = ISSUE_URL.fullmatch(issue_url)
+    if issue_match is None:
+        return None
+    authorization = managed_ledger.implementation_authorization_receipt(
+        task_id=task_id,
+        thread_id=thread_id,
+        worktree_path=worktree_path,
+        repo=issue_match.group(1),
+        issue_url=issue_url,
+    )
+    if authorization is None:
+        return None
+    historical_result = managed_ledger.fix_ready_result_for_task_head(
+        task_id,
+        head_sha=result_head,
+        issue_url=issue_url,
+    )
+    if historical_result is None:
+        return None
+    try:
+        published_pr = managed_ledger.published_pr_authority_for_opportunity(
+            key,
+            pr_url=pr_url,
+            receipt_head_sha=publication_head,
+        )
+    except ValueError:
+        return None
+    if (
+        published_pr is None
+        or published_pr.get("opportunity_key") != key
+        or published_pr.get("pr_url") != pr_url
+        or published_pr.get("head_sha") != publication_head
+        or published_pr.get("reservation_state") != "FINALIZED"
+        or published_pr.get("state") not in {"OPEN", "MERGED"}
+    ):
+        return None
+    try:
+        historical_observed_at = parse_time(str(historical_result.get("observed_at") or ""))
+        publication_observed_at = parse_time(str(published_pr.get("observed_at") or ""))
+        followup_checked_at = parse_time(str(followup.get("checkedAt") or ""))
+    except (TypeError, ValueError):
+        return None
+    if (
+        publication_observed_at <= historical_observed_at
+        or followup_checked_at <= historical_observed_at
+    ):
+        return None
+    return published_pr | {
+        "taskId": task_id,
+        "threadId": thread_id,
+        "resultHeadSha": result_head,
+        "managedResultDigest": str(historical_result.get("result_digest") or ""),
+        "managedResultObservedAt": str(historical_result.get("observed_at") or ""),
+        "publicationHeadSha": publication_head,
+    }
+
+
 def _recoverable_published_result(
-    context: dict[str, Any], *, store: RadarLedger | None = None
+    context: dict[str, Any],
+    *,
+    store: RadarLedger | None = None,
+    context_path: Path | None = None,
 ) -> dict[str, Any] | None:
     """Identify a clean result already represented by a published task context."""
 
@@ -2541,7 +2704,14 @@ def _recoverable_published_result(
 
     worktree = _lexical_absolute(Path(str(context.get("worktreePath") or "")))
     result_path = _lexical_absolute(Path(str(context.get("resultPath") or "")))
-    candidate = {"worktreePath": str(worktree)}
+    candidate = {
+        "key": context.get("key"),
+        "stage": context.get("stage"),
+        "issueUrl": context.get("issueUrl"),
+        "intentId": context.get("intentId"),
+        "threadId": context.get("threadId"),
+        "worktreePath": str(worktree),
+    }
     expected_path = _task_result_path(candidate)
     if result_path != expected_path:
         raise RuntimeError("shared task context result path is invalid")
@@ -2562,6 +2732,31 @@ def _recoverable_published_result(
     }
     if not isinstance(value, dict):
         raise RuntimeError("published task result must be an object")
+    authority = None
+    if store is not None and "worktreePath" not in value and value.get("stage") == "FIX_READY":
+        verified_path = context_path or shared_context_path(str(context.get("issueUrl") or ""))
+        try:
+            verified_context, _verified_at = _verified_shared_task_context(verified_path)
+        except (OSError, RuntimeError, ValueError):
+            verified_context = None
+        if verified_context == context:
+            authority = _superseded_fix_ready_missing_worktree_authority(
+                ManagedLedger(store.path, ensure_schema=False),
+                candidate=candidate,
+                context=context,
+                value=value,
+                worktree=worktree,
+            )
+        if authority is not None:
+            _clear_exact_superseded_missing_worktree_quarantines(
+                store,
+                path=verified_path,
+                context=context,
+                value=value,
+                raw=raw,
+                authority=authority,
+            )
+            return None
     for key, expected_value in expected.items():
         if value.get(key) != expected_value:
             raise RuntimeError(f"published task result mismatch: {key}")
@@ -2737,7 +2932,11 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
             )
             result_receipt = None
             if not superseded_mirror:
-                result_receipt = _recoverable_published_result(context, store=store)
+                result_receipt = _recoverable_published_result(
+                    context,
+                    store=store,
+                    context_path=path,
+                )
                 _clear_exact_tombstone_authority_quarantine(
                     store,
                     path=path,
@@ -5230,6 +5429,274 @@ def _quarantine_shared_context(
         "originalBytesSha256": source_digest,
         "new": bool(persisted.get("created")),
     }
+
+
+def _clear_exact_superseded_missing_worktree_quarantines(
+    store: RadarLedger,
+    *,
+    path: Path,
+    context: dict[str, Any],
+    value: dict[str, Any],
+    raw: bytes,
+    authority: dict[str, Any],
+) -> int:
+    """Clear only historical gates caused by one superseded field omission."""
+
+    expected_reason = "SHARED_CONTEXT_INVALID"
+    expected_error = "published task result mismatch: worktreePath"
+    key = str(context.get("key") or "")
+    issue_url = str(context.get("issueUrl") or "")
+    task_id = str(context.get("intentId") or "")
+    thread_id = str(context.get("threadId") or "")
+    worktree = _lexical_absolute(Path(str(context.get("worktreePath") or "")))
+    shared_path = shared_context_path(issue_url)
+    if (
+        not key
+        or not issue_url
+        or not task_id
+        or not thread_id
+        or _lexical_absolute(path) != shared_path
+        or _lexical_absolute(Path(str(context.get("resultPath") or "")))
+        != _task_result_path({"worktreePath": str(worktree)})
+    ):
+        return 0
+
+    candidate = {
+        "key": key,
+        "stage": context.get("stage"),
+        "issueUrl": issue_url,
+        "intentId": task_id,
+        "threadId": thread_id,
+        "worktreePath": str(worktree),
+    }
+    with opportunity_action_guard(ledger_action_guard_root(store.path), key):
+        try:
+            current_context_raw, _current_stat, current_path = _read_shared_context_file(path)
+            current_context = json.loads(current_context_raw)
+            current_result = _read_task_result_bytes_if_present(candidate)
+        except (OSError, RuntimeError, UnicodeDecodeError, json.JSONDecodeError):
+            return 0
+        if (
+            current_path != shared_path
+            or current_context != context
+            or current_result is None
+            or current_result[1] != raw
+        ):
+            return 0
+        try:
+            current_value = json.loads(current_result[1])
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return 0
+        if current_value != value:
+            return 0
+        refreshed_authority = _superseded_fix_ready_missing_worktree_authority(
+            ManagedLedger(store.path, ensure_schema=False),
+            candidate=candidate,
+            context=context,
+            value=value,
+            worktree=worktree,
+        )
+        authority_fields = {
+            "reservation_key",
+            "opportunity_key",
+            "pr_key",
+            "publication_head_sha",
+            "pr_url",
+            "head_sha",
+            "state",
+            "taskId",
+            "threadId",
+            "resultHeadSha",
+            "managedResultDigest",
+            "managedResultObservedAt",
+            "publicationHeadSha",
+        }
+        if refreshed_authority is None or any(
+            refreshed_authority.get(field) != authority.get(field) for field in authority_fields
+        ):
+            return 0
+
+        gates = store.active_task_quarantines(key)
+        matching_gates = [
+            gate
+            for gate in gates
+            if gate.get("reason") == expected_reason
+            and isinstance(gate.get("payload"), dict)
+            and gate["payload"].get("error") == expected_error
+        ]
+        if not matching_gates:
+            return 0
+        expected_payload_keys = {
+            "issueUrl",
+            "originalPath",
+            "originalBytesSha256",
+            "artifactPath",
+            "error",
+        }
+        expected_artifact_keys = {
+            "schemaVersion",
+            "key",
+            "issueUrl",
+            "reason",
+            "error",
+            "originalPath",
+            "originalMode",
+            "originalBytesSha256",
+            "originalBytesBase64",
+            "observedAt",
+        }
+        verified_gates: list[dict[str, str]] = []
+        try:
+            quarantine_fd, _quarantine_path, handles = _open_shared_context_quarantine_directory(
+                create=False
+            )
+        except (OSError, RuntimeError):
+            return 0
+        try:
+            for gate in matching_gates:
+                payload = gate.get("payload")
+                if (
+                    gate.get("reason") != expected_reason
+                    or not isinstance(payload, dict)
+                    or set(payload) != expected_payload_keys
+                    or payload.get("issueUrl") != issue_url
+                    or payload.get("originalPath") != str(shared_path)
+                    or payload.get("error") != expected_error
+                    or gate.get("payloadDigest") != sha256_json(payload)
+                ):
+                    return 0
+                original_digest = str(payload.get("originalBytesSha256") or "")
+                if re.fullmatch(r"[0-9a-f]{64}", original_digest) is None:
+                    return 0
+                expected_dedupe = hashlib.sha256(
+                    f"shared-context|{shared_path}|{original_digest}|{expected_reason}".encode(
+                        "utf-8"
+                    )
+                ).hexdigest()
+                dedupe_key = str(gate.get("dedupeKey") or "")
+                if (
+                    dedupe_key != expected_dedupe
+                    and re.fullmatch(
+                        rf"{re.escape(expected_dedupe)}\|generation=[2-9][0-9]*",
+                        dedupe_key,
+                    )
+                    is None
+                ):
+                    return 0
+                artifact_identity = sha256_json(
+                    {
+                        "key": key,
+                        "reason": expected_reason,
+                        "originalPath": str(shared_path),
+                        "originalBytesSha256": original_digest,
+                    }
+                )
+                artifact_path = shared_context_quarantine_root() / f"q-{artifact_identity}.json"
+                if payload.get("artifactPath") != str(artifact_path):
+                    return 0
+                artifact, _artifact_raw = _read_context_quarantine_artifact_at(
+                    quarantine_fd,
+                    artifact_path,
+                )
+                if set(artifact) != expected_artifact_keys:
+                    return 0
+                expected_artifact = {
+                    "schemaVersion": "shared-context-quarantine-v1",
+                    "key": key,
+                    "issueUrl": issue_url,
+                    "reason": expected_reason,
+                    "error": expected_error,
+                    "originalPath": str(shared_path),
+                    "originalMode": 0o600,
+                    "originalBytesSha256": original_digest,
+                    "observedAt": gate.get("createdAt"),
+                }
+                if any(
+                    artifact.get(name) != expected for name, expected in expected_artifact.items()
+                ):
+                    return 0
+                try:
+                    historical_raw = base64.b64decode(
+                        str(artifact.get("originalBytesBase64") or ""),
+                        validate=True,
+                    )
+                    historical = json.loads(historical_raw)
+                except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+                    return 0
+                historical_receipt = (
+                    historical.get("publicationReceipt") if isinstance(historical, dict) else None
+                )
+                historical_followup = (
+                    historical.get("prFollowup") if isinstance(historical, dict) else None
+                )
+                historical_prepared_head = (
+                    str(historical_followup.get("preparedHeadSha"))
+                    if isinstance(historical_followup, dict)
+                    and historical_followup.get("preparedHeadSha")
+                    else None
+                )
+                historical_digest_valid = bool(
+                    isinstance(historical, dict)
+                    and historical.get("contextDigest")
+                    in _task_context_digest_candidates(historical, historical_prepared_head)
+                )
+                if (
+                    hashlib.sha256(historical_raw).hexdigest() != original_digest
+                    or not isinstance(historical, dict)
+                    or _shared_context_identity_from_filename(shared_path, historical_raw)
+                    != (key, issue_url)
+                    or historical.get("schemaVersion") != TASK_CONTEXT_SCHEMA
+                    or historical.get("key") != key
+                    or historical.get("issueUrl") != issue_url
+                    or historical.get("intentId") != task_id
+                    or historical.get("threadId") != thread_id
+                    or historical.get("worktreePath") != str(worktree)
+                    or historical.get("resultPath") != context.get("resultPath")
+                    or historical.get("contextDigest") != context.get("contextDigest")
+                    or not historical_digest_valid
+                    or historical.get("stage") not in PUBLISHED_TASK_STAGES
+                    or not isinstance(historical_receipt, dict)
+                    or historical_receipt.get("prUrl") != authority.get("pr_url")
+                    or historical_receipt.get("commitSha") != authority.get("publicationHeadSha")
+                ):
+                    return 0
+                verified_gates.append(
+                    {
+                        "reason": expected_reason,
+                        "dedupeKey": dedupe_key,
+                        "payloadDigest": str(gate["payloadDigest"]),
+                    }
+                )
+        except (OSError, RuntimeError, ValueError, TypeError):
+            return 0
+        finally:
+            for descriptor in reversed(handles):
+                os.close(descriptor)
+        evidence = {
+            "revalidated": True,
+            "repair": "SUPERSEDED_FIX_READY_RESULT_IGNORED",
+            "taskId": task_id,
+            "threadId": thread_id,
+            "prUrl": str(authority.get("pr_url") or ""),
+            "resultHeadSha": str(authority.get("resultHeadSha") or ""),
+            "managedResultDigest": str(authority.get("managedResultDigest") or ""),
+            "publicationHeadSha": str(authority.get("publicationHeadSha") or ""),
+            "resultFileSha256": hashlib.sha256(raw).hexdigest(),
+        }
+        cleared = 0
+        for gate in verified_gates:
+            try:
+                store.clear_task_quarantine_member_exact(
+                    key,
+                    reason=gate["reason"],
+                    dedupe_key=gate["dedupeKey"],
+                    payload_digest=gate["payloadDigest"],
+                    evidence=evidence,
+                )
+            except (sqlite3.Error, RuntimeError, ValueError, TypeError):
+                return cleared
+            cleared += 1
+        return cleared
 
 
 def _context_without_pr_followup_check_time(value: dict[str, Any]) -> str | None:
@@ -16375,6 +16842,30 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             )
             managed_candidate["publicationReceipt"] = context.get("publicationReceipt")
             managed_candidate["taskStage"] = context.get("taskStage")
+            superseded_missing_worktree = None
+            if "worktreePath" not in value and value.get("stage") == "FIX_READY":
+                try:
+                    verified_context, _verified_at = _verified_shared_task_context(
+                        shared_context_path(str(candidate.get("issueUrl") or ""))
+                    )
+                except (OSError, RuntimeError, ValueError):
+                    verified_context = None
+                if verified_context == context:
+                    superseded_missing_worktree = _superseded_fix_ready_missing_worktree_authority(
+                        managed_ledger,
+                        candidate=candidate,
+                        context=context,
+                        value=value,
+                        worktree=result_access.worktree,
+                    )
+            if superseded_missing_worktree is not None:
+                ignored.append(
+                    {
+                        "key": str(candidate["key"]),
+                        "reason": "MANAGED_PUBLISHED_PR_SUPERSEDED_FIX_READY",
+                    }
+                )
+                continue
             expected = {
                 "schemaVersion": TASK_RESULT_SCHEMA,
                 "key": candidate["key"],

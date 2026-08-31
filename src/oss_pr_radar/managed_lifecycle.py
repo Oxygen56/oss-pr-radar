@@ -3562,6 +3562,39 @@ class ManagedLedger:
         finally:
             connection.close()
 
+    def fix_ready_result_for_task_head(
+        self,
+        task_id: str,
+        *,
+        head_sha: str,
+        issue_url: str,
+    ) -> dict[str, Any] | None:
+        """Return an exact historical FIX_READY head bound to one managed task."""
+
+        if (
+            not task_id
+            or re.fullmatch(r"[0-9a-f]{40}", head_sha) is None
+            or _ISSUE_URL_RE.fullmatch(issue_url) is None
+        ):
+            return None
+        connection = self._connection()
+        try:
+            row = connection.execute(
+                """SELECT * FROM managed_results
+                   WHERE task_id=? AND head_sha=? AND commit_sha=?
+                   ORDER BY observed_at DESC,result_key DESC LIMIT 1""",
+                (task_id, head_sha, head_sha),
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return None
+        result = dict(row)
+        provenance = json_payload(result.get("provenance_json"))
+        if provenance.get("stage") != "FIX_READY" or provenance.get("issueUrl") != issue_url:
+            return None
+        return result | {"provenance": provenance}
+
     def record_published_task_result(
         self,
         *,
