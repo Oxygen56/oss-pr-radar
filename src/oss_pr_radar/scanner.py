@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from .claims import detect_claims
 from .contracts import CANDIDATE_SCHEMA, SCAN_SCHEMA, contract_digest
@@ -963,6 +963,68 @@ def probe_code_paths(anchors: Iterable[str]) -> list[str]:
     ]
 
 
+def _literal_repository_path_variants(
+    anchor: str,
+    *,
+    repo: str | None,
+) -> tuple[str, ...]:
+    """Return plausible repo-relative forms without treating them as verified."""
+
+    value = unquote(str(anchor)).strip().strip("`").replace("\\", "/")
+    value = value.split("#", 1)[0].split("?", 1)[0]
+    value = re.sub(r"^file:/+", "", value, flags=re.I).lstrip("/")
+    value = re.sub(r"^https?://", "", value, flags=re.I)
+    github_match = re.fullmatch(
+        r"(?:www\.)?github\.com/([^/]+/[^/]+)/blob/(.+)",
+        value,
+        flags=re.I,
+    )
+    if github_match is not None:
+        if repo and github_match.group(1).casefold() != repo.casefold():
+            return ()
+        tail = github_match.group(2).split("/")
+        # A ref is always present after /blob/. It may itself contain slashes,
+        # so every later suffix remains only a candidate until the tree binds it.
+        variants = ["/".join(tail[index:]) for index in range(1, len(tail))]
+    else:
+        value = re.sub(r"^CWD/+", "", value, flags=re.I)
+        variants = [re.sub(r"^(?:\./)+", "", value)]
+
+    return tuple(
+        dict.fromkeys(
+            variant
+            for variant in variants
+            if variant and "node_modules" not in {part.casefold() for part in variant.split("/")}
+        )
+    )
+
+
+def _bind_literal_repository_path(
+    anchor: str,
+    tree_paths: set[str],
+    *,
+    repo: str | None,
+) -> str | None:
+    """Bind one literal anchor to an exact or uniquely suffixed tree blob."""
+
+    variants = _literal_repository_path_variants(anchor, repo=repo)
+    exact_matches = {variant for variant in variants if variant in tree_paths}
+    if len(exact_matches) == 1:
+        return next(iter(exact_matches))
+    if exact_matches:
+        return None
+
+    suffix_matches = {
+        tree_path
+        for variant in variants
+        for tree_path in tree_paths
+        if tree_path == variant or tree_path.endswith(f"/{variant}")
+    }
+    if len(suffix_matches) == 1:
+        return next(iter(suffix_matches))
+    return None
+
+
 def _symbol_filename_stems(anchor: str) -> tuple[str, ...]:
     """Convert code symbols such as ``AudioRecognition`` to filename stems."""
 
@@ -983,11 +1045,27 @@ def _symbol_filename_stems(anchor: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(stems))
 
 
-def resolve_probe_code_paths(anchors: Iterable[str], repository_paths: Iterable[str]) -> list[str]:
+def resolve_probe_code_paths(
+    anchors: Iterable[str],
+    repository_paths: Iterable[str],
+    *,
+    repo: str | None = None,
+) -> list[str]:
     """Resolve verified repository files from literal paths and symbol anchors."""
 
     anchor_list = list(anchors)
-    resolved = probe_code_paths(anchor_list)
+    tree_paths = {
+        re.sub(r"^(?:\./)+", "", str(path).strip().replace("\\", "/"))
+        for path in repository_paths
+        if str(path).strip()
+        and "node_modules"
+        not in {part.casefold() for part in str(path).replace("\\", "/").split("/")}
+    }
+    resolved = [
+        bound
+        for anchor in probe_code_paths(anchor_list)
+        if (bound := _bind_literal_repository_path(anchor, tree_paths, repo=repo)) is not None
+    ]
     symbol_stems = {stem for anchor in anchor_list for stem in _symbol_filename_stems(anchor)}
     if not symbol_stems:
         return list(dict.fromkeys(resolved))
@@ -998,7 +1076,7 @@ def resolve_probe_code_paths(anchors: Iterable[str], repository_paths: Iterable[
         return is_test, path.count("/"), path
 
     matches: list[str] = []
-    for path in repository_paths:
+    for path in tree_paths:
         basename = Path(path).name
         if not ISSUE_CODE_FILE_RE.fullmatch(basename):
             continue
@@ -4757,6 +4835,7 @@ class Radar:
                 "codePathsPlan": resolve_probe_code_paths(
                     actionability.get("code_anchors") or [],
                     self.repo_tree_paths.get(base["repo"], ()),
+                    repo=base["repo"],
                 ),
                 "reproductionPathPlan": bool(actionability.get("probe_ready")),
                 "validationPathPlan": bool(scored.get("test_path")),
