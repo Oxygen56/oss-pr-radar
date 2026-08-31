@@ -61,6 +61,26 @@ def test_offer_to_send_small_pr_is_an_active_claim():
     assert "happy to send a small PR" in signals[0].excerpt
 
 
+def test_maintainer_commitment_to_figure_out_fix_is_an_active_claim():
+    signals = detect_claims(
+        [
+            comment(
+                "Thanks for the report! I'll definitely get this figured out "
+                "before the upcoming release.",
+                author="FoxxMD",
+                association="OWNER",
+            )
+        ],
+        current_actor="Oxygen56",
+    )
+
+    assert len(signals) == 1
+    assert signals[0].author == "FoxxMD"
+    assert signals[0].association == "OWNER"
+    assert signals[0].kind == "active_claim"
+    assert "get this figured out" in signals[0].excerpt
+
+
 def test_maintainer_approval_requires_privileged_association():
     assert detect_maintainer_approval([comment("Please open a PR for this", association="MEMBER")])
     assert not detect_maintainer_approval(

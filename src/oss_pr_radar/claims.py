@@ -9,7 +9,9 @@ from typing import Any, Iterable
 CLAIM_RE = re.compile(
     r"\b(?:"
     r"i(?:['’]?m| am|['’]?ll| will| would|['’]?d)?\s+"
-    r"(?:like to\s+)?(?:take|claim|work on|investigate|implement|prepare|open|submit|send|try)"
+    r"(?:definitely\s+)?(?:like to\s+)?(?:take|claim|work on|investigate|implement|"
+    r"prepare|open|submit|send|try|fix|resolve|address|figure (?:this|it) out|"
+    r"get (?:this|it) figured out)"
     r"|i can\s+(?:take|claim|work on|investigate|implement|prepare|open|submit|send|try)"
     r"|can (?:you )?assign (?:this|it) to me"
     r"|please assign (?:this|it) to me"
