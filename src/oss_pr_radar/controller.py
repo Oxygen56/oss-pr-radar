@@ -21,7 +21,7 @@ from .operational_auth import require_operational_authorization
 from .release_binding import bind_runtime, runtime_ledger_path, runtime_python
 
 DEFAULT_PROJECT_ID = "5e41d21c-cba3-4be0-9a02-7eef35b67625"
-CONTROLLER_REPAIR_AGE_MINUTES = 90
+CONTROLLER_DIAGNOSTIC_SCAN_AGE_MINUTES = 90
 CONTROLLER_LOCK_MARKER_SCHEMA = "oss-pr-radar.controller-lock.v1"
 CONTROLLER_COMPLETED_REUSE_SECONDS = 300
 CONTROLLER_ABANDONED_RECOVERY_SECONDS = 900
@@ -186,8 +186,7 @@ def controller_cycle(
             "--code-root",
             str(binding.code_root),
             "--max-effective-age-minutes",
-            str(CONTROLLER_REPAIR_AGE_MINUTES),
-            "--repair",
+            str(CONTROLLER_DIAGNOSTIC_SCAN_AGE_MINUTES),
         ],
         allowed_codes={0, 2},
         require_ok=False,
