@@ -20015,6 +20015,37 @@
     ],
     "why": "The issue clearly identifies a silent security gap on Windows where LocalSandbox defaults to unisolated execution, but the fix requires an architectural decision (native addon vs helper binary vs documented unsupported) that only maintainers can make. The reporter explicitly asks for direction, and the maintainer bot confirms the need for maintainer decision. The low-cost improvement (isolation: 'auto' + warning) is actionable but not yet approved."
   },
+  "5687994c07b6d3c6dae44e86d097e27d776f6068bd9d4f0955eea45a7bd1914d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comment notes #54102 and #50173 remove the frame in opposite directions; issue assumes 384 stop is mandatory, but #54102 allows crossing the boundary."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py",
+      "tests/v1/core/test_scheduler.py"
+    ],
+    "risks": [
+      "The suggested phase guard may break existing test_spec_decode_padding_first_decode_step; needs careful adjustment to preserve intended optimization.",
+      "Overlap with open PRs #54102 and #50173 requires maintainer decision on Mamba align boundary semantics."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a scheduler unit test with hybrid Mamba align, block_size=384, K=7, one running decode, and a waiting request with prompt_tokens=380 and external_computed_tokens=379; assert num_scheduled_tokens==1 and no speculative placeholders.",
+      "Parameterize the test for generic MTP/EAGLE and long_prefill_token_threshold to cover non-Mamba limiters."
+    ],
+    "unknowns": [
+      "Whether a 1+K synthetic verifier window is allowed to cross a Mamba align boundary; this determines the correct fix direction."
+    ],
+    "why": "The issue provides a precise root cause: the waiting-request path latches pad_spec_decode before later limiters (Mamba align split) shorten the physical span, leaving stale speculative placeholders. A concrete reproduction with exact token counts and a proposed phase guard plus defensive invariant are given. The comment adds a scheduler-only repro and identifies overlapping PRs, but the core bug is well-defined and actionable."
+  },
   "569e65446e89cbfaa88771dc79db293614f1887aadeb5475d905f563cc48e1fb": {
     "confidence": 0.85,
     "contradictions": [
@@ -24791,6 +24822,35 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly identifies error suppression in hgctl upgrade/uninstall and has maintainer approval, but a design conflict remains: strict fail-closed semantics would break local-docker installs without kubeconfig. The maintainer requires Design #4403 revision and approval before implementation."
   },
+  "695e0483c5e282989838d125db8ab471b64a90af2196c06afcb8d25236038bd8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/backend/common/vendor/atproto/AbstractATProtoApiClient.ts",
+      "src/backend/scrobblers/TealfmScrobbler.ts"
+    ],
+    "risks": [
+      "Potential behavior change in rate limit handling could affect other ATProto clients.",
+      "Fix may require coordination with PDS API changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by running multi-scrobbler with Teal.fm configured and a PDS that returns null rate limit headers; verify historical scrobbles are hydrated and scrobbles are sent to PDS.",
+      "Add a unit test for setRateLimitsFromResponse with null rate limit data to ensure no exception is thrown."
+    ],
+    "unknowns": [
+      "Exact code path causing hydration failure beyond the rate limit parsing error.",
+      "Whether the maintainer has a preferred fix approach."
+    ],
+    "why": "Issue provides a clear user-visible bug with logs showing a hydration failure in the Teal.fm scrobbler, a concrete code anchor (AbstractATProtoApiClient.ts) and a maintainer acknowledgment. The root cause is likely an unhandled null rate limit or hydration error that bricks the scrobbler session. The fix is actionable and testable."
+  },
   "69605fd98dc882648e2fcf1c09dcaafcf36dae1e0dfe22bd17e74748b569bcb7": {
     "confidence": 0.85,
     "contradictions": [
@@ -27634,6 +27694,31 @@
       "Exact list of models that currently reject temperature is not provided in the issue."
     ],
     "why": "Issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach rather than per-model hardcoding. No existing PR addresses this issue, and the issue is actionable with a clear reproduction."
+  },
+  "7477d8bdbac14da81884f8b43860b9397a891dcdff0ca812077bd884cdfbb551": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "metrics collection/labeling in lemond server",
+      "alias resolution path to include alias in metric labels or add mapping series"
+    ],
+    "risks": [
+      "Potential design preference on metric shape (label vs separate series) requires maintainer confirmation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that registers an alias, loads model via alias, and asserts the alias appears in /metrics output"
+    ],
+    "unknowns": [
+      "Exact code location for metrics assembly and alias resolution, but not blocking given clear reproduction"
+    ],
+    "why": "Issue provides clear reproduction steps and root cause: aliases are resolved at the API edge and never propagated to Prometheus metrics labels. The expected behavior is well-defined and the fix is actionable."
   },
   "747e5119139fa2332572f968fa91a9aa70eb099ec5fe50bfed58089d54ca1e97": {
     "confidence": 0.7,
@@ -48517,6 +48602,47 @@
     ],
     "why": "Issue provides a clear user-visible regression with a concrete reproduction command, isolated variables, and a known working version. Root cause is localized to generation/sampling path for Qwen3.5-arch models in 0.5.17, making it actionable for a targeted fix."
   },
+  "d0c84a2ac81835b27354bec3a1625d87d13382c59c012ac073a1e139a36071f3": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Original report claimed no CUDA DSA backend supports fp8 KV, but later comments show PR #36904 enables it on SM90 and SM121"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "dsa_backend.py",
+      "kv_cache_configurator.py",
+      "memory_pool.py",
+      "overrides.py"
+    ],
+    "risks": [
+      "Potential overlap with PR #36904 which may already cover the fix; need to compare implementation boundaries",
+      "Numerical differences due to fp8 quantization may cause slight output divergence; need tolerance thresholds",
+      "Hardware-specific behavior on SM90 vs SM121 may require arch-conditional adjustments"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run kernel-level one-hot exact case and scrambled-index negative control on SM90",
+      "Run boot-gate negative control (mixed backends + fp8 must raise)",
+      "Compare temperature=0 output parity vs bf16 baseline over fixed prompt set",
+      "Measure decode tok/s and TTFT at multiple context depths, bf16 vs fp8",
+      "Check allocation numbers (KV tokens, max_running_requests) to validate pool accounting"
+    ],
+    "unknowns": [
+      "Whether PR #36904 fully resolves the issue or if additional changes are needed for other backends (e.g., flashmla_kv tail handling)",
+      "Exact merge status of PR #36904 and its compatibility with recent branch changes"
+    ],
+    "why": "The issue provides a precise root cause chain (index_kpool>1 excludes flashmla_kv, no CUDA DSA backend supports bf16-query x fp8-KV), concrete reproduction commands, and a validation path via PR #36904 which has been validated on SM90 and SM121. The evidence includes kernel-level tests, negative controls, and output parity checks, establishing a concrete reference-vs-implementation test."
+  },
   "d0e1962b0800fe1dfd31e09092b66800fc7fbf50497879ad5d01aa3b47999176": {
     "confidence": 0.6,
     "contradictions": [],
@@ -61201,6 +61327,31 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a silent correctness failure in LMCache P/D disaggregation with a concrete reproduction and a contributor's root-cause hypothesis (token-count mismatch in the adapter). However, the supplied evidence flags a potential duplicate issue #52620 sharing stack/failure signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not confirmed, and the proposed fix path depends on maintainer confirmation of the adapter behavior."
+  },
+  "fe0c122b4882372030c50f5d8ca010355c527984f6825af8743f38287cad9755": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "integrations/mem0-plugin/hooks/codex-hooks.json"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different quoting approach; low risk of breaking existing behavior if quoting is applied correctly."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a test that runs each hook command with PLUGIN_ROOT containing a space and asserts exit code 0; or a static check that verifies all commands quote ${PLUGIN_ROOT}."
+    ],
+    "unknowns": [
+      "No maintainer confirmation on preferred fix style; but this does not block actionability."
+    ],
+    "why": "Issue provides a clear root cause (unquoted PLUGIN_ROOT in codex-hooks.json) and a concrete reproduction with expected vs actual behavior. The fix is a minimal, well-scoped change to quote script paths in nine commands. No competing PR directly covers this issue; PR #6196 is only keyword overlap. The repository is mature and the validation path is straightforward."
   },
   "fe32c9e91d883770a72cc340756d2a710395efc5f0ace6b4e323adadf7c7e5e4": {
     "confidence": 0.85,
