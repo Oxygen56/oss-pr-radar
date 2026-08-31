@@ -5296,6 +5296,39 @@
     ],
     "why": "Issue identifies a clear protocol-conformance bug in McpServerSession and McpStatelessAsyncServer where empty Mono completions suppress JSON-RPC responses, with a concrete root cause and suggested fix. However, the repository requires assignment and AI disclosure, and the deterministic gate is HUMAN_REVIEW, so work should not start without maintainer confirmation."
   },
+  "18761d7767e27559a5e5cba43a7f2006eb9f54397543cd6eb3578ef85affe25e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #50172 is a draft with semantic overlap but does not directly reference the issue, and its root cause coverage is unconfirmed."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/platforms/interface.py",
+      "vllm/v1/engine/core.py",
+      "vllm/v1/core/sched/interface.py"
+    ],
+    "risks": [
+      "Potential performance regression in mamba kernel efficiency if virtual splitting is not implemented carefully.",
+      "The fix may interact with existing PR #50172, requiring coordination to avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the concurrency collapse with the provided staircase script on a hybrid model, then verify that attention block size returns to 64-256 tokens and that prefix cache hits are restored for short prompts."
+    ],
+    "unknowns": [
+      "Whether the proposed virtual splitting approach is compatible with the existing mamba kernel layout constraints.",
+      "The exact number and nature of the ~23 KV-cache groups, which affects the fix's scope."
+    ],
+    "why": "The issue identifies a concrete algorithmic root cause in vLLM's hybrid mamba/attention page alignment, with detailed measurements and a clear code path. The proposed fix (virtual splitting) is actionable and testable. Although an open PR (#50172) overlaps semantically, it is a draft and does not directly reference this issue, so the contribution remains valuable."
+  },
   "18ee1c2743e208f4c0beb3b6c8c52ae9be3acc5db0ccbed7248c9f81be7489a2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -10370,6 +10403,34 @@
       "No explicit maintainer approval or design confirmation, but issue is clear and actionable"
     ],
     "why": "Issue provides concrete measurements and a clear root cause: hook detection only matches command string, not args, and init recommends shell-wrapped form. This is a user-visible performance bug with a suggested fix. No competing PR or issue found."
+  },
+  "2e187b328f561d6825c5d57d2432e1afd121e8cbba7b56365c1fa26ee8282fb7": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Studio composer behavior for generic suspensions",
+      "resume form rendering from resumeSchema"
+    ],
+    "risks": [
+      "Design preference may change implementation direction",
+      "Potential interaction with existing approval UI and auto-resume mechanism"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create a minimal reproduction with a custom tool using resumeSchema and autoResumeSuspendedTools, then verify composer is enabled or a resume form appears."
+    ],
+    "unknowns": [
+      "Whether the issue is still reproducible on current main",
+      "Maintainer design preference between option 1 and option 2"
+    ],
+    "why": "The issue describes a UI dead-end but lacks a concrete reproduction or root-cause evidence; the proposed solutions are design-level and require maintainer confirmation. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the missing validation path and design confirmation make actionability uncertain."
   },
   "2e341483c57b34162f0f84021c68c966a5d873501621da6ff435952d2aff70bd": {
     "confidence": 0.7,
@@ -18327,6 +18388,37 @@
     ],
     "why": "The issue reports empirical observations about DBCache defaults and quality metrics, but lacks a concrete code-level root cause or a specific implementation proposal. It is more of a tuning/benchmark report than an actionable algorithm change. The track is agent_ai_infra, not llm_algorithm, so the algorithm evidence requirement is relaxed, but the issue still needs maintainer confirmation on desired defaults and metric additions."
   },
+  "50c76685ebbc451d6a0b433742adb8846db9efae9d2b2b7ebbc758c7aca7b8cc": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "@mastra/schema-compat OpenAISchemaCompatLayer.postProcessJSONNode single-type branch",
+      "route single-type through the existing multi-type types-array code path",
+      "remove type-specific keywords from property node and keep them only in the non-null anyOf branch"
+    ],
+    "risks": [
+      "Potential behavior change for consumers relying on the current malformed shape",
+      "Need maintainer design confirmation on the exact routing approach"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided standalone repro script and assert the output schema has no properties/required siblings next to anyOf for optional single-type object properties",
+      "Add a unit test in @mastra/schema-compat covering nested optional objects to verify no subtree duplication",
+      "Add a regression test for scalar optional properties ensuring description is not duplicated"
+    ],
+    "unknowns": [
+      "Maintainer preference on implementation approach (routing vs. separate fix)"
+    ],
+    "why": "The issue provides a precise root cause in the single-type branch of postProcessJSONNode, a minimal standalone reproducer, and a clear expected fix aligned with the already-merged multi-type fix (#21190). The bug causes schema duplication and OpenAI server errors, with production impact and a concrete validation path."
+  },
   "5105335f7b5b60c223331111f95768eb587bd5f4e9fa6f8146939df791fb0900": {
     "confidence": 0.7,
     "contradictions": [],
@@ -20011,6 +20103,38 @@
       "Whether in-container vLLM upgrades are a supported workflow; maintainer decision pending."
     ],
     "why": "Issue identifies a clear root cause: baked flashinfer-jit-cache version skew with flashinfer-python causes serve-time registry failure. Evidence includes reproduction command, observed error, and verified workaround. Maintainer triage confirms engagement and a pending contract decision, but the structural hazard remains latent. The issue is actionable: either document unsupported workflow or couple package versions, with a concrete validation path (serve-time test or build-time assert)."
+  },
+  "56e2102ee12c7fb04a4b8bc33895b5e6476b2b95780a3bd80551305182779b8e": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #38818 is titled for anthropic workload identity but overlaps semantically; no direct issue reference."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/integrations/langfuse/langfuse.py",
+      "litellm/integrations/langfuse/langfuse_otel.py",
+      "litellm/router.py"
+    ],
+    "risks": [
+      "Potential behavior change if existing code expects tags as a string; need to ensure backward compatibility.",
+      "Coordination with open PR #30042 to avoid conflicting changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test in langfuse tests that calls add_metadata_from_header with a langfuse_tags header and asserts metadata['tags'] is a list.",
+      "Add a router test that simulates a retry with litellm_credential_name and a langfuse_tags header, verifying no AttributeError and proper failover."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific implementation approach beyond the suggested fix.",
+      "Exact current state of the code on main after recent changes."
+    ],
+    "why": "Issue provides a clear root cause (shared mutable metadata tags with conflicting types), a concrete reproduction (curl command and unit test), and a suggested fix (parse header tags into list and type-guard router branches). The code paths are identified, and the bug is user-visible with high impact. The existing PR #38818 has semantic overlap but does not directly reference the issue and lacks root-cause coverage, so the opportunity remains actionable."
   },
   "571a5bd07ffc2f8dc99b28f3833a40fe28fffe914a0f2b04b0afa6e8daa9d0aa": {
     "confidence": 0.85,
@@ -22486,6 +22610,38 @@
       "Maintainer preference on DSL pin bump vs code fix"
     ],
     "why": "Issue provides a clear root cause and deterministic repro for a real startup crash, but the deterministic gate is HUMAN_REVIEW and the repo requires AI-use disclosure, blocking autonomous action. Existing PR #41834 overlaps semantically and may already address the root cause, so maintainer comparison is needed before starting new work."
+  },
+  "61465f54d4d9a5323923c292bcb0891d912ff26f04b28bebe69f1ed621ad84d7": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue body suggests proxy incompatibility with classifier backend, while later comments identify copilot_optimizer misclassification as root cause."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src-tauri/src/proxy/copilot_optimizer.rs",
+      "src-tauri/src/settings.rs",
+      "src-tauri/src/commands/settings.rs",
+      "src-tauri/src/proxy/providers/models/anthropic.rs"
+    ],
+    "risks": [
+      "Changing warmup detection may affect legitimate warmup requests; need to ensure positive classification does not break existing warmup optimization."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression fixture using a real Auto Mode classifier request and assert it is not classified as warmup.",
+      "Run existing proxy unit tests and add a test that verifies classifier requests preserve the intended mapped model."
+    ],
+    "unknowns": [
+      "Exact upstream behavior of classifier endpoint and whether positive warmup detection requires additional request features not yet identified."
+    ],
+    "why": "Issue and comments provide a concrete root cause: Claude Code Auto Mode classifier requests are misclassified as warmup by copilot_optimizer and downgraded to gpt-5-mini, causing failures. Multiple independent reproductions and A/B verification confirm the mechanism. The suggested fix (positive warmup detection) is actionable and testable."
   },
   "614d6b816b8bca29aa32990d252197fea20edd3027c6766241e2ae37cb16969c": {
     "confidence": 0.7,
@@ -29481,6 +29637,37 @@
     ],
     "why": "Issue provides a concrete curl reproduction, consistent failure pattern, and control experiments isolating the problem to the Ox Alpha free model's tool path. Root cause is likely a routing/provider issue, with evidence pointing to sticky routing and upstream shard unavailability. The contribution is actionable: fix the provider routing or failover for this model."
   },
+  "7c967621c25831cb7c3dee9547ed0990cffdeda1f7b76a9752582c40b507df60": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Original issue claims data loss/overbilling, but author later retracts as documented behavior"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Add per-input fan-out option for vertex_ai Gemini embeddings",
+      "Add warning log when list input is fused",
+      "Update documentation to surface fusion behavior"
+    ],
+    "risks": [
+      "Changing default behavior may break existing users relying on fusion",
+      "Fan-out may increase cost and latency for large batches"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a test that calls vertex_ai embeddings with list input and asserts either N embeddings or a warning is emitted",
+      "Compare behavior with gemini route for same input to ensure consistency when fan-out enabled"
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to implement fan-out, warning, or docs only"
+    ],
+    "why": "Issue identifies a concrete behavioral discrepancy: vertex_ai route fuses list inputs into one embedding while gemini route fans out, with clear reproduction and code anchors. Author retracts bug framing but confirms the semantic mismatch and proposes actionable improvements (fan-out, opt-in flag, warning). Root cause is documented behavior, not a bug, but the contribution is a valuable feature/UX improvement."
+  },
   "7c967bbcc8d422006b105d81f40f4372b24f9ac72ab59de2e1b9d36c186b370c": {
     "confidence": 0.6,
     "contradictions": [],
@@ -34347,6 +34534,38 @@
       "Whether maintainers prefer a specific fix approach"
     ],
     "why": "Issue provides a clear root cause (read-after-write inconsistency with read replica), a concrete reproduction path, and a validation method (temporarily pointing reader to writer resolves the 500). The existing PR #38580 directly addresses this by pinning the read to the writer DB, but lacks root-cause coverage evidence; the issue's evidence strengthens the case for a targeted fix."
+  },
+  "92479e4cdedd5d60d2c285618f36ee66a47b4f5c8fdae31bb463d201e9c884e9": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue suggests phase guard; commenter shows it breaks an existing test",
+      "PR #54102 allows crossing Mamba boundary while issue assumes it is mandatory"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py: adjust waiting-request speculative padding to cancel or preserve width after limiters",
+      "tests/v1/core/test_scheduler.py: add regression test for hybrid Mamba align with K=7 and external prefix"
+    ],
+    "risks": [
+      "Proposed phase guard breaks existing test_spec_decode_padding_first_decode_step; fix must reconcile with that test",
+      "Open PRs #54102 and #50173 may already address the issue; need to compare approaches and avoid duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run scheduler-only reproduction: create_scheduler(num_speculative_tokens=7, block_size=384, enable_prefix_caching=True, use_kv_connector=mock_kv(matched_tokens=379)), one running decode, then 380-token request; assert num_scheduled_tokens==1 and no placeholders",
+      "Run existing test_spec_decode_padding_first_decode_step to ensure no regression"
+    ],
+    "unknowns": [
+      "Maintainer decision on whether synthetic window may cross Mamba align boundary",
+      "Whether PR #54102 or #50173 fully resolves the issue"
+    ],
+    "why": "Issue provides a precise root cause: the waiting-request path latches pad_spec_decode before Mamba alignment, then emits K placeholders even when the physical span is clipped, causing a 5-token row with 7 placeholders. A commenter reproduced on main with a scheduler-only script and identified the exact code path and a failing test for the proposed guard. The issue includes a concrete regression test and validation experiments."
   },
   "92796e4b67b22f85a0a2c6b2e876c0fc06f29c75524d782fde3faca6454e9fc8": {
     "confidence": 0.8,
