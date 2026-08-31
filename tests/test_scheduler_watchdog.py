@@ -78,7 +78,9 @@ def test_eligible_slot_waits_thirteen_minutes_and_recovers_latest_slot_after_sle
     )
 
 
-def test_natural_run_covers_slot_without_dispatch_and_remains_natural_health(tmp_path, monkeypatch):
+def test_natural_run_is_recorded_only_as_canary_and_does_not_suppress_fallback(
+    tmp_path, monkeypatch
+):
     root = _root(tmp_path, monkeypatch)
     dispatched = []
     result = _watchdog(
@@ -89,14 +91,17 @@ def test_natural_run_covers_slot_without_dispatch_and_remains_natural_health(tmp
         effect_guard=_guard,
     )
 
-    assert result["action"] == "covered"
-    assert result["coverageKind"] == "natural"
-    assert result["githubNaturalScheduleHealthy"] is True
-    assert dispatched == []
+    assert result["action"] == "fallback_requested"
+    assert result["githubNaturalScheduleHealthy"] is False
+    assert len(dispatched) == 1
+    state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
+    assert state["naturalScheduleCanary"]["latestRunSuccessful"] is True
+    assert state["naturalScheduleCanary"]["latestRun"]["event"] == "schedule"
 
 
-def test_active_run_covers_slot_but_does_not_claim_natural_success(tmp_path, monkeypatch):
+def test_active_natural_canary_does_not_suppress_fallback(tmp_path, monkeypatch):
     root = _root(tmp_path, monkeypatch)
+    dispatched = []
     result = _watchdog(
         root,
         now=NOW,
@@ -108,13 +113,15 @@ def test_active_run_covers_slot_but_does_not_claim_natural_success(tmp_path, mon
                 conclusion=None,
             )
         ],
-        dispatch=lambda *_args: pytest.fail("active run must prevent fallback"),
+        dispatch=lambda *_args: dispatched.append(True),
         effect_guard=_guard,
     )
 
-    assert result["action"] == "covered"
-    assert result["coverageKind"] == "natural"
+    assert result["action"] == "fallback_requested"
     assert result["githubNaturalScheduleHealthy"] is False
+    assert dispatched == [True]
+    state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
+    assert state["naturalScheduleCanary"]["latestRunSuccessful"] is False
 
 
 def test_publication_pause_does_not_consume_fallback_key(tmp_path, monkeypatch):
@@ -218,6 +225,41 @@ def test_delayed_dispatch_run_reconciles_claim_without_second_request(tmp_path, 
     assert second["coverageKind"] == "fallback"
     assert second["githubNaturalScheduleHealthy"] is False
     assert attempts == ["attempt"]
+
+
+def test_late_natural_run_cannot_replace_fallback_evidence_or_trigger_again(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    attempts = []
+    responses = [
+        [],
+        [],
+        [_run(event="schedule", run_id=10, created_at="2026-08-31T03:49:00Z")],
+    ]
+
+    first = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: responses.pop(0),
+        dispatch=lambda *_args: attempts.append("fallback"),
+        effect_guard=_guard,
+    )
+    second = _watchdog(
+        root,
+        now=datetime(2026, 8, 31, 3, 50, tzinfo=UTC),
+        list_runs=lambda _repo, _workflow: responses.pop(0),
+        dispatch=lambda *_args: attempts.append("duplicate"),
+        effect_guard=_guard,
+    )
+
+    assert first["action"] == "fallback_requested"
+    assert second["action"] == "reconciling"
+    assert second["fallbackKey"] == first["fallbackKey"]
+    assert attempts == ["fallback"]
+    state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
+    slot = state["slots"][first["fallbackKey"]]
+    assert slot["state"] == "REQUESTED"
+    assert "coverageKind" not in slot
+    assert state["naturalScheduleCanary"]["latestRun"]["runId"] == 10
 
 
 def test_recheck_under_shared_effect_lock_closes_controller_race(tmp_path, monkeypatch):

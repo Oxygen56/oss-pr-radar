@@ -31,7 +31,6 @@ WATCHDOG_LOCK = "scheduler-watchdog.lock"
 WATCHDOG_WORKER = "scheduler-watchdog"
 WATCHDOG_LABEL = "com.oss-pr-radar.scheduler-watchdog"
 ACTIVE_RUN_STATUSES = frozenset({"queued", "in_progress", "waiting", "requested", "pending"})
-RELEVANT_EVENTS = frozenset({"schedule", "workflow_dispatch"})
 MAX_RETAINED_SLOTS = 48
 
 RunLister = Callable[[str, str], list[dict[str, Any]]]
@@ -82,7 +81,9 @@ def _run_time(run: dict[str, Any]) -> datetime | None:
 
 
 def _run_covers_slot(run: dict[str, Any], slot: datetime, *, ref: str) -> bool:
-    if run.get("event") not in RELEVANT_EVENTS:
+    # event=schedule is a trigger canary only.  It never proves that the
+    # workflow_dispatch business scan for this slot ran.
+    if run.get("event") != "workflow_dispatch":
         return False
     if run.get("head_branch") not in {None, "", ref}:
         return False
@@ -250,6 +251,16 @@ def watchdog_cycle(
                     # Natural health is intentionally derived only from
                     # event=schedule and cannot be made green by this worker.
                     "latestNaturalSchedule": _run_summary(natural) if natural else None,
+                    "naturalScheduleCanary": {
+                        "observed": natural is not None,
+                        "latestRun": _run_summary(natural) if natural else None,
+                        "latestRunSuccessful": bool(
+                            natural
+                            and natural.get("status") == "completed"
+                            and natural.get("conclusion") == "success"
+                        ),
+                        "sourceEvent": "schedule",
+                    },
                 }
             )
             existing = slots.get(claim_key)
@@ -265,9 +276,7 @@ def watchdog_cycle(
                     {
                         "state": "COVERED",
                         "coveredAt": _iso_z(current),
-                        "coverageKind": "natural"
-                        if covered.get("event") == "schedule"
-                        else "fallback",
+                        "coverageKind": "fallback",
                         "run": _run_summary(covered),
                     }
                 )
@@ -281,8 +290,7 @@ def watchdog_cycle(
                     "fallbackKey": claim_key,
                     "coverageKind": entry["coverageKind"],
                     "run": entry["run"],
-                    "githubNaturalScheduleHealthy": covered.get("event") == "schedule"
-                    and covered.get("conclusion") == "success",
+                    "githubNaturalScheduleHealthy": False,
                 }
 
             if existing is not None:
@@ -329,9 +337,7 @@ def watchdog_cycle(
                         "firstObservedAt": _iso_z(current),
                         "state": "COVERED",
                         "coveredAt": _iso_z(current),
-                        "coverageKind": "natural"
-                        if covered.get("event") == "schedule"
-                        else "fallback",
+                        "coverageKind": "fallback",
                         "run": _run_summary(covered),
                     }
                     slots[claim_key] = entry
@@ -344,8 +350,7 @@ def watchdog_cycle(
                         "fallbackKey": claim_key,
                         "coverageKind": entry["coverageKind"],
                         "run": entry["run"],
-                        "githubNaturalScheduleHealthy": covered.get("event") == "schedule"
-                        and covered.get("conclusion") == "success",
+                        "githubNaturalScheduleHealthy": False,
                     }
 
                 baseline_ids = sorted(
