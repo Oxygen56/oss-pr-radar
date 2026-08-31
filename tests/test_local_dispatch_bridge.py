@@ -201,6 +201,74 @@ def test_resolve_repo_code_paths_keeps_unique_suffixes_only():
     ) == ["src/providers/openai/client.py"]
 
 
+def test_resolve_repo_code_paths_recovers_real_multi_scrobbler_legacy_anchors():
+    class Client:
+        def repository_tree(self, repo, ref):
+            assert repo == "FoxxMD/multi-scrobbler"
+            assert ref == "232c802b44abda301f0f61840200e66054717b4b"
+            return [
+                {
+                    "type": "blob",
+                    "path": "src/backend/common/vendor/atproto/AbstractATProtoApiClient.ts",
+                },
+                {
+                    "type": "blob",
+                    "path": "src/backend/common/vendor/teal/TealApiClient.ts",
+                },
+                {"type": "blob", "path": "src/backend/scrobblers/TealfmScrobbler.ts"},
+                {
+                    "type": "blob",
+                    "path": "src/backend/scrobblers/AbstractScrobbleClient.ts",
+                },
+                {
+                    "type": "blob",
+                    "path": "src/backend/scrobblers/AbstractHistoricalScrobbleClient.ts",
+                },
+                {
+                    "type": "blob",
+                    "path": "node_modules/drizzle-orm/node-sqlite/session.js",
+                },
+            ]
+
+    assert MODULE._resolve_repo_code_paths(
+        Client(),
+        repo="FoxxMD/multi-scrobbler",
+        ref="232c802b44abda301f0f61840200e66054717b4b",
+        code_paths=[
+            "https://github.com/FoxxMD/multi-scrobbler/blob/232c802b44abda301f0f61840200e66054717b4b/src/backend/common/vendor/atproto/AbstractATProtoApiClient.ts",
+            "CWD/src/backend/common/vendor/atproto/AbstractATProtoApiClient.ts",
+            "CWD/src/backend/common/vendor/teal/TealApiClient.ts",
+            "CWD/src/backend/scrobblers/TealfmScrobbler.ts",
+            "CWD/src/backend/scrobblers/AbstractScrobbleClient.ts",
+            "CWD/src/backend/scrobblers/AbstractHistoricalScrobbleClient.ts",
+            "CWD/node_modules/drizzle-orm/node-sqlite/session.js",
+            "CWD/node_modules/drizzle-orm/sqlite-core/query-builders/insert.js",
+        ],
+    ) == [
+        "src/backend/common/vendor/atproto/AbstractATProtoApiClient.ts",
+        "src/backend/common/vendor/teal/TealApiClient.ts",
+        "src/backend/scrobblers/AbstractHistoricalScrobbleClient.ts",
+        "src/backend/scrobblers/AbstractScrobbleClient.ts",
+        "src/backend/scrobblers/TealfmScrobbler.ts",
+    ]
+
+
+def test_resolve_repo_code_paths_does_not_bypass_tree_lookup_failure():
+    class Client:
+        def repository_tree(self, _repo, _ref):
+            raise RuntimeError("tree unavailable")
+
+    assert (
+        MODULE._resolve_repo_code_paths(
+            Client(),
+            repo="owner/repo",
+            ref="base-sha",
+            code_paths=["CWD/src/runtime.py"],
+        )
+        == []
+    )
+
+
 def _superseded_scanner_revision() -> str:
     return V51_SUPERSEDED_REVISION
 

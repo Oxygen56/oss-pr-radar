@@ -26,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from time import monotonic, sleep
 from typing import Any, Callable
+from urllib.parse import unquote
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -3778,6 +3779,36 @@ def _hardware_inventory() -> set[str]:
     }
 
 
+def _repo_code_path_variants(path: str, *, repo: str) -> tuple[str, ...]:
+    """Normalize one legacy path without considering it repository-verified."""
+
+    value = unquote(str(path)).strip().strip("`").replace("\\", "/")
+    value = value.split("#", 1)[0].split("?", 1)[0]
+    value = re.sub(r"^file:/+", "", value, flags=re.I).lstrip("/")
+    value = re.sub(r"^https?://", "", value, flags=re.I)
+    github_match = re.fullmatch(
+        r"(?:www\.)?github\.com/([^/]+/[^/]+)/blob/(.+)",
+        value,
+        flags=re.I,
+    )
+    if github_match is not None:
+        if github_match.group(1).casefold() != repo.casefold():
+            return ()
+        tail = github_match.group(2).split("/")
+        variants = ["/".join(tail[index:]) for index in range(1, len(tail))]
+    else:
+        value = re.sub(r"^CWD/+", "", value, flags=re.I)
+        variants = [re.sub(r"^(?:\./)+", "", value)]
+
+    return tuple(
+        dict.fromkeys(
+            variant
+            for variant in variants
+            if variant and "node_modules" not in {part.casefold() for part in variant.split("/")}
+        )
+    )
+
+
 def _resolve_repo_code_paths(
     client: GitHubClient,
     *,
@@ -3785,18 +3816,25 @@ def _resolve_repo_code_paths(
     ref: str,
     code_paths: list[str],
 ) -> list[str]:
-    normalized = [str(path).strip().strip("`").lstrip("./") for path in code_paths]
-    normalized = [path for path in normalized if path]
+    normalized = [
+        variants for path in code_paths if (variants := _repo_code_path_variants(path, repo=repo))
+    ]
     if not normalized:
         return []
     try:
         tree_paths = {
             str(item.get("path") or "")
             for item in client.repository_tree(repo, ref)
-            if item.get("type") == "blob" and str(item.get("path") or "")
+            if item.get("type") == "blob"
+            and str(item.get("path") or "")
+            and "node_modules"
+            not in {
+                part.casefold()
+                for part in str(item.get("path") or "").replace("\\", "/").split("/")
+            }
         }
     except Exception:
-        return normalized
+        return []
 
     resolved: set[str] = set()
     code_search_terms: list[str] = []
@@ -3815,17 +3853,25 @@ def _resolve_repo_code_paths(
         ".c",
         ".h",
     )
-    for path in normalized:
-        if path in tree_paths:
-            resolved.add(path)
+    for variants in normalized:
+        exact_matches = {path for path in variants if path in tree_paths}
+        if len(exact_matches) == 1:
+            resolved.update(exact_matches)
             continue
-        if "/" in path:
-            suffix_matches = {
-                candidate for candidate in tree_paths if candidate.endswith(f"/{path}")
-            }
-            if len(suffix_matches) == 1:
-                resolved.update(suffix_matches)
+        if exact_matches:
             continue
+        suffix_matches = {
+            candidate
+            for path in variants
+            for candidate in tree_paths
+            if candidate == path or candidate.endswith(f"/{path}")
+        }
+        if len(suffix_matches) == 1:
+            resolved.update(suffix_matches)
+            continue
+        if any("/" in path for path in variants):
+            continue
+        path = variants[0]
         if "." not in path:
             snake_stem = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", path)
             snake_stem = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", "_", snake_stem).casefold()
