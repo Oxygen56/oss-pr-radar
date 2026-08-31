@@ -248,9 +248,7 @@ def test_create_pr_retries_transient_503_after_exact_head_is_still_absent(monkey
     assert result["created"] is True
     assert result["prUrl"] == "https://github.com/example/project/pull/2"
     assert len(calls) == 1
-    assert store.creation_attempts == [
-        {"effect_id": "effect-1", "permit_id": "permit-1"}
-    ]
+    assert store.creation_attempts == [{"effect_id": "effect-1", "permit_id": "permit-1"}]
     assert calls[0][:3] == ["gh", "pr", "create"]
     assert store.retried == [
         (

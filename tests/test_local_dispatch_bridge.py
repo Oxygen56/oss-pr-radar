@@ -26636,9 +26636,7 @@ def test_controller_publication_notice_reconciles_visible_reply_then_reserves_ne
     }
 
 
-def test_controller_publication_notice_replays_unacknowledged_reservation(
-    monkeypatch, tmp_path
-):
+def test_controller_publication_notice_replays_unacknowledged_reservation(monkeypatch, tmp_path):
     pr_url = "https://github.com/a/b/pull/9"
     rollout = tmp_path / "rollout.jsonl"
     rollout.write_text("", encoding="utf-8")
