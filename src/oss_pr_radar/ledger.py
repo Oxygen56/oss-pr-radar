@@ -14599,9 +14599,7 @@ class RadarLedger:
             "reservedAt": now,
         }
 
-    def commit_controller_publication_notice(
-        self, *, reservation_nonce: str, pr_url: str
-    ) -> None:
+    def commit_controller_publication_notice(self, *, reservation_nonce: str, pr_url: str) -> None:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             row = connection.execute(

@@ -394,9 +394,7 @@ def controller_publication_notice_text(pr_url: str) -> str:
     return f"新 PR 已创建：{pr_url}\n你无需操作。"
 
 
-def controller_publication_notice_materialized(
-    rollout_path: str | None, pr_url: str
-) -> bool:
+def controller_publication_notice_materialized(rollout_path: str | None, pr_url: str) -> bool:
     """Require the exact heartbeat reply before advancing its durable cursor."""
 
     return latest_agent_message(rollout_path) == controller_publication_notice_text(pr_url)

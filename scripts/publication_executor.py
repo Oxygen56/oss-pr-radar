@@ -856,8 +856,7 @@ def _create_pr_unlocked(args: argparse.Namespace, store: RadarLedger) -> dict[st
         result = {
             "ok": True,
             "created": bool(
-                publication_request.get("publicationKind") == "PR_CREATE"
-                and creation_attempted
+                publication_request.get("publicationKind") == "PR_CREATE" and creation_attempted
             ),
             "reconciled": bool(proc and proc.returncode != 0) or metadata_reconciled,
             "metadataUpdated": metadata_updated,
