@@ -22,6 +22,7 @@ from oss_pr_radar.local_publication import (
     queue_import_once,
     retryable_delivery_pending,
     run_bridge,
+    scheduler_watchdog_launch_agent_spec,
     slow_advance_once,
     slow_launch_agent_spec,
     sync_cloud_queue_if_due,
@@ -1894,16 +1895,21 @@ def test_worker_specs_are_separate_and_use_expected_intervals(tmp_path):
     fast = launch_agent_spec(tmp_path / "radar", interval_seconds=20, home=home)
     slow = slow_launch_agent_spec(tmp_path / "radar", home=home)
     queue = queue_import_launch_agent_spec(tmp_path / "radar", home=home)
+    watchdog = scheduler_watchdog_launch_agent_spec(tmp_path / "radar", home=home)
 
     assert fast["Label"] != slow["Label"]
     assert slow["StartInterval"] == 60
     assert queue["StartInterval"] == 300
+    assert watchdog["StartInterval"] == 300
     assert "ProcessType" not in slow
     assert "LowPriorityIO" not in slow
     assert "ProcessType" not in queue
     assert "LowPriorityIO" not in queue
+    assert "ProcessType" not in watchdog
+    assert "LowPriorityIO" not in watchdog
     assert slow["ProgramArguments"][-2:] == ["--root", str((tmp_path / "radar").resolve())]
     assert "queue_importer.py" in queue["ProgramArguments"][-3]
+    assert "scheduler_watchdog.py" in watchdog["ProgramArguments"][-3]
     assert worker_log_paths(fast["Label"], home=home) == (
         Path(fast["StandardOutPath"]),
         Path(fast["StandardErrorPath"]),
@@ -1916,8 +1922,13 @@ def test_worker_specs_are_separate_and_use_expected_intervals(tmp_path):
         Path(queue["StandardOutPath"]),
         Path(queue["StandardErrorPath"]),
     )
+    assert worker_log_paths(watchdog["Label"], home=home) == (
+        Path(watchdog["StandardOutPath"]),
+        Path(watchdog["StandardErrorPath"]),
+    )
     assert Path(slow["StandardOutPath"]).name == "local-publication-slow.log"
     assert Path(queue["StandardOutPath"]).name == "queue-importer.log"
+    assert Path(watchdog["StandardOutPath"]).name == "scheduler-watchdog.log"
 
 
 def test_due_cloud_queue_sync_imports_and_lists_pending_work(tmp_path):

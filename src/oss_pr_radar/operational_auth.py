@@ -19,7 +19,7 @@ from typing import Any
 from .managed_security import sign_current, verify_current
 from .pr_projection import ledger_projection
 from .release_binding import active_release, runtime_root_digest
-from .runtime import disk_restart_safe, read_disk_pressure_gate_health
+from .runtime import REQUIRED_WORKERS, disk_restart_safe, read_disk_pressure_gate_health
 from .stage6_rehearsal import source_generation, stable_sqlite_copy
 from .util import canonical_json, iso_z, sha256_json
 
@@ -838,8 +838,8 @@ def _preflight_requirements(preflight: dict[str, Any]) -> None:
         elif actual != expected:
             raise RuntimeError(f"operational authorization preflight failed: {key}")
     workers = preflight.get("workers")
-    if not isinstance(workers, list) or len(workers) != 3:
-        raise RuntimeError("operational authorization requires three staged workers")
+    if not isinstance(workers, list) or len(workers) != len(REQUIRED_WORKERS):
+        raise RuntimeError("operational authorization requires every staged worker")
     if any(
         item.get("actualConfigMatch") is not True
         or item.get("launchConfigMatch") is not True
@@ -948,7 +948,7 @@ def issue_operational_authorization(
 
 
 def _verify_worker_plist_bindings(bindings: object) -> bool:
-    if not isinstance(bindings, list) or len(bindings) != 3:
+    if not isinstance(bindings, list) or len(bindings) != len(REQUIRED_WORKERS):
         return False
     labels: set[str] = set()
     for item in bindings:
@@ -1223,7 +1223,7 @@ def reset_expired_worker_staging(
         expected_spec_digest = worker_spec_digest(specs)
         runner = launchctl_runner or launchctl_print
         unloaded_markers = ("could not find", "service not found", "no such process")
-        for worker in ("fast", "slow", "queue-importer"):
+        for worker in WORKER_LABELS:
             label = WORKER_LABELS[worker]
             output = runner(label)
             if not isinstance(output, str) or not any(

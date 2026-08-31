@@ -25,6 +25,7 @@ WORKER_LABELS = {
     "fast": "com.oss-pr-radar.local-publication",
     "slow": "com.oss-pr-radar.local-publication-slow",
     "queue-importer": "com.oss-pr-radar.queue-importer",
+    "scheduler-watchdog": "com.oss-pr-radar.scheduler-watchdog",
 }
 LEGACY_LABELS = (
     "com.oss-pr-radar.local-publication-agent",

@@ -55,6 +55,7 @@ WORKER_MAX_AGE = {
     "fast": timedelta(minutes=2),
     "slow": timedelta(minutes=5),
     "queue-importer": timedelta(minutes=15),
+    "scheduler-watchdog": timedelta(minutes=10),
 }
 MAX_EVIDENCE_AGE = timedelta(hours=24)
 MAX_AUTOMATION_AGE = timedelta(minutes=10)

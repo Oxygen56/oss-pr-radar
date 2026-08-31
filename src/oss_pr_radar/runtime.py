@@ -44,7 +44,7 @@ DISK_PRESSURE_GATE_SCHEMA = "disk_pressure_gate_v1"
 DISK_PRESSURE_RECHECK_SECONDS = 300
 RUNTIME_SCHEMA = "runtime_health_v1"
 GIB = 1024**3
-REQUIRED_WORKERS = ("fast", "slow", "queue-importer")
+REQUIRED_WORKERS = ("fast", "slow", "queue-importer", "scheduler-watchdog")
 SLOW_INFLIGHT_MAX_SECONDS = 1800
 
 
@@ -1531,6 +1531,7 @@ def _worker_health(
     now: float,
     max_success_age_seconds: int,
     max_queue_age_seconds: int,
+    max_watchdog_age_seconds: int,
     max_inflight_seconds: int,
     max_failures: int,
 ) -> dict[str, Any]:
@@ -1541,7 +1542,12 @@ def _worker_health(
     )
     success = _parse_epoch(state.get(success_field))
     issues: list[str] = []
-    max_age = max_queue_age_seconds if worker == "queue-importer" else max_success_age_seconds
+    if worker == "queue-importer":
+        max_age = max_queue_age_seconds
+    elif worker == "scheduler-watchdog":
+        max_age = max_watchdog_age_seconds
+    else:
+        max_age = max_success_age_seconds
     in_flight = worker == "slow" and state.get("inFlight") is True
     attempt_started = _parse_epoch(state.get("attemptStartedAt"))
     worker_pid_alive = False
@@ -1594,6 +1600,7 @@ def evaluate_health(
     now: float | None = None,
     max_success_age_seconds: int = 120,
     max_queue_age_seconds: int = 900,
+    max_watchdog_age_seconds: int = 600,
     max_inflight_seconds: int = SLOW_INFLIGHT_MAX_SECONDS,
     max_failures: int = 3,
     expected_release: str | None = None,
@@ -1618,6 +1625,7 @@ def evaluate_health(
             now=current,
             max_success_age_seconds=max_success_age_seconds,
             max_queue_age_seconds=max_queue_age_seconds,
+            max_watchdog_age_seconds=max_watchdog_age_seconds,
             max_inflight_seconds=max_inflight_seconds,
             max_failures=max_failures,
         )

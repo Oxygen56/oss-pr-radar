@@ -33,6 +33,7 @@ from .runtime import (
 )
 from .runtime_audit import active_release_evidence
 from .runtime_retention import maybe_reclaim_runtime_storage
+from .scheduler_watchdog import WATCHDOG_LABEL
 
 LAUNCH_AGENT_LABEL = "com.oss-pr-radar.local-publication"
 SLOW_WORKER_LABEL = "com.oss-pr-radar.local-publication-slow"
@@ -1618,6 +1619,23 @@ def queue_import_launch_agent_spec(
     )
 
 
+def scheduler_watchdog_launch_agent_spec(
+    root: Path,
+    *,
+    home: Path,
+    interval_seconds: int = 300,
+    runtime_root: Path | None = None,
+) -> dict[str, Any]:
+    return _worker_spec(
+        root,
+        label=WATCHDOG_LABEL,
+        script="scheduler_watchdog.py",
+        interval_seconds=interval_seconds,
+        home=home,
+        runtime_root=runtime_root,
+    )
+
+
 def worker_specs(
     root: Path,
     *,
@@ -1640,6 +1658,7 @@ def worker_specs(
         ),
         slow_launch_agent_spec(code_root, home=home, runtime_root=runtime_root),
         queue_import_launch_agent_spec(code_root, home=home, runtime_root=runtime_root),
+        scheduler_watchdog_launch_agent_spec(code_root, home=home, runtime_root=runtime_root),
     ]
 
 

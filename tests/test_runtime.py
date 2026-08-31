@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from oss_pr_radar.runtime import (
+    REQUIRED_WORKERS,
     DiskThresholds,
     RuntimeLockBusy,
     disk_restart_safe,
@@ -184,7 +185,7 @@ def _record_cycle_process(root: str, worker: str) -> None:
 def test_runtime_health_keeps_worker_state_and_aggregate_atomic(tmp_path: Path):
     processes = [
         multiprocessing.Process(target=_record_cycle_process, args=(str(tmp_path), worker))
-        for worker in ("fast", "slow", "queue-importer")
+        for worker in REQUIRED_WORKERS
     ]
     for process in processes:
         process.start()
@@ -193,7 +194,7 @@ def test_runtime_health_keeps_worker_state_and_aggregate_atomic(tmp_path: Path):
         assert process.exitcode == 0
 
     state = json.loads((tmp_path / "state" / "runtime-health.json").read_text())
-    assert set(state["workers"]) == {"fast", "slow", "queue-importer"}
+    assert set(state["workers"]) == set(REQUIRED_WORKERS)
     assert "worker" not in state
     assert "lastExitCode" not in state
     assert state["workers"]["fast"]["lastExitCode"] == 0
@@ -210,7 +211,7 @@ def test_required_worker_failure_cannot_be_hidden_by_successful_worker():
                 "lastExitCode": 0,
                 "consecutiveFailures": 0,
             }
-            for worker in ("fast", "slow", "queue-importer")
+            for worker in REQUIRED_WORKERS
         },
         "deployment": {
             "pendingPublicationEffects": 0,
@@ -254,7 +255,7 @@ def test_health_does_not_mark_live_slow_cycle_stale_before_inflight_deadline(mon
                 "queueLastExitCode": 0,
                 "consecutiveFailures": 0,
             }
-            for worker in ("fast", "slow", "queue-importer")
+            for worker in REQUIRED_WORKERS
         },
         "deployment": {
             "pendingPublicationEffects": 0,
@@ -310,7 +311,7 @@ def test_health_rejects_dead_or_overdue_slow_cycle(
                 "lastExitCode": 0,
                 "consecutiveFailures": 0,
             }
-            for worker in ("fast", "slow", "queue-importer")
+            for worker in REQUIRED_WORKERS
         },
         "deployment": {
             "pendingPublicationEffects": 0,
@@ -349,7 +350,7 @@ def test_health_rejects_nonexistent_recorded_slow_pid():
                 "queueLastExitCode": 0,
                 "consecutiveFailures": 0,
             }
-            for worker in ("fast", "slow", "queue-importer")
+            for worker in REQUIRED_WORKERS
         },
         "deployment": {
             "pendingPublicationEffects": 0,

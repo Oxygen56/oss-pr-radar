@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the fast, slow, and signed-queue worker LaunchAgents together."""
+"""Install all required local Radar worker LaunchAgents together."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ FIXED_WORKER_LABELS = (
     "com.oss-pr-radar.local-publication",
     "com.oss-pr-radar.local-publication-slow",
     "com.oss-pr-radar.queue-importer",
+    "com.oss-pr-radar.scheduler-watchdog",
 )
 
 from oss_pr_radar.launch_config import parse_launchctl_config  # noqa: E402
@@ -107,8 +108,10 @@ def _snapshot_plist(service: str, path: Path) -> PlistSnapshot:
 
 
 def _validate_specs(specs: list[dict[str, object]]) -> None:
-    if len(specs) != 3:
-        raise RuntimeError(f"expected three worker specs, got {len(specs)}")
+    if len(specs) != len(REQUIRED_WORKERS):
+        raise RuntimeError(
+            f"expected {len(REQUIRED_WORKERS)} required worker specs, got {len(specs)}"
+        )
     labels: set[str] = set()
     required = {
         "Label",
@@ -259,6 +262,7 @@ def service_status(
         FIXED_WORKER_LABELS[0]: "fast",
         FIXED_WORKER_LABELS[1]: "slow",
         FIXED_WORKER_LABELS[2]: "queue-importer",
+        FIXED_WORKER_LABELS[3]: "scheduler-watchdog",
     }.get(str(expected.get("Label")), "fast")
     release = active_release_evidence(root)
     # Status is deliberately observational: evaluate the complete persisted

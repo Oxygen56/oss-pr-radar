@@ -78,6 +78,7 @@ def specs(tmp_path: Path) -> list[dict[str, object]]:
         "com.oss-pr-radar.local-publication",
         "com.oss-pr-radar.local-publication-slow",
         "com.oss-pr-radar.queue-importer",
+        "com.oss-pr-radar.scheduler-watchdog",
     )
     return [
         {
@@ -126,12 +127,12 @@ def test_second_worker_failure_restores_everything(
     assert slow.read_bytes() == slow_before
     assert fast.stat().st_mode & 0o777 == 0o640
     assert slow.stat().st_mode & 0o777 == 0o604
-    assert not plist_path(home, str(worker_specs[2]["Label"])).exists()
+    assert all(not plist_path(home, str(spec["Label"])).exists() for spec in worker_specs[2:])
     assert fake.loaded == {fast_service}
     assert not list(launch_dir.glob(".*.tmp"))
 
 
-def test_success_installs_and_loads_all_three_workers(
+def test_success_installs_and_loads_all_required_workers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "home"
@@ -149,7 +150,7 @@ def test_success_installs_and_loads_all_three_workers(
     result = INSTALL.install_workers(worker_specs, home=home, domain=domain)
 
     assert result["ok"] is True
-    assert len(result["workers"]) == 3
+    assert len(result["workers"]) == 4
     assert fake.loaded == {f"{domain}/{spec['Label']}" for spec in worker_specs}
     for spec in worker_specs:
         path = plist_path(home, str(spec["Label"]))
@@ -299,6 +300,7 @@ def test_first_worker_failure_does_not_touch_later_loaded_workers(
     }
     assert fake.loaded == set(services[1:])
     assert [call[0] for call in fake.calls] == [
+        "print",
         "print",
         "print",
         "print",
@@ -572,7 +574,7 @@ def test_worker_write_modes_require_authorization_before_any_launchctl_or_plist_
     assert not list((home / "Library" / "LaunchAgents").glob("*.plist"))
 
 
-def test_authorized_stage_uses_only_the_three_current_worker_specs(
+def test_authorized_stage_uses_only_the_current_required_worker_specs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[tuple[str, list[str]]] = []
@@ -628,6 +630,7 @@ def test_authorized_stage_uses_only_the_three_current_worker_specs(
                 "com.oss-pr-radar.local-publication",
                 "com.oss-pr-radar.local-publication-slow",
                 "com.oss-pr-radar.queue-importer",
+                "com.oss-pr-radar.scheduler-watchdog",
             ],
         )
     ]
@@ -726,6 +729,11 @@ def test_worker_status_uses_complete_runtime_state_without_cross_worker_false_al
                         "queueLastExitCode": 0,
                         "queueConsecutiveFailures": 0,
                     },
+                    "scheduler-watchdog": {
+                        "lastSuccessAt": now - 10,
+                        "lastExitCode": 0,
+                        "consecutiveFailures": 0,
+                    },
                 },
                 "deployment": {
                     "manifestVerified": True,
@@ -784,7 +792,7 @@ def test_worker_status_uses_complete_runtime_state_without_cross_worker_false_al
         for spec in worker_specs
     ]
 
-    assert [status["ok"] for status in statuses] == [True, False, True]
+    assert [status["ok"] for status in statuses] == [True, False, True, True]
     assert statuses[0]["runtimeHealth"]["healthy"] is False
     assert statuses[0]["workerRuntimeHealth"]["healthy"] is True
     assert statuses[1]["workerRuntimeHealth"]["lastExitCode"] == 1
@@ -817,6 +825,11 @@ def test_worker_status_reports_disk_warning_without_failing_loaded_workers(
                         "queueImportSuccessAt": now - 10,
                         "queueLastExitCode": 0,
                         "queueConsecutiveFailures": 0,
+                    },
+                    "scheduler-watchdog": {
+                        "lastSuccessAt": now - 10,
+                        "lastExitCode": 0,
+                        "consecutiveFailures": 0,
                     },
                 },
                 "deployment": {
@@ -867,7 +880,7 @@ def test_worker_status_reports_disk_warning_without_failing_loaded_workers(
         for spec in worker_specs
     ]
 
-    assert [status["ok"] for status in statuses] == [True, True, True]
+    assert [status["ok"] for status in statuses] == [True, True, True, True]
     assert statuses[0]["runtimeHealth"]["healthy"] is True
     assert statuses[0]["runtimeHealth"]["issues"] == []
     assert statuses[0]["runtimeHealth"]["warnings"] == ["DISK_WARNING_THRESHOLD"]
@@ -884,6 +897,7 @@ def test_status_top_level_ok_aggregates_worker_health(
         str(worker_specs[0]["Label"]): True,
         str(worker_specs[1]["Label"]): False,
         str(worker_specs[2]["Label"]): True,
+        str(worker_specs[3]["Label"]): True,
     }
     monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
     monkeypatch.setattr(
@@ -941,7 +955,7 @@ def test_status_top_level_ok_aggregates_worker_health(
     assert result["ok"] is False
     assert result["diskPressureGate"] == gate_health
     assert gate_reads == 1
-    assert [worker["ok"] for worker in result["workers"]] == [True, False, True]
+    assert [worker["ok"] for worker in result["workers"]] == [True, False, True, True]
 
 
 def test_legacy_installer_is_only_a_compatibility_forwarder():
@@ -1046,7 +1060,7 @@ def test_authorized_stage_replaces_complete_unloaded_previous_release(
     )
 
     def consume(*_args, worker_records, **_kwargs):
-        assert len(worker_records) == 3
+        assert len(worker_records) == 4
         assert all(
             plistlib.loads(plist_path(home, str(spec["Label"])).read_bytes()) == spec
             for spec in current
@@ -1218,7 +1232,7 @@ def test_stage_receipt_uses_fresh_launchctl_observation_not_hardcoded_state(
     monkeypatch.setattr(INSTALL, "launchctl", fake)
 
     records = INSTALL._staging_records(worker_specs, home=home, domain=domain)
-    assert len(records) == 3
+    assert len(records) == 4
     assert all(item["loaded"] is False and item["pid"] is None for item in records)
     assert all(item["observedAt"].endswith("Z") for item in records)
     assert all(call[0] == "print" for call in fake.calls)
@@ -1275,6 +1289,7 @@ def test_stage_transaction_lock_serializes_two_stagers(tmp_path: Path) -> None:
                 "com.oss-pr-radar.local-publication",
                 "com.oss-pr-radar.local-publication-slow",
                 "com.oss-pr-radar.queue-importer",
+                "com.oss-pr-radar.scheduler-watchdog",
             ),
             None,
         ),
@@ -1283,6 +1298,7 @@ def test_stage_transaction_lock_serializes_two_stagers(tmp_path: Path) -> None:
                 "com.oss-pr-radar.local-publication",
                 "com.oss-pr-radar.local-publication-slow",
                 "com.oss-pr-radar.queue-importer",
+                "com.oss-pr-radar.scheduler-watchdog",
             ),
             "com.oss-pr-radar.local-publication",
         ),
@@ -1459,7 +1475,7 @@ def test_two_complete_stage_transactions_have_one_receipt_and_one_write(
         thread.join(timeout=5)
 
     assert results == [0, 0]
-    assert len(write_calls) == 3
+    assert len(write_calls) == 4
     assert consume_calls == [1]
     assert receipt_path.exists()
     assert all(

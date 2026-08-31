@@ -12,6 +12,7 @@ from test_ledger import insert_publication_preflight
 from test_runtime import healthy_state
 
 from oss_pr_radar.ledger import RadarLedger
+from oss_pr_radar.runtime import REQUIRED_WORKERS
 from oss_pr_radar.runtime_audit import (
     _runtime_journal,
     active_release_evidence,
@@ -28,6 +29,7 @@ def healthy_worker_processes():
                 "fast": "com.oss-pr-radar.local-publication",
                 "slow": "com.oss-pr-radar.local-publication-slow",
                 "queue-importer": "com.oss-pr-radar.queue-importer",
+                "scheduler-watchdog": "com.oss-pr-radar.scheduler-watchdog",
             }[worker],
             "launchctl": {"pid": 1, "lastExitCode": 0},
             "process": {
@@ -38,7 +40,7 @@ def healthy_worker_processes():
             },
             "stalePidConflict": False,
         }
-        for worker in ("fast", "slow", "queue-importer")
+        for worker in REQUIRED_WORKERS
     }
 
 
@@ -49,6 +51,7 @@ def short_lived_worker_processes():
                 "fast": "com.oss-pr-radar.local-publication",
                 "slow": "com.oss-pr-radar.local-publication-slow",
                 "queue-importer": "com.oss-pr-radar.queue-importer",
+                "scheduler-watchdog": "com.oss-pr-radar.scheduler-watchdog",
             }[worker],
             "launchctl": {"pid": None, "lastExitCode": 0},
             "process": {
@@ -59,7 +62,7 @@ def short_lived_worker_processes():
             },
             "stalePidConflict": False,
         }
-        for worker in ("fast", "slow", "queue-importer")
+        for worker in REQUIRED_WORKERS
     }
 
 
@@ -76,7 +79,7 @@ def healthy_nested_state(now: float) -> dict:
                 ),
                 "consecutiveFailures": 0,
             }
-            for worker in ("fast", "slow", "queue-importer")
+            for worker in REQUIRED_WORKERS
         },
         "deployment": {
             "pendingPublicationEffects": 0,
@@ -215,7 +218,7 @@ def test_collect_snapshot_uses_real_pids_and_detects_stale_runtime_pid(tmp_path)
 
     workers = {}
     processes = {}
-    for worker in ("fast", "slow", "queue-importer"):
+    for worker in REQUIRED_WORKERS:
         process = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(5)", release["path"]],
             cwd=target,
@@ -239,6 +242,7 @@ def test_collect_snapshot_uses_real_pids_and_detects_stale_runtime_pid(tmp_path)
         "fast": "com.oss-pr-radar.local-publication",
         "slow": "com.oss-pr-radar.local-publication-slow",
         "queue-importer": "com.oss-pr-radar.queue-importer",
+        "scheduler-watchdog": "com.oss-pr-radar.scheduler-watchdog",
     }
 
     def fake_launchctl(label: str) -> str:

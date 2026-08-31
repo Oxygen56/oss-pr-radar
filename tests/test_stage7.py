@@ -40,6 +40,7 @@ from oss_pr_radar.operational_auth import (
 from oss_pr_radar.outbound_pause import OUTBOUND_PAUSE_FILENAME, OUTBOUND_PAUSE_SCHEMA
 from oss_pr_radar.pr_projection import projection_summary
 from oss_pr_radar.release_binding import runtime_root_digest
+from oss_pr_radar.runtime_audit import WORKER_LABELS
 from oss_pr_radar.stage6_verification import build_verification_manifest
 from oss_pr_radar.stage7_acceptance import (
     _activated_worker_execution_ok,
@@ -371,10 +372,7 @@ def _bootstrap(runtime: Path, legacy: Path, tmp_path: Path) -> None:
         "observedAt": now,
         "expiresAt": expires,
         "allStopped": True,
-        "workers": {
-            worker: {"loaded": False, "pidAlive": False}
-            for worker in ("fast", "slow", "queue-importer")
-        },
+        "workers": {worker: {"loaded": False, "pidAlive": False} for worker in WORKER_LABELS},
         "legacy": {
             label: {"loaded": False}
             for label in (
@@ -1080,6 +1078,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
         "fast": {"lastSuccessAt": now, "lastExitCode": 0},
         "slow": {"lastSuccessAt": now, "lastExitCode": 0},
         "queue-importer": {"queueImportSuccessAt": now, "queueLastExitCode": 0},
+        "scheduler-watchdog": {"lastSuccessAt": now, "lastExitCode": 0},
     }
     health_path.write_text(json.dumps(state), encoding="utf-8")
     retry_at = utc_now().timestamp() + 300
@@ -1760,7 +1759,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
                 "queueImportSuccessAt": timestamp,
                 "lastExitCode": exit_code,
             }
-            for worker in ("fast", "slow", "queue-importer")
+            for worker in WORKER_LABELS
         }
         (runtime / "state" / "runtime-health.json").write_text(json.dumps(state), encoding="utf-8")
 
