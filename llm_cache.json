@@ -37769,6 +37769,39 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly identifies a missing integration path in @mastra/mcp for MCP protocol revision 2026-07-28, with concrete code anchors and a suggested design. However, it is an infrastructure/API enhancement requiring maintainer design confirmation, and the gate decision is HUMAN_REVIEW."
   },
+  "a092ebb2a4ab0f5e65efe8ea7c28214defe4d1ef204b748057ca567ba2524142": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "tools/checkpoint/utils.py",
+      "tools/checkpoint/saver_base.py",
+      "megatron/core/process_groups_config.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #6683 which touches GTP_remat and weight-shard semantics; need to compare implementation boundaries to avoid duplication.",
+      "Changes to process group initialization might affect other converter paths or training if not carefully scoped."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided convert.py command with a small Mixtral model or synthetic checkpoint, verify conversion completes and the output checkpoint loads in pretrain_gpt.py with target TP/PP.",
+      "Add a unit test for saver_base._load_checkpoint_args to ensure target-derived weight-shard args are not overwritten by source checkpoint args.",
+      "Add a test that fakes GTP_remat process groups in the converter path and verifies model building does not assert."
+    ],
+    "unknowns": [
+      "Whether existing PR #6683 already fixes the root cause; requires manual comparison of code changes."
+    ],
+    "why": "The issue provides a precise root cause for two regressions in the HF->mcore checkpoint converter, with exact code locations, reproduction commands, and expected vs actual behavior. The proposed fixes are concrete and local to tools/checkpoint, and the validation path is clear: run the converter with the given command and verify the checkpoint loads and evaluates correctly. This is a valuable, actionable contribution to a curated LLM algorithm repository."
+  },
   "a0988c0775eda5f125f8e9fc12358bd74dade8d93f3e6ddd5b7144b6779dc168": {
     "confidence": 0.8,
     "contradictions": [
