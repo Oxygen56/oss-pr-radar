@@ -11593,6 +11593,173 @@ def _published_followup_store(
     return store, worktree, head_sha, pr_url
 
 
+def test_late_pr_followup_result_unblocks_pending_new_issue_claim(monkeypatch, tmp_path):
+    store, _worktree, head_sha, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    wake_digest = str(candidate["wakeDigest"])
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=wake_digest,
+        prepared_head_sha=head_sha,
+    )
+    store.complete_pr_followup_reservation(
+        thread_id="thread-1",
+        wake_digest=wake_digest,
+    )
+
+    now = datetime.now(UTC)
+    assert store.enqueue(
+        {
+            "intentId": "intent-new",
+            "key": "a/b#2",
+            "repo": "a/b",
+            "issueNumber": 2,
+            "issueUrl": "https://github.com/a/b/issues/2",
+            "title": "New runtime bug",
+            "mode": "canary",
+            "category": "NEW_CLEAN_CANDIDATE",
+            "scanGate": "ALLOW_TO_WORK",
+            "autoSpawn": True,
+            "score": 9,
+            "snapshotId": "snapshot-new",
+            "decisionDigest": "decision-new",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            ("thread-1", int((now - timedelta(hours=2)).timestamp()), 0, None),
+        )
+
+    state = tmp_path / "state"
+    receipt_root = state / "task_turn_receipts"
+    receipt_root.mkdir(parents=True)
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="pr-followup",
+        thread_id="thread-1",
+        delivery_token=wake_digest,
+    )
+    (receipt_root / f"{receipt_key}.json").write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "turnStarted": False,
+                "turnId": None,
+                "error": (
+                    "RuntimeError:DESKTOP_ACTIVE_WRITER:"
+                    "thread thread-1 already has an active writer"
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_list",
+        lambda _args: {"candidates": [], "controllerReviewPending": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "recovery_list",
+        lambda _args: {"recoverable": [], "unresolved": []},
+    )
+    monkeypatch.setenv("RADAR_MAX_ACTIVE_TASKS", "5")
+    priority_args = SimpleNamespace(ledger=store.path, runtime_root=tmp_path / "runtime")
+    claim_args = SimpleNamespace(
+        ledger=store.path,
+        runtime_root=tmp_path / "runtime",
+        intent_id="intent-new",
+        owner="controller",
+        lease_minutes=15,
+        prepare=False,
+    )
+
+    unresolved = MODULE.pr_followup_list(priority_args)["unresolved"]
+    assert unresolved[0]["wake_digest"] == wake_digest
+    assert unresolved[0]["retryReason"] == "DESKTOP_ACTIVE_WRITER"
+    assert MODULE._higher_priority_existing_work(
+        priority_args,
+        intent_key="a/b#2",
+    ) == [{"kind": "pr_followup", "key": "a/b#1"}]
+    monkeypatch.setattr(
+        MODULE,
+        "_audit_intent",
+        lambda _intent: pytest.fail("the unresolved existing PR must defer the new audit"),
+    )
+    blocked = MODULE.claim_intent(claim_args)
+    assert blocked["reason"] == "higher_priority_existing_work"
+    assert blocked["priorityWork"] == [{"kind": "pr_followup", "key": "a/b#1"}]
+    with store.connect() as connection:
+        pending = connection.execute(
+            "SELECT status FROM intents WHERE intent_id='intent-new'"
+        ).fetchone()
+    assert pending["status"] == "PENDING"
+
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=wake_digest,
+        result_digest="late-result",
+        stage="PR_OPEN",
+    )
+
+    priority_after_result = MODULE._higher_priority_existing_work(
+        priority_args,
+        intent_key="a/b#2",
+    )
+    assert {"kind": "pr_followup", "key": "a/b#1"} not in priority_after_result
+
+    evidence = SimpleNamespace(
+        digest="live-evidence-new",
+        probe_level="UNVERIFIED",
+        repo_probe_receipt={},
+        as_dict=lambda: {
+            "digest": "live-evidence-new",
+            "complete": True,
+            "repo": "a/b",
+            "issue": {"state": "open", "labels": []},
+        },
+    )
+    verdict = AuthorizationDecision(
+        status="ALLOW",
+        reason_code="LIVE_EVIDENCE_PASSED",
+        checks={"evidence": "PASS"},
+        evidence_digest=evidence.digest,
+    )
+    monkeypatch.setattr(MODULE, "_audit_intent", lambda _intent: (evidence, verdict))
+    monkeypatch.setattr(
+        MODULE,
+        "resolve_target_base",
+        lambda _client, _repo, _issue: {
+            "branch": "main",
+            "sha": "a" * 40,
+            "source": "repository_default",
+            "defaultBranch": "main",
+        },
+    )
+
+    result = MODULE.claim_intent(claim_args)
+
+    assert result["authorized"] is True
+    assert result["claimed"] is True
+    assert result["intentId"] == "intent-new"
+    with store.connect() as connection:
+        claimed = connection.execute(
+            "SELECT status,lease_owner FROM intents WHERE intent_id='intent-new'"
+        ).fetchone()
+    assert dict(claimed) == {"status": "LEASED", "lease_owner": "controller"}
+
+
 def test_ingestion_accepts_current_ci_green_continuation_result(tmp_path):
     store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
     store.record_stage("a/b#1", "CI_GREEN", evidence={"checks": "green"})
@@ -13537,6 +13704,7 @@ def _controller_commit_result(
     authenticated: bool = True,
     worktree: Path | None = None,
     additional_changed_files: tuple[str, ...] = (),
+    additional_baseline_files: tuple[str, ...] = (),
     reported_code_paths: tuple[str, ...] | None = None,
     probe_code_paths: tuple[str, ...] = ("runtime.py",),
 ) -> tuple[RadarLedger, Path, Path]:
@@ -13549,12 +13717,13 @@ def _controller_commit_result(
     receipt_code_paths = list(probe_code_paths)
     source = worktree / "runtime.py"
     source.write_text("value = 1\n", encoding="utf-8")
-    for relative in additional_changed_files:
+    for relative in (*additional_changed_files, *additional_baseline_files):
         extra = worktree / relative
         extra.parent.mkdir(parents=True, exist_ok=True)
         extra.write_text("value = 1\n", encoding="utf-8")
     changed_files = sorted(["runtime.py", *additional_changed_files])
-    run_git(worktree, "add", *changed_files)
+    baseline_files = sorted([*changed_files, *additional_baseline_files])
+    run_git(worktree, "add", *baseline_files)
     run_git(worktree, "commit", "-m", "chore: baseline")
     run_git(worktree, "branch", "-M", "main")
     run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
@@ -19255,8 +19424,20 @@ def test_existing_policy_block_with_refreshed_context_stays_idempotent(tmp_path)
     }
 
 
-def _merge_resolution_scope_request_fixture(tmp_path):
-    store, worktree, result_path = _controller_commit_result(tmp_path)
+def _merge_resolution_scope_request_fixture(
+    tmp_path,
+    *,
+    head_changed_files: tuple[str, ...] = (),
+    head_unchanged_files: tuple[str, ...] = (),
+    requested_extra: str = "runtime/new.py",
+    signed_changed_files: tuple[str, ...] | None = None,
+    signed_review_paths: tuple[str, ...] = (),
+):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=head_changed_files,
+        additional_baseline_files=head_unchanged_files,
+    )
     source_result = json.loads(result_path.read_text(encoding="utf-8"))
     head_sha = str(source_result["reproductionReceipt"]["commitSha"])
     run_git(worktree, "switch", "main")
@@ -19275,6 +19456,18 @@ def _merge_resolution_scope_request_fixture(tmp_path):
         degrade_stage=False,
     )
     checked_at = iso_z(datetime.now(UTC) + timedelta(seconds=1))
+    followup_evidence = {
+        "mergeConflict": True,
+        "baseRefName": "main",
+        "baseSha": base_sha,
+        "mergeConflictFiles": ["runtime.py"],
+    }
+    if signed_changed_files is not None:
+        followup_evidence["changedFiles"] = sorted(signed_changed_files)
+    if signed_review_paths:
+        followup_evidence["unresolvedReviewThreads"] = [
+            {"path": path} for path in sorted(signed_review_paths)
+        ]
     store.import_pr_followups(
         {
             "version": "pr_followup_v3",
@@ -19287,12 +19480,7 @@ def _merge_resolution_scope_request_fixture(tmp_path):
                     "taskActionDigest": "merge-conflict-task-action",
                     "taskFollowupRequired": True,
                     "taskActions": ["解决当前基线重构引起的冲突"],
-                    "evidence": {
-                        "mergeConflict": True,
-                        "baseRefName": "main",
-                        "baseSha": base_sha,
-                        "mergeConflictFiles": ["runtime.py"],
-                    },
+                    "evidence": followup_evidence,
                     "checkedAt": checked_at,
                 }
             ],
@@ -19329,13 +19517,243 @@ def _merge_resolution_scope_request_fixture(tmp_path):
         "reason": "CONFLICT_SCOPE_INSUFFICIENT",
         "evidence": {
             "headSha": head_sha,
-            "localAction": "none",
             "mergeConflictFiles": ["runtime.py"],
-            "requiredResolutionFiles": ["runtime.py", "runtime/new.py"],
+            "requiredResolutionFiles": sorted(["runtime.py", requested_extra]),
         },
     }
     result_path.write_text(json.dumps(request), encoding="utf-8")
     return store, worktree, result_path, context, request, head_sha, base_sha
+
+
+def test_ingest_accepts_explicit_none_merge_resolution_local_action(tmp_path):
+    store, _worktree, result_path, _context, request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    request["evidence"]["localAction"] = "none"
+    result_path.write_text(json.dumps(request), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["resolutionScopeAuthorized"][0]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+
+
+@pytest.mark.parametrize("local_action", [None, False, "changed"])
+def test_ingest_rejects_explicit_non_none_merge_resolution_local_action(tmp_path, local_action):
+    store, _worktree, result_path, _context, request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    request["evidence"]["localAction"] = local_action
+    result_path.write_text(json.dumps(request), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["ingested"] == []
+    assert result["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "MERGE_RESOLUTION_SCOPE_REQUEST_INVALID",
+            "alreadyRecorded": False,
+        }
+    ]
+
+
+def test_ingest_authorizes_review_bound_existing_pr_path_and_finalizer_consumes_it(tmp_path):
+    store, worktree, result_path, _context, request, head_sha, base_sha = (
+        _merge_resolution_scope_request_fixture(
+            tmp_path,
+            head_changed_files=("worker.py",),
+            requested_extra="worker.py",
+            signed_changed_files=("runtime.py", "worker.py"),
+            signed_review_paths=("worker.py",),
+        )
+    )
+
+    authorized = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert authorized["ok"] is True, authorized["errors"]
+    assert authorized.get("workBlocked", []) == []
+    authorization = authorized["resolutionScopeAuthorized"][0]
+    assert authorization["authorizedResolutionFiles"] == ["runtime.py", "worker.py"]
+    replacement = store.pr_followup_candidates()[0]
+    assert replacement["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "worker.py",
+    ]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=str(replacement["wakeDigest"]),
+        prepared_head_sha=head_sha,
+        prepared_base_sha=base_sha,
+        merge_conflict_files=["runtime.py"],
+    )
+    next_context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+            prepared_followup_head=head_sha,
+        ).read_text(encoding="utf-8")
+    )
+    assert next_context["prFollowup"]["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "worker.py",
+    ]
+
+    (worktree / "runtime.py").write_text("value = 4\n", encoding="utf-8")
+    (worktree / "worker.py").write_text("value = 4\n", encoding="utf-8")
+    quality = {field: True for field in QUALITY_FIELDS}
+    quality["independent_review_passed"] = False
+    merge_value = {
+        "schemaVersion": "radar-task-result-v1",
+        "contextDigest": next_context["contextDigest"],
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "stage": "FIX_READY",
+        "reason": "MERGE_CONFLICT_RESOLVED",
+        "prUrl": request["prUrl"],
+        "followupDigest": replacement["wakeDigest"],
+        "handoffMode": "controller_merge_required",
+        "commitSha": None,
+        "headSha": head_sha,
+        "branch": "fix/1-runtime-boundary",
+        "commitMessage": "merge: resolve runtime review findings",
+        "changedFiles": ["runtime.py", "worker.py"],
+        "mergeBaseSha": base_sha,
+        "selectedBaseSha": next_context["selectedBaseSha"],
+        "taskId": "intent-1",
+        "codePaths": list(next_context["codePaths"]),
+        "probeRequired": True,
+        "probeLevel": "REPRODUCED_VALIDATED",
+        "tests": [{"command": "pytest tests/runtime", "exitCode": 0}],
+        "quality": quality,
+        "publication": {
+            "headOwner": "Oxygen56",
+            "baseBranch": "main",
+            "title": "fix: resolve runtime review findings",
+            "bodyFile": str((worktree / ".oss-pr-radar" / "pr-body.md").resolve()),
+        },
+    }
+    result_path.write_text(json.dumps(merge_value), encoding="utf-8")
+
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate={"worktreePath": str(worktree)},
+        context=next_context,
+        value=merge_value,
+        result_path=result_path,
+    )
+
+    assert finalized["mergeResolutionFiles"] == ["runtime.py", "worker.py"]
+    assert finalized["controllerCommitChangedFiles"] == ["runtime.py", "worker.py"]
+    assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
+        head_sha,
+        base_sha,
+    ]
+    assert (worktree / "worker.py").read_text(encoding="utf-8") == "value = 4\n"
+    assert run_git(worktree, "status", "--porcelain") == ""
+
+
+def test_ingest_rejects_pr_changed_path_without_signed_review_thread(tmp_path):
+    store, _worktree, _result_path, _context, _request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(
+            tmp_path,
+            head_changed_files=("worker.py",),
+            requested_extra="worker.py",
+            signed_changed_files=("runtime.py", "worker.py"),
+        )
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "MERGE_RESOLUTION_SCOPE_UNRELATED_PATH",
+            "alreadyRecorded": False,
+        }
+    ]
+
+
+def test_ingest_rejects_forged_local_review_path_absent_from_historical_preparation(tmp_path):
+    store, _worktree, result_path, _context, request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(
+            tmp_path,
+            head_changed_files=("worker.py",),
+            requested_extra="worker.py",
+            signed_changed_files=("runtime.py", "worker.py"),
+        )
+    )
+    context_path = result_path.parent / "task-context.json"
+    forged_context = json.loads(context_path.read_text(encoding="utf-8"))
+    forged_context["prFollowup"]["evidence"]["unresolvedReviewThreads"] = [{"path": "worker.py"}]
+    forged_context["contextDigest"] = MODULE._task_context_digest(
+        forged_context, forged_context["prFollowup"]["preparedHeadSha"]
+    )
+    context_path.write_text(json.dumps(forged_context), encoding="utf-8")
+    request["contextDigest"] = forged_context["contextDigest"]
+    result_path.write_text(json.dumps(request), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "MERGE_RESOLUTION_SCOPE_UNRELATED_PATH",
+            "alreadyRecorded": False,
+        }
+    ]
+
+
+def test_ingest_rejects_review_path_outside_signed_changed_files(tmp_path):
+    store, _worktree, _result_path, _context, _request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(
+            tmp_path,
+            head_changed_files=("worker.py",),
+            requested_extra="worker.py",
+            signed_changed_files=("runtime.py",),
+            signed_review_paths=("worker.py",),
+        )
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "MERGE_RESOLUTION_SCOPE_UNRELATED_PATH",
+            "alreadyRecorded": False,
+        }
+    ]
+
+
+def test_ingest_rejects_signed_review_path_outside_bound_pr_delta(tmp_path):
+    store, _worktree, _result_path, _context, _request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(
+            tmp_path,
+            head_unchanged_files=("stable.py",),
+            requested_extra="stable.py",
+            signed_changed_files=("runtime.py", "stable.py"),
+            signed_review_paths=("stable.py",),
+        )
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "MERGE_RESOLUTION_SCOPE_BASE_DELTA_INVALID",
+            "alreadyRecorded": False,
+        }
+    ]
 
 
 def test_ingest_authorizes_base_only_merge_resolution_scope_and_finalizer_consumes_it(
@@ -19347,6 +19765,7 @@ def test_ingest_authorizes_base_only_merge_resolution_scope_and_finalizer_consum
     source_wake = str(source_context["prFollowup"]["wakeDigest"])
     source_code_paths = list(source_context["codePaths"])
     source_receipt_digest = source_context["reproductionReceipt"]["receiptDigest"]
+    assert "localAction" not in request["evidence"]
 
     first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
     repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))

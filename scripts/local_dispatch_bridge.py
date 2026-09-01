@@ -16375,7 +16375,7 @@ def _ingest_merge_resolution_scope_request(
     raw: bytes,
     worktree: Path,
 ) -> dict[str, Any] | None:
-    """Authorize one exact base-only expansion requested by a clean PR follow-up."""
+    """Authorize one exact conflict-resolution expansion from signed PR evidence."""
 
     result_evidence = value.get("evidence")
     if (
@@ -16385,38 +16385,87 @@ def _ingest_merge_resolution_scope_request(
     ):
         return None
     followup = context.get("prFollowup")
-    followup_evidence = followup.get("evidence") if isinstance(followup, dict) else None
+    context_followup_evidence = followup.get("evidence") if isinstance(followup, dict) else None
     publication_receipt = context.get("publicationReceipt")
+    local_action_invalid = bool(
+        isinstance(result_evidence, dict)
+        and "localAction" in result_evidence
+        and (
+            not isinstance(result_evidence.get("localAction"), str)
+            or result_evidence.get("localAction") != "none"
+        )
+    )
     if (
         value.get("stage") != "PR_OPEN"
         or str(candidate.get("stage") or "") not in PUBLISHED_TASK_STAGES
         or context.get("taskStage") != "IMPLEMENTATION_READY"
         or not isinstance(followup, dict)
-        or not isinstance(followup_evidence, dict)
-        or followup_evidence.get("mergeConflict") is not True
+        or not isinstance(context_followup_evidence, dict)
+        or context_followup_evidence.get("mergeConflict") is not True
         or not isinstance(result_evidence, dict)
-        or result_evidence.get("localAction") != "none"
+        or local_action_invalid
         or not isinstance(publication_receipt, dict)
         or value.get("contextDigest") != context.get("contextDigest")
     ):
         raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_REQUEST_INVALID")
 
-    source_wake = str(followup.get("wakeDigest") or "")
+    task_id = str(candidate.get("intentId") or "")
+    source_wake = str(value.get("followupDigest") or "")
     expected_head = str(followup.get("headSha") or "")
     prepared_head = str(followup.get("preparedHeadSha") or "")
-    expected_base = str(followup_evidence.get("baseSha") or "")
     pr_url = str(followup.get("prUrl") or "")
+    try:
+        preparation = store.historical_pr_followup_preparation(
+            key=str(candidate["key"]),
+            task_id=task_id,
+            thread_id=str(candidate["threadId"]),
+            wake_digest=source_wake,
+        )
+    except (LedgerError, ValueError) as exc:
+        raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_BINDING_INVALID") from exc
+    snapshot = preparation.get("snapshot") if isinstance(preparation, dict) else None
+    snapshot_evidence = snapshot.get("evidence") if isinstance(snapshot, dict) else None
+    if (
+        not isinstance(preparation, dict)
+        or preparation.get("key") != candidate.get("key")
+        or preparation.get("issueUrl") != candidate.get("issueUrl")
+        or preparation.get("intentId") != task_id
+        or preparation.get("threadId") != candidate.get("threadId")
+        or preparation.get("wakeDigest") != source_wake
+        or Path(str(preparation.get("worktreePath") or "")).resolve() != worktree.resolve()
+        or context.get("key") != candidate.get("key")
+        or context.get("issueUrl") != candidate.get("issueUrl")
+        or context.get("intentId") != task_id
+        or context.get("threadId") != candidate.get("threadId")
+        or Path(str(context.get("worktreePath") or "")).resolve() != worktree.resolve()
+        or not isinstance(snapshot, dict)
+        or not isinstance(snapshot_evidence, dict)
+        or snapshot.get("wakeDigest") != source_wake
+        or snapshot.get("prUrl") != pr_url
+        or snapshot.get("headSha") != expected_head
+        or snapshot.get("preparedHeadSha") != prepared_head
+        or snapshot.get("actionDigest") != followup.get("actionDigest")
+        or snapshot.get("taskActionDigest") != followup.get("taskActionDigest")
+        or snapshot.get("checkedAt") != followup.get("checkedAt")
+    ):
+        raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_BINDING_INVALID")
+    expected_base = str(snapshot_evidence.get("baseSha") or "")
     if (
         not re.fullmatch(r"[0-9a-f]{64}", source_wake)
         or not re.fullmatch(r"[0-9a-f]{40}", expected_head)
         or prepared_head != expected_head
         or not re.fullmatch(r"[0-9a-f]{40}", expected_base)
-        or value.get("followupDigest") != source_wake
+        or followup.get("wakeDigest") != source_wake
         or value.get("headSha") != expected_head
         or value.get("commitSha") != expected_head
         or result_evidence.get("headSha") != expected_head
         or value.get("prUrl") != pr_url
         or publication_receipt.get("prUrl") != pr_url
+        or publication_receipt.get("commitSha") != expected_head
+        or snapshot_evidence.get("mergeConflict") is not True
+        or context_followup_evidence.get("baseSha") != expected_base
+        or context_followup_evidence.get("mergeConflictFiles")
+        != snapshot_evidence.get("mergeConflictFiles")
     ):
         raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_BINDING_INVALID")
     if any(
@@ -16435,7 +16484,7 @@ def _ingest_merge_resolution_scope_request(
     ):
         raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_WORKTREE_INVALID")
 
-    conflicts_value = followup_evidence.get("mergeConflictFiles")
+    conflicts_value = snapshot_evidence.get("mergeConflictFiles")
     requested_value = result_evidence.get("requiredResolutionFiles")
     result_conflicts_value = result_evidence.get("mergeConflictFiles")
     try:
@@ -16452,9 +16501,34 @@ def _ingest_merge_resolution_scope_request(
     conflict_refactor_roots = {
         PurePosixPath(conflict).with_suffix("").as_posix() for conflict in conflicts
     }
-    if any(
-        not any(extra == root or extra.startswith(f"{root}/") for root in conflict_refactor_roots)
+    signed_changed_value = snapshot_evidence.get("changedFiles")
+    try:
+        signed_changed_files = (
+            set(_validated_changed_files(signed_changed_value))
+            if isinstance(signed_changed_value, list) and signed_changed_value
+            else set()
+        )
+    except RuntimeError:
+        signed_changed_files = set()
+    signed_review_paths: set[str] = set()
+    unresolved_review_threads = snapshot_evidence.get("unresolvedReviewThreads")
+    if isinstance(unresolved_review_threads, list):
+        for thread in unresolved_review_threads:
+            review_path = thread.get("path") if isinstance(thread, dict) else None
+            if not isinstance(review_path, str):
+                continue
+            try:
+                signed_review_paths.add(_validated_changed_files([review_path])[0])
+            except RuntimeError:
+                continue
+    review_bound_paths = signed_changed_files & signed_review_paths
+    base_refactor_paths = {
+        extra
         for extra in extras
+        if any(extra == root or extra.startswith(f"{root}/") for root in conflict_refactor_roots)
+    }
+    if any(
+        extra not in base_refactor_paths and extra not in review_bound_paths for extra in extras
     ):
         raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_UNRELATED_PATH")
     tombstone_receipt = context.get("codePathTombstoneReceipt")
@@ -16485,7 +16559,33 @@ def _ingest_merge_resolution_scope_request(
             ).splitlines()
             if line
         }
+        head_changed = {
+            line
+            for line in command(
+                [
+                    "git",
+                    "diff",
+                    "--name-only",
+                    "--diff-filter=ACMRT",
+                    f"{merge_base}..{expected_head}",
+                    "--",
+                ],
+                cwd=worktree,
+            ).splitlines()
+            if line
+        }
         for path in extras:
+            if path in review_bound_paths:
+                if path not in head_changed:
+                    raise RuntimeError("review resolution path is not part of the bound PR delta")
+                if (
+                    command(["git", "cat-file", "-t", f"{expected_head}:{path}"], cwd=worktree)
+                    != "blob"
+                    or command(["git", "cat-file", "-t", f"{expected_base}:{path}"], cwd=worktree)
+                    != "blob"
+                ):
+                    raise RuntimeError("review resolution path is not a bound head/base blob")
+                continue
             if path not in base_changed:
                 raise RuntimeError("resolution path is not part of the bound base delta")
             if (
@@ -16527,7 +16627,6 @@ def _ingest_merge_resolution_scope_request(
         _optional_command(["git", "merge", "--abort"], cwd=worktree)
         raise TaskResultEvidenceBlocked("MERGE_RESOLUTION_SCOPE_BASE_DELTA_INVALID") from exc
 
-    task_id = str(candidate.get("intentId") or candidate["threadId"])
     issue_match = ISSUE_URL.fullmatch(str(candidate["issueUrl"]))
     managed_task = managed_ledger.read_task(task_id) or {}
     try:

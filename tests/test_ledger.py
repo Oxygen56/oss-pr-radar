@@ -6464,6 +6464,87 @@ def _assert_no_pr_followup_reservation(store: RadarLedger, key: str) -> None:
     assert reserved == 0
 
 
+def _reserve_unresolved_pr_followup(store: RadarLedger) -> tuple[str, str]:
+    key = _make_pr_followup_candidate(store)
+    candidate = store.pr_followup_candidates()[0]
+    wake_digest = candidate["wakeDigest"]
+    store.reserve_pr_followup(
+        thread_id=candidate["threadId"],
+        wake_digest=wake_digest,
+        prepared_head_sha="d" * 40,
+    )
+    store.complete_pr_followup_reservation(thread_id=candidate["threadId"], wake_digest=wake_digest)
+    assert [item["wake_digest"] for item in store.unresolved_pr_followups()] == [wake_digest]
+    return key, wake_digest
+
+
+def test_unresolved_pr_followup_is_closed_by_same_wake_result(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key, wake_digest = _reserve_unresolved_pr_followup(store)
+
+    store.record_followup_result(
+        key,
+        wake_digest=wake_digest,
+        result_digest="result-digest",
+        stage="PR_OPEN",
+    )
+
+    assert store.unresolved_pr_followups() == []
+
+
+def test_unresolved_pr_followup_is_not_closed_by_different_wake_result(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key, wake_digest = _reserve_unresolved_pr_followup(store)
+
+    store.record_followup_result(
+        key,
+        wake_digest="f" * 64,
+        result_digest="result-digest",
+        stage="PR_OPEN",
+    )
+
+    assert [item["wake_digest"] for item in store.unresolved_pr_followups()] == [wake_digest]
+
+
+def test_unresolved_pr_followup_is_not_closed_by_older_same_wake_result(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store)
+    candidate = store.pr_followup_candidates()[0]
+    wake_digest = candidate["wakeDigest"]
+
+    store.record_followup_result(
+        key,
+        wake_digest=wake_digest,
+        result_digest="older-result-digest",
+        stage="PR_OPEN",
+    )
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_RESERVED",
+            wake_digest,
+            {"threadId": candidate["threadId"], "prUrl": candidate["prUrl"]},
+            iso_z(datetime.now(UTC)),
+        )
+
+    with store.connect() as connection:
+        event_ids = {
+            row["event_type"]: row["id"]
+            for row in connection.execute(
+                """SELECT id,event_type FROM events
+                   WHERE opportunity_key=? AND dedupe_key=?
+                     AND event_type IN (
+                       'PR_FOLLOWUP_RESULT_INGESTED',
+                       'PR_FOLLOWUP_RESERVED'
+                     )""",
+                (key, wake_digest),
+            )
+        }
+    assert event_ids["PR_FOLLOWUP_RESULT_INGESTED"] < event_ids["PR_FOLLOWUP_RESERVED"]
+    assert [item["wake_digest"] for item in store.unresolved_pr_followups()] == [wake_digest]
+
+
 @pytest.mark.parametrize(
     "publication_drift_reason",
     ["EXISTING_PR_BASE_DRIFT", "EXISTING_PR_HEAD_DRIFT"],
@@ -7291,6 +7372,7 @@ def test_pr_followup_task_drift_rebinds_wake_and_invalidates_preparation(tmp_pat
     assert rebound["previousWakeDigest"] == old_wake
     assert rebound["replacementWakeDigest"] != old_wake
     assert store.active_pr_followup_preparation("a/b#1", thread_id="thread-1") is None
+    assert store.unresolved_pr_followups() == []
     assert store.pr_followup_candidates()[0]["wakeDigest"] == rebound["replacementWakeDigest"]
     repeated = store.rearm_pr_followup_after_task_drift(
         "a/b#1",

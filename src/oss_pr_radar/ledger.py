@@ -12981,6 +12981,13 @@ class RadarLedger:
                        AND s.dedupe_key=r.dedupe_key
                    )
                      AND NOT EXISTS (
+                       SELECT 1 FROM events result
+                       WHERE result.opportunity_key=r.opportunity_key
+                         AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                         AND result.dedupe_key=r.dedupe_key
+                         AND result.id>r.id
+                     )
+                     AND NOT EXISTS (
                      SELECT 1 FROM events abandoned
                      WHERE abandoned.opportunity_key=r.opportunity_key
                        AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
