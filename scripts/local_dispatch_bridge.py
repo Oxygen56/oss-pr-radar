@@ -209,7 +209,7 @@ TERMINAL_PUBLICATION_BLOCK_REASONS = {
     "ACTIVE_OR_CONDITIONAL_CLAIM",
     "STRONG_EXISTING_PR",
 }
-TASK_RESULT_EVIDENCE_POLICY_REVISION = "managed-reproduction-scope-v3"
+TASK_RESULT_EVIDENCE_POLICY_REVISION = "managed-reproduction-scope-v4"
 TASK_CACHE_CLEANUP_SCHEMA = "radar-task-cache-cleanup-v1"
 TASK_CACHE_CLEANUP_TERMINAL_STATUSES = frozenset({"completed", "interrupted", "failed"})
 CACHE_DIRECTORY_TAG_SIGNATURE = "Signature: 8a477f597d28d172789f06886806bc55"
@@ -12739,6 +12739,30 @@ def _controller_default_code_paths(
     return _validated_changed_files(sorted(set(inherited) | set(commit_changed_files)))
 
 
+def _controller_validation_code_paths(
+    *,
+    context: dict[str, Any],
+    publication_changed_files: list[str],
+    commit_changed_files: list[str],
+) -> list[str]:
+    """Rebuild a validation continuation scope from controller-verified evidence.
+
+    A deferred result is already normalized to the durable reproduction scope,
+    with any implementation-only paths recorded in ``controllerCodePathScope``.
+    Validation turns copy that result as their input. Once the controller has
+    verified the new commit and cumulative publication diff, the copied top-level
+    scope must not hide those verified files from the next receipt binding. The
+    exact commit delta remains part of the review scope even when a corrective
+    change restores a path to its base contents and removes it from the final PR
+    diff.
+    """
+
+    inherited = [str(path) for path in (context.get("codePaths") or []) if str(path).strip()]
+    return _validated_changed_files(
+        sorted(set(inherited) | set(publication_changed_files) | set(commit_changed_files))
+    )
+
+
 def _enforce_code_path_tombstones(
     *,
     context: dict[str, Any],
@@ -13112,6 +13136,7 @@ def _finalize_controller_merge(
         finalized["publication"] = finalized_publication
     if context.get("targetBase") is not None:
         finalized["targetBase"] = validate_target_base(context["targetBase"])
+    _clear_stale_final_result_authentication(finalized)
     raw = _write_task_result_json_to_private(result_access, finalized)
     return finalized, raw
 
@@ -13392,21 +13417,48 @@ def _finalize_controller_commit(
         finalized["commitSha"] = head_sha
         finalized["branch"] = command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
         finalized["controllerCommitChangedFiles"] = commit_changed_files
+        finalized.pop("mergeResolutionFiles", None)
+        finalized.pop("mergeBaseSha", None)
+        finalized.pop("resolutionSourceCommit", None)
         finalized["changedFiles"] = publication_changed_files
-        default_code_paths = _controller_default_code_paths(
-            context=context,
-            value=value,
-            commit_changed_files=commit_changed_files,
-        )
-        if default_code_paths is not None:
-            finalized["codePaths"] = default_code_paths
+        if is_validation_continuation:
+            rebuilt_code_paths = _controller_validation_code_paths(
+                context=context,
+                publication_changed_files=publication_changed_files,
+                commit_changed_files=commit_changed_files,
+            )
+            finalized["codePaths"] = rebuilt_code_paths
+            finalized.pop("controllerCodePathScope", None)
+        else:
+            default_code_paths = _controller_default_code_paths(
+                context=context,
+                value=value,
+                commit_changed_files=commit_changed_files,
+            )
+            if default_code_paths is not None:
+                finalized["codePaths"] = default_code_paths
         followup = context.get("prFollowup")
         if isinstance(followup, dict):
             previous_commit = str(followup.get("preparedHeadSha") or followup.get("headSha") or "")
             if not re.fullmatch(r"[0-9a-f]{40}", previous_commit):
                 raise RuntimeError("controller commit lacks a valid review parent")
+            if _merge_parents(worktree, head_sha) != [previous_commit]:
+                raise RuntimeError("controller commit parent does not match the PR follow-up")
             finalized["previousCommitSha"] = previous_commit
         else:
+            if is_validation_continuation:
+                context_receipt = context.get("reproductionReceipt") or context.get("probeReceipt")
+                validation_parent = (
+                    str(context_receipt.get("commitSha") or "")
+                    if isinstance(context_receipt, dict)
+                    else ""
+                )
+                if not re.fullmatch(r"[0-9a-f]{40}", validation_parent):
+                    raise RuntimeError("controller commit lacks a valid validation parent")
+                if head_sha != validation_parent and _merge_parents(worktree, head_sha) != [
+                    validation_parent
+                ]:
+                    raise RuntimeError("controller commit parent does not match validation input")
             finalized.pop("previousCommitSha", None)
         base_branch = _prepared_base_branch(worktree, context)
         publication = finalized.get("publication")
@@ -13414,6 +13466,7 @@ def _finalize_controller_commit(
             finalized["publication"] = dict(publication) | {"baseBranch": base_branch}
         if context.get("targetBase") is not None:
             finalized["targetBase"] = validate_target_base(context["targetBase"])
+        _clear_stale_final_result_authentication(finalized)
         if write_if_unchanged or finalized != value:
             raw = _write_task_result_json_to_private(result_access, finalized)
         else:
@@ -13446,6 +13499,13 @@ def _finalize_controller_commit(
         expected_parent = str(followup.get("preparedHeadSha") or followup.get("headSha") or "")
         if not re.fullmatch(r"[0-9a-f]{40}", expected_parent):
             raise RuntimeError("controller commit lacks a valid PR follow-up parent")
+    elif is_validation_continuation:
+        context_receipt = context.get("reproductionReceipt") or context.get("probeReceipt")
+        expected_parent = (
+            str(context_receipt.get("commitSha") or "") if isinstance(context_receipt, dict) else ""
+        )
+        if not re.fullmatch(r"[0-9a-f]{40}", expected_parent):
+            raise RuntimeError("controller commit lacks a valid validation parent")
     if actual:
         _enforce_code_path_tombstones(
             context=context,
@@ -13534,6 +13594,9 @@ def _finalize_controller_commit(
     finalized["commitSha"] = final_commit
     finalized["branch"] = command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
     finalized["controllerCommitChangedFiles"] = commit_changed_files
+    finalized.pop("mergeResolutionFiles", None)
+    finalized.pop("mergeBaseSha", None)
+    finalized.pop("resolutionSourceCommit", None)
     publication_changed_files = _validation_publication_changed_files(
         worktree=worktree,
         context=context,
@@ -13545,14 +13608,23 @@ def _finalize_controller_commit(
     }:
         raise RuntimeError("controller commit receipt does not match validation files")
     finalized["changedFiles"] = publication_changed_files
-    default_code_paths = _controller_default_code_paths(
-        context=context,
-        value=value,
-        commit_changed_files=commit_changed_files,
-    )
-    if default_code_paths is not None:
-        finalized["codePaths"] = default_code_paths
-    if expected_parent:
+    if is_validation_continuation:
+        rebuilt_code_paths = _controller_validation_code_paths(
+            context=context,
+            publication_changed_files=publication_changed_files,
+            commit_changed_files=commit_changed_files,
+        )
+        finalized["codePaths"] = rebuilt_code_paths
+        finalized.pop("controllerCodePathScope", None)
+    else:
+        default_code_paths = _controller_default_code_paths(
+            context=context,
+            value=value,
+            commit_changed_files=commit_changed_files,
+        )
+        if default_code_paths is not None:
+            finalized["codePaths"] = default_code_paths
+    if isinstance(followup, dict):
         finalized["previousCommitSha"] = expected_parent
     else:
         finalized.pop("previousCommitSha", None)
@@ -13565,6 +13637,7 @@ def _finalize_controller_commit(
         finalized["publication"] = finalized_publication
     if context.get("targetBase") is not None:
         finalized["targetBase"] = validate_target_base(context["targetBase"])
+    _clear_stale_final_result_authentication(finalized)
     raw = _write_task_result_json_to_private(result_access, finalized)
     return finalized, raw
 
@@ -16215,6 +16288,98 @@ def _unsigned_final_task_result_digest(value: dict[str, Any]) -> str:
     return sha256_json(unsigned)
 
 
+def _clear_stale_final_result_authentication(value: dict[str, Any]) -> None:
+    """Drop authentication that no longer signs the finalized envelope.
+
+    Controller finalizers persist their canonical result before the receipt is
+    rebound.  Clearing only scope-related changes leaves a crash window whenever
+    another canonical field (for example the final commit identity) changes.
+    Keep an existing receipt only when both digest copies still match the exact
+    controller-finalized payload.
+    """
+
+    receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+    authentication_present = bool(
+        "resultDigest" in value or "reproductionReceipt" in value or "probeReceipt" in value
+    )
+    if not authentication_present:
+        return
+    expected = _unsigned_final_task_result_digest(value)
+    if (
+        not isinstance(receipt, dict)
+        or value.get("resultDigest") != expected
+        or receipt.get("resultDigest") != expected
+    ):
+        value.pop("resultDigest", None)
+        value.pop("reproductionReceipt", None)
+        value.pop("probeReceipt", None)
+
+
+def _finalized_validation_result_requires_authentication_rebind(
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    raw: bytes,
+) -> bool:
+    """Recognize a stale signed intermediate only on a validation continuation.
+
+    The caller must run the normal controller commit/merge finalizer before
+    rebinding.  That re-verifies the exact Git commit, parent, changed-file scope,
+    and signed follow-up context, so this recovery path cannot turn a child claim
+    into controller evidence merely because its old digest is invalid.
+    """
+
+    receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+    result_digest = str(value.get("resultDigest") or "")
+    commit_sha = str(value.get("commitSha") or "")
+    receipt_commit_sha = str(receipt.get("commitSha") or "") if isinstance(receipt, dict) else ""
+    if (
+        value.get("stage") != "FIX_READY"
+        or value.get("handoffMode")
+        not in {"controller_commit_complete", "controller_merge_complete"}
+        or not isinstance(receipt, dict)
+        or not _VALIDATION_SNAPSHOT_ID.fullmatch(result_digest)
+        or result_digest != receipt.get("resultDigest")
+        or value.get("contextDigest") != context.get("contextDigest")
+        or not re.fullmatch(r"[0-9a-f]{40}", commit_sha)
+        or not re.fullmatch(r"[0-9a-f]{40}", receipt_commit_sha)
+        or commit_sha == receipt_commit_sha
+        or not (
+            candidate.get("stage") == "VALIDATION_PENDING"
+            or context.get("stage") == "VALIDATION_PENDING"
+            or isinstance(context.get("prFollowup"), dict)
+        )
+    ):
+        return False
+    followup = context.get("prFollowup")
+    if isinstance(followup, dict):
+        wake_digest = str(followup.get("wakeDigest") or "")
+        expected_parent = str(followup.get("preparedHeadSha") or followup.get("headSha") or "")
+        if (
+            not _VALIDATION_SNAPSHOT_ID.fullmatch(wake_digest)
+            or value.get("followupDigest") != wake_digest
+            or not re.fullmatch(r"[0-9a-f]{40}", expected_parent)
+            or value.get("previousCommitSha") != expected_parent
+            or receipt_commit_sha != expected_parent
+        ):
+            return False
+    else:
+        context_receipt = context.get("reproductionReceipt") or context.get("probeReceipt")
+        context_commit_sha = (
+            str(context_receipt.get("commitSha") or "") if isinstance(context_receipt, dict) else ""
+        )
+        if receipt_commit_sha != context_commit_sha:
+            return False
+    try:
+        _task_result_digest(value, raw)
+    except RuntimeError as exc:
+        if str(exc) == "reproduction receipt result digest does not match result":
+            return True
+        raise
+    return False
+
+
 def _validation_followup_result_requires_receipt_rebind(
     *,
     store: RadarLedger,
@@ -16599,6 +16764,32 @@ def _repair_exact_published_validation_result(
     return True
 
 
+def _controller_verified_result_changed_files(value: dict[str, Any]) -> set[str]:
+    """Return only the changed-file provenance valid for the finalized mode."""
+
+    handoff_mode = str(value.get("handoffMode") or "")
+    commit_value = value.get("controllerCommitChangedFiles")
+    merge_value = value.get("mergeResolutionFiles")
+    try:
+        if handoff_mode == "controller_commit_complete":
+            if merge_value is not None:
+                raise TaskResultEvidenceBlocked("CONTROLLER_CHANGED_FILES_MODE_MISMATCH")
+            return set(_validated_changed_files(commit_value))
+        if handoff_mode == "controller_merge_complete":
+            commit_files = _validated_changed_files(commit_value)
+            merge_files = _validated_changed_files(merge_value)
+            if commit_files != merge_files:
+                raise TaskResultEvidenceBlocked("CONTROLLER_CHANGED_FILES_MODE_MISMATCH")
+            return set(commit_files)
+    except RuntimeError as exc:
+        if isinstance(exc, TaskResultEvidenceBlocked):
+            raise
+        raise TaskResultEvidenceBlocked("CONTROLLER_CHANGED_FILES_INVALID") from exc
+    if commit_value is not None or merge_value is not None:
+        raise TaskResultEvidenceBlocked("CONTROLLER_CHANGED_FILES_MODE_MISMATCH")
+    return set()
+
+
 def _bind_final_reproduction_receipt(
     *,
     candidate: dict[str, Any],
@@ -16643,14 +16834,7 @@ def _bind_final_reproduction_receipt(
                 reported_code_paths = _validated_changed_files(reported_code_paths)
             except RuntimeError as exc:
                 raise TaskResultEvidenceBlocked("REPORTED_SCOPE_PATHS_INVALID") from exc
-    controller_touched: set[str] = set()
-    for field in ("controllerCommitChangedFiles", "mergeResolutionFiles"):
-        if value.get(field):
-            try:
-                field_paths = _validated_changed_files(value.get(field))
-            except RuntimeError as exc:
-                raise TaskResultEvidenceBlocked("CONTROLLER_CHANGED_FILES_INVALID") from exc
-            controller_touched.update(field_paths)
+    controller_touched = _controller_verified_result_changed_files(value)
     task_id = str(
         value.get("taskId")
         or value.get("intentId")
@@ -16742,7 +16926,8 @@ def _bind_final_reproduction_receipt(
                 verified_changed_files = set(_validated_changed_files(value.get("changedFiles")))
             except RuntimeError as exc:
                 raise TaskResultEvidenceBlocked("REPORTED_SCOPE_CHANGED_FILES_INVALID") from exc
-            if not added_scope.issubset(verified_changed_files):
+            controller_verified_files = verified_changed_files | controller_touched
+            if not added_scope.issubset(controller_verified_files):
                 raise TaskResultEvidenceBlocked("REPORTED_SCOPE_NOT_IN_COMMITTED_CHANGES")
     if not controller_touched.issubset(set(reported_code_paths)):
         raise TaskResultEvidenceBlocked("CONTROLLER_CHANGED_FILES_OUTSIDE_REPORTED_SCOPE")
@@ -17944,9 +18129,34 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 context=context,
                 value=value,
             )
+            finalized_authentication_rebound = (
+                _finalized_validation_result_requires_authentication_rebind(
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    raw=raw,
+                )
+            )
             if validation_receipt_rebound:
                 value = dict(value)
                 value["contextDigest"] = context.get("contextDigest")
+                value, raw = _bind_final_reproduction_receipt(
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    result_access=result_access,
+                    managed_ledger=managed_ledger,
+                )
+                receipt = value["reproductionReceipt"]
+                initial_digest = _task_result_digest(value, raw)
+            elif finalized_authentication_rebound:
+                value, raw = _finalize_controller_commit(
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    result_access=result_access,
+                    write_if_unchanged=False,
+                )
                 value, raw = _bind_final_reproduction_receipt(
                     candidate=candidate,
                     context=context,

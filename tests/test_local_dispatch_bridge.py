@@ -19427,6 +19427,93 @@ def test_expanded_controller_code_path_scope_is_idempotent_across_second_rebind(
     assert rebound == finalized
 
 
+def test_commit_finalizer_drops_forged_merge_resolution_provenance(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    candidate = store.task_result_candidates()[0]
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "mergeResolutionFiles": ["unrelated.py"],
+            "mergeBaseSha": "a" * 40,
+            "resolutionSourceCommit": "b" * 40,
+        }
+    )
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        with pytest.raises(
+            MODULE.TaskResultEvidenceBlocked,
+            match="CONTROLLER_CHANGED_FILES_MODE_MISMATCH",
+        ):
+            MODULE._bind_final_reproduction_receipt(
+                candidate=candidate,
+                context=context,
+                value=value,
+                result_access=result_access,
+                managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+                write_result=False,
+            )
+
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate=candidate,
+        context=context,
+        value=value,
+        result_path=result_path,
+    )
+    assert finalized["controllerCommitChangedFiles"] == ["runtime.py"]
+    assert "mergeResolutionFiles" not in finalized
+    assert "mergeBaseSha" not in finalized
+    assert "resolutionSourceCommit" not in finalized
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        rebound, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=finalized,
+            result_access=result_access,
+            managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+            write_result=False,
+        )
+    assert "mergeResolutionFiles" not in rebound
+    assert "controllerCodePathScope" not in rebound
+
+
+def test_merge_receipt_keeps_resolution_path_restored_out_of_publication_diff(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("integration.py",),
+        reported_code_paths=("runtime.py", "integration.py"),
+    )
+    candidate = store.task_result_candidates()[0]
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    resolution_files = list(value["controllerCommitChangedFiles"])
+    value.update(
+        {
+            "handoffMode": "controller_merge_complete",
+            "mergeResolutionFiles": resolution_files,
+            "changedFiles": ["runtime.py"],
+        }
+    )
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        rebound, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=result_access,
+            managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+            write_result=False,
+        )
+
+    assert rebound["changedFiles"] == ["runtime.py"]
+    assert rebound["controllerCodePathScope"]["reported"] == [
+        "integration.py",
+        "runtime.py",
+    ]
+    assert rebound["controllerCodePathScope"]["added"] == ["integration.py"]
+
+
 def test_final_receipt_never_falls_back_when_managed_durable_binding_disagrees(
     tmp_path,
 ):
@@ -20412,6 +20499,14 @@ def test_ingest_authorizes_base_only_merge_resolution_scope_and_finalizer_consum
         "runtime/new.py",
     ]
 
+    # Simulate a crash-era controller intermediate: the merge envelope was
+    # finalized, but it still carries the implementation receipt for the old
+    # commit. The next ingestion must re-verify the merge before re-signing it.
+    stale_complete = dict(finalized)
+    stale_complete["resultDigest"] = next_context["resultDigest"]
+    stale_complete["reproductionReceipt"] = next_context["reproductionReceipt"]
+    result_path.write_text(json.dumps(stale_complete), encoding="utf-8")
+
     with store.connect() as connection:
         requests_before = connection.execute(
             "SELECT COUNT(*) FROM publication_requests"
@@ -20923,6 +21018,8 @@ def test_controller_creates_two_parent_commit_for_conflicted_pr_followup(tmp_pat
         "mergeBaseSha": base_sha,
         "resolutionSourceCommit": previous_head,
         "publication": {"baseBranch": "main"},
+        "resultDigest": "a" * 64,
+        "reproductionReceipt": {"resultDigest": "a" * 64},
     }
     result_path.write_text(json.dumps(value), encoding="utf-8")
     finalized, _raw = _finalize_controller_commit_for_test(
@@ -20946,6 +21043,8 @@ def test_controller_creates_two_parent_commit_for_conflicted_pr_followup(tmp_pat
     assert finalized["mergeResolutionFiles"] == ["runtime.py"]
     assert finalized["controllerCommitChangedFiles"] == ["runtime.py"]
     assert finalized["changedFiles"] == ["runtime.py"]
+    assert "resultDigest" not in finalized
+    assert "reproductionReceipt" not in finalized
     assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
         previous_head,
         base_sha,
@@ -25220,6 +25319,239 @@ def test_validation_followup_uses_cumulative_files_for_first_publication(tmp_pat
     )
 
 
+def test_validation_followup_rebuilds_controller_normalized_scope(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("test_runtime.py",),
+        reported_code_paths=("runtime.py", "test_runtime.py"),
+        missing_quality=("independent_review_passed",),
+    )
+
+    deferred = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert deferred["ok"] is True, deferred
+    assert deferred["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": ["independent_review_passed"],
+        }
+    ]
+    normalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert normalized["codePaths"] == ["runtime.py"]
+    assert normalized["controllerCodePathScope"]["reported"] == [
+        "runtime.py",
+        "test_runtime.py",
+    ]
+
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    assert context["stage"] == "VALIDATION_PENDING"
+    previous_head = run_git(worktree, "rev-parse", "HEAD")
+    (worktree / "runtime.py").write_text("value = 3\nassert value == 3\n", encoding="utf-8")
+    (worktree / "test_runtime.py").write_text("value = 3\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py", "test_runtime.py")
+    run_git(worktree, "commit", "-m", "fix: address validation finding")
+    corrected_head = run_git(worktree, "rev-parse", "HEAD")
+
+    followup = dict(normalized)
+    followup.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "commitSha": corrected_head,
+            "headSha": previous_head,
+            "controllerCommitChangedFiles": ["runtime.py", "test_runtime.py"],
+            "changedFiles": ["runtime.py", "test_runtime.py"],
+        }
+    )
+    followup.pop("resultDigest", None)
+    followup.pop("reproductionReceipt", None)
+    followup.pop("probeReceipt", None)
+    followup.pop("independentReview", None)
+    result_path.write_text(json.dumps(followup), encoding="utf-8")
+    old_snapshot_digest = hashlib.sha256(
+        result_path.read_bytes() + b"\0" + (result_path.parent / "task-context.json").read_bytes()
+    ).hexdigest()
+    ManagedLedger(store.path, ensure_schema=False).record_event(
+        event_type="TASK_RESULT_EVIDENCE_BLOCKED",
+        idempotency_key=(
+            "task-result-evidence-blocked:managed-reproduction-scope-v3:"
+            f"a/b#1:thread-1:{old_snapshot_digest}"
+        ),
+        opportunity_key="a/b#1",
+        task_id="intent-1",
+        state="VALIDATION_PENDING",
+        source="result-ingestion",
+        provenance={"policyRevision": "managed-reproduction-scope-v3"},
+        payload={"reason": "CONTROLLER_CHANGED_FILES_OUTSIDE_REPORTED_SCOPE"},
+    )
+
+    advanced = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert advanced["ok"] is True, advanced
+    assert advanced.get("workBlocked", []) == []
+    assert advanced["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": ["independent_review_passed"],
+        }
+    ]
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["commitSha"] == corrected_head
+    assert finalized["headSha"] == corrected_head
+    assert finalized["codePaths"] == ["runtime.py"]
+    assert finalized["controllerCodePathScope"]["reported"] == [
+        "runtime.py",
+        "test_runtime.py",
+    ]
+    assert finalized["controllerCodePathScope"]["added"] == ["test_runtime.py"]
+    assert finalized["reproductionReceipt"]["commitSha"] == corrected_head
+
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert repeated["ok"] is True, repeated
+    assert repeated["errors"] == []
+    assert repeated.get("workBlocked", []) == []
+
+
+def test_validation_followup_keeps_commit_path_restored_out_of_publication_diff(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("integration.py",),
+        reported_code_paths=("runtime.py", "integration.py"),
+        missing_quality=("independent_review_passed",),
+    )
+    deferred = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert deferred["ok"] is True, deferred
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    assert context["stage"] == "VALIDATION_PENDING"
+    normalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert normalized["codePaths"] == ["runtime.py"]
+
+    previous_head = run_git(worktree, "rev-parse", "HEAD")
+    (worktree / "runtime.py").write_text("value = 3\nassert value == 3\n", encoding="utf-8")
+    (worktree / "integration.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py", "integration.py")
+    run_git(worktree, "commit", "-m", "fix: narrow validated runtime change")
+    corrected_head = run_git(worktree, "rev-parse", "HEAD")
+    assert run_git(
+        worktree,
+        "diff",
+        "--name-only",
+        f"{context['selectedBaseSha']}..HEAD",
+    ).splitlines() == ["runtime.py"]
+
+    followup = dict(normalized)
+    followup.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "commitSha": corrected_head,
+            "headSha": previous_head,
+            "controllerCommitChangedFiles": ["integration.py", "runtime.py"],
+            "changedFiles": ["runtime.py"],
+        }
+    )
+    followup.pop("resultDigest", None)
+    followup.pop("reproductionReceipt", None)
+    followup.pop("probeReceipt", None)
+    followup.pop("independentReview", None)
+    result_path.write_text(json.dumps(followup), encoding="utf-8")
+
+    advanced = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert advanced["ok"] is True, advanced
+    assert advanced.get("workBlocked", []) == []
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["commitSha"] == corrected_head
+    assert finalized["changedFiles"] == ["runtime.py"]
+    assert finalized["controllerCommitChangedFiles"] == [
+        "integration.py",
+        "runtime.py",
+    ]
+    assert finalized["codePaths"] == ["runtime.py"]
+    assert finalized["controllerCodePathScope"]["reported"] == [
+        "integration.py",
+        "runtime.py",
+    ]
+    assert finalized["controllerCodePathScope"]["added"] == ["integration.py"]
+
+
+def test_validation_scope_rebuild_is_retryable_if_receipt_rebind_crashes(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("test_runtime.py",),
+        reported_code_paths=("runtime.py", "test_runtime.py"),
+        missing_quality=("independent_review_passed",),
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    normalized = json.loads(result_path.read_text(encoding="utf-8"))
+    (worktree / "runtime.py").write_text("value = 4\nassert value == 4\n", encoding="utf-8")
+    (worktree / "test_runtime.py").write_text("value = 4\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py", "test_runtime.py")
+    run_git(worktree, "commit", "-m", "fix: complete validation correction")
+    corrected_head = run_git(worktree, "rev-parse", "HEAD")
+    followup = dict(normalized)
+    followup.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "commitSha": corrected_head,
+            "controllerCommitChangedFiles": ["runtime.py", "test_runtime.py"],
+            "changedFiles": ["runtime.py", "test_runtime.py"],
+        }
+    )
+    followup.pop("independentReview", None)
+    assert followup["reproductionReceipt"]["commitSha"] != corrected_head
+    result_path.write_text(json.dumps(followup), encoding="utf-8")
+
+    original_bind = MODULE._bind_final_reproduction_receipt
+    calls = {"count": 0}
+
+    def crash_once(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise OSError("simulated receipt rebind interruption")
+        return original_bind(*args, **kwargs)
+
+    monkeypatch.setattr(MODULE, "_bind_final_reproduction_receipt", crash_once)
+    interrupted = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert interrupted["ok"] is False
+    assert interrupted["errors"] == [
+        {"key": "a/b#1", "error": "simulated receipt rebind interruption"}
+    ]
+    unsigned = json.loads(result_path.read_text(encoding="utf-8"))
+    assert unsigned["codePaths"] == ["runtime.py", "test_runtime.py"]
+    assert "controllerCodePathScope" not in unsigned
+    assert "resultDigest" not in unsigned
+    assert "reproductionReceipt" not in unsigned
+
+    recovered = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert recovered["ok"] is True, recovered
+    assert recovered["errors"] == []
+    assert recovered.get("workBlocked", []) == []
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["reproductionReceipt"]["commitSha"] == corrected_head
+
+
 def test_validation_followup_accepts_cumulative_files_with_local_correction(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
@@ -25412,6 +25744,64 @@ def test_validation_followup_recovers_a_committed_cumulative_file_handoff(tmp_pa
     assert finalized["handoffMode"] == "controller_commit_complete"
     assert finalized["controllerCommitChangedFiles"] == ["replacement.py", "runtime.py"]
     assert finalized["changedFiles"] == ["replacement.py"]
+    expected_parent = context["reproductionReceipt"]["commitSha"]
+    assert "previousCommitSha" not in finalized
+    assert run_git(worktree, "rev-parse", "HEAD^") == expected_parent
+
+    repeated, _raw = _finalize_controller_commit_for_test(
+        candidate={"worktreePath": str(worktree)},
+        context=context,
+        value=finalized,
+        result_path=result_path,
+        write_if_unchanged=False,
+    )
+    assert repeated == finalized
+
+
+def test_validation_followup_required_rejects_a_wrong_parent_before_commit(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("independent_review_passed",),
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    expected_parent = context["reproductionReceipt"]["commitSha"]
+
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    publication_base = value["selectedBaseSha"]
+    branch = value["branch"]
+    assert publication_base != expected_parent
+    run_git(worktree, "switch", "-C", branch, publication_base)
+    (worktree / "runtime.py").write_text("value = 9\n", encoding="utf-8")
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "changedFiles": ["runtime.py"],
+        }
+    )
+    value.pop("controllerCommitChangedFiles", None)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    before = result_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="parent drifted"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=value,
+            result_path=result_path,
+        )
+
+    assert result_path.read_bytes() == before
+    assert run_git(worktree, "rev-parse", "HEAD") == publication_base
+    assert run_git(worktree, "status", "--porcelain") == "M runtime.py"
 
 
 def test_controller_accepts_equivalent_rebased_commit_receipt(tmp_path):
@@ -25442,6 +25832,78 @@ def test_controller_accepts_equivalent_rebased_commit_receipt(tmp_path):
     assert normalized["commitSha"] == rebased_commit
     assert normalized["controllerCommitChangedFiles"] == ["runtime.py"]
     assert normalized["changedFiles"] == ["runtime.py"]
+    assert "resultDigest" not in normalized
+    assert "reproductionReceipt" not in normalized
+
+    repeated, _raw = _finalize_controller_commit_for_test(
+        candidate={"worktreePath": str(worktree)},
+        context=context,
+        value=normalized,
+        result_path=result_path,
+        write_if_unchanged=False,
+    )
+    assert repeated == normalized
+
+
+def test_controller_complete_rejects_rogue_pr_followup_parent_before_rebinding(tmp_path):
+    _store, worktree, result_path = _controller_commit_result(tmp_path)
+    context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    expected_parent = str(value["commitSha"])
+    publication_base = str(value["selectedBaseSha"])
+    branch = str(value["branch"])
+    wake_digest = "a" * 64
+    context.update(
+        {
+            "stage": "PR_OPEN",
+            "prFollowup": {
+                "wakeDigest": wake_digest,
+                "preparedHeadSha": expected_parent,
+                "headSha": expected_parent,
+                "evidence": {"baseSha": publication_base},
+            },
+        }
+    )
+
+    run_git(worktree, "switch", "-C", branch, publication_base)
+    (worktree / "runtime.py").write_text("value = 9\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: rogue side-branch correction")
+    rogue_head = run_git(worktree, "rev-parse", "HEAD")
+    assert run_git(worktree, "rev-parse", "HEAD^") == publication_base
+    assert publication_base != expected_parent
+
+    stale_complete = dict(value)
+    stale_complete.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "followupDigest": wake_digest,
+            "previousCommitSha": expected_parent,
+            "commitSha": rogue_head,
+            "headSha": rogue_head,
+            "controllerCommitChangedFiles": ["runtime.py"],
+            "changedFiles": ["runtime.py"],
+        }
+    )
+    result_path.write_text(json.dumps(stale_complete), encoding="utf-8")
+    before = result_path.read_bytes()
+    assert MODULE._finalized_validation_result_requires_authentication_rebind(
+        candidate={"stage": "PR_OPEN"},
+        context=context,
+        value=stale_complete,
+        raw=before,
+    )
+
+    with pytest.raises(RuntimeError, match="parent does not match the PR follow-up"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=stale_complete,
+            result_path=result_path,
+        )
+    assert result_path.read_bytes() == before
 
 
 def test_controller_rejects_changed_commit_behind_an_old_receipt(tmp_path):
