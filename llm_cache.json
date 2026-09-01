@@ -22762,6 +22762,36 @@
     ],
     "why": "The issue reports a user-facing bug where VS Code's custom endpoint cannot auto-load models from LiteLLM, but the root cause is unclear: a comment suggests a URL configuration issue, while the reporter says multiple URL styles fail. The issue is a usage/support problem rather than a clear code defect in LiteLLM, and no maintainer has confirmed a desired fix. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the lack of a confirmed root cause and maintainer direction makes actionability low."
   },
+  "614da4d4bd413fa77e11be4345155a7e1e8c7006516b6779fba6c0998d02df40": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Recent comment claims a PR fixes the issue but degrades speed; this may conflict with the issue's expectation of a correct fix without performance regression."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/attention/backends/turboquant_attn.py",
+      "vllm/v1/worker/gpu_model_runner.py",
+      "vllm/model_executor/layers/quantization/fp8.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #53406 and #53410; need to ensure independent implementation or coordinate. Hardware dependency on sm120 may limit test availability."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided command and long prompt; verify repetition collapse with turboquant KV and clean output with fp8. Add a regression test that runs MTP with turboquant KV on a small model and asserts no repetition collapse and correct needle recall."
+    ],
+    "unknowns": [
+      "Exact root cause not yet isolated; whether existing PRs fully cover the fix; availability of sm120 hardware for testing."
+    ],
+    "why": "The issue provides a detailed, reproducible bug with a clear root cause hypothesis (TurboQuant KV cache interaction with MTP speculative decoding), concrete reproduction steps, and a validation path via comparing fp8 vs turboquant KV dtypes. The algorithm evidence confirms involvement of model architecture, quantization numerics, and kernel algorithms, satisfying the llm_algorithm track requirements."
+  },
   "615cb814a1e7a188854b34263a5802040c3808520065673c46ed52394f2937d0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -34710,6 +34740,35 @@
       "Exact root cause not yet identified; maintainer input on design preferences may be needed."
     ],
     "why": "Issue provides detailed reproduction attempts, multiple configurations, and evidence isolating the problem to shared audio routing infrastructure. Root cause is narrowed to AudioRecognition or STT stream lifecycle, with clear code anchors and a reproducible pattern (freeze after successful turns). This is a high-impact bug affecting production deployments, and the issue is actionable for a maintainer or contributor to investigate and fix."
+  },
+  "9162b01c4797a3fad35e9a971badcf80343a8805473df3b0b4f6d5cb5ac69ef0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "browser_use/dom/serializer/html_serializer.py",
+      "tests/ci/test_html_serializer_visible_code.py"
+    ],
+    "risks": [
+      "Potential over-correction if the fix removes filtering for genuinely hidden state containers; must preserve hidden code removal and bpr-guid handling.",
+      "Possible maintainer preference for a different fix approach; but normal implementation choice is not a blocker."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided pytest reproduction to confirm failure, then implement fix and rerun to ensure visible code with 'user-data' and 'workflow-state' is preserved in HTML and Markdown.",
+      "Add regression tests for hidden code elements and existing bpr-guid state-block filtering to ensure no over-correction."
+    ],
+    "unknowns": [
+      "Exact maintainer design preference for the fix, but not material to actionability."
+    ],
+    "why": "The issue provides a clear root cause: HTMLSerializer drops visible <code> elements when their id contains 'data' or 'state' due to an overbroad substring filter that ignores visibility. A deterministic reproduction with failing tests is supplied, and the fix is straightforward. An open PR exists but lacks root-cause coverage, leaving room for a more complete contribution."
   },
   "9180c23cbe24abd7c03e2d04888e5adef9580d7c3460c744f0f575b7817f54db": {
     "confidence": 0.8,
@@ -48993,6 +49052,33 @@
       "Exact CSS file and class responsible; whether maintainers prefer a different fix approach."
     ],
     "why": "Issue reports a clear UI overflow bug with reproduction steps and user-confirmed workaround; root cause is likely missing width constraint in chat container CSS. A concrete patch is suggested in comments, and no duplicate or competing PR covers the same fix."
+  },
+  "d07b9e806d978d15452027326c62d82518981b857eb88df44a0d7be48c16d758": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/pipeline/network/egress/tcp_client.rs",
+      "lib/runtime/src/pipeline/network/codec/zero_copy_decoder.rs",
+      "HTTP error mapping layer"
+    ],
+    "risks": [
+      "Potential behavior change for existing clients expecting 500 on oversized requests; need to ensure error type mapping is consistent across HTTP layers."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided script using a 1 MiB cap and a 1024x1024 noise PNG; verify the frontend returns 413/400 instead of 500 and no worker RST occurs.",
+      "Add a unit test for TcpConnection::send_request that asserts an oversized frame is rejected before write."
+    ],
+    "unknowns": [
+      "Exact preferred error type (413 vs 400) and whether maintainers prefer a new ErrorType variant; not blocking since either is acceptable."
+    ],
+    "why": "The issue provides a clear root cause: the TCP client lacks a pre-send size check against DYN_TCP_MAX_MESSAGE_SIZE, causing oversized frames to be rejected by the worker decoder and misreported as HTTP 500. The expected behavior and suggested fix are concrete, with a reproducible test case and code anchors."
   },
   "d09416668eb347da78a336d1304414061c809e9813de15ba1be688bf24a7df38": {
     "confidence": 0.85,
