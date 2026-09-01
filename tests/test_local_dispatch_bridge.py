@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -10203,6 +10204,103 @@ def test_task_turn_delivery_never_restarts_a_live_worker(monkeypatch, tmp_path):
     assert result["workerPid"] == os.getpid()
 
 
+def test_concurrent_task_turn_deliveries_spawn_only_one_worker(monkeypatch, tmp_path):
+    state = tmp_path / "state"
+    candidate = {
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "reservedAt": "2026-08-31T00:00:00Z",
+    }
+    authorizations = []
+
+    class Store:
+        path = tmp_path / "ledger.sqlite3"
+
+        def active_task_quarantine(self, _key):
+            return None
+
+        def authorize_task_turn_delivery(self, **kwargs):
+            authorizations.append(kwargs)
+            return kwargs
+
+    initial_checks = threading.Barrier(2)
+
+    def active_worker(_thread_id):
+        initial_checks.wait(timeout=2)
+        return None
+
+    def active_workers(_thread_id):
+        launches = list((state / "task_turn_receipts").glob("*.launch.json"))
+        if not launches:
+            return []
+        launch = json.loads(launches[0].read_text(encoding="utf-8"))
+        return [{"pid": launch["pid"], "deliveryKind": launch["deliveryKind"]}]
+
+    class FakeWorker:
+        pid = 4242
+
+    popen_calls = []
+
+    def fake_popen(*args, **kwargs):
+        popen_calls.append((args, kwargs))
+        return FakeWorker()
+
+    clock = threading.local()
+
+    def fast_monotonic():
+        clock.value = getattr(clock, "value", 0) + 61
+        return clock.value
+
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "_task_turn_reservation", lambda *_args, **_kwargs: candidate)
+    monkeypatch.setattr(MODULE, "_validated_task_turn_thread", lambda _candidate: (tmp_path, None))
+    monkeypatch.setattr(MODULE, "_task_turn_prompt", lambda *_args: "continue")
+    monkeypatch.setattr(MODULE, "thread_prompt_materialized_after", lambda *_args: (True, False))
+    monkeypatch.setattr(MODULE, "active_task_turn_worker", active_worker)
+    monkeypatch.setattr(MODULE, "active_task_turn_workers", active_workers)
+    monkeypatch.setattr(MODULE.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(MODULE, "monotonic", fast_monotonic)
+
+    results = []
+    errors = []
+
+    def deliver():
+        try:
+            results.append(
+                MODULE.task_turn_deliver(
+                    SimpleNamespace(
+                        ledger=Store.path,
+                        delivery_kind="pr-followup",
+                        delivery_token="a" * 64,
+                        thread_id="thread-1",
+                    )
+                )
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append((exc, "".join(__import__("traceback").format_exception(exc))))
+
+    calls = [threading.Thread(target=deliver) for _ in range(2)]
+    for call in calls:
+        call.start()
+    for call in calls:
+        call.join(timeout=3)
+
+    if errors:
+        pytest.fail("\n".join(trace for _exc, trace in errors), pytrace=False)
+    assert all(not call.is_alive() for call in calls)
+    assert len(popen_calls) == 1
+    assert len(authorizations) == 1
+    assert len(results) == 2
+    assert {result.get("reason") for result in results} == {None, "TASK_TURN_WORKER_ACTIVE"}
+    launch = json.loads(
+        next((state / "task_turn_receipts").glob("*.launch.json")).read_text(encoding="utf-8")
+    )
+    assert launch["pid"] == FakeWorker.pid
+
+
 def test_task_turn_delivery_rechecks_quarantine_before_starting_worker(monkeypatch, tmp_path):
     store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
@@ -13707,6 +13805,7 @@ def _controller_commit_result(
     additional_baseline_files: tuple[str, ...] = (),
     reported_code_paths: tuple[str, ...] | None = None,
     probe_code_paths: tuple[str, ...] = ("runtime.py",),
+    omit_reported_code_paths: bool = False,
 ) -> tuple[RadarLedger, Path, Path]:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
@@ -13887,6 +13986,8 @@ def _controller_commit_result(
             "bodyFile": str(body_path.resolve()),
         },
     }
+    if omit_reported_code_paths:
+        result.pop("codePaths")
     if publication_blocked_reason:
         result["publicationBlockedReason"] = publication_blocked_reason
     if quality.get("independent_review_passed") is not True:
@@ -18675,6 +18776,328 @@ def test_controller_accepts_verified_changed_files_beyond_reproduction_scope(tmp
     assert finalized["reproductionReceipt"]["codePaths"] == ["runtime.py"]
 
 
+def test_controller_defaults_omitted_code_paths_from_exact_commit_scope(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("tests/test_runtime.py",),
+        additional_baseline_files=("tests/test_runtime.py",),
+        omit_reported_code_paths=True,
+    )
+    candidate = store.task_result_candidates()[0]
+    result_raw = result_path.read_bytes()
+    context_raw = (result_path.parent / "task-context.json").read_bytes()
+    old_snapshot_digest = hashlib.sha256(result_raw + b"\0" + context_raw).hexdigest()
+    ManagedLedger(store.path, ensure_schema=False).record_event(
+        event_type="TASK_RESULT_EVIDENCE_BLOCKED",
+        idempotency_key=(
+            "task-result-evidence-blocked:managed-reproduction-scope-v2:"
+            f"{candidate['key']}:{candidate['threadId']}:{old_snapshot_digest}"
+        ),
+        opportunity_key=candidate["key"],
+        task_id=candidate["intentId"],
+        state="DISPATCHED",
+        source="result-ingestion",
+        provenance={"policyRevision": "managed-reproduction-scope-v2"},
+        payload={"reason": "CONTROLLER_CHANGED_FILES_OUTSIDE_REPORTED_SCOPE"},
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result
+    assert result["errors"] == []
+    assert result.get("workBlocked", []) == []
+    assert result["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["changedFiles"] == ["runtime.py", "tests/test_runtime.py"]
+    assert finalized["codePaths"] == ["runtime.py"]
+    assert finalized["reproductionReceipt"]["codePaths"] == ["runtime.py"]
+    assert finalized["controllerCodePathScope"]["reported"] == [
+        "runtime.py",
+        "tests/test_runtime.py",
+    ]
+    assert finalized["controllerCodePathScope"]["added"] == ["tests/test_runtime.py"]
+
+
+def test_completed_controller_commit_defaults_code_paths_when_field_is_absent(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("integration.py",),
+    )
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.pop("codePaths")
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        finalized, _raw = MODULE._finalize_controller_commit(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=result_access,
+            write_if_unchanged=False,
+        )
+
+    assert finalized["codePaths"] == ["integration.py", "runtime.py"]
+    assert finalized["controllerCommitChangedFiles"] == ["integration.py", "runtime.py"]
+
+
+def _write_completed_implementation_turn_receipt(
+    state: Path,
+    *,
+    context: dict[str, Any],
+    attempt_digest: str | None = None,
+) -> Path:
+    delivery_token = str(context["resultDigest"])
+    attempt_digest = attempt_digest or delivery_token
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="implementation-followup",
+        thread_id="thread-1",
+        delivery_token=delivery_token,
+        delivery_attempt_digest=attempt_digest,
+    )
+    receipt_root = state / "task_turn_receipts"
+    receipt_root.mkdir(parents=True)
+    receipt_path = receipt_root / f"{receipt_key}.json"
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "threadId": "thread-1",
+                "deliveryKind": "implementation-followup",
+                "deliveryToken": delivery_token,
+                "deliveryAttemptDigest": attempt_digest,
+                "turnId": "turn-implementation-1",
+                "turnStatus": "completed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    receipt_path.chmod(0o600)
+    return receipt_path
+
+
+def _record_completed_implementation_followup(
+    store: RadarLedger,
+    *,
+    context: dict[str, Any],
+) -> str:
+    result_digest = str(context["resultDigest"])
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=result_digest,
+        stage="IMPLEMENTATION_READY",
+    )
+    reserved = store.reserve_implementation_followup(
+        thread_id="thread-1",
+        result_digest=result_digest,
+    )
+    attempt_digest = str(reserved["implementationFollowupAttemptDigest"])
+    store.authorize_task_turn_delivery(
+        delivery_kind="implementation-followup",
+        thread_id="thread-1",
+        delivery_token=result_digest,
+        delivery_attempt_digest=attempt_digest,
+    )
+    store.commit_implementation_followup(
+        thread_id="thread-1",
+        result_digest=result_digest,
+    )
+    return attempt_digest
+
+
+def test_context_sync_preserves_exact_completed_result_pending_ingestion(monkeypatch, tmp_path):
+    managed_worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=managed_worktree,
+        additional_changed_files=("tests/test_runtime.py",),
+        additional_baseline_files=("tests/test_runtime.py",),
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.pop("codePaths")
+    value.pop("taskId")
+    result_path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+    result_raw = result_path.read_bytes()
+    context_path = result_path.parent / "task-context.json"
+    context_raw = context_path.read_bytes()
+    context = json.loads(context_raw)
+    state = tmp_path / "runtime-state"
+    attempt_digest = _record_completed_implementation_followup(store, context=context)
+    _write_completed_implementation_turn_receipt(
+        state,
+        context=context,
+        attempt_digest=attempt_digest,
+    )
+    monkeypatch.setattr(MODULE, "STATE", state)
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True, synced
+    assert synced["errors"] == []
+    assert synced["pendingResultIngestion"] == [{"key": "a/b#1", "threadId": "thread-1"}]
+    assert result_path.read_bytes() == result_raw
+    assert context_path.read_bytes() == context_raw
+
+
+def test_context_sync_does_not_defer_mismatched_completed_commit(monkeypatch, tmp_path):
+    managed_worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=managed_worktree,
+        additional_changed_files=("integration.py",),
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["controllerCommitChangedFiles"] = ["runtime.py"]
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    candidate = store.task_result_candidates()[0]
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    state = tmp_path / "runtime-state"
+    attempt_digest = _record_completed_implementation_followup(store, context=context)
+    _write_completed_implementation_turn_receipt(
+        state,
+        context=context,
+        attempt_digest=attempt_digest,
+    )
+    monkeypatch.setattr(MODULE, "STATE", state)
+
+    assert (
+        MODULE._controller_commit_result_pending_ingestion(
+            store,
+            candidate,
+            worktree=worktree,
+        )
+        is False
+    )
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    assert synced["pendingResultIngestion"] == []
+
+
+def test_context_sync_requires_completed_implementation_turn_receipt(monkeypatch, tmp_path):
+    managed_worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, _result_path = _controller_commit_result(
+        tmp_path,
+        worktree=managed_worktree,
+    )
+    candidate = store.task_result_candidates()[0]
+    context = json.loads(
+        (worktree / MODULE.TASK_PRIVATE_DIR / "task-context.json").read_text(encoding="utf-8")
+    )
+    _record_completed_implementation_followup(store, context=context)
+    monkeypatch.setattr(MODULE, "STATE", tmp_path / "empty-runtime-state")
+
+    assert (
+        MODULE._controller_commit_result_pending_ingestion(
+            store,
+            candidate,
+            worktree=worktree,
+        )
+        is False
+    )
+
+
+def test_context_sync_rejects_explicit_wrong_task_id(monkeypatch, tmp_path):
+    managed_worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=managed_worktree,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["taskId"] = "different-intent"
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    state = tmp_path / "runtime-state"
+    attempt_digest = _record_completed_implementation_followup(store, context=context)
+    _write_completed_implementation_turn_receipt(
+        state,
+        context=context,
+        attempt_digest=attempt_digest,
+    )
+    monkeypatch.setattr(MODULE, "STATE", state)
+    candidate = store.task_result_candidates()[0]
+
+    assert (
+        MODULE._controller_commit_result_pending_ingestion(
+            store,
+            candidate,
+            worktree=worktree,
+        )
+        is False
+    )
+
+
+def test_context_sync_accepts_completed_repaired_implementation_attempt(monkeypatch, tmp_path):
+    managed_worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=managed_worktree,
+    )
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    initial_attempt = _record_completed_implementation_followup(store, context=context)
+    assert initial_attempt == context["resultDigest"]
+    assert store.record_implementation_context_repair(
+        key="a/b#1",
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=str(worktree),
+        result_digest=str(context["resultDigest"]),
+        context_digest=str(context["contextDigest"]),
+    )
+    repaired_attempt = _record_completed_implementation_followup(store, context=context)
+    assert repaired_attempt != initial_attempt
+    state = tmp_path / "runtime-state"
+    _write_completed_implementation_turn_receipt(
+        state,
+        context=context,
+        attempt_digest=repaired_attempt,
+    )
+    monkeypatch.setattr(MODULE, "STATE", state)
+    candidate = store.task_result_candidates()[0]
+
+    assert MODULE._controller_commit_result_pending_ingestion(
+        store,
+        candidate,
+        worktree=worktree,
+    )
+
+
+def test_context_sync_rejects_stale_receipt_after_repaired_attempt(monkeypatch, tmp_path):
+    managed_worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=managed_worktree,
+    )
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    initial_attempt = _record_completed_implementation_followup(store, context=context)
+    state = tmp_path / "runtime-state"
+    _write_completed_implementation_turn_receipt(
+        state,
+        context=context,
+        attempt_digest=initial_attempt,
+    )
+    assert store.record_implementation_context_repair(
+        key="a/b#1",
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=str(worktree),
+        result_digest=str(context["resultDigest"]),
+        context_digest=str(context["contextDigest"]),
+    )
+    repaired_attempt = _record_completed_implementation_followup(store, context=context)
+    assert repaired_attempt != initial_attempt
+    monkeypatch.setattr(MODULE, "STATE", state)
+    candidate = store.task_result_candidates()[0]
+
+    assert (
+        MODULE._controller_commit_result_pending_ingestion(
+            store,
+            candidate,
+            worktree=worktree,
+        )
+        is False
+    )
+
+
 def test_controller_recovers_prebind_review_after_receipt_binding_crash(monkeypatch, tmp_path):
     store, _worktree, result_path = _controller_commit_result(
         tmp_path,
@@ -18938,6 +19361,8 @@ def test_final_receipt_never_falls_back_when_managed_durable_binding_disagrees(
     ("reported", "changed", "reason"),
     [
         (["replacement.py"], ["replacement.py"], "REPRODUCTION_SCOPE_OMITTED_OR_REPLACED"),
+        ([], ["runtime.py"], "REPORTED_SCOPE_PATHS_INVALID"),
+        (None, ["runtime.py"], "REPORTED_SCOPE_PATHS_INVALID"),
         (
             ["runtime.py", "unrelated.py"],
             ["runtime.py"],
@@ -21413,6 +21838,566 @@ def test_task_turn_worker_writes_terminal_failure_when_app_server_exits(monkeypa
     assert persisted["turnStatus"] == "failed"
     assert persisted["turnError"] == result["turnError"]
     assert store.unresolved_validation_followups() == []
+
+
+def _managed_rebuild_cache_fixture(monkeypatch, tmp_path):
+    state = tmp_path / "runtime" / "state"
+    monkeypatch.setattr(MODULE, "STATE", state)
+    worktree = MODULE.managed_worktree_root() / "intent-1-deadbeef00" / "repo"
+    worktree.mkdir(parents=True)
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Radar Test")
+    run_git(worktree, "config", "user.email", "radar@example.com")
+    (worktree / ".gitignore").write_text(
+        ".oss-pr-radar/\ntarget/\n.pytest_cache/\n",
+        encoding="utf-8",
+    )
+    source = worktree / "source.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    run_git(worktree, "add", ".gitignore", "source.py")
+    run_git(worktree, "commit", "-m", "test: baseline")
+    private = worktree / MODULE.TASK_PRIVATE_DIR
+    private.mkdir(mode=0o700)
+    protected = {
+        "result.json": b'{"stage":"FIX_READY"}\n',
+        "pr-body.md": b"private draft\n",
+        "task-context.json": (
+            json.dumps(
+                {
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "threadId": "thread-cache",
+                    "worktreePath": str(worktree),
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8"),
+    }
+    for name, raw in protected.items():
+        (private / name).write_bytes(raw)
+    return state, worktree, source, private, protected
+
+
+def _write_rebuild_cache(worktree: Path, name: str) -> Path:
+    creators = {
+        "target": "# This file is a cache directory tag created by cargo.",
+        ".pytest_cache": "# This file is a cache directory tag created by pytest.",
+    }
+    cache = worktree / name
+    cache.mkdir()
+    (cache / "CACHEDIR.TAG").write_text(
+        "Signature: 8a477f597d28d172789f06886806bc55" + "\n" + creators[name] + "\n",
+        encoding="utf-8",
+    )
+    (cache / "rebuild-only.bin").write_bytes(b"cache")
+    return cache
+
+
+def _write_terminal_cleanup_receipt(path: Path, *, terminal: bool = True) -> bytes:
+    value = {
+        "ok": True,
+        "threadId": "thread-cache",
+        "turnId": "turn-cache",
+        **({"turnStatus": "completed"} if terminal else {}),
+    }
+    path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+    return path.read_bytes()
+
+
+def test_active_turn_does_not_reclaim_managed_rebuild_cache(monkeypatch, tmp_path):
+    _state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "active-turn.json"
+    _write_terminal_cleanup_receipt(receipt, terminal=False)
+
+    result = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "skipped"
+    assert result["reason"] == "TURN_NOT_DURABLY_TERMINAL"
+    assert cache.is_dir()
+
+    _write_terminal_cleanup_receipt(receipt)
+    monkeypatch.setattr(
+        MODULE,
+        "active_task_turn_workers",
+        lambda _thread_id: [{"pid": os.getpid()}, {"pid": os.getpid() + 1}],
+    )
+    result = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+    assert result["status"] == "skipped"
+    assert result["reason"] == "ANOTHER_TASK_TURN_IS_ACTIVE"
+    assert cache.is_dir()
+
+
+def test_unverifiable_live_worker_blocks_cache_reclaim(monkeypatch, tmp_path):
+    state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "terminal-unverified-worker.json"
+    _write_terminal_cleanup_receipt(receipt)
+    launch_root = state / "task_turn_receipts"
+    launch_root.mkdir(parents=True)
+    (launch_root / "unverified.launch.json").write_text(
+        json.dumps(
+            {
+                "threadId": "thread-cache",
+                "pid": os.getpid() + 1000,
+                "deliveryKind": "implementation-followup",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(MODULE, "_pid_is_alive", lambda _pid: True)
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(subprocess.TimeoutExpired("ps", 2)),
+    )
+
+    blocked = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert blocked["status"] == "skipped"
+    assert blocked["reason"] == "ANOTHER_TASK_TURN_IS_ACTIVE"
+    assert cache.is_dir()
+
+
+def test_terminal_turn_reclaims_only_managed_rebuild_caches(monkeypatch, tmp_path):
+    _state, worktree, source, private, protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    target = _write_rebuild_cache(worktree, "target")
+    pytest_cache = _write_rebuild_cache(worktree, ".pytest_cache")
+    receipt = tmp_path / "terminal-turn.json"
+    receipt_raw = _write_terminal_cleanup_receipt(receipt)
+    head = run_git(worktree, "rev-parse", "HEAD")
+    source_raw = source.read_bytes()
+
+    result = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "completed"
+    assert set(result["removed"]) == {"target", ".pytest_cache"}
+    assert sorted(path.name for path in target.iterdir()) == ["CACHEDIR.TAG"]
+    assert sorted(path.name for path in pytest_cache.iterdir()) == ["CACHEDIR.TAG"]
+    assert receipt.read_bytes() == receipt_raw
+    assert source.read_bytes() == source_raw
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+    for name, raw in protected.items():
+        assert (private / name).read_bytes() == raw
+
+    repeated = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+    assert repeated["ok"] is True
+    assert set(repeated["absent"]) == {"target", ".pytest_cache"}
+
+
+@pytest.mark.parametrize("unsafe_kind", ["symlink", "unmarked", "tracked", "nonmanaged"])
+def test_terminal_turn_refuses_unsafe_rebuild_cache(monkeypatch, tmp_path, unsafe_kind):
+    _state, managed, source, private, protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    worktree = managed
+    outside = tmp_path / "outside-cache"
+    outside.mkdir()
+    sentinel = outside / "sentinel"
+    sentinel.write_text("keep", encoding="utf-8")
+    if unsafe_kind == "symlink":
+        (worktree / "target").symlink_to(outside, target_is_directory=True)
+    elif unsafe_kind == "unmarked":
+        (worktree / "target").mkdir()
+        (worktree / "target" / "ordinary.txt").write_text("keep", encoding="utf-8")
+    elif unsafe_kind == "tracked":
+        _write_rebuild_cache(worktree, "target")
+        run_git(worktree, "add", "-f", "target/CACHEDIR.TAG", "target/rebuild-only.bin")
+        run_git(worktree, "commit", "-m", "test: tracked target")
+    else:
+        worktree = tmp_path / "unmanaged-repo"
+        worktree.mkdir()
+        run_git(worktree, "init")
+        run_git(worktree, "config", "user.name", "Radar Test")
+        run_git(worktree, "config", "user.email", "radar@example.com")
+        (worktree / ".gitignore").write_text(".oss-pr-radar/\ntarget/\n", encoding="utf-8")
+        (worktree / "source.py").write_text("VALUE = 1\n", encoding="utf-8")
+        run_git(worktree, "add", ".gitignore", "source.py")
+        run_git(worktree, "commit", "-m", "test: unmanaged")
+        unmanaged_private = worktree / MODULE.TASK_PRIVATE_DIR
+        unmanaged_private.mkdir(mode=0o700)
+        _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / f"terminal-{unsafe_kind}.json"
+    receipt_raw = _write_terminal_cleanup_receipt(receipt)
+    source_raw = source.read_bytes()
+    protected_raw = {name: (private / name).read_bytes() for name in protected}
+
+    result = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert result["ok"] is False
+    assert receipt.read_bytes() == receipt_raw
+    assert (worktree / "target").exists() or (worktree / "target").is_symlink()
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert source.read_bytes() == source_raw
+    for name, raw in protected_raw.items():
+        assert (private / name).read_bytes() == raw
+    if unsafe_kind == "tracked":
+        assert "contains tracked files" in result["refused"][0]["reason"]
+
+
+def test_cache_cleanup_failure_does_not_change_completed_turn_receipt(monkeypatch, tmp_path):
+    _state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "terminal-cleanup-failure.json"
+    receipt_raw = _write_terminal_cleanup_receipt(receipt)
+
+    def fail_cache_clear(*_args, **_kwargs):
+        raise PermissionError("injected cleanup failure")
+
+    monkeypatch.setattr(MODULE, "_clear_task_cache_contents", fail_cache_clear)
+
+    result = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "failed"
+    assert "injected cleanup failure" in result["refused"][0]["reason"]
+    assert receipt.read_bytes() == receipt_raw
+    assert cache.is_dir()
+
+
+def test_cache_cleanup_refuses_open_cache_file(monkeypatch, tmp_path):
+    _state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "terminal-open-cache.json"
+    _write_terminal_cleanup_receipt(receipt)
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import pathlib,time; "
+                f"handle=pathlib.Path({str(cache / 'rebuild-only.bin')!r}).open('rb'); "
+                "print('ready', flush=True); time.sleep(30)"
+            ),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "ready"
+        blocked = MODULE._cleanup_after_terminal_turn(
+            receipt_path=receipt,
+            worktree=worktree,
+            thread_id="thread-cache",
+            turn_id="turn-cache",
+        )
+        assert blocked["ok"] is False
+        assert "still has open files" in blocked["refused"][0]["reason"]
+        assert cache.is_dir()
+    finally:
+        holder.terminate()
+        holder.wait(timeout=5)
+
+    cleared = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+    assert cleared["ok"] is True
+    assert sorted(path.name for path in cache.iterdir()) == ["CACHEDIR.TAG"]
+
+
+def test_cache_cleanup_does_not_delete_a_replacement_after_final_binding_check(
+    monkeypatch, tmp_path
+):
+    _state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    authenticated_cache = _write_rebuild_cache(worktree, "target")
+    replacement = tmp_path / "ordinary-directory"
+    replacement.mkdir()
+    (replacement / "sentinel.txt").write_text("keep", encoding="utf-8")
+    receipt = tmp_path / "terminal-cache-swap.json"
+    receipt_raw = _write_terminal_cleanup_receipt(receipt)
+    real_clear = MODULE._clear_task_cache_contents
+
+    def swap_before_clear(cache_fd, *, cache_name):
+        authenticated_cache.rename(worktree / "authenticated-target-moved")
+        replacement.rename(authenticated_cache)
+        return real_clear(cache_fd, cache_name=cache_name)
+
+    monkeypatch.setattr(MODULE, "_clear_task_cache_contents", swap_before_clear)
+
+    blocked = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert blocked["ok"] is False
+    assert "changed before cleanup" in blocked["refused"][0]["reason"]
+    assert (authenticated_cache / "sentinel.txt").read_text(encoding="utf-8") == "keep"
+    assert receipt.read_bytes() == receipt_raw
+
+
+def test_cache_cleanup_requires_context_worktree_binding(monkeypatch, tmp_path):
+    _state, worktree, _source, private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "terminal-wrong-context.json"
+    _write_terminal_cleanup_receipt(receipt)
+    context = json.loads((private / "task-context.json").read_text(encoding="utf-8"))
+    context["threadId"] = "another-thread"
+    (private / "task-context.json").write_text(json.dumps(context), encoding="utf-8")
+
+    blocked = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert blocked["ok"] is False
+    assert "context binding does not match" in blocked["error"]
+    assert cache.is_dir()
+
+
+def test_process_cleanup_failure_blocks_cache_reclaim(monkeypatch, tmp_path):
+    _state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "terminal-process-cleanup-failure.json"
+    receipt_raw = _write_terminal_cleanup_receipt(receipt)
+
+    result = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+        process_cleanup_error="cargo descendant could not be stopped",
+    )
+
+    assert result["ok"] is False
+    assert result["reason"] == "APP_SERVER_CLEANUP_FAILED"
+    assert receipt.read_bytes() == receipt_raw
+    assert cache.is_dir()
+
+
+def test_nonquiescent_process_tree_blocks_cache_reclaim(monkeypatch, tmp_path):
+    _state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "terminal-nonquiescent.json"
+    _write_terminal_cleanup_receipt(receipt)
+    monkeypatch.setattr(MODULE, "_capture_app_server_cleanup_guard", lambda _process: {"ok": True})
+    monkeypatch.setattr(MODULE, "_terminate_app_server_process", lambda _process: None)
+    monkeypatch.setattr(MODULE, "_app_server_cleanup_is_quiescent", lambda *_args: False)
+
+    MODULE._finalize_terminal_turn_resources(
+        process=object(),
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert cache.is_dir()
+    diagnostic = json.loads(
+        MODULE._task_cache_cleanup_receipt_path(
+            thread_id="thread-cache",
+            turn_id="turn-cache",
+            worktree=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    assert diagnostic["reason"] == "APP_SERVER_CLEANUP_FAILED"
+
+
+def test_process_group_must_be_gone_before_cache_cleanup():
+    process = subprocess.Popen(["/bin/sleep", "30"], start_new_session=True)
+    guard = {"processGroup": process.pid, "descendantPids": []}
+    try:
+        assert (
+            MODULE._app_server_cleanup_is_quiescent(
+                process,
+                guard,
+                timeout_seconds=0,
+            )
+            is False
+        )
+    finally:
+        os.killpg(process.pid, MODULE.signal.SIGKILL)
+        process.wait(timeout=5)
+    assert (
+        MODULE._app_server_cleanup_is_quiescent(
+            process,
+            guard,
+            timeout_seconds=1,
+        )
+        is True
+    )
+
+
+def test_terminal_resource_cleanup_stops_process_before_reclaim(monkeypatch, tmp_path):
+    events: list[str] = []
+    receipt = tmp_path / "terminal-order.json"
+    _write_terminal_cleanup_receipt(receipt)
+    process = object()
+
+    monkeypatch.setattr(MODULE, "_capture_app_server_cleanup_guard", lambda _process: {"ok": True})
+    monkeypatch.setattr(
+        MODULE,
+        "_terminate_app_server_process",
+        lambda observed: events.append("terminated") if observed is process else None,
+    )
+    monkeypatch.setattr(MODULE, "_app_server_cleanup_is_quiescent", lambda *_args: True)
+
+    def observe_cleanup(**kwargs):
+        assert kwargs["process_cleanup_error"] is None
+        assert json.loads(receipt.read_text(encoding="utf-8"))["turnStatus"] == "completed"
+        events.append("reclaimed")
+        return {"ok": True}
+
+    monkeypatch.setattr(MODULE, "_cleanup_after_terminal_turn", observe_cleanup)
+
+    MODULE._finalize_terminal_turn_resources(
+        process=process,
+        receipt_path=receipt,
+        worktree=tmp_path / "worktree",
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert events == ["terminated", "reclaimed"]
+
+
+def test_unbound_turn_id_cannot_reclaim_cache(monkeypatch, tmp_path):
+    _state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "different-terminal-turn.json"
+    _write_terminal_cleanup_receipt(receipt)
+    monkeypatch.setattr(MODULE, "_capture_app_server_cleanup_guard", lambda _process: {"ok": True})
+    monkeypatch.setattr(MODULE, "_terminate_app_server_process", lambda _process: None)
+    monkeypatch.setattr(MODULE, "_app_server_cleanup_is_quiescent", lambda *_args: True)
+
+    MODULE._finalize_terminal_turn_resources(
+        process=object(),
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="",
+    )
+
+    assert cache.is_dir()
+    diagnostic = json.loads(
+        MODULE._task_cache_cleanup_receipt_path(
+            thread_id="thread-cache",
+            turn_id="",
+            worktree=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    assert diagnostic["status"] == "skipped"
+    assert diagnostic["reason"] == "TURN_NOT_DURABLY_TERMINAL"
+
+
+def test_task_worker_orders_terminal_receipt_process_stop_and_cache_reclaim(monkeypatch, tmp_path):
+    _store, candidate, _worktree, _result_path, _original, _binding, args = (
+        _bound_validation_worker_fixture(monkeypatch, tmp_path)
+    )
+    process = _FakeTaskTurnProcess()
+    events: list[str] = []
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": candidate["threadId"]}}}
+        return buffer, {"result": {"turn": {"id": "turn-ordered"}}}
+
+    original_write_terminal = MODULE._write_terminal_turn_receipt
+
+    def write_terminal(*call_args, **call_kwargs):
+        terminal = original_write_terminal(*call_args, **call_kwargs)
+        events.append("receipt")
+        return terminal
+
+    def reclaim(**kwargs):
+        persisted = json.loads(Path(args.receipt).read_text(encoding="utf-8"))
+        assert persisted["turnId"] == "turn-ordered"
+        assert persisted["turnStatus"] == "completed"
+        assert kwargs["process_cleanup_error"] is None
+        events.append("reclaimed")
+        return {"ok": True}
+
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+    monkeypatch.setattr(
+        MODULE,
+        "_wait_for_app_server_terminal_turn",
+        lambda *_args, **_kwargs: {"turnId": "turn-ordered", "status": "completed"},
+    )
+    monkeypatch.setattr(MODULE, "_write_terminal_turn_receipt", write_terminal)
+    monkeypatch.setattr(
+        MODULE,
+        "_terminate_app_server_process",
+        lambda observed: events.append("terminated") if observed is process else None,
+    )
+    monkeypatch.setattr(MODULE, "_capture_app_server_cleanup_guard", lambda _process: {"ok": True})
+    monkeypatch.setattr(MODULE, "_app_server_cleanup_is_quiescent", lambda *_args: True)
+    monkeypatch.setattr(MODULE, "_cleanup_after_terminal_turn", reclaim)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    result = MODULE._app_server_task_turn_worker(args)
+
+    assert result["turnStatus"] == "completed"
+    assert events == ["receipt", "terminated", "reclaimed"]
 
 
 def test_app_server_cleanup_terminates_its_process_group(monkeypatch):

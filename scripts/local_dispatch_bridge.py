@@ -209,7 +209,14 @@ TERMINAL_PUBLICATION_BLOCK_REASONS = {
     "ACTIVE_OR_CONDITIONAL_CLAIM",
     "STRONG_EXISTING_PR",
 }
-TASK_RESULT_EVIDENCE_POLICY_REVISION = "managed-reproduction-scope-v2"
+TASK_RESULT_EVIDENCE_POLICY_REVISION = "managed-reproduction-scope-v3"
+TASK_CACHE_CLEANUP_SCHEMA = "radar-task-cache-cleanup-v1"
+TASK_CACHE_CLEANUP_TERMINAL_STATUSES = frozenset({"completed", "interrupted", "failed"})
+CACHE_DIRECTORY_TAG_SIGNATURE = "Signature: 8a477f597d28d172789f06886806bc55"
+MANAGED_TASK_REBUILD_CACHES = {
+    "target": "# This file is a cache directory tag created by cargo.",
+    ".pytest_cache": "# This file is a cache directory tag created by pytest.",
+}
 PR_FOLLOWUP_ISOLATABLE_PATH_ERRORS = frozenset(
     {
         "CODE_PATH_UNSAFE",
@@ -7427,6 +7434,59 @@ def _terminate_app_server_process(process: subprocess.Popen[Any]) -> None:
     _signal_app_server_descendants(descendant_groups, descendant_pids, signal.SIGKILL)
 
 
+def _capture_app_server_cleanup_guard(
+    process: subprocess.Popen[Any],
+) -> dict[str, Any] | None:
+    """Bind cleanup to one live, isolated app-server process tree."""
+
+    try:
+        process_group = os.getpgid(process.pid)
+    except (AttributeError, OSError, ProcessLookupError, ValueError):
+        return None
+    if process_group != process.pid:
+        return None
+    snapshot = _app_server_process_snapshot()
+    root = snapshot.get(process.pid)
+    if root is None or root[1] != process_group or "app-server" not in root[2]:
+        return None
+    descendant_groups, descendant_pids = _capture_app_server_descendants(
+        process,
+        process_group=process_group,
+    )
+    captured_descendants = set(descendant_pids)
+    for pids in descendant_groups.values():
+        captured_descendants.update(pids)
+    return {
+        "processGroup": process_group,
+        "descendantPids": sorted(captured_descendants),
+    }
+
+
+def _app_server_cleanup_is_quiescent(
+    process: subprocess.Popen[Any],
+    guard: dict[str, Any],
+    *,
+    timeout_seconds: float = 5,
+) -> bool:
+    """Prove the bound app-server group and captured descendants are gone."""
+
+    process_group = int(guard.get("processGroup") or 0)
+    descendant_pids = {int(pid) for pid in (guard.get("descendantPids") or [])}
+    if process_group <= 1:
+        return False
+    deadline = monotonic() + timeout_seconds
+    while True:
+        snapshot = _app_server_process_snapshot()
+        if snapshot:
+            group_live = any(pgid == process_group for _ppid, pgid, _command in snapshot.values())
+            descendants_live = any(pid in snapshot for pid in descendant_pids)
+            if process.poll() is not None and not group_live and not descendants_live:
+                return True
+        if monotonic() >= deadline:
+            return False
+        sleep(0.1)
+
+
 def _write_terminal_turn_receipt(
     path: Path,
     base: dict[str, Any],
@@ -7644,8 +7704,13 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
         raise
     finally:
         selector.close()
-        if process is not None:
-            _terminate_app_server_process(process)
+        _finalize_terminal_turn_resources(
+            process=process,
+            receipt_path=Path(args.receipt),
+            worktree=Path(args.worktree),
+            thread_id=thread_id,
+            turn_id=turn_id,
+        )
 
 
 def root_task_create(args: argparse.Namespace) -> dict[str, Any]:
@@ -9195,13 +9260,13 @@ def _app_server_task_turn_worker(args: argparse.Namespace) -> dict[str, Any]:
         raise
     finally:
         selector.close()
-        if process is not None and process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
+        _finalize_terminal_turn_resources(
+            process=process,
+            receipt_path=Path(args.receipt),
+            worktree=Path(str(candidate.get("worktreePath") or "")),
+            thread_id=args.thread_id,
+            turn_id=turn_id,
+        )
 
 
 def task_turn_worker_entry(args: argparse.Namespace) -> dict[str, Any]:
@@ -9285,52 +9350,68 @@ def _task_turn_delivery_file_key(
     )
 
 
-def active_task_turn_worker(thread_id: str) -> dict[str, Any] | None:
-    """Return the verified local worker that still owns a task turn."""
+def active_task_turn_workers(thread_id: str) -> list[dict[str, Any]]:
+    """Return every verified local worker that still owns this task."""
 
+    workers: dict[int, dict[str, Any]] = {}
     receipt_root = STATE / "task_turn_receipts"
-    if not receipt_root.is_dir():
-        return None
-    for launch_path in receipt_root.glob("*.launch.json"):
-        launch = read_json(launch_path, missing={})
-        if str(launch.get("threadId") or "") != thread_id:
-            continue
-        pid = int(launch.get("pid") or 0)
-        if not pid or not _pid_is_alive(pid):
-            continue
-        try:
-            command_line = subprocess.run(
-                ["ps", "-p", str(pid), "-o", "command="],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=2,
-            ).stdout.strip()
-        except (OSError, RuntimeError, subprocess.SubprocessError):
-            continue
-        if (
-            "local_dispatch_bridge.py" not in command_line
-            or "task-turn-worker" not in command_line
-            or thread_id not in command_line
-        ):
-            continue
-        worker = {
-            "pid": pid,
-            "deliveryKind": launch.get("deliveryKind"),
-            "startedAt": launch.get("startedAt"),
-        }
-        if launch.get("reservationDigest"):
-            worker["reservationDigest"] = launch["reservationDigest"]
-        return worker
-    return active_root_task_worker(thread_id)
+    if receipt_root.is_dir():
+        for launch_path in receipt_root.glob("*.launch.json"):
+            launch = read_json(launch_path, missing={})
+            if str(launch.get("threadId") or "") != thread_id:
+                continue
+            pid = int(launch.get("pid") or 0)
+            if not pid or not _pid_is_alive(pid):
+                continue
+            try:
+                command_line = subprocess.run(
+                    ["ps", "-p", str(pid), "-o", "command="],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                ).stdout.strip()
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                workers[pid] = {
+                    "pid": pid,
+                    "deliveryKind": launch.get("deliveryKind"),
+                    "startedAt": launch.get("startedAt"),
+                    "unverified": True,
+                }
+                continue
+            if (
+                "local_dispatch_bridge.py" not in command_line
+                or "task-turn-worker" not in command_line
+                or thread_id not in command_line
+            ):
+                continue
+            worker = {
+                "pid": pid,
+                "deliveryKind": launch.get("deliveryKind"),
+                "startedAt": launch.get("startedAt"),
+            }
+            if launch.get("reservationDigest"):
+                worker["reservationDigest"] = launch["reservationDigest"]
+            workers[pid] = worker
+    for worker in active_root_task_workers(thread_id):
+        workers[int(worker["pid"])] = worker
+    return list(workers.values())
 
 
-def active_root_task_worker(thread_id: str) -> dict[str, Any] | None:
-    """Return the verified root-task worker that owns a task's first turn."""
+def active_task_turn_worker(thread_id: str) -> dict[str, Any] | None:
+    """Return one verified local worker for compatibility with existing callers."""
 
+    workers = active_task_turn_workers(thread_id)
+    return workers[0] if workers else None
+
+
+def active_root_task_workers(thread_id: str) -> list[dict[str, Any]]:
+    """Return every verified root-task worker that owns this task."""
+
+    workers: list[dict[str, Any]] = []
     receipt_root = STATE / "root_task_receipts"
     if not receipt_root.is_dir():
-        return None
+        return workers
     for launch_path in receipt_root.glob("*.launch.json"):
         creation_token = launch_path.name.removesuffix(".launch.json")
         launch = read_json(launch_path, missing={})
@@ -9349,6 +9430,14 @@ def active_root_task_worker(thread_id: str) -> dict[str, Any] | None:
                 timeout=2,
             ).stdout.strip()
         except (OSError, RuntimeError, subprocess.SubprocessError):
+            workers.append(
+                {
+                    "pid": pid,
+                    "deliveryKind": "root-task",
+                    "startedAt": launch.get("startedAt"),
+                    "unverified": True,
+                }
+            )
             continue
         if (
             "local_dispatch_bridge.py" not in command_line
@@ -9356,12 +9445,21 @@ def active_root_task_worker(thread_id: str) -> dict[str, Any] | None:
             or creation_token not in command_line
         ):
             continue
-        return {
-            "pid": pid,
-            "deliveryKind": "root-task",
-            "startedAt": launch.get("startedAt"),
-        }
-    return None
+        workers.append(
+            {
+                "pid": pid,
+                "deliveryKind": "root-task",
+                "startedAt": launch.get("startedAt"),
+            }
+        )
+    return workers
+
+
+def active_root_task_worker(thread_id: str) -> dict[str, Any] | None:
+    """Return one verified root-task worker for compatibility with existing callers."""
+
+    workers = active_root_task_workers(thread_id)
+    return workers[0] if workers else None
 
 
 def _latest_active_thread_turn(rollout_path: str | None) -> dict[str, Any] | None:
@@ -10235,9 +10333,20 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
             ),
         }
 
+    worker: subprocess.Popen[Any] | None = None
     try:
         with opportunity_action_guard(ledger_action_guard_root(store.path), opportunity_key):
             _require_task_action_clear(store, opportunity_key)
+            active_workers = active_task_turn_workers(args.thread_id)
+            if active_workers:
+                return {
+                    "ok": True,
+                    "pending": True,
+                    "threadId": args.thread_id,
+                    "deliveryKind": args.delivery_kind,
+                    "reason": "TASK_TURN_WORKER_ACTIVE",
+                    "worker": active_workers[0],
+                }
             if args.delivery_kind == "validation-followup":
                 try:
                     reservation_digest = str(candidate["reservationDigest"])
@@ -10380,13 +10489,37 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
+            try:
+                _atomic_json(
+                    launch,
+                    {
+                        "pid": worker.pid,
+                        "startedAt": iso_z(datetime.now(UTC)),
+                        "threadId": args.thread_id,
+                        "deliveryKind": args.delivery_kind,
+                        "deliveryToken": args.delivery_token,
+                        **(
+                            {"deliveryAttemptDigest": delivery_attempt_digest}
+                            if delivery_attempt_digest
+                            else {}
+                        ),
+                        **(
+                            {"reservationDigest": validation_reservation_digest}
+                            if validation_reservation_digest
+                            else {}
+                        ),
+                    },
+                )
+            except BaseException:
+                _terminate_app_server_process(worker)
+                raise
     except Exception as exc:
         if not receipt.exists():
             _atomic_json(
                 receipt,
                 {
                     "ok": False,
-                    "turnStarted": False,
+                    "turnStarted": None if worker is not None else False,
                     "turnId": None,
                     "error": f"{type(exc).__name__}:{str(exc)[:300]}",
                     **(
@@ -10397,26 +10530,7 @@ def task_turn_deliver(args: argparse.Namespace) -> dict[str, Any]:
                 },
             )
         raise
-    _atomic_json(
-        launch,
-        {
-            "pid": worker.pid,
-            "startedAt": iso_z(datetime.now(UTC)),
-            "threadId": args.thread_id,
-            "deliveryKind": args.delivery_kind,
-            "deliveryToken": args.delivery_token,
-            **(
-                {"deliveryAttemptDigest": delivery_attempt_digest}
-                if delivery_attempt_digest
-                else {}
-            ),
-            **(
-                {"reservationDigest": validation_reservation_digest}
-                if validation_reservation_digest
-                else {}
-            ),
-        },
-    )
+    assert worker is not None
     deadline = monotonic() + 60
     while monotonic() < deadline:
         if receipt.exists():
@@ -11846,6 +11960,384 @@ def _task_worktree_private_descriptor(candidate: dict[str, Any]):
             os.close(fd)
 
 
+def _task_cache_cleanup_receipt_path(*, thread_id: str, turn_id: str, worktree: Path) -> Path:
+    identity = canonical_json(
+        {
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "worktreePath": str(_lexical_absolute(worktree)),
+        }
+    )
+    key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return STATE / "task_cache_cleanup_receipts" / f"{key}.json"
+
+
+def _record_task_cache_cleanup(
+    *, thread_id: str, turn_id: str, worktree: Path, value: dict[str, Any]
+) -> None:
+    diagnostic = {
+        "schema": TASK_CACHE_CLEANUP_SCHEMA,
+        "recordedAt": iso_z(datetime.now(UTC)),
+        "threadId": thread_id,
+        "turnId": turn_id,
+        "worktreePath": str(_lexical_absolute(worktree)),
+        **value,
+    }
+    try:
+        _atomic_json(
+            _task_cache_cleanup_receipt_path(
+                thread_id=thread_id,
+                turn_id=turn_id,
+                worktree=worktree,
+            ),
+            diagnostic,
+        )
+    except Exception as exc:
+        print(
+            f"TASK_CACHE_CLEANUP_DIAGNOSTIC_FAILED:{type(exc).__name__}:{str(exc)[:240]}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+def _task_cache_marker_bytes(cache_fd: int, *, cache_name: str) -> bytes:
+    try:
+        marker_stat = os.stat("CACHEDIR.TAG", dir_fd=cache_fd, follow_symlinks=False)
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"{cache_name} CACHEDIR.TAG is missing") from exc
+    if marker_stat.st_size > 4096:
+        raise RuntimeError(f"{cache_name} CACHEDIR.TAG is oversized")
+    raw = _read_owned_regular_file(
+        Path("CACHEDIR.TAG"),
+        label=f"{cache_name} CACHEDIR.TAG",
+        reject_dangerous_writes=True,
+        directory_fd=cache_fd,
+    )
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(f"{cache_name} CACHEDIR.TAG is invalid") from exc
+    expected_creator = MANAGED_TASK_REBUILD_CACHES[cache_name]
+    if not lines or lines[0] != CACHE_DIRECTORY_TAG_SIGNATURE or expected_creator not in lines[1:]:
+        raise RuntimeError(f"{cache_name} CACHEDIR.TAG is invalid")
+    return raw
+
+
+def _validate_task_cache_binding(
+    opened: _ValidationWorktreeDirectory,
+    *,
+    cache_name: str,
+    cache_fd: int,
+) -> None:
+    _require_validation_worktree_private_binding(
+        bindings=opened.bindings,
+        worktree=opened.worktree,
+        worktree_fd=opened.worktree_fd,
+        private_dir=opened.private_dir,
+        private_fd=opened.private_fd,
+    )
+    try:
+        path_stat = os.stat(
+            cache_name,
+            dir_fd=opened.worktree_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"{cache_name} changed before cleanup") from exc
+    descriptor_stat = os.fstat(cache_fd)
+    if (
+        stat.S_ISLNK(path_stat.st_mode)
+        or not stat.S_ISDIR(path_stat.st_mode)
+        or path_stat.st_uid != os.getuid()
+        or stat.S_IMODE(path_stat.st_mode) & 0o022
+        or not stat.S_ISDIR(descriptor_stat.st_mode)
+        or descriptor_stat.st_uid != os.getuid()
+        or stat.S_IMODE(descriptor_stat.st_mode) & 0o022
+        or (path_stat.st_dev, path_stat.st_ino) != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+    ):
+        raise RuntimeError(f"{cache_name} changed before cleanup")
+
+
+def _clear_task_cache_contents(cache_fd: int, *, cache_name: str) -> bool:
+    """Clear cache payload through its authenticated descriptor, retaining its root tag."""
+
+    entries = [name for name in os.listdir(cache_fd) if name != "CACHEDIR.TAG"]
+    if not entries:
+        return False
+    for name in entries:
+        entry_stat = os.stat(name, dir_fd=cache_fd, follow_symlinks=False)
+        if stat.S_ISDIR(entry_stat.st_mode) and not stat.S_ISLNK(entry_stat.st_mode):
+            shutil.rmtree(name, dir_fd=cache_fd)
+        else:
+            os.unlink(name, dir_fd=cache_fd)
+    os.fsync(cache_fd)
+    return True
+
+
+def _reclaim_managed_task_rebuild_caches(
+    worktree: Path,
+    *,
+    thread_id: str,
+) -> dict[str, Any]:
+    """Remove only authenticated, ignored rebuild caches from one managed worktree."""
+
+    if not worktree.is_absolute() or not _is_managed_worktree(worktree):
+        raise RuntimeError("task cache cleanup worktree is not managed")
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise RuntimeError("task cache cleanup is not symlink safe on this platform")
+    removed: list[str] = []
+    absent: list[str] = []
+    refused: list[dict[str, str]] = []
+    with _task_worktree_private_descriptor({"worktreePath": str(worktree)}) as opened:
+        if not _is_managed_worktree(opened.worktree):
+            raise RuntimeError("task cache cleanup worktree binding is not managed")
+        context_raw = _read_owned_regular_file(
+            Path("task-context.json"),
+            label="task cache cleanup context",
+            reject_dangerous_writes=True,
+            directory_fd=opened.private_fd,
+        )
+        context = json.loads(context_raw)
+        if (
+            not isinstance(context, dict)
+            or context.get("threadId") != thread_id
+            or _lexical_absolute(Path(str(context.get("worktreePath") or ""))) != opened.worktree
+        ):
+            raise RuntimeError("task cache cleanup context binding does not match")
+        repository_root = Path(
+            command(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=opened.worktree,
+                timeout=30,
+            )
+        ).resolve()
+        if repository_root != opened.worktree.resolve():
+            raise RuntimeError("task cache cleanup path is not the repository root")
+
+        for cache_name in MANAGED_TASK_REBUILD_CACHES:
+            try:
+                os.stat(
+                    cache_name,
+                    dir_fd=opened.worktree_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                absent.append(cache_name)
+                continue
+
+            cache_fd = -1
+            try:
+                cache_fd, _cache_path = _open_directory_child(
+                    parent_fd=opened.worktree_fd,
+                    parent_path=opened.worktree,
+                    name=cache_name,
+                    label=f"managed rebuild cache {cache_name}",
+                )
+                marker_raw = _task_cache_marker_bytes(cache_fd, cache_name=cache_name)
+                ignored = subprocess.run(
+                    [
+                        "git",
+                        "check-ignore",
+                        "--quiet",
+                        "--no-index",
+                        "--",
+                        cache_name,
+                    ],
+                    cwd=opened.worktree,
+                    check=False,
+                    capture_output=True,
+                    timeout=30,
+                )
+                if ignored.returncode != 0:
+                    reason = (
+                        "is not git ignored"
+                        if ignored.returncode == 1
+                        else "git ignore check failed"
+                    )
+                    raise RuntimeError(f"{cache_name} {reason}")
+                tracked = subprocess.run(
+                    ["git", "ls-files", "-z", "--", cache_name],
+                    cwd=opened.worktree,
+                    check=False,
+                    capture_output=True,
+                    timeout=30,
+                )
+                if tracked.returncode != 0:
+                    raise RuntimeError(f"{cache_name} tracked-file check failed")
+                if tracked.stdout:
+                    raise RuntimeError(f"{cache_name} contains tracked files")
+                lsof = shutil.which("lsof")
+                if not lsof:
+                    raise RuntimeError(f"{cache_name} open-file check is unavailable")
+                open_files = subprocess.run(
+                    [lsof, "-nP", "-F", "p", "+D", str(opened.worktree / cache_name)],
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=30,
+                )
+                open_pids = {
+                    int(line[1:])
+                    for line in open_files.stdout.decode("utf-8", errors="ignore").splitlines()
+                    if re.fullmatch(r"p[1-9][0-9]*", line)
+                }
+                open_pids.discard(os.getpid())
+                if open_pids:
+                    raise RuntimeError(f"{cache_name} still has open files")
+                if open_files.returncode not in {0, 1}:
+                    raise RuntimeError(f"{cache_name} open-file check failed")
+                _validate_task_cache_binding(
+                    opened,
+                    cache_name=cache_name,
+                    cache_fd=cache_fd,
+                )
+                if _task_cache_marker_bytes(cache_fd, cache_name=cache_name) != marker_raw:
+                    raise RuntimeError(f"{cache_name} CACHEDIR.TAG changed before cleanup")
+                if _clear_task_cache_contents(cache_fd, cache_name=cache_name):
+                    _validate_task_cache_binding(
+                        opened,
+                        cache_name=cache_name,
+                        cache_fd=cache_fd,
+                    )
+                    if _task_cache_marker_bytes(cache_fd, cache_name=cache_name) != marker_raw:
+                        raise RuntimeError(f"{cache_name} CACHEDIR.TAG changed during cleanup")
+                    removed.append(cache_name)
+                else:
+                    absent.append(cache_name)
+            except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+                refused.append(
+                    {
+                        "cache": cache_name,
+                        "reason": f"{type(exc).__name__}:{str(exc)[:240]}",
+                    }
+                )
+            finally:
+                if cache_fd >= 0:
+                    os.close(cache_fd)
+    return {"removed": removed, "absent": absent, "refused": refused}
+
+
+def _cleanup_after_terminal_turn(
+    *,
+    receipt_path: Path,
+    worktree: Path,
+    thread_id: str,
+    turn_id: str,
+    process_cleanup_error: str | None = None,
+) -> dict[str, Any]:
+    """Reclaim rebuild caches without changing the durable turn receipt."""
+
+    base = {"receiptPath": str(receipt_path)}
+    try:
+        receipt_raw = _read_owned_regular_file(
+            receipt_path,
+            label="terminal turn receipt",
+            reject_dangerous_writes=True,
+        )
+        receipt = json.loads(receipt_raw)
+        if not isinstance(receipt, dict):
+            raise RuntimeError("terminal turn receipt is invalid")
+        active_workers = active_task_turn_workers(thread_id)
+        other_worker_pids = sorted(
+            {
+                int(worker.get("pid") or 0)
+                for worker in active_workers
+                if int(worker.get("pid") or 0) not in {0, os.getpid()}
+            }
+        )
+        if (
+            receipt.get("ok") is not True
+            or receipt.get("threadId") != thread_id
+            or receipt.get("turnId") != turn_id
+            or receipt.get("turnStatus") not in TASK_CACHE_CLEANUP_TERMINAL_STATUSES
+        ):
+            result = base | {
+                "ok": True,
+                "status": "skipped",
+                "reason": "TURN_NOT_DURABLY_TERMINAL",
+            }
+        elif other_worker_pids:
+            result = base | {
+                "ok": True,
+                "status": "skipped",
+                "reason": "ANOTHER_TASK_TURN_IS_ACTIVE",
+                "activeWorkerPids": other_worker_pids,
+            }
+        elif process_cleanup_error is not None:
+            result = base | {
+                "ok": False,
+                "status": "failed",
+                "reason": "APP_SERVER_CLEANUP_FAILED",
+                "error": process_cleanup_error,
+                "terminalReceiptDigest": hashlib.sha256(receipt_raw).hexdigest(),
+            }
+        else:
+            cleanup = _reclaim_managed_task_rebuild_caches(
+                worktree,
+                thread_id=thread_id,
+            )
+            result = base | {
+                "ok": not cleanup["refused"],
+                "status": "completed" if not cleanup["refused"] else "failed",
+                "terminalReceiptDigest": hashlib.sha256(receipt_raw).hexdigest(),
+                **cleanup,
+            }
+    except Exception as exc:
+        result = base | {
+            "ok": False,
+            "status": "failed",
+            "reason": "TASK_CACHE_CLEANUP_FAILED",
+            "error": f"{type(exc).__name__}:{str(exc)[:300]}",
+        }
+    _record_task_cache_cleanup(
+        thread_id=thread_id,
+        turn_id=turn_id,
+        worktree=worktree,
+        value=result,
+    )
+    return result
+
+
+def _finalize_terminal_turn_resources(
+    *,
+    process: subprocess.Popen[Any] | None,
+    receipt_path: Path,
+    worktree: Path,
+    thread_id: str,
+    turn_id: str,
+) -> None:
+    process_cleanup_error: str | None = None
+    if process is None:
+        process_cleanup_error = "app-server process is unavailable"
+    else:
+        cleanup_guard = _capture_app_server_cleanup_guard(process)
+        if cleanup_guard is None:
+            process_cleanup_error = "app-server process tree could not be authenticated"
+        try:
+            _terminate_app_server_process(process)
+        except Exception as exc:
+            process_cleanup_error = f"{type(exc).__name__}:{str(exc)[:300]}"
+        if process_cleanup_error is None and not _app_server_cleanup_is_quiescent(
+            process,
+            cleanup_guard,
+        ):
+            process_cleanup_error = "app-server process tree is still active"
+    try:
+        _cleanup_after_terminal_turn(
+            receipt_path=receipt_path,
+            worktree=worktree,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            process_cleanup_error=process_cleanup_error,
+        )
+    except Exception as exc:
+        print(
+            f"TASK_CACHE_CLEANUP_FAILED:{type(exc).__name__}:{str(exc)[:240]}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 @contextmanager
 def _validation_worktree_private_descriptor(candidate: dict[str, Any]):
     with _task_worktree_private_descriptor(candidate) as opened:
@@ -12222,6 +12714,27 @@ def _validated_changed_files(value: Any) -> list[str]:
     if len(set(normalized)) != len(normalized):
         raise RuntimeError("changedFiles contains duplicate paths")
     return sorted(normalized)
+
+
+def _controller_default_code_paths(
+    *,
+    context: dict[str, Any],
+    value: dict[str, Any],
+    commit_changed_files: list[str],
+) -> list[str] | None:
+    """Fill the optional result scope only from controller-verified evidence.
+
+    The child result contract makes ``changedFiles`` authoritative for a
+    controller commit and does not require ``codePaths``.  Preserve an explicit
+    child scope so an incomplete declaration still fails closed, but when the
+    field is absent mirror the merge path by combining the reproduction scope
+    with the exact committed diff that the controller already verified.
+    """
+
+    if "codePaths" in value:
+        return None
+    inherited = [str(path) for path in (context.get("codePaths") or []) if str(path).strip()]
+    return _validated_changed_files(sorted(set(inherited) | set(commit_changed_files)))
 
 
 def _enforce_code_path_tombstones(
@@ -12878,6 +13391,13 @@ def _finalize_controller_commit(
         finalized["branch"] = command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
         finalized["controllerCommitChangedFiles"] = commit_changed_files
         finalized["changedFiles"] = publication_changed_files
+        default_code_paths = _controller_default_code_paths(
+            context=context,
+            value=value,
+            commit_changed_files=commit_changed_files,
+        )
+        if default_code_paths is not None:
+            finalized["codePaths"] = default_code_paths
         followup = context.get("prFollowup")
         if isinstance(followup, dict):
             previous_commit = str(followup.get("preparedHeadSha") or followup.get("headSha") or "")
@@ -13023,6 +13543,13 @@ def _finalize_controller_commit(
     }:
         raise RuntimeError("controller commit receipt does not match validation files")
     finalized["changedFiles"] = publication_changed_files
+    default_code_paths = _controller_default_code_paths(
+        context=context,
+        value=value,
+        commit_changed_files=commit_changed_files,
+    )
+    if default_code_paths is not None:
+        finalized["codePaths"] = default_code_paths
     if expected_parent:
         finalized["previousCommitSha"] = expected_parent
     else:
@@ -13144,6 +13671,275 @@ def _recover_unbound_pr_followup_preparations(
     return recovered, errors
 
 
+def _completed_implementation_followup_attempt_digest(
+    store: RadarLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    worktree: Path,
+) -> str | None:
+    """Return the latest completed implementation delivery's exact attempt binding."""
+
+    key = str(candidate.get("key") or "")
+    task_id = str(candidate.get("intentId") or "")
+    thread_id = str(candidate.get("threadId") or "")
+    result_digest = str(context.get("resultDigest") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", result_digest):
+        return None
+    with store.connect() as connection:
+        reserved = connection.execute(
+            """SELECT id,dedupe_key,payload_json FROM events
+               WHERE opportunity_key=? AND event_type='IMPLEMENTATION_FOLLOWUP_RESERVED'
+                 AND json_extract(payload_json,'$.threadId')=?
+                 AND json_extract(payload_json,'$.resultDigest')=?
+               ORDER BY id DESC LIMIT 1""",
+            (key, thread_id, result_digest),
+        ).fetchone()
+        sent = connection.execute(
+            """SELECT id,dedupe_key,payload_json FROM events
+               WHERE opportunity_key=? AND event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                 AND json_extract(payload_json,'$.threadId')=?
+                 AND json_extract(payload_json,'$.resultDigest')=?
+               ORDER BY id DESC LIMIT 1""",
+            (key, thread_id, result_digest),
+        ).fetchone()
+        repair = connection.execute(
+            """SELECT id,dedupe_key,payload_json FROM events
+               WHERE opportunity_key=? AND event_type='IMPLEMENTATION_CONTEXT_REPAIRED'
+                 AND json_extract(payload_json,'$.threadId')=?
+                 AND json_extract(payload_json,'$.resultDigest')=?
+               ORDER BY id DESC LIMIT 1""",
+            (key, thread_id, result_digest),
+        ).fetchone()
+        if reserved is None or sent is None:
+            return None
+        attempt_digest = str(sent["dedupe_key"] or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", attempt_digest):
+            return None
+        started = connection.execute(
+            """SELECT id,payload_json FROM events
+               WHERE opportunity_key=? AND event_type='TASK_TURN_DELIVERY_STARTED'
+                 AND json_extract(payload_json,'$.deliveryKind')='implementation-followup'
+                 AND json_extract(payload_json,'$.threadId')=?
+                 AND json_extract(payload_json,'$.deliveryToken')=?
+                 AND json_extract(payload_json,'$.deliveryAttemptDigest')=?
+               ORDER BY id DESC LIMIT 1""",
+            (key, thread_id, result_digest, attempt_digest),
+        ).fetchone()
+    if started is None:
+        return None
+    try:
+        reserved_payload = json.loads(reserved["payload_json"])
+        sent_payload = json.loads(sent["payload_json"])
+        started_payload = json.loads(started["payload_json"])
+        repair_payload = json.loads(repair["payload_json"]) if repair is not None else None
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if (
+        not all(
+            isinstance(payload, dict)
+            for payload in (reserved_payload, sent_payload, started_payload)
+        )
+        or str(reserved["dedupe_key"] or "") != attempt_digest
+        or not (int(reserved["id"]) < int(started["id"]) < int(sent["id"]))
+        or reserved_payload.get("threadId") != thread_id
+        or reserved_payload.get("resultDigest") != result_digest
+        or reserved_payload.get("attemptDigest") != attempt_digest
+        or reserved_payload.get("issueUrl") != candidate.get("issueUrl")
+        or reserved_payload.get("worktreePath") != str(worktree)
+        or sent_payload
+        != {
+            "threadId": thread_id,
+            "resultDigest": result_digest,
+            "attemptDigest": attempt_digest,
+        }
+        or started_payload.get("deliveryKind") != "implementation-followup"
+        or started_payload.get("threadId") != thread_id
+        or started_payload.get("deliveryToken") != result_digest
+        or started_payload.get("deliveryAttemptDigest") != attempt_digest
+    ):
+        return None
+    if repair is None:
+        return attempt_digest if attempt_digest == result_digest else None
+    if (
+        not isinstance(repair_payload, dict)
+        or str(repair["dedupe_key"] or "") != attempt_digest
+        or int(repair["id"]) >= int(reserved["id"])
+        or repair_payload.get("taskId") != task_id
+        or repair_payload.get("threadId") != thread_id
+        or repair_payload.get("worktreePath") != str(worktree)
+        or repair_payload.get("resultDigest") != result_digest
+        or repair_payload.get("contextDigest") != context.get("contextDigest")
+    ):
+        return None
+    return attempt_digest
+
+
+def _controller_commit_result_pending_ingestion(
+    store: RadarLedger,
+    candidate: dict[str, Any],
+    *,
+    worktree: Path,
+) -> bool:
+    """Recognize an exact completed commit without rewriting its bound context."""
+
+    if (
+        candidate.get("stage") != "DISPATCHED"
+        or not _is_managed_worktree(worktree)
+        or _active_task_turn_for_result(candidate)
+    ):
+        return False
+    try:
+        with _task_worktree_private_descriptor(candidate) as opened:
+            value = json.loads(_read_task_result_bytes_from_private(opened))
+            context_raw = _read_task_context_bytes_from_private(opened)
+            context = json.loads(context_raw)
+        if not isinstance(value, dict) or not isinstance(context, dict):
+            return False
+        task_id = str(candidate.get("intentId") or "")
+        issue_url = str(candidate.get("issueUrl") or "")
+        thread_id = str(candidate.get("threadId") or "")
+        expected = {
+            "schemaVersion": TASK_RESULT_SCHEMA,
+            "key": candidate["key"],
+            "issueUrl": issue_url,
+            "threadId": thread_id,
+            "worktreePath": str(worktree),
+        }
+        if any(value.get(key) != expected_value for key, expected_value in expected.items()):
+            return False
+        if any(
+            context.get(key) != expected_value
+            for key, expected_value in expected.items()
+            if key != "schemaVersion"
+        ):
+            return False
+        if value.get("contextDigest") != context.get("contextDigest"):
+            return False
+        if (
+            ("taskId" in value and value.get("taskId") != task_id)
+            or context.get("intentId") != task_id
+            or context.get("taskStage") != "IMPLEMENTATION_READY"
+            or candidate.get("intentStatus") != "DISPATCHED"
+            or context.get("stage") != "DISPATCHED"
+            or context.get("intentStatus") != "DISPATCHED"
+            or context.get("prFollowup") is not None
+        ):
+            return False
+
+        managed_ledger = ManagedLedger(store.path, ensure_schema=False)
+        managed_task = managed_ledger.read_task(task_id)
+        if (
+            managed_task is None
+            or managed_task.get("readSource") != "managed"
+            or managed_task.get("opportunity_key") != candidate["key"]
+            or managed_task.get("thread_id") != thread_id
+            or managed_task.get("worktree_path") != str(worktree)
+            or managed_task.get("state") != "IMPLEMENTATION_READY"
+        ):
+            return False
+        issue_match = ISSUE_URL.fullmatch(issue_url)
+        reproduction_receipt = context.get("reproductionReceipt")
+        if issue_match is None or not isinstance(reproduction_receipt, dict):
+            return False
+        receipt_digest = str(reproduction_receipt.get("receiptDigest") or "")
+        durable_receipt = (
+            managed_ledger.implementation_authorization_receipt(
+                task_id=task_id,
+                thread_id=thread_id,
+                worktree_path=str(worktree),
+                repo=issue_match.group(1),
+                issue_url=issue_url,
+                receipt_digest=receipt_digest,
+            )
+            if receipt_digest
+            else None
+        )
+        if not receipt_digest or durable_receipt is None or reproduction_receipt != durable_receipt:
+            return False
+
+        verified_context, _verified_at = _verified_shared_task_context(
+            shared_context_path(issue_url)
+        )
+        shared_context_raw, _shared_stat, _shared_source = _read_shared_context_file(
+            shared_context_path(issue_url)
+        )
+        if verified_context != context or shared_context_raw != context_raw:
+            return False
+
+        delivery_token = str(context.get("resultDigest") or "")
+        delivery_attempt_digest = _completed_implementation_followup_attempt_digest(
+            store,
+            candidate=candidate,
+            context=context,
+            worktree=worktree,
+        )
+        if delivery_attempt_digest is None:
+            return False
+        delivery_kind = "implementation-followup"
+        turn_receipt_key = _task_turn_delivery_file_key(
+            delivery_kind=delivery_kind,
+            thread_id=thread_id,
+            delivery_token=delivery_token,
+            delivery_attempt_digest=delivery_attempt_digest,
+        )
+        turn_receipt_raw = _read_owned_regular_file(
+            STATE / "task_turn_receipts" / f"{turn_receipt_key}.json",
+            label="completed implementation task-turn receipt",
+            reject_dangerous_writes=True,
+        )
+        turn_receipt = json.loads(turn_receipt_raw)
+        if (
+            not isinstance(turn_receipt, dict)
+            or turn_receipt.get("ok") is not True
+            or turn_receipt.get("threadId") != thread_id
+            or turn_receipt.get("deliveryKind") != delivery_kind
+            or turn_receipt.get("deliveryToken") != delivery_token
+            or turn_receipt.get("deliveryAttemptDigest") != delivery_attempt_digest
+            or turn_receipt.get("turnStatus") != "completed"
+            or not isinstance(turn_receipt.get("turnId"), str)
+            or not turn_receipt["turnId"]
+        ):
+            return False
+        if (
+            value.get("stage") != "FIX_READY"
+            or value.get("handoffMode") != "controller_commit_complete"
+        ):
+            return False
+        commit_sha = str(value.get("commitSha") or "")
+        if not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
+            return False
+        head_sha = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+        if commit_sha != head_sha or command(["git", "status", "--porcelain"], cwd=worktree):
+            return False
+        actual_commit_files = _validated_changed_files(
+            [
+                line
+                for line in command(
+                    ["git", "show", "--pretty=format:", "--name-only", "HEAD"],
+                    cwd=worktree,
+                ).splitlines()
+                if line
+            ]
+        )
+        if actual_commit_files != _validated_changed_files(
+            value.get("controllerCommitChangedFiles")
+        ):
+            return False
+        if actual_commit_files != _validated_changed_files(value.get("changedFiles")):
+            return False
+        target_base = context.get("targetBase")
+        if target_base is not None:
+            validated_base = validate_target_base(target_base)
+            command(
+                ["git", "merge-base", "--is-ancestor", validated_base["sha"], head_sha],
+                cwd=worktree,
+            )
+        return True
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+        return False
+
+
 def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
     store = ledger(args.ledger)
     written: list[dict[str, str]] = []
@@ -13151,6 +13947,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
     pr_followups_pending_preparation: list[dict[str, Any]] = []
     no_go: list[dict[str, str]] = []
     unavailable: list[dict[str, str]] = []
+    pending_result_ingestion: list[dict[str, str]] = []
     revalidation_errors: list[dict[str, str]] = []
     superseded = store.reconcile_superseded_pr_followups()
     prepared_recovered, errors = _recover_unbound_pr_followup_preparations(store)
@@ -13205,6 +14002,14 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
                         "threadId": candidate["threadId"],
                         "worktreePath": str(worktree),
                         "reason": "TASK_WORKTREE_UNAVAILABLE",
+                    }
+                )
+                continue
+            if _controller_commit_result_pending_ingestion(store, candidate, worktree=worktree):
+                pending_result_ingestion.append(
+                    {
+                        "key": str(candidate["key"]),
+                        "threadId": str(candidate["threadId"]),
                     }
                 )
                 continue
@@ -13290,6 +14095,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
         "prFollowupsPendingPreparation": pr_followups_pending_preparation,
         "noGo": no_go,
         "unavailable": unavailable,
+        "pendingResultIngestion": pending_result_ingestion,
         "revalidationErrors": revalidation_errors,
         "errors": errors,
     }
@@ -15814,22 +16620,27 @@ def _bind_final_reproduction_receipt(
         or (candidate.get("preTaskEvidence") or {}).get("baseSha")
         or ""
     )
-    reported_code_paths = [
-        str(path)
-        for path in (
-            value.get("codePaths")
-            or context.get("codePaths")
-            or candidate.get("codePaths")
-            or (candidate.get("preTaskEvidence") or {}).get("codePathsPlan")
-            or []
-        )
-        if str(path).strip()
-    ]
-    if reported_code_paths:
+    if "codePaths" in value:
         try:
-            reported_code_paths = _validated_changed_files(reported_code_paths)
+            reported_code_paths = _validated_changed_files(value.get("codePaths"))
         except RuntimeError as exc:
             raise TaskResultEvidenceBlocked("REPORTED_SCOPE_PATHS_INVALID") from exc
+    else:
+        reported_code_paths = [
+            str(path)
+            for path in (
+                context.get("codePaths")
+                or candidate.get("codePaths")
+                or (candidate.get("preTaskEvidence") or {}).get("codePathsPlan")
+                or []
+            )
+            if str(path).strip()
+        ]
+        if reported_code_paths:
+            try:
+                reported_code_paths = _validated_changed_files(reported_code_paths)
+            except RuntimeError as exc:
+                raise TaskResultEvidenceBlocked("REPORTED_SCOPE_PATHS_INVALID") from exc
     controller_touched: set[str] = set()
     for field in ("controllerCommitChangedFiles", "mergeResolutionFiles"):
         if value.get(field):
