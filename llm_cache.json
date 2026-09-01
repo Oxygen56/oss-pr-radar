@@ -32854,6 +32854,39 @@
     ],
     "why": "The issue identifies a real design flaw in capability ordering: the 'innermost' tier is overloaded, causing incorrect behavior for non-durability capabilities like SpendLimits. It provides a clear root cause, reproduction, and proposed fixes. However, the gate decision is HUMAN_REVIEW, and the submission policy requires assignment, so work should not start without maintainer confirmation."
   },
+  "89d32fff3ff9ec669892dde806314b8dd3d0636d9bc4a0892aee9ac6d8a41dd4": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The original report shows arguments: {} while later reproduction shows nested arguments with query present but missing at top level; the exact shape changed but the core missing top-level query persists."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/openai/src/responses/openai-responses-language-model.ts",
+      "packages/openai/src/tool/tool-search.ts",
+      "packages/gateway/src/gateway-provider.ts",
+      "packages/gateway/src/gateway-language-model.ts"
+    ],
+    "risks": [
+      "The fix may require changes to hosted Gateway code not present in this repository, limiting direct implementation.",
+      "Changing the provider's argument handling could affect other tool types or existing integrations."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a unit test that simulates an OpenAI Responses response with tool_search_call arguments nested as { arguments: { query, limit }, call_id } and assert that the provider unwraps to the expected flat arguments object.",
+      "Add a regression test that verifies the provider's output conforms to the tool_search schema when the upstream payload is malformed, ensuring required fields are preserved or an error is surfaced."
+    ],
+    "unknowns": [
+      "Whether the maintainers intend to fix the hosted Gateway serializer or adjust the AI SDK provider to be more tolerant of malformed upstream payloads."
+    ],
+    "why": "The issue provides a clear user-visible bug with a concrete reproduction path, expected vs actual behavior, and control checks isolating the failure to the Gateway's tool_search response serialization. The reproduction comments confirm the malformed nesting at the Gateway boundary and identify the internal representation that must be unwrapped. Although the fix may live in hosted Gateway code not present in this checkout, the issue is actionable for the AI SDK repository by improving the provider's handling or documenting the required unwrapping, and the evidence supports a concrete validation path."
+  },
   "89e0d50b8d57a0772f80c0337ffbca22ad6c485af9899020ff89a4b94c78d4c2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -40059,6 +40092,36 @@
     ],
     "why": "The issue provides a deterministic reproduction and a comment identifies the root cause as an extra LoRA reference release in the parallel-sampling path, with existing fix PRs #25747 and #31808. This is a concrete, actionable algorithm bug in LoRA reference counting."
   },
+  "abad65a381be114e888f5bea8331fadb629e0cdb3b152d30e0717a052c83edd5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "SGLang prefill/decode handler logic to align n cardinality",
+      "frontend validation to reject n>1 in disaggregated mode"
+    ],
+    "risks": [
+      "Potential maintainer preference for rejecting n>1 vs supporting it; need to confirm design direction.",
+      "Changes may affect other backends or routing paths if not scoped carefully."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sends an n=2 chat completion request to a disaggregated SGLang deployment and asserts a response or a 4xx rejection within a timeout.",
+      "Run existing SGLang backend unit tests and integration tests for disaggregated routing."
+    ],
+    "unknowns": [
+      "Exact code location and maintainer design preference for handling n>1 in disaggregated mode."
+    ],
+    "why": "Issue provides a clear user-visible bug with detailed reproduction steps, expected vs actual behavior, and a specific root cause (n/handoff cardinality mismatch between prefill and decode handlers). The evidence includes code anchors and a concrete validation path via the provided curl command. No competing PR covers the root cause, and the issue is open with no maintainer investigation blocking."
+  },
   "abd0dc83190a49c628ea83f21d4e43004b4b2cac3d2f627613be493686ec1dd3": {
     "confidence": 0.85,
     "contradictions": [],
@@ -47209,6 +47272,30 @@
       "Maintainer design preferences for the failure policy and retry configuration API."
     ],
     "why": "The issue identifies a concrete, high-impact failure mode in the agent runtime: synchronous observation failures cause multi-minute blocking and turn aborts, with no configuration or degradation path. The root cause is clearly located in specific code files (retry.ts, sync.ts, processor.ts) and the proposal is actionable. A production user confirms the problem and provides a minimal fail-open patch, strengthening the evidence."
+  },
+  "c7b635a70c91f17636f7ecc7899f6f5b252e860a46cab025401e449eed9ddc5e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "mem0/vector_stores/supabase.py: fix _preprocess_filters to translate comparison operators to vecs equivalents and preserve logical operator structure"
+    ],
+    "risks": [
+      "Potential edge cases with unsupported operators; need to ensure explicit failure for operators vecs cannot represent."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided probe script to confirm the failure, then add a regression test that asserts _preprocess_filters produces the expected vecs filter structure for comparison and logical operators."
+    ],
+    "unknowns": [
+      "No maintainer confirmation on preferred implementation, but this does not block actionability."
+    ],
+    "why": "The issue provides a precise root cause: Supabase._preprocess_filters() incorrectly wraps comparison operators in $eq and mishandles logical operators, with a concrete reproduction script and expected/actual SQL output. The fix is localized to the Supabase adapter and is actionable."
   },
   "c7c1358212b35db2acdd661439794bb0cb407f4bd7c8aea16a8b55e59fa08ec9": {
     "confidence": 0.7,
@@ -62106,5 +62193,38 @@
       "Exact Dockerfile line to modify and whether maintainers prefer unsetting vs removing specific path"
     ],
     "why": "Issue provides a clear root cause (LD_LIBRARY_PATH conflict shadowing PyTorch's bundled cuBLAS) and a concrete validation path (reproduce with BAGEL-7B-MoT fp8, apply minimal Dockerfile fix, run smoke test). Maintainers have confirmed the fix direction, making it actionable."
+  },
+  "ffe9e340495bbf65fdd3ffb5a7e0c983d4ca93e3a1d7b8d0c26fe96935c8cf5d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue reports assertion in older version, but comment says main already has improved message; version discrepancy needs confirmation"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "vllm/config.py: replace assert with ValueError in VllmConfig.__post_init__ for all2all backend validation",
+      "update error message to include nixl_ep and remediation hint",
+      "add regression test for unsupported all2all backend with use_ubatching"
+    ],
+    "risks": [
+      "Changing assert to ValueError may affect existing code that relies on AssertionError; need to ensure no other paths depend on it",
+      "Potential overlap with existing PRs #54511 and #54512; must coordinate to avoid duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run python -c \"from vllm.config import VllmConfig, ParallelConfig; VllmConfig(parallel_config=ParallelConfig(use_ubatching=True))\" and assert it raises ValueError with updated message",
+      "Add unit test in tests/config or similar verifying clean error for allgather_reducescatter backend"
+    ],
+    "unknowns": [
+      "Exact vLLM version where the older message was observed; whether the issue is still reproducible on latest main with the updated message"
+    ],
+    "why": "Issue reports a user-visible bug where --enable-dbo triggers an assertion during VllmConfig construction instead of a clean validation error. Root cause is identified: __post_init__ uses asserts for all2all backend validation, and the error message is outdated. A contributor comment confirms the fix location and provides a minimal reproduction command. Existing PRs are incomplete or draft, leaving room for a proper fix with tests."
   }
 }
