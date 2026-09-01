@@ -2189,6 +2189,31 @@
     ],
     "why": "The issue provides a clear root cause: a regression in the DeepGEMM revision pinned by vLLM v0.27.1 causes CUDA illegal memory access during CUDA graph capture on SM90 (H20). A controlled A/B test with two DeepGEMM revisions confirms the fix, and the fix is already merged in PR #52035. The evidence includes concrete code anchors and a validation path."
   },
+  "097808bf6594f8b15d4baa159188909a2bcb98b0ca305bf8d520448c6c9e3556": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "transfer_queue/storage/bootstrap/simple_storage_bootstrap.py",
+      "transfer_queue/utils/common.py",
+      "verl/trainer/main_ppo.py"
+    ],
+    "risks": [
+      "Changing default num_data_storage_units may affect performance on larger nodes; adding timeout may require tuning to avoid false positives on slow clusters."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided quickstart command on a machine with 8 or fewer CPUs and verify no hang; add a timeout to get_placement_group and assert an actionable error is raised; verify that setting transfer_queue.enable=False prevents initialization."
+    ],
+    "unknowns": [
+      "Exact desired default value for num_data_storage_units; maintainer preference on whether to auto-detect CPU count."
+    ],
+    "why": "The issue provides a clear root cause: SimpleStorage placement group requests 9 CPUs on an 8-CPU node, causing a permanent PENDING state and silent deadlock. It includes a reproduction command, py-spy stack trace, and a confirmed workaround (setting num_data_storage_units=1). The expected behavior suggests concrete fixes: documentation, fail-fast timeout, and honoring transfer_queue.enable=False. This is actionable and testable."
+  },
   "09781cee75435ba3d10d4eca11d08d1b0697587d32058faa625331c17ae7cdac": {
     "confidence": 0.7,
     "contradictions": [],
@@ -20538,6 +20563,33 @@
     ],
     "why": "Issue provides a clear root cause (shared mutable metadata tags with conflicting types), a concrete reproduction (curl command and unit test), and a suggested fix (parse header tags into list and type-guard router branches). The code paths are identified, and the bug is user-visible with high impact. The existing PR #38818 has semantic overlap but does not directly reference the issue and lacks root-cause coverage, so the opportunity remains actionable."
   },
+  "570e14babbf15b3ece718238008c48da11c0d609dfdeb482ffe448f67d478790": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints/openai/chat_completion/serving.py",
+      "vllm/entrypoints/openai/engine/serving.py",
+      "vllm/parser/abstract_parser.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #49228; need to ensure fix does not duplicate or conflict."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests using the provided three requests to verify tool_choice required and named function behavior on /v1/chat/completions."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific implementation approach for integrating adjust_request into chat completions path."
+    ],
+    "why": "Issue provides a clear user-visible bug with detailed reproduction steps and root cause analysis pointing to missing adjust_request calls in chat completions path. The fix is actionable and testable."
+  },
   "571a5bd07ffc2f8dc99b28f3833a40fe28fffe914a0f2b04b0afa6e8daa9d0aa": {
     "confidence": 0.85,
     "contradictions": [],
@@ -22927,6 +22979,33 @@
       "Exact root cause of the 0.9 GiB gap on the original issue vs 0.59 GiB in follow-up"
     ],
     "why": "Issue provides strong evidence of a real bug: MRv2 reports more available KV memory than runtime can back, causing OOM under load; root cause is likely CUDA graph capture headroom accounting, but not fully confirmed. Existing draft PR #49233 attempts a fix but is incomplete and has failed CI. Maintainer direction is unclear; issue needs maintainer confirmation before work starts."
+  },
+  "60633d9390e80b4d20226fc480b36d0a03c84907f1ddf07d502418bdc2fa1a43": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/chatgpt/responses/transformation.py",
+      "litellm/responses/streaming_iterator.py",
+      "litellm/completion_extras/litellm_responses_transformation/transformation.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #36075 or #38719; need to compare implementation boundaries to avoid duplication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided minimal reproducer to create a failing test for non-streaming chatgpt/* responses, then verify the fix restores non-streaming behavior while streaming remains unaffected."
+    ],
+    "unknowns": [
+      "Whether the suggested fix in #38719 is already merged or covers the exact root cause; need to verify current state of that PR."
+    ],
+    "why": "Issue provides a clear regression (stream=false fails, stream=true works) with a minimal reproducer and a detailed root-cause analysis in comments, including exact code paths and a suggested fix location. The evidence is concrete and actionable."
   },
   "6064ebba3957d8c339edf831cb6cd6a301e484d7a84ee0e28382ec4446669f2b": {
     "confidence": 0.9,
@@ -35684,6 +35763,34 @@
       "Whether a maintainer has a preferred fix approach is unknown."
     ],
     "why": "Issue provides a clear, reproducible bug with multiple configurations isolating the failure to the shared audio routing infrastructure. Maintainer has confirmed the symptom (RoomIO stops receiving audio) and requested a minimal reproducer, which the reporter has provided. Root cause is localized to audio frame delivery in the session, with concrete code paths identified."
+  },
+  "93759b6133b4a2af7d7eb18f590bdcdb3e5fd80d8ea4e9e6d83260c9f34087a2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "api/extensions/ext_logging.py",
+      "api/extensions/ext_database.py"
+    ],
+    "risks": [
+      "Changing logger configuration may affect existing log formatting or propagation behavior; need to avoid duplicate log lines.",
+      "Potential impact on performance if formatter converter is applied broadly."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Enable SQL echo logging with non-UTC LOG_TZ, capture log output, assert timestamps match configured timezone.",
+      "Add unit test for _apply_timezone_to_sqlalchemy_loggers verifying handler formatter converter uses LOG_TZ."
+    ],
+    "unknowns": [
+      "Maintainer preference on fix location (ext_logging vs ext_database) is not confirmed, but not blocking."
+    ],
+    "why": "Issue provides a clear root cause (sqlalchemy.engine logger propagation disabled, no LOG_TZ-aware formatter) and a concrete reference implementation. Dosu bot confirms the analysis and suggests a clean fix location. No duplicate PR/issue found. The bug is user-visible and affects log consistency, making it a valuable actionable fix."
   },
   "937bebb9102c0bf9343d1bec842af47ee24dbcdf41bf1da696e90baaa48662ae": {
     "confidence": 0.85,
@@ -56369,6 +56476,41 @@
       "Whether the fix applies cleanly to v0.27.1 branch"
     ],
     "why": "The issue provides a clear root cause: a regression in the DeepGEMM revision pinned by vLLM v0.27.1 causes CUDA illegal memory access during CUDA graph capture on SM90 (H20). A controlled A/B test with two DeepGEMM revisions confirms the fix, and the fix is already merged in main via PR #52035. The evidence includes concrete reproduction steps, code anchors, and a validation path."
+  },
+  "e6651c0605472c2f2dfda08111e5e00e0fcb562259be8183715b0a60b9e242d1": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #39094 is open and semantically overlaps but does not reference the issue and lacks root-cause coverage"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/router_utils/common_utils.py",
+      "Add shared predicates for web_search and web_fetch tool types",
+      "Apply separate deployment capability filters for search and fetch",
+      "Add tests for mixed deployment groups"
+    ],
+    "risks": [
+      "Potential overlap with PR #39094; need to compare implementation boundaries",
+      "Default-to-True behavior for missing metadata may need adjustment",
+      "Behavior change could affect existing routing logic"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided Python snippet to confirm filter_web_search_deployments fails to exclude incompatible deployment",
+      "Add unit tests for web_search_20250305, web_fetch_20250910, and future versioned types",
+      "Test mixed deployment groups with supports_web_search and supports_web_fetch flags"
+    ],
+    "unknowns": [
+      "Whether PR #39094 fully fixes the issue or only partially",
+      "Maintainer preference for implementation approach"
+    ],
+    "why": "Issue provides a clear root cause: the router's web-search detection only recognizes OpenAI-style tool types, missing Anthropic's versioned types, and there is no web-fetch filter. It includes a deterministic code-level reproduction and expected behavior. An open PR (#39094) overlaps semantically but is not linked and lacks root-cause coverage, so the issue remains actionable."
   },
   "e66a3040d249cb421c74f464c3b310feb9615442cd0e8b0ecb542a98bc481cb1": {
     "confidence": 0.85,
