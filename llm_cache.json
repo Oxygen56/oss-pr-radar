@@ -30402,6 +30402,34 @@
     ],
     "why": "Issue identifies a concrete bug in the gemma4 tool parser: tool_choice='required' does not enforce tool call generation, and finish_reason is incorrectly set to 'tool_calls' with empty tool_calls. Root cause is partially known (translation layer in #53255) and the enforcement gap is clearly described. The issue provides a reproduction methodology (loop script, payload variations) and a validation path (compare behavior under load, check finish_reason and tool_calls). This is a legitimate LLM algorithm bug in tool-calling logic, not mere plumbing."
   },
+  "7f8336d23b8fa28d3401ce25b8f1a7a2f693336085a65b07016fa1606e6dcfe4": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/pipeline/network/egress/tcp_client.rs",
+      "lib/runtime/src/pipeline/network/codec/zero_copy_decoder.rs",
+      "lib/runtime/src/pipeline/network/egress/nats_client.rs",
+      "HTTP error mapping layer"
+    ],
+    "risks": [
+      "Potential behavior change in error handling may affect existing clients expecting HTTP 500; need to ensure migration logic correctly treats the new error as non-migratable."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sets DYN_TCP_MAX_MESSAGE_SIZE to a small value and sends a generate() request with a payload exceeding that limit, asserting the client returns a typed error (not CannotConnect) and the worker socket is not reset.",
+      "Run existing TCP request plane tests and the targeted package unit tests."
+    ],
+    "unknowns": [
+      "Exact maintainer preference for 413 vs 400 error code; whether a new ErrorType::PayloadTooLarge should be introduced or reuse InvalidArgument."
+    ],
+    "why": "The issue provides a clear root cause: the TCP client lacks a pre-write size check against DYN_TCP_MAX_MESSAGE_SIZE, causing oversized generate() frames to be rejected by the worker decoder and surfaced as HTTP 500. The expected behavior and suggested fix are concrete, mirroring existing NATS handling. The reproduction steps are detailed and executable, and the code paths are identified."
+  },
   "7fb0841ae83cef3d579eac2bf1a17f1ac383322b91e5b951f03b383309d326ca": {
     "confidence": 0.85,
     "contradictions": [
@@ -34564,6 +34592,41 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly identifies a parser default mismatch with template and docs, with a minimal reproduction. However, an open PR #50964 directly targets the same code path and semantic overlap, and the deterministic gate is HUMAN_REVIEW. Need maintainer comparison of PR vs issue before starting new work."
+  },
+  "90ce5c4ded50bb58004d0f7e1091146b2bbdba0fb136dc264c2d074a3d6aa4bb": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue description mentions ValueError, but comment clarifies it is TypeError for raising templates."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "chat template content format validation",
+      "startup validation for content format compatibility"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #54622 which restores a warning but does not fully fix the issue; need to ensure the fix complements rather than duplicates.",
+      "The fix may need to handle both TypeError and silent rendering cases, requiring careful template detection."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script with a string-only template (e.g., template_chatml.jinja) and --chat-template-content-format openai, expecting a clear error or normalization.",
+      "Add a regression test that checks the validation logic rejects incompatible content formats at startup."
+    ],
+    "unknowns": [
+      "Whether the Qwen3-4B-Instruct model's bundled template handles list content, which affects reproduction with the exact model.",
+      "Exact maintainer preference for rejecting vs normalizing the content format."
+    ],
+    "why": "The issue identifies a concrete bug in chat template content format handling, with a clear root cause (missing validation of --chat-template-content-format against template capabilities) and a reproducible test case. The recent comment provides detailed analysis and confirms the failure modes, making the contribution actionable."
   },
   "910015a40ba9b28ae20473b0050ee4d75c6c84f2d8877f5491721de4405f2c76": {
     "confidence": 0.7,
@@ -55096,6 +55159,34 @@
     ],
     "why": "Issue clearly identifies a missing feature: LiteLLM proxy does not support vLLM-Omni's videos API, causing 400 errors when using the standard /v1/videos endpoint. The user provides a working transparent path and a failing path, establishing a concrete reproduction. A related PR #38148 exists but lacks root-cause coverage, leaving room for a more complete fix."
   },
+  "e62939cb43b2f03ff7bf3b790ecd4e75a1329b3ee7a5a1cd535c5a5f5d12782b": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Frontend canvas extension install flow to correctly compose Source and Path for local sources",
+      "Possibly adjust API handling or validation for local source paths"
+    ],
+    "risks": [
+      "Potential maintainer preference for API behavior changes",
+      "Need to ensure full-directory Source still works after fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test that installs a local extension using Source as parent directory and Path as internal directory",
+      "Run existing frontend tests for the canvas extension install flow"
+    ],
+    "unknowns": [
+      "Exact code location and implementation details of the fix",
+      "Whether maintainers have a preferred design for Source/Path composition"
+    ],
+    "why": "Issue provides a clear bug report with reproduction steps, expected behavior, and acceptance criteria. A commenter has traced the root cause to the frontend sending a local Source plus Path as repo_path, which the Agent Server API rejects. This is a concrete, actionable bug fix with a clear validation path."
+  },
   "e63a70b10d97940ab96e59b12f306347f81a5b54ec98103b974281b529c5fc74": {
     "confidence": 0.7,
     "contradictions": [],
@@ -61532,6 +61623,33 @@
     ],
     "unknowns": [],
     "why": "The issue is a dependency-related segfault caused by decord's global symbol override, not an LLM algorithm defect. The proposed fix (making decord optional or removing it) is operational dependency management, not a training objective, model mechanism, or numerical method. It lacks a reference-vs-implementation test or controlled experiment for algorithm validation."
+  },
+  "fd60b4ab0327c109ac8dece479ae0359cf05ae061c1f5bb81a5add650137eca6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "AgentHistoryList.save_to_file",
+      "_filter_sensitive_data_from_dict"
+    ],
+    "risks": [
+      "Potential behavior change for non-sensitive nested structures",
+      "Need to ensure compatibility with existing sensitive_data filtering semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided failing test tests/ci/security/test_history_nested_sensitive_data.py",
+      "Add regression tests for nested lists, tuples, and mixed containers"
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix implementation"
+    ],
+    "why": "Issue provides a clear root cause (recursive filter misses nested lists), a minimal failing test, and expected behavior. Existing PR #5626 is open but lacks root-cause coverage, leaving room for a more complete fix."
   },
   "fdb12a727f1b119486cf16cfa1464c7a712fc5e144ecda01e568d0267ea10078": {
     "confidence": 0.85,
