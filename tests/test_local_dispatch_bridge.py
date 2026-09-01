@@ -9726,6 +9726,101 @@ def test_app_server_watchdog_uses_bounded_live_probe_when_rollout_lacks_abort(mo
     assert json.loads(process.stdin.writes[0])["method"] == "thread/read"
 
 
+def test_app_server_watchdog_uses_live_probe_when_owner_reports_stale_nonterminal(monkeypatch):
+    class FakeStdin:
+        def __init__(self):
+            self.writes: list[bytes] = []
+
+        def write(self, value: bytes) -> None:
+            self.writes.append(value)
+
+        def flush(self) -> None:
+            return None
+
+    class FakeStdout:
+        @staticmethod
+        def fileno() -> int:
+            return 123
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = FakeStdin()
+            self.stdout = FakeStdout()
+
+        @staticmethod
+        def poll():
+            return None
+
+    class AlwaysReadySelector:
+        @staticmethod
+        def select(_timeout):
+            return [(object(), None)]
+
+    class StepClock:
+        def __init__(self):
+            self.value = -0.25
+
+        def __call__(self):
+            self.value += 0.25
+            return self.value
+
+    process = FakeProcess()
+    live_calls: list[set[str]] = []
+    owner_nonterminal_reads: list[int] = []
+    monkeypatch.setattr(MODULE, "monotonic", StepClock())
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_STALE_SECONDS", 15.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_LIVE_PROBE_SECONDS", 1.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_TASK_TURN_MAX_SECONDS", 10.0)
+    monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _thread_id: None)
+
+    def responsive_nonterminal_read(_fd, _size):
+        request_id = json.loads(process.stdin.writes[-1])["id"]
+        owner_nonterminal_reads.append(request_id)
+        return (
+            json.dumps(
+                {
+                    "id": request_id,
+                    "result": {
+                        "thread": {
+                            "id": "thread-1",
+                            "turns": [{"id": "turn-1", "status": "inProgress"}],
+                        }
+                    },
+                }
+            )
+            + "\n"
+        ).encode()
+
+    def live_probe(thread_ids):
+        assert owner_nonterminal_reads
+        live_calls.append(thread_ids)
+        return {
+            "thread-1": {
+                "turnId": "turn-1",
+                "status": "interrupted",
+                "code": "turn_interrupted",
+                "message": "interrupted",
+            }
+        }
+
+    monkeypatch.setattr(MODULE.os, "read", responsive_nonterminal_read)
+    monkeypatch.setattr(MODULE, "live_thread_turn_states", live_probe)
+
+    result = MODULE._wait_for_app_server_terminal_turn(
+        process,
+        AlwaysReadySelector(),
+        b"",
+        thread_id="thread-1",
+        turn_id="turn-1",
+    )
+
+    assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
+    assert live_calls == [{"thread-1"}]
+    assert owner_nonterminal_reads
+
+
 def test_app_server_watchdog_times_out_without_opening_second_app_server(monkeypatch):
     class FakeStdin:
         def __init__(self):

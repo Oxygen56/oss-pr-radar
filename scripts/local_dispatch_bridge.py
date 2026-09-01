@@ -7167,6 +7167,7 @@ def _wait_for_app_server_terminal_turn(
         return None
     read_request_id: int | None = None
     read_requested_at: float | None = None
+    read_ever_requested = False
     watch_started_at = monotonic()
     next_read_at = watch_started_at + APP_SERVER_WATCHDOG_INTERVAL_SECONDS
     next_external_probe_at = watch_started_at + APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS
@@ -7222,7 +7223,7 @@ def _wait_for_app_server_terminal_turn(
                     "status": independently_observed["status"],
                     "error": independently_observed.get("error"),
                 }
-            if now >= next_live_probe_at and request_stale:
+            if now >= next_live_probe_at and read_ever_requested:
                 live_observed = live_thread_turn_states({thread_id}).get(thread_id)
                 next_live_probe_at = monotonic() + APP_SERVER_WATCHDOG_LIVE_RETRY_SECONDS
                 if (
@@ -7252,6 +7253,7 @@ def _wait_for_app_server_terminal_turn(
                 ).encode("utf-8")
             )
             process.stdin.flush()
+            read_ever_requested = True
             next_read_at = now + APP_SERVER_WATCHDOG_INTERVAL_SECONDS
 
         timeout = min(
