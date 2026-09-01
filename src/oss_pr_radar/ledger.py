@@ -8043,6 +8043,81 @@ class RadarLedger:
                              )
                          )
                        )
+                       OR (
+                         o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
+                         AND EXISTS (
+                           SELECT 1 FROM events sent
+                           WHERE sent.opportunity_key=o.key
+                             AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
+                             AND json_extract(sent.payload_json,'$.threadId')=i.thread_id
+                             AND NOT EXISTS (
+                               SELECT 1 FROM events result
+                               WHERE result.opportunity_key=sent.opportunity_key
+                                 AND result.event_type IN (
+                                   'TASK_RESULT_INGESTED',
+                                   'PUBLISHED_TASK_RESULT_BACKFILLED'
+                                 )
+                                 AND result.id>sent.id
+                                 AND json_extract(result.payload_json,'$.threadId')=
+                                     i.thread_id
+                             )
+                             AND NOT EXISTS (
+                               SELECT 1 FROM events cancelled
+                               WHERE cancelled.opportunity_key=sent.opportunity_key
+                                 AND cancelled.event_type=
+                                     'VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                                 AND json_extract(cancelled.payload_json,'$.resultDigest')=
+                                     sent.dedupe_key
+                                 AND json_extract(cancelled.payload_json,'$.threadId')=
+                                     i.thread_id
+                                 AND cancelled.id>sent.id
+                             )
+                             AND NOT EXISTS (
+                               SELECT 1 FROM events abandoned
+                               WHERE abandoned.opportunity_key=sent.opportunity_key
+                                 AND abandoned.event_type=
+                                     'VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
+                                 AND json_extract(abandoned.payload_json,'$.resultDigest')=
+                                     sent.dedupe_key
+                                 AND json_extract(abandoned.payload_json,'$.threadId')=
+                                     i.thread_id
+                                 AND abandoned.id>sent.id
+                             )
+                             AND NOT EXISTS (
+                               SELECT 1 FROM events no_progress
+                               WHERE no_progress.opportunity_key=sent.opportunity_key
+                                 AND no_progress.event_type=
+                                     'VALIDATION_FOLLOWUP_NO_PROGRESS'
+                                 AND no_progress.dedupe_key=sent.dedupe_key
+                                 AND json_extract(no_progress.payload_json,'$.threadId')=
+                                     i.thread_id
+                                 AND NOT EXISTS (
+                                   SELECT 1 FROM events rearmed
+                                   WHERE rearmed.opportunity_key=sent.opportunity_key
+                                     AND rearmed.event_type=
+                                         'VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                                     AND json_extract(
+                                       rearmed.payload_json,'$.resultDigest'
+                                     )=sent.dedupe_key
+                                     AND json_extract(
+                                       rearmed.payload_json,'$.threadId'
+                                     )=i.thread_id
+                                     AND rearmed.id>no_progress.id
+                                 )
+                             )
+                             AND NOT EXISTS (
+                               SELECT 1 FROM events rearmed
+                               WHERE rearmed.opportunity_key=sent.opportunity_key
+                                 AND rearmed.event_type=
+                                     'VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                                 AND json_extract(rearmed.payload_json,'$.resultDigest')=
+                                     sent.dedupe_key
+                                 AND json_extract(rearmed.payload_json,'$.threadId')=
+                                     i.thread_id
+                                 AND rearmed.id>sent.id
+                             )
+                         )
+                       )
                      )
                    ORDER BY i.updated_at"""
             ).fetchall()

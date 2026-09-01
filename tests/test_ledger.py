@@ -5159,22 +5159,215 @@ def test_local_receipt_candidates_keep_unfinished_validation_followup(tmp_path):
     assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
 
 
+def _record_local_receipt_completion(store, event_type, *, digest, stage, task_id, thread_id):
+    if event_type == "TASK_RESULT_INGESTED":
+        store.record_task_result_ingested(
+            "a/b#1",
+            digest=digest,
+            stage=stage,
+            task_id=task_id,
+            thread_id=thread_id,
+        )
+        return
+    store.record_published_task_result_backfilled(
+        "a/b#1",
+        task_id=task_id,
+        thread_id=thread_id,
+        digest=digest,
+        stage=stage,
+        pr_url="https://github.com/a/b/pull/9",
+        head_sha="b" * 40,
+    )
+
+
+def _published_validation_followup_store(tmp_path, *, stage="PR_OPEN"):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.restore_task_context(published_task_context(stage=stage))
+    old = iso_z(datetime.now(UTC) - timedelta(minutes=5))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','PR_FOLLOWUP_SENT','published-followup',?,?)""",
+            (json.dumps({"threadId": "thread-recovered"}), old),
+        )
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest="published-followup",
+        result_digest="published-followup-result",
+        stage=stage,
+    )
+    for event_type in ("TASK_RESULT_INGESTED", "PUBLISHED_TASK_RESULT_BACKFILLED"):
+        _record_local_receipt_completion(
+            store,
+            event_type,
+            digest="published-followup-result",
+            stage=stage,
+            task_id="recovered-intent",
+            thread_id="thread-recovered",
+        )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-recovered",
+        result_digest="published-followup-result",
+        missing=["relevant_tests_green"],
+    )
+    reservation = store.reserve_validation_followup(
+        thread_id="thread-recovered",
+        result_digest="published-followup-result",
+    )
+    store.commit_validation_followup(
+        thread_id="thread-recovered",
+        result_digest="published-followup-result",
+        reservation_digest=reservation["reservationDigest"],
+    )
+    return store, reservation
+
+
+@pytest.mark.parametrize("stage", ["PR_OPEN", "CI_GREEN"])
+@pytest.mark.parametrize(
+    "completion_event", ["TASK_RESULT_INGESTED", "PUBLISHED_TASK_RESULT_BACKFILLED"]
+)
+def test_local_receipt_candidates_keep_published_validation_followup_until_new_result(
+    tmp_path, stage, completion_event
+):
+    store, _reservation = _published_validation_followup_store(tmp_path, stage=stage)
+
+    _record_local_receipt_completion(
+        store,
+        completion_event,
+        digest="wrong-thread-result",
+        stage=stage,
+        task_id="another-intent",
+        thread_id="another-thread",
+    )
+
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
+    assert store.task_result_candidates()[0]["stage"] == stage
+
+    for _attempt in range(2):
+        _record_local_receipt_completion(
+            store,
+            completion_event,
+            digest="validation-followup-result",
+            stage=stage,
+            task_id="recovered-intent",
+            thread_id="thread-recovered",
+        )
+
+    assert store.local_receipt_candidates() == []
+    assert store.local_receipt_candidates() == []
+    assert store.task_result_candidates()[0]["stage"] == stage
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload"),
+    [
+        (
+            "VALIDATION_FOLLOWUP_DELIVERY_ABANDONED",
+            {
+                "threadId": "thread-recovered",
+                "resultDigest": "published-followup-result",
+            },
+        ),
+        (
+            "VALIDATION_FOLLOWUP_RESERVATION_CANCELLED",
+            {
+                "threadId": "thread-recovered",
+                "resultDigest": "published-followup-result",
+                "reservationDigest": "reservation",
+            },
+        ),
+    ],
+)
+def test_local_receipt_candidates_ignore_retired_published_validation_followup(
+    tmp_path, event_type, payload
+):
+    store, _reservation = _published_validation_followup_store(tmp_path)
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1',?,?,?,?)""",
+            (
+                event_type,
+                f"wrong-thread-{event_type}",
+                json.dumps(payload | {"threadId": "another-thread"}),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
+
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1',?,?,?,?)""",
+            (
+                event_type,
+                f"retired-{event_type}",
+                json.dumps(payload),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+
+    assert store.local_receipt_candidates() == []
+
+
+def test_local_receipt_candidates_require_new_sent_after_validation_rearm(tmp_path):
+    store, _reservation = _published_validation_followup_store(tmp_path)
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','VALIDATION_FOLLOWUP_NO_PROGRESS',?,?,?)""",
+            (
+                "published-followup-result",
+                json.dumps(
+                    {
+                        "threadId": "thread-recovered",
+                        "resultDigest": "published-followup-result",
+                    }
+                ),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+
+    assert store.local_receipt_candidates() == []
+    assert store.rearm_validation_no_progress_for_review(
+        key="a/b#1",
+        result_digest="published-followup-result",
+        review_marker="changed-review",
+        reason="CONTROLLER_REVIEW_FEEDBACK_AVAILABLE",
+    )
+    assert store.local_receipt_candidates() == []
+
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-recovered",
+        result_digest="new-validation-result",
+        missing=["independent_review_passed"],
+    )
+    next_reservation = store.reserve_validation_followup(
+        thread_id="thread-recovered",
+        result_digest="new-validation-result",
+    )
+    store.commit_validation_followup(
+        thread_id="thread-recovered",
+        result_digest="new-validation-result",
+        reservation_digest=next_reservation["reservationDigest"],
+    )
+
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
+
+
 def test_local_receipt_candidates_exclude_active_quarantine_without_changing_audit_scope(
     tmp_path,
 ):
-    store = RadarLedger(tmp_path / "ledger.sqlite3")
-    store.enqueue(intent())
-    store.claim("intent-1", "worker")
-    store.commit_dispatch(
-        "intent-1",
-        owner="worker",
-        thread_id="thread-1",
-        project_id="repo-project",
-        worktree_path="/tmp/worktree",
-    )
-    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": "https://github.com/a/b/pull/9"})
+    store, _reservation = _published_validation_followup_store(tmp_path)
     assert [item["key"] for item in store.task_result_candidates()] == ["a/b#1"]
-    assert store.local_receipt_candidates() == []
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
 
     store.record_shared_context_quarantine(
         key="a/b#1",
