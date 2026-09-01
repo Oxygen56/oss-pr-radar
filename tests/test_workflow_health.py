@@ -34,7 +34,7 @@ def _healthy_managed_followup(_path):
 def test_missing_natural_schedule_is_unhealthy():
     result = MODULE.health([], now=NOW)
     assert result["healthy"] is False
-    assert result["healthScope"] == "github_actions_schedule"
+    assert result["healthScope"] == "github_actions_schedule_and_full_scan_slots"
     assert result["githubNaturalScheduleHealthy"] is False
     assert result["naturalScheduleHealthy"] is False
     assert "NO_NATURAL_SCHEDULE_RUN" in result["issues"]
@@ -47,6 +47,7 @@ def test_recent_successful_schedule_is_healthy():
         [
             {
                 "event": "schedule",
+                "status": "completed",
                 "conclusion": "success",
                 "created_at": "2026-08-04T01:15:00Z",
                 "updated_at": "2026-08-04T01:30:00Z",
@@ -61,10 +62,11 @@ def test_recent_successful_schedule_is_healthy():
     assert result["naturalScheduleCoverage"]["assessed"] is False
 
 
-def test_sparse_natural_schedule_coverage_is_reported_without_hiding_freshness():
+def test_sparse_natural_schedule_coverage_cannot_be_hidden_by_a_fresh_canary():
     runs = [
         {
             "event": "schedule",
+            "status": "completed",
             "conclusion": "success",
             "created_at": (NOW - timedelta(hours=offset)).isoformat(),
             "updated_at": (NOW - timedelta(hours=offset) + timedelta(minutes=10)).isoformat(),
@@ -84,18 +86,24 @@ def test_sparse_natural_schedule_coverage_is_reported_without_hiding_freshness()
 
     result = MODULE.health(runs, now=NOW, coverage_window_hours=24)
 
-    assert result["githubNaturalScheduleHealthy"] is True
-    assert result["issues"] == []
+    assert result["naturalScheduleCanaryHealthy"] is True
+    assert result["naturalScheduleCanary"]["healthy"] is True
+    assert result["githubNaturalScheduleHealthy"] is False
+    assert result["issues"] == [
+        "NATURAL_SCHEDULE_COVERAGE_LOW",
+        "NATURAL_SCHEDULE_GAP_EXCESSIVE",
+    ]
     assert result["githubNaturalScheduleWarnings"] == [
         "NATURAL_SCHEDULE_COVERAGE_LOW",
         "NATURAL_SCHEDULE_GAP_EXCESSIVE",
     ]
     assert result["naturalScheduleCoverage"] == {
         "assessed": True,
+        "healthy": False,
         "windowHours": 24,
         "successfulRuns": 8,
         "expectedRuns": 24,
-        "minimumRuns": 12,
+        "minimumRuns": 24,
         "coverageRatio": 0.333,
         "maxGapMinutes": 180,
         "warnings": [
@@ -103,6 +111,145 @@ def test_sparse_natural_schedule_coverage_is_reported_without_hiding_freshness()
             "NATURAL_SCHEDULE_GAP_EXCESSIVE",
         ],
     }
+
+
+def _hourly_full_runs(*, failed_offset: int | None = None) -> list[dict]:
+    latest_slot = MODULE.eligible_slot(NOW)
+    values = []
+    for offset in range(12):
+        slot = latest_slot - timedelta(hours=offset)
+        failed = offset == failed_offset
+        values.append(
+            {
+                "id": offset + 1,
+                "event": "workflow_dispatch",
+                "status": "completed",
+                "conclusion": "failure" if failed else "success",
+                "created_at": (slot + timedelta(minutes=13)).isoformat(),
+                "updated_at": (slot + timedelta(minutes=20)).isoformat(),
+                "html_url": f"https://github.com/a/b/actions/runs/{offset + 1}",
+            }
+        )
+    values.append(
+        {
+            "id": 100,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": (latest_slot - timedelta(hours=13)).isoformat(),
+            "updated_at": (latest_slot - timedelta(hours=13)).isoformat(),
+            "html_url": "https://github.com/a/b/actions/runs/100",
+        }
+    )
+    return values
+
+
+def test_full_slot_coverage_requires_complete_workflow_dispatch_successes():
+    runs = _hourly_full_runs()
+    watchdog_ids = {str(item["id"]) for item in runs if item.get("event") == "workflow_dispatch"}
+    healthy = MODULE.full_slot_coverage(
+        runs,
+        now=NOW,
+        watchdog_run_ids=watchdog_ids,
+    )
+    degraded = MODULE.full_slot_coverage(
+        _hourly_full_runs(failed_offset=3),
+        now=NOW,
+        watchdog_run_ids=watchdog_ids,
+    )
+
+    assert healthy["assessed"] is True
+    assert healthy["healthy"] is True
+    assert healthy["coveredSlots"] == healthy["expectedSlots"] == 12
+    assert healthy["coverageRatio"] == 1.0
+    assert degraded["healthy"] is False
+    assert degraded["coveredSlots"] == 11
+    assert degraded["coverageRatio"] == 0.917
+    assert degraded["issues"] == ["FULL_SLOT_RUN_FAILED"]
+    assert len(degraded["failedSlots"]) == 1
+
+
+def test_manual_dispatches_and_schedule_canaries_never_count_as_watchdog_coverage():
+    runs = _hourly_full_runs()
+
+    result = MODULE.full_slot_coverage(runs, now=NOW, watchdog_run_ids=set())
+
+    assert result["assessed"] is True
+    assert result["healthy"] is False
+    assert result["coveredSlots"] == 0
+    assert len(result["missingSlots"]) == 12
+    assert result["sourceEvent"] == "workflow_dispatch"
+    assert result["evidenceSource"] == "scheduler_watchdog_exact_run_id"
+
+
+def test_latest_failed_natural_run_makes_canary_unhealthy_even_with_full_history():
+    runs = [
+        {
+            "id": offset,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": (NOW - timedelta(hours=offset)).isoformat(),
+            "updated_at": (NOW - timedelta(hours=offset) + timedelta(minutes=5)).isoformat(),
+            "html_url": f"https://github.com/a/b/actions/runs/{offset}",
+        }
+        for offset in range(1, 13)
+    ]
+    runs.append(
+        {
+            "id": 99,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "failure",
+            "created_at": (NOW - timedelta(minutes=10)).isoformat(),
+            "updated_at": (NOW - timedelta(minutes=5)).isoformat(),
+            "html_url": "https://github.com/a/b/actions/runs/99",
+        }
+    )
+
+    result = MODULE.health(runs, now=NOW)
+
+    assert result["naturalScheduleCoverage"]["healthy"] is True
+    assert result["naturalScheduleCoverage"]["successfulRuns"] == 12
+    assert result["naturalScheduleCanaryHealthy"] is False
+    assert result["githubNaturalScheduleHealthy"] is False
+    assert "LATEST_NATURAL_SCHEDULE_NOT_SUCCESSFUL" in result["issues"]
+
+
+def test_half_of_expected_natural_runs_is_unhealthy_even_when_gaps_stay_below_limit():
+    runs = [
+        {
+            "id": offset,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": (NOW - timedelta(hours=offset)).isoformat(),
+            "updated_at": (NOW - timedelta(hours=offset) + timedelta(minutes=5)).isoformat(),
+            "html_url": f"https://github.com/a/b/actions/runs/{offset}",
+        }
+        for offset in (1, 3, 5, 7, 9, 11)
+    ]
+    runs.append(
+        {
+            "id": 200,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": (NOW - timedelta(hours=13)).isoformat(),
+            "updated_at": (NOW - timedelta(hours=13)).isoformat(),
+            "html_url": "https://github.com/a/b/actions/runs/200",
+        }
+    )
+
+    result = MODULE.health(runs, now=NOW)
+
+    assert result["naturalScheduleCanaryHealthy"] is True
+    assert result["naturalScheduleCoverage"]["successfulRuns"] == 6
+    assert result["naturalScheduleCoverage"]["expectedRuns"] == 12
+    assert result["naturalScheduleCoverage"]["maxGapMinutes"] == 120
+    assert result["naturalScheduleCoverage"]["healthy"] is False
+    assert result["githubNaturalScheduleHealthy"] is False
+    assert result["githubNaturalScheduleWarnings"] == ["NATURAL_SCHEDULE_COVERAGE_LOW"]
 
 
 def _managed_followup_ledger(
@@ -738,6 +885,61 @@ def test_main_reports_stale_scan_without_dispatching_a_repair(monkeypatch, capsy
     assert result["repairWouldTrigger"] is False
     assert result["repairSuppressedReason"] == "REPAIR_OWNED_BY_SCHEDULER_WATCHDOG"
     assert not hasattr(MODULE, "dispatch_scan")
+
+
+def test_main_cannot_report_overall_health_when_latest_natural_run_failed(
+    monkeypatch, capsys, tmp_path
+):
+    current = datetime.now(UTC)
+    workflow_runs = [
+        {
+            "id": 51,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "failure",
+            "created_at": (current - timedelta(minutes=10)).isoformat(),
+            "updated_at": (current - timedelta(minutes=5)).isoformat(),
+            "html_url": "https://github.com/a/b/actions/runs/51",
+        },
+        {
+            "id": 50,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": (current - timedelta(minutes=30)).isoformat(),
+            "updated_at": (current - timedelta(minutes=20)).isoformat(),
+            "html_url": "https://github.com/a/b/actions/runs/50",
+        },
+    ]
+    monkeypatch.setattr(MODULE, "runs", lambda _repo: workflow_runs)
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(MODULE, "proven_watchdog_run_ids", lambda _root: frozenset())
+    monkeypatch.setattr(MODULE, "runtime_managed_followup_coverage", _healthy_managed_followup)
+    monkeypatch.setattr(MODULE, "github_actions_external_blocker", lambda *_args: None)
+    monkeypatch.setattr(
+        MODULE,
+        "workflow_component_health",
+        lambda *_args: {
+            "assessed": True,
+            "healthy": True,
+            "issues": [],
+            "scanSucceeded": True,
+            "runUpdatedAt": workflow_runs[1]["updated_at"],
+            "runUrl": workflow_runs[1]["html_url"],
+        },
+    )
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["check_workflow_health.py", "--runtime-root", str(tmp_path)],
+    )
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["currentOperationalHealthy"] is True
+    assert result["githubNaturalScheduleHealthy"] is False
+    assert result["operationalHealthy"] is False
+    assert "LATEST_NATURAL_SCHEDULE_NOT_SUCCESSFUL" in result["healthIssues"]
 
 
 def test_dispatch_blocker_does_not_poison_natural_canary_health(monkeypatch, capsys):

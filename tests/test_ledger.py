@@ -6798,6 +6798,396 @@ def test_existing_publication_request_without_snapshot_rejects_binding_drift(tmp
     assert "evidenceRawBase64" not in stored["request"]
 
 
+@pytest.mark.parametrize("request_status", ["PENDING", "GRANTED"])
+def test_audit_no_go_atomically_revokes_private_publication_authorization(tmp_path, request_status):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = None
+    if request_status == "GRANTED":
+        permit = store.grant_publication_request(
+            request["request_id"],
+            issue_url=args["issue_url"],
+            commit_sha=args["commit_sha"],
+            branch=args["branch"],
+            evidence={"verified": True},
+        )
+
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="ACTIVE_OR_CONDITIONAL_CLAIM",
+        dedupe_key="fresh-live-no-go",
+    )
+
+    blocked = store.publication_request(request["request_id"])
+    assert blocked["status"] == "BLOCKED"
+    assert blocked["reason"] == "ACTIVE_OR_CONDITIONAL_CLAIM"
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage,terminal_reason FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()
+        intent_status = connection.execute(
+            "SELECT status FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()["status"]
+        revoked = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PUBLICATION_AUTHORIZATION_REVOKED'"""
+        ).fetchone()
+        permit_status = (
+            connection.execute(
+                "SELECT status FROM publication_permits WHERE permit_id=?",
+                (permit["permit_id"],),
+            ).fetchone()["status"]
+            if permit is not None
+            else None
+        )
+    assert dict(opportunity) == {
+        "stage": "AUDIT_NO_GO",
+        "terminal_reason": "ACTIVE_OR_CONDITIONAL_CLAIM",
+    }
+    assert intent_status == "REJECTED"
+    assert permit_status == ("BLOCKED" if permit is not None else None)
+    assert json.loads(revoked["payload_json"])["previousRequestStatus"] == request_status
+    assert store.publication_work_items() == []
+
+
+def test_audit_no_go_revocation_rolls_back_with_lifecycle_transaction(monkeypatch, tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    original_event = store._event
+
+    def interrupt_revoke(connection, key, event_type, dedupe_key, payload, created_at):
+        if event_type == "PUBLICATION_AUTHORIZATION_REVOKED":
+            raise RuntimeError("simulated transaction interruption")
+        original_event(connection, key, event_type, dedupe_key, payload, created_at)
+
+    monkeypatch.setattr(store, "_event", interrupt_revoke)
+
+    with pytest.raises(RuntimeError, match="simulated transaction interruption"):
+        store.record_stage(
+            "a/b#1",
+            "AUDIT_NO_GO",
+            reason="STRONG_EXISTING_PR",
+            dedupe_key="interrupted-live-no-go",
+        )
+
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+                "stage"
+            ]
+            == "FIX_READY"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_requests WHERE request_id=?",
+                (request["request_id"],),
+            ).fetchone()["status"]
+            == "GRANTED"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_permits WHERE permit_id=?",
+                (permit["permit_id"],),
+            ).fetchone()["status"]
+            == "ACTIVE"
+        )
+
+
+@pytest.mark.parametrize(
+    ("action", "mark_creation_attempt"),
+    [("push", False), ("create_pr", False), ("create_pr", True)],
+)
+def test_audit_no_go_defers_revocation_across_ambiguous_publication_effect(
+    tmp_path, action, mark_creation_attempt
+):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    effect = store.publication_effect(
+        permit_id=permit["permit_id"],
+        action=action,
+        request_digest=f"{action}-digest",
+    )
+    if mark_creation_attempt:
+        store.mark_pull_request_creation_attempt(
+            effect_id=effect["effect_id"],
+            permit_id=permit["permit_id"],
+        )
+
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        evidence={"live": True},
+        reason="ACTIVE_OR_CONDITIONAL_CLAIM",
+        dedupe_key=f"concurrent-no-go:{action}:{mark_creation_attempt}",
+    )
+
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage,terminal_reason FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()
+        request_status = connection.execute(
+            "SELECT status,reason FROM publication_requests WHERE request_id=?",
+            (request["request_id"],),
+        ).fetchone()
+        permit_status = connection.execute(
+            "SELECT status FROM publication_permits WHERE permit_id=?",
+            (permit["permit_id"],),
+        ).fetchone()["status"]
+        deferred = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PUBLICATION_AUDIT_NO_GO_DEFERRED'"""
+        ).fetchone()
+
+    assert dict(opportunity) == {"stage": "FIX_READY", "terminal_reason": None}
+    assert dict(request_status) == {"status": "GRANTED", "reason": None}
+    assert permit_status == "ACTIVE"
+    payload = json.loads(deferred["payload_json"])
+    assert payload["publicationBoundary"] == "IN_FLIGHT_OR_UNCERTAIN"
+    assert payload["effectId"] == effect["effect_id"]
+    assert payload["effectAction"] == action
+    assert payload["effectStatus"] == "ATTEMPTED"
+    assert payload["creationAttempted"] is mark_creation_attempt
+
+
+def test_concurrent_audit_no_go_cannot_orphan_successful_pull_request(tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    effect = store.publication_effect(
+        permit_id=permit["permit_id"],
+        action="create_pr",
+        request_digest="create-pr-race-digest",
+    )
+    store.mark_pull_request_creation_attempt(
+        effect_id=effect["effect_id"],
+        permit_id=permit["permit_id"],
+    )
+
+    # This is the exact race: the external call is now allowed to be in
+    # flight while a stale-task audit arrives in another controller process.
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="ISSUE_NOT_OPEN",
+        dedupe_key="no-go-during-pr-create",
+    )
+    store.succeed_pull_request_effect(
+        effect_id=effect["effect_id"],
+        permit_id=permit["permit_id"],
+        pr_url="https://github.com/a/b/pull/9",
+        result={"ok": True, "created": True, "prUrl": "https://github.com/a/b/pull/9"},
+    )
+
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+                "stage"
+            ]
+            == "PR_OPEN"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_requests WHERE request_id=?",
+                (request["request_id"],),
+            ).fetchone()["status"]
+            == "CONSUMED"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_permits WHERE permit_id=?",
+                (permit["permit_id"],),
+            ).fetchone()["status"]
+            == "CONSUMED"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_effects WHERE effect_id=?",
+                (effect["effect_id"],),
+            ).fetchone()["status"]
+            == "SUCCEEDED"
+        )
+
+
+def test_deferred_audit_no_go_applies_after_preflight_proves_no_external_effect(tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    effect = store.publication_effect(
+        permit_id=permit["permit_id"],
+        action="create_pr",
+        request_digest="preflight-race-digest",
+    )
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="ACTIVE_OR_CONDITIONAL_CLAIM",
+        dedupe_key="deferred-until-preflight",
+    )
+
+    store.resolve_publication_preflight(
+        effect["effect_id"],
+        disposition="BLOCK",
+        reason="ACTIVE_OR_CONDITIONAL_CLAIM",
+    )
+
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage,terminal_reason FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()
+        request_status = connection.execute(
+            "SELECT status FROM publication_requests WHERE request_id=?",
+            (request["request_id"],),
+        ).fetchone()["status"]
+        permit_status = connection.execute(
+            "SELECT status FROM publication_permits WHERE permit_id=?",
+            (permit["permit_id"],),
+        ).fetchone()["status"]
+        no_go = connection.execute(
+            """SELECT 1 FROM events WHERE opportunity_key='a/b#1'
+               AND event_type='AUDIT_NO_GO' AND dedupe_key='deferred-until-preflight'"""
+        ).fetchone()
+    assert dict(opportunity) == {
+        "stage": "AUDIT_NO_GO",
+        "terminal_reason": "ACTIVE_OR_CONDITIONAL_CLAIM",
+    }
+    assert request_status == "BLOCKED"
+    assert permit_status == "EXPIRED"
+    assert no_go is not None
+
+
+def test_deferred_audit_no_go_revokes_after_failed_push_is_definitive(tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    effect = store.publication_effect(
+        permit_id=permit["permit_id"],
+        action="push",
+        request_digest="failed-push-race-digest",
+    )
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="ISSUE_NOT_OPEN",
+        dedupe_key="deferred-until-push-failed",
+    )
+
+    store.complete_publication_effect(
+        effect["effect_id"],
+        status="FAILED",
+        result={"ok": False, "reason": "REMOTE_BRANCH_CONFLICT"},
+    )
+
+    assert store.publication_request(request["request_id"])["status"] == "BLOCKED"
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+                "stage"
+            ]
+            == "AUDIT_NO_GO"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_permits WHERE permit_id=?",
+                (permit["permit_id"],),
+            ).fetchone()["status"]
+            == "BLOCKED"
+        )
+
+
+def test_audit_no_go_never_regresses_consumed_publication_boundary(tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE publication_requests SET status='CONSUMED'
+               WHERE request_id=?""",
+            (request["request_id"],),
+        )
+        connection.execute(
+            """UPDATE publication_permits SET status='CONSUMED',pr_url=?
+               WHERE permit_id=?""",
+            ("https://github.com/a/b/pull/9", permit["permit_id"]),
+        )
+
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="ISSUE_NOT_OPEN",
+        dedupe_key="late-live-no-go",
+    )
+
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+                "stage"
+            ]
+            == "FIX_READY"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_requests WHERE request_id=?",
+                (request["request_id"],),
+            ).fetchone()["status"]
+            == "CONSUMED"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_permits WHERE permit_id=?",
+                (permit["permit_id"],),
+            ).fetchone()["status"]
+            == "CONSUMED"
+        )
+        preserved = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='POST_PUBLICATION_AUDIT_NO_GO'
+                 AND dedupe_key='late-live-no-go'"""
+        ).fetchone()
+    assert json.loads(preserved["payload_json"])["publicationBoundary"] == ("IRREVERSIBLE_RECEIPT")
+
+
 def test_post_push_confirmation_recovers_legacy_head_drift_failure(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())

@@ -54,8 +54,12 @@ def deterministic_controller_disk_pressure(monkeypatch):
 def healthy_response(stage: str) -> dict:
     if stage in {"workflowHealth", "finalWorkflowHealth"}:
         return {
+            "currentOperationalHealthy": True,
             "operationalHealthy": True,
             "githubNaturalScheduleHealthy": True,
+            "naturalScheduleCanaryHealthy": True,
+            "naturalScheduleCoverage": {"healthy": True, "coverageRatio": 0.917},
+            "fullSlotCoverage": {"healthy": True, "coverageRatio": 1.0},
             "effectiveScan": {"recentActive": False},
         }
     if stage == "drain":
@@ -105,6 +109,11 @@ def test_controller_cycle_runs_one_ordered_sync_and_drain(tmp_path):
     assert calls.index("resultIngestion") < calls.index("independentReview")
     assert calls.index("restoreReconcile") < calls.index("drain")
     assert result["summary"]["drainAction"] == "issue_task_dispatched"
+    assert result["summary"]["naturalScheduleCanaryHealthy"] is True
+    assert result["summary"]["naturalScheduleCoverageHealthy"] is True
+    assert result["summary"]["naturalScheduleCoverageRatio"] == 0.917
+    assert result["summary"]["fullSlotCoverageHealthy"] is True
+    assert result["summary"]["fullSlotCoverageRatio"] == 1.0
 
 
 def test_controller_reconciles_event_lanes_before_final_health(tmp_path):
@@ -330,6 +339,59 @@ def test_controller_skips_post_publication_cleanup_without_terminal_block(tmp_pa
     assert "terminalFeedbackAfterPublication" not in calls
     assert "titleReconcileAfterPublication" not in calls
     assert "cleanupReconcileAfterPublication" not in calls
+
+
+def test_controller_uses_final_context_revalidation_result_after_earlier_recovery(tmp_path):
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        if stage == "contextSyncBeforeCleanup":
+            return {
+                "ok": True,
+                "revalidationErrors": [{"key": "owner/repo#1", "error": "temporary"}],
+            }
+        if stage == "contextSync":
+            return {"ok": True, "revalidationErrors": []}
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+
+    assert result["ok"] is True
+    assert result["summary"]["liveAuditRevalidationErrorCount"] == 0
+    assert not any(item["queue"] == "revalidationErrors" for item in result["finalBlockers"])
+
+
+def test_controller_blocks_on_final_context_revalidation_errors(tmp_path):
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        if stage == "contextSync":
+            return {
+                "ok": True,
+                "revalidationErrors": [
+                    {"key": "owner/repo#1", "error": "rate limited"},
+                    {"key": "owner/repo#2", "error": "unavailable"},
+                ],
+            }
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+
+    assert result["ok"] is False
+    assert result["summary"]["liveAuditRevalidationErrorCount"] == 2
+    assert {
+        "stage": "contextSync",
+        "queue": "revalidationErrors",
+        "count": 2,
+    } in result["finalBlockers"]
     assert result["stages"]["terminalFeedbackAfterPublication"]["skipped"] is True
     assert result["stages"]["titleReconcileAfterPublication"]["skipped"] is True
     assert result["stages"]["cleanupReconcileAfterPublication"]["skipped"] is True
@@ -406,6 +468,7 @@ def test_controller_cycle_skips_sync_while_remote_scan_is_active(tmp_path):
         calls.append(stage)
         if stage == "workflowHealth":
             return {
+                "currentOperationalHealthy": True,
                 "operationalHealthy": True,
                 "githubNaturalScheduleHealthy": True,
                 "effectiveScan": {"recentActive": True},
@@ -419,6 +482,40 @@ def test_controller_cycle_skips_sync_while_remote_scan_is_active(tmp_path):
     assert result["ok"] is True
     assert "queueSync" not in calls
     assert result["stages"]["queueSync"]["reason"] == "remote_scan_active"
+
+
+def test_historical_slot_gap_is_reported_without_stopping_current_queue_sync(tmp_path):
+    calls: list[str] = []
+
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        calls.append(stage)
+        if stage in {"workflowHealth", "finalWorkflowHealth"}:
+            return {
+                "currentOperationalHealthy": True,
+                "operationalHealthy": False,
+                "githubNaturalScheduleHealthy": False,
+                "naturalScheduleCanaryHealthy": True,
+                "naturalScheduleCoverage": {"healthy": False, "coverageRatio": 0.083},
+                "fullSlotCoverage": {"healthy": False, "coverageRatio": 0.75},
+                "effectiveScan": {"recentActive": False},
+            }
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+
+    assert "queueSync" in calls
+    assert result["ok"] is False
+    assert result["summary"]["currentOperationalHealthy"] is True
+    assert result["summary"]["operationalHealthy"] is False
+    assert result["summary"]["naturalScheduleCanaryHealthy"] is True
+    assert result["summary"]["naturalScheduleCoverageHealthy"] is False
+    assert result["summary"]["fullSlotCoverageHealthy"] is False
 
 
 def test_controller_never_promotes_malformed_health_values(tmp_path):
@@ -1174,6 +1271,48 @@ def test_controller_keeps_unresolved_pr_delivery_as_a_business_blocker():
     )
 
     assert blockers == [{"stage": "finalPrFollowups", "queue": "unresolved", "count": 1}]
+
+
+def test_controller_does_not_refail_for_a_durably_recorded_task_blocker():
+    from oss_pr_radar.controller import _final_blockers
+
+    blockers = _final_blockers(
+        {
+            "resultIngestion": {
+                "ok": True,
+                "errors": [],
+                "workBlocked": [
+                    {"key": "a/b#1", "alreadyRecorded": True},
+                    {"key": "a/b#2", "alreadyRecorded": False},
+                ],
+            }
+        }
+    )
+
+    assert blockers == [{"stage": "resultIngestion", "queue": "workBlocked", "count": 1}]
+
+
+def test_controller_summary_separates_total_and_new_task_blockers(tmp_path):
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        if stage == "resultIngestion":
+            return {
+                "ok": True,
+                "errors": [],
+                "workBlocked": [{"key": "a/b#1", "alreadyRecorded": True}],
+            }
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+
+    assert result["ok"] is True
+    assert result["summary"]["workBlockedCount"] == 1
+    assert result["summary"]["newWorkBlockedCount"] == 0
 
 
 def test_controller_blockers_include_execution_failures_and_exhausted_recovery():

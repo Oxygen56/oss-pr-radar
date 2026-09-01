@@ -1686,6 +1686,68 @@ def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(monkeypatch
     assert slow["workerPidAlive"] is False
 
 
+def test_slow_worker_does_not_back_off_for_persisted_task_evidence_block(monkeypatch, tmp_path):
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
+    ingestion_count = 0
+
+    def runner(_root: Path, operation: str):
+        nonlocal ingestion_count
+        if operation == "reproduction-probe":
+            return {"ok": True, "errors": []}
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "unavailable": [], "errors": []}
+        if operation == "ingest-results":
+            ingestion_count += 1
+            return {
+                "ok": True,
+                "ingested": [],
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "workBlocked": [
+                    {
+                        "key": "a/b#1",
+                        "reason": "VALIDATION_PARENT_BINDING_INVALID",
+                        "alreadyRecorded": ingestion_count > 1,
+                    }
+                ],
+                "errors": [],
+            }
+        if operation == "independent-review-run":
+            return {"ok": True, "updated": [], "errors": []}
+        if operation == "title-reconcile":
+            return {"ok": True, "renamed": [], "deferred": [], "errors": []}
+        if operation == "cleanup-reconcile":
+            return {"ok": True, "archived": [], "errors": []}
+        if operation == "publication-run":
+            return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+        if operation == "sync":
+            return {"ok": True, "verified": 0, "inserted": 0, "superseded": 0}
+        if operation == "list":
+            return {"ok": True, "pending": []}
+        if operation == "publication-feedback-list":
+            return {"ok": True, "candidates": [], "unresolved": [], "reconciled": []}
+        if operation == "recovery-list":
+            return {"ok": True, "recoverable": []}
+        raise AssertionError(operation)
+
+    first = slow_advance_once(tmp_path, runner=runner)
+    second = slow_advance_once(tmp_path, runner=runner)
+
+    assert first["ok"] is True, first
+    assert first["activity"] is True
+    assert first["workBlocked"][0]["alreadyRecorded"] is False
+    assert second["ok"] is True, second
+    assert second["activity"] is False
+    assert second["workBlocked"][0]["alreadyRecorded"] is True
+    assert ingestion_count == 2
+    backoff = json.loads((tmp_path / "state" / "slow-worker-backoff.json").read_text())
+    assert backoff["failureCount"] == 0
+    assert backoff["backoffSeconds"] == 0
+    health = json.loads((tmp_path / "state" / "runtime-health.json").read_text())
+    assert health["workers"]["slow"]["lastExitCode"] == 0
+    assert health["workers"]["slow"]["consecutiveFailures"] == 0
+
+
 def test_slow_worker_marks_terminal_missing_worktree_skip_as_success(monkeypatch, tmp_path):
     monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
     calls = []

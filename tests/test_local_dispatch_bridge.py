@@ -12627,6 +12627,263 @@ def test_context_sync_keeps_missing_worktree_when_live_revalidation_fails(monkey
     ]
 
 
+def test_missing_worktree_live_revalidation_is_task_locked_and_ttl_bounded(monkeypatch, tmp_path):
+    store, worktree = registered_store(tmp_path)
+    shutil.rmtree(worktree)
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    calls = 0
+
+    def refresh_once(_intent):
+        nonlocal calls
+        calls += 1
+        return _live_audit_result("HOLD", "EVIDENCE_INCOMPLETE")
+
+    monkeypatch.setattr(MODULE, "_audit_intent", refresh_once)
+
+    first = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    second = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert calls == 1
+    assert first["refreshed"] == [
+        {
+            "key": "a/b#1",
+            "evidenceDigest": "refreshed-evidence",
+            "status": "HOLD",
+            "reason": "EVIDENCE_INCOMPLETE",
+        }
+    ]
+    assert second["refreshed"] == []
+    assert first["unavailable"][0]["reason"] == "TASK_WORKTREE_UNAVAILABLE"
+    assert second["unavailable"][0]["reason"] == "TASK_WORKTREE_UNAVAILABLE"
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert context["missingWorktreeRevalidation"] is True
+
+
+def test_missing_worktree_live_revalidation_defers_when_task_lock_is_busy(monkeypatch, tmp_path):
+    store, worktree = registered_store(tmp_path)
+    shutil.rmtree(worktree)
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+
+    def unexpected_refresh(_intent):
+        raise AssertionError("a lock loser must not duplicate missing-worktree GitHub queries")
+
+    monkeypatch.setattr(MODULE, "_audit_intent", unexpected_refresh)
+    lock_path = MODULE._task_live_audit_refresh_lock_path(store.path, "a/b#1")
+    with MODULE.exclusive_lock(lock_path, blocking=False):
+        synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["refreshed"] == []
+    assert synced["revalidationErrors"] == []
+    assert synced["revalidationDeferred"] == [
+        {"key": "a/b#1", "reason": "LIVE_AUDIT_REFRESH_LOCK_BUSY"}
+    ]
+    assert synced["unavailable"][0]["reason"] == "TASK_WORKTREE_UNAVAILABLE"
+
+
+def _age_task_live_audit(store: RadarLedger) -> None:
+    stale = iso_z(datetime.now(UTC) - timedelta(hours=2))
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT id,payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type IN ('AUDIT_PASS','AUDIT_SNAPSHOT')"""
+        ).fetchall()
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            if isinstance(payload.get("liveAudit"), dict):
+                payload["liveAudit"]["capturedAt"] = stale
+            connection.execute(
+                "UPDATE events SET created_at=?,payload_json=? WHERE id=?",
+                (stale, json.dumps(payload, sort_keys=True), row["id"]),
+            )
+
+
+def _live_audit_result(status: str, reason: str, digest: str = "refreshed-evidence"):
+    evidence = SimpleNamespace(
+        digest=digest,
+        probe_level="REPRODUCED_VALIDATED",
+        as_dict=lambda: {
+            "digest": digest,
+            "issue": {"state": "open", "title": "Current issue title"},
+        },
+    )
+    verdict = SimpleNamespace(
+        status=status,
+        reason_code=reason,
+        as_dict=lambda: {"status": status, "reason_code": reason},
+    )
+    return evidence, verdict
+
+
+def test_context_sync_stale_fix_ready_live_block_terminalizes_task(monkeypatch, tmp_path):
+    store, worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    _age_task_live_audit(store)
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    monkeypatch.setattr(
+        MODULE,
+        "_refresh_active_task_live_audit",
+        lambda _intent, _context: _live_audit_result("BLOCK", "ACTIVE_OR_CONDITIONAL_CLAIM"),
+    )
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["revalidationErrors"] == []
+    assert synced["noGo"] == [
+        {
+            "key": "a/b#1",
+            "reason": "ACTIVE_OR_CONDITIONAL_CLAIM",
+            "source": "active_live_revalidation",
+        }
+    ]
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert context["stage"] == "AUDIT_NO_GO"
+    assert context["liveAudit"]["evidence"]["digest"] == "refreshed-evidence"
+    written = json.loads(
+        (worktree / MODULE.TASK_PRIVATE_DIR / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert written["stage"] == "AUDIT_NO_GO"
+    assert written["liveAudit"]["evidence"]["digest"] == "refreshed-evidence"
+
+
+def test_context_sync_stale_live_hold_updates_snapshot_without_terminalizing(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+    _age_task_live_audit(store)
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    monkeypatch.setattr(
+        MODULE,
+        "_refresh_active_task_live_audit",
+        lambda _intent, _context: _live_audit_result("HOLD", "EVIDENCE_INCOMPLETE"),
+    )
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["noGo"] == []
+    assert synced["refreshed"] == [
+        {
+            "key": "a/b#1",
+            "evidenceDigest": "refreshed-evidence",
+            "status": "HOLD",
+            "reason": "EVIDENCE_INCOMPLETE",
+        }
+    ]
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert context["stage"] == "VALIDATION_PENDING"
+    assert context["liveAudit"]["evidence"]["digest"] == "refreshed-evidence"
+
+
+def test_context_sync_missing_live_hold_is_recoverable_not_terminal(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    with store.connect() as connection:
+        connection.execute(
+            """DELETE FROM events WHERE opportunity_key='a/b#1'
+               AND event_type IN ('AUDIT_PASS','AUDIT_SNAPSHOT')"""
+        )
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    monkeypatch.setattr(
+        MODULE,
+        "_audit_intent",
+        lambda _intent: _live_audit_result("HOLD", "REPRODUCTION_REQUIRED_NOT_VISIBLE"),
+    )
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["noGo"] == []
+    assert synced["refreshed"][0]["status"] == "HOLD"
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert context["stage"] == "DISPATCHED"
+    assert context["liveAudit"]["evidence"]["digest"] == "refreshed-evidence"
+
+
+def test_context_sync_does_not_refresh_unrelated_published_history(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "PR_OPEN", evidence={})
+    _age_task_live_audit(store)
+
+    def unexpected_refresh(_intent, _context):
+        raise AssertionError("published history must not spend live-audit API calls")
+
+    monkeypatch.setattr(MODULE, "_refresh_active_task_live_audit", unexpected_refresh)
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["refreshed"] == []
+    assert synced["revalidationErrors"] == []
+
+
+def test_context_sync_defers_stale_refresh_while_task_turn_is_active(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    _age_task_live_audit(store)
+    monkeypatch.setattr(
+        MODULE,
+        "_active_task_turn_for_result",
+        lambda _candidate: {"source": "worker_receipt", "turnId": "turn-1"},
+    )
+
+    def unexpected_refresh(_intent, _context):
+        raise AssertionError("active task context must not be replaced")
+
+    monkeypatch.setattr(MODULE, "_refresh_active_task_live_audit", unexpected_refresh)
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["refreshed"] == []
+    assert synced["revalidationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "ACTIVE_TASK_TURN",
+            "activeTurn": {"source": "worker_receipt", "turnId": "turn-1"},
+        }
+    ]
+
+
+def test_context_sync_defers_stale_refresh_when_another_process_holds_task_lock(
+    monkeypatch, tmp_path
+):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    _age_task_live_audit(store)
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+
+    def unexpected_refresh(_intent, _context):
+        raise AssertionError("a lock loser must not duplicate GitHub evidence collection")
+
+    monkeypatch.setattr(MODULE, "_refresh_active_task_live_audit", unexpected_refresh)
+    lock_path = MODULE._task_live_audit_refresh_lock_path(store.path, "a/b#1")
+    with MODULE.exclusive_lock(lock_path, blocking=False):
+        synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["refreshed"] == []
+    assert synced["revalidationErrors"] == []
+    assert synced["revalidationDeferred"] == [
+        {"key": "a/b#1", "reason": "LIVE_AUDIT_REFRESH_LOCK_BUSY"}
+    ]
+
+
+def test_task_live_audit_refresh_due_is_stage_and_ttl_bounded():
+    now = datetime(2026, 9, 2, 8, 0, tzinfo=UTC)
+    fresh = {
+        "stage": "FIX_READY",
+        "liveAuditRecordedAt": iso_z(now - timedelta(minutes=59)),
+        "liveAudit": {"evidence": {}},
+    }
+    stale = fresh | {"liveAuditRecordedAt": iso_z(now - timedelta(minutes=60))}
+    published = stale | {"stage": "PR_OPEN"}
+
+    assert MODULE._task_live_audit_refresh_due(fresh, now=now) is False
+    assert MODULE._task_live_audit_refresh_due(stale, now=now) is True
+    assert MODULE._task_live_audit_refresh_due(published, now=now) is False
+
+
 def test_context_sync_isolates_recovered_task_with_missing_category(tmp_path):
     store, worktree = registered_store(tmp_path)
     with store.transaction() as connection:
@@ -25932,6 +26189,100 @@ def test_non_pr_validation_required_commits_on_latest_authenticated_managed_pare
     assert finalized["handoffMode"] == "controller_commit_complete"
     assert finalized["controllerCommitChangedFiles"] == ["tests/test_runtime.py"]
     assert finalized["changedFiles"] == ["runtime.py", "tests/test_runtime.py"]
+
+
+def test_non_pr_validation_required_recovers_omitted_authenticated_managed_parent(tmp_path):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    test_path = worktree / "tests" / "test_runtime.py"
+    test_path.parent.mkdir(exist_ok=True)
+    test_path.write_text("def test_runtime():\n    assert True\n", encoding="utf-8")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "changedFiles": ["runtime.py", "tests/test_runtime.py"],
+            "codePaths": ["runtime.py", "tests/test_runtime.py"],
+        }
+    )
+    value.pop("headSha", None)
+    value.pop("controllerCommitChangedFiles", None)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate=candidate,
+        context=context,
+        value=value,
+        result_path=result_path,
+        managed_ledger=managed,
+    )
+
+    assert run_git(worktree, "rev-parse", "HEAD^") == previous_head
+    assert finalized["headSha"] == previous_head
+    assert finalized["handoffMode"] == "controller_commit_complete"
+    assert finalized["controllerCommitChangedFiles"] == ["tests/test_runtime.py"]
+    assert finalized["changedFiles"] == ["runtime.py", "tests/test_runtime.py"]
+
+
+def test_omitted_validation_parent_with_unmanaged_head_is_persistently_task_blocked(tmp_path):
+    (
+        store,
+        _managed,
+        _candidate,
+        context,
+        worktree,
+        result_path,
+        _previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    (worktree / "unmanaged.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "unmanaged.py")
+    run_git(worktree, "commit", "-m", "fix: unmanaged intermediate")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "changedFiles": ["runtime.py", "unmanaged.py"],
+            "codePaths": ["runtime.py", "unmanaged.py"],
+        }
+    )
+    value.pop("headSha", None)
+    value.pop("controllerCommitChangedFiles", None)
+    value.pop("reproductionReceipt", None)
+    value.pop("resultDigest", None)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True
+    assert first["errors"] == []
+    assert first.get("workBlocked") == [
+        {
+            "key": "a/b#1",
+            "reason": "VALIDATION_PARENT_BINDING_INVALID",
+            "alreadyRecorded": False,
+        }
+    ], first
+    assert repeated["ok"] is True
+    assert repeated["errors"] == []
+    assert repeated.get("workBlocked") == [
+        {
+            "key": "a/b#1",
+            "reason": "VALIDATION_PARENT_BINDING_INVALID",
+            "alreadyRecorded": True,
+        }
+    ], repeated
 
 
 def test_non_pr_validation_rejects_an_unmanaged_intermediate_parent(tmp_path):

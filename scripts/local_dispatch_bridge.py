@@ -109,7 +109,7 @@ from oss_pr_radar.repo_probe import (  # noqa: E402
     verify_merge_resolution_scope_receipt,
     verify_probe_receipt,
 )
-from oss_pr_radar.runtime import exclusive_lock  # noqa: E402
+from oss_pr_radar.runtime import RuntimeLockBusy, exclusive_lock  # noqa: E402
 from oss_pr_radar.target_branch import (  # noqa: E402
     TargetBranchError,
     resolve_target_base,
@@ -210,6 +210,7 @@ TERMINAL_PUBLICATION_BLOCK_REASONS = {
     "STRONG_EXISTING_PR",
 }
 TASK_RESULT_EVIDENCE_POLICY_REVISION = "managed-reproduction-scope-v4"
+VALIDATION_PARENT_BINDING_INVALID = "VALIDATION_PARENT_BINDING_INVALID"
 TASK_CACHE_CLEANUP_SCHEMA = "radar-task-cache-cleanup-v1"
 TASK_CACHE_CLEANUP_TERMINAL_STATUSES = frozenset({"completed", "interrupted", "failed"})
 CACHE_DIRECTORY_TAG_SIGNATURE = "Signature: 8a477f597d28d172789f06886806bc55"
@@ -238,8 +239,8 @@ PR_FOLLOWUP_ISOLATABLE_PATH_ERRORS = frozenset(
 class TaskResultEvidenceBlocked(RuntimeError):
     """A stable child result cannot satisfy controller evidence requirements."""
 
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
+    def __init__(self, reason: str, *, detail: str | None = None) -> None:
+        super().__init__(detail or reason)
         self.reason = reason
 
 
@@ -449,6 +450,8 @@ PR_STAGE_PRIORITY = {
     "CLOSED": 4,
 }
 LOCAL_PR_ACTION_STAGES = {"VALIDATION_PENDING", "FIX_READY"}
+ACTIVE_TASK_LIVE_AUDIT_STAGES = frozenset({"DISPATCHED", "VALIDATION_PENDING", "FIX_READY"})
+ACTIVE_TASK_LIVE_AUDIT_MAX_AGE_MINUTES = 60
 TERMINAL_PR_STAGES = {"MERGED", "CLOSED"}
 CONTROLLER_TERMINAL_STATUS = "controller_terminal"
 CODEX_DECISION_BINDINGS_SCHEMA = "oss-pr-radar.codex-decision-bindings.v1"
@@ -4300,6 +4303,99 @@ def _audit_payload(
     if target_base is not None:
         payload["targetBase"] = validate_target_base(target_base)
     return payload
+
+
+def _task_live_audit_refresh_due(
+    context: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Limit periodic GitHub refreshes to stale, still-private active tasks."""
+
+    if str(context.get("stage") or "") not in ACTIVE_TASK_LIVE_AUDIT_STAGES:
+        return False
+    live_audit = context.get("liveAudit")
+    if not isinstance(live_audit, dict) or not isinstance(live_audit.get("evidence"), dict):
+        return True
+    recorded_at = str(context.get("liveAuditRecordedAt") or live_audit.get("capturedAt") or "")
+    try:
+        observed_at = parse_time(recorded_at)
+    except (TypeError, ValueError):
+        return True
+    current = now or datetime.now(UTC)
+    if observed_at > current:
+        return True
+    return current - observed_at >= timedelta(minutes=ACTIVE_TASK_LIVE_AUDIT_MAX_AGE_MINUTES)
+
+
+def _missing_worktree_live_audit_refresh_due(context: dict[str, Any]) -> bool:
+    """Audit a newly missing worktree immediately, then honor the normal TTL."""
+
+    return context.get("missingWorktreeRevalidation") is not True or (
+        _task_live_audit_refresh_due(context)
+    )
+
+
+def _task_live_audit_refresh_lock_path(ledger_path: Path, key: str) -> Path:
+    """Bind one non-blocking OS lock to one task in one durable ledger."""
+
+    path = Path(ledger_path).resolve()
+    identity = sha256_text(str(key))[:24]
+    return path.with_name(f".{path.name}.live-audit-refresh-{identity}.lock")
+
+
+def _refresh_active_task_live_audit(
+    intent: dict[str, Any],
+    context: dict[str, Any],
+) -> tuple[Any, Any]:
+    """Refresh mutable issue evidence while preserving the task's bound repo probe."""
+
+    match = ISSUE_URL.match(str(intent.get("issueUrl") or ""))
+    if not match:
+        raise RuntimeError("invalid issue URL")
+    repo, number = match.groups()
+    evidence = collect_evidence(
+        GitHubClient(),
+        repo,
+        int(number),
+        current_actor=os.environ.get("GITHUB_ACTOR", "Oxygen56"),
+        hardware_inventory=_hardware_inventory(),
+    )
+    previous_live_audit = context.get("liveAudit")
+    previous_evidence = (
+        previous_live_audit.get("evidence")
+        if isinstance(previous_live_audit, dict)
+        and isinstance(previous_live_audit.get("evidence"), dict)
+        else {}
+    )
+    evidence = replace(
+        evidence,
+        default_branch=str(
+            previous_evidence.get("defaultBranch")
+            or previous_evidence.get("default_branch")
+            or context.get("defaultBranch")
+            or ""
+        ),
+        selected_base_sha=str(
+            previous_evidence.get("selectedBaseSha")
+            or previous_evidence.get("selected_base_sha")
+            or context.get("selectedBaseSha")
+            or ""
+        ),
+        live_base_sha=str(
+            previous_evidence.get("liveBaseSha") or previous_evidence.get("live_base_sha") or ""
+        ),
+        repo_probe_receipt=(
+            previous_evidence.get("repoProbeReceipt") or previous_evidence.get("repo_probe_receipt")
+        ),
+        probe_level=str(
+            previous_evidence.get("probeLevel")
+            or previous_evidence.get("probe_level")
+            or context.get("probeLevel")
+            or "UNVERIFIED"
+        ),
+    )
+    return evidence, authorize(_candidate(intent), evidence)
 
 
 def _private_task_limit() -> int | None:
@@ -12962,37 +13058,42 @@ def _non_pr_validation_parent(
 ) -> str:
     """Resolve the exact implementation head a validation commit may extend."""
 
+    def blocked(detail: str) -> TaskResultEvidenceBlocked:
+        return TaskResultEvidenceBlocked(
+            VALIDATION_PARENT_BINDING_INVALID,
+            detail=detail,
+        )
+
     context_receipt = context.get("reproductionReceipt") or context.get("probeReceipt")
     context_parent = (
         str(context_receipt.get("commitSha") or "") if isinstance(context_receipt, dict) else ""
     )
     declared_head = str(value.get("headSha") or "")
-    if (
-        re.fullmatch(r"[0-9a-f]{40}", context_parent) is None
-        or re.fullmatch(r"[0-9a-f]{40}", declared_head) is None
-    ):
-        raise RuntimeError("controller commit lacks a valid validation parent")
+    if re.fullmatch(r"[0-9a-f]{40}", context_parent) is None:
+        raise blocked("controller commit lacks a valid validation parent")
     worktree_head = command(["git", "rev-parse", "HEAD"], cwd=worktree)
-    validation_parent = declared_head
-    if value.get("handoffMode") == "controller_commit_complete":
-        declared_commit = str(value.get("commitSha") or "")
-        if worktree_head == context_parent:
-            if declared_head not in {worktree_head, declared_commit}:
-                raise RuntimeError("controller commit parent does not match validation input")
-            validation_parent = context_parent
-        else:
-            parents = _merge_parents(worktree, worktree_head)
-            if len(parents) != 1 or declared_head not in {
-                parents[0],
-                worktree_head,
-                declared_commit,
-            }:
-                raise RuntimeError("controller commit parent does not match validation input")
-            validation_parent = parents[0]
     if managed_ledger is None:
+        if re.fullmatch(r"[0-9a-f]{40}", declared_head) is None:
+            raise blocked("controller commit lacks a valid validation parent")
+        validation_parent = declared_head
+        if value.get("handoffMode") == "controller_commit_complete":
+            declared_commit = str(value.get("commitSha") or "")
+            if worktree_head == context_parent:
+                if declared_head not in {worktree_head, declared_commit}:
+                    raise blocked("controller commit parent does not match validation input")
+                validation_parent = context_parent
+            else:
+                parents = _merge_parents(worktree, worktree_head)
+                if len(parents) != 1 or declared_head not in {
+                    parents[0],
+                    worktree_head,
+                    declared_commit,
+                }:
+                    raise blocked("controller commit parent does not match validation input")
+                validation_parent = parents[0]
         if validation_parent == context_parent:
             return validation_parent
-        raise RuntimeError("controller commit parent does not match validation input")
+        raise blocked("controller commit parent does not match validation input")
 
     task_id = str(value.get("taskId") or candidate.get("intentId") or "")
     key = str(candidate.get("key") or "")
@@ -13020,13 +13121,11 @@ def _non_pr_validation_parent(
         or context.get("intentId") != task_id
         or value.get("taskId") != task_id
     ):
-        raise RuntimeError("controller validation parent identity is invalid")
+        raise blocked("controller validation parent identity is invalid")
 
     managed_task = managed_ledger.read_task(task_id)
     if managed_task is None:
-        if validation_parent == context_parent:
-            return validation_parent
-        raise RuntimeError("controller validation parent task binding is invalid")
+        raise blocked("controller validation parent task binding is invalid")
     if (
         not isinstance(managed_task, dict)
         or managed_task.get("readSource") != "managed"
@@ -13035,12 +13134,48 @@ def _non_pr_validation_parent(
         or Path(str(managed_task.get("worktree_path") or "")).resolve() != worktree.resolve()
         or managed_task.get("state") not in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}
     ):
-        raise RuntimeError("controller validation parent task binding is invalid")
+        raise blocked("controller validation parent task binding is invalid")
 
     historical = managed_ledger.latest_authenticated_fix_ready_result_for_task(
         task_id,
         issue_url=issue_url,
     )
+    historical_head = str(historical.get("head_sha") or "") if isinstance(historical, dict) else ""
+    if re.fullmatch(r"[0-9a-f]{40}", declared_head) is None:
+        inferred_parent = historical_head
+        if not inferred_parent:
+            if (
+                not managed_ledger.has_unpublished_result_for_task(task_id)
+                and managed_task.get("state") == "IMPLEMENTATION_READY"
+            ):
+                inferred_parent = context_parent
+            else:
+                raise blocked("controller commit lacks a valid validation parent")
+        if value.get("handoffMode") == "controller_commit_complete":
+            parents = _merge_parents(worktree, worktree_head)
+            if worktree_head != inferred_parent and parents != [inferred_parent]:
+                raise blocked("controller commit parent does not match validation input")
+        elif worktree_head != inferred_parent:
+            raise blocked("controller commit parent does not match validation input")
+        declared_head = inferred_parent
+
+    validation_parent = declared_head
+    if value.get("handoffMode") == "controller_commit_complete":
+        declared_commit = str(value.get("commitSha") or "")
+        if worktree_head == context_parent:
+            if declared_head not in {worktree_head, declared_commit}:
+                raise blocked("controller commit parent does not match validation input")
+            validation_parent = context_parent
+        else:
+            parents = _merge_parents(worktree, worktree_head)
+            if len(parents) != 1 or declared_head not in {
+                parents[0],
+                worktree_head,
+                declared_commit,
+            }:
+                raise blocked("controller commit parent does not match validation input")
+            validation_parent = parents[0]
+
     if historical is None:
         if (
             not managed_ledger.has_unpublished_result_for_task(task_id)
@@ -13048,9 +13183,9 @@ def _non_pr_validation_parent(
             and managed_task.get("state") == "IMPLEMENTATION_READY"
         ):
             return validation_parent
-        raise RuntimeError("controller commit parent does not match validation input")
+        raise blocked("controller commit parent does not match validation input")
     if historical.get("head_sha") not in {validation_parent, worktree_head}:
-        raise RuntimeError("controller commit parent does not match validation input")
+        raise blocked("controller commit parent does not match validation input")
     try:
         command(["git", "cat-file", "-e", f"{validation_parent}^{{commit}}"], cwd=worktree)
         command(
@@ -13058,7 +13193,7 @@ def _non_pr_validation_parent(
             cwd=worktree,
         )
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-        raise RuntimeError("controller commit parent does not match validation input") from exc
+        raise blocked("controller commit parent does not match validation input") from exc
     return validation_parent
 
 
@@ -13569,6 +13704,8 @@ def _finalize_controller_commit(
                     validation_parent
                 ]:
                     raise RuntimeError("controller commit parent does not match validation input")
+                if re.fullmatch(r"[0-9a-f]{40}", str(value.get("headSha") or "")) is None:
+                    finalized["headSha"] = validation_parent
             finalized.pop("previousCommitSha", None)
         base_branch = _prepared_base_branch(worktree, context)
         publication = finalized.get("publication")
@@ -13738,6 +13875,8 @@ def _finalize_controller_commit(
     if isinstance(followup, dict):
         finalized["previousCommitSha"] = expected_parent
     else:
+        if is_validation_continuation:
+            finalized["headSha"] = expected_parent
         finalized.pop("previousCommitSha", None)
     finalized["handoffMode"] = "controller_commit_complete"
     base_branch = _prepared_base_branch(worktree, context)
@@ -14135,6 +14274,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
     unavailable: list[dict[str, str]] = []
     pending_result_ingestion: list[dict[str, str]] = []
     revalidation_errors: list[dict[str, str]] = []
+    revalidation_deferred: list[dict[str, Any]] = []
     superseded = store.reconcile_superseded_pr_followups()
     prepared_recovered, errors = _recover_unbound_pr_followup_preparations(store)
     preparation_error_keys = {item["key"] for item in errors}
@@ -14149,39 +14289,130 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
             worktree = Path(candidate["worktreePath"]).resolve()
             if not worktree.is_dir():
                 if candidate.get("stage") not in PUBLISHED_TASK_STAGES:
-                    try:
-                        evidence, verdict = _audit_intent(candidate["intent"])
-                    except (OSError, RuntimeError, ValueError) as exc:
+                    missing_terminalized = False
+                    current = store.task_context(
+                        issue_url=candidate["issueUrl"],
+                        thread_id=candidate["threadId"],
+                    )
+                    if current is None:
                         revalidation_errors.append(
                             {
                                 "key": candidate["key"],
-                                "error": f"{type(exc).__name__}:{str(exc)[:240]}",
+                                "error": "RuntimeError:registered task context is unavailable",
                             }
                         )
-                    else:
-                        if verdict.status == "BLOCK":
-                            store.record_stage(
-                                candidate["key"],
-                                "AUDIT_NO_GO",
-                                evidence={
-                                    "authorization": verdict.as_dict(),
-                                    "evidence": evidence.as_dict(),
-                                    "missingWorktreeRevalidation": True,
-                                },
-                                reason=verdict.reason_code,
-                                dedupe_key=(
-                                    f"{candidate['intentId']}:{evidence.digest}:"
-                                    "missing-worktree-no-go"
-                                ),
-                            )
-                            no_go.append(
+                    elif _missing_worktree_live_audit_refresh_due(current):
+                        active_turn = _active_task_turn_for_result(candidate)
+                        if active_turn is not None:
+                            revalidation_deferred.append(
                                 {
                                     "key": candidate["key"],
-                                    "reason": verdict.reason_code,
-                                    "source": "missing_worktree_revalidation",
+                                    "reason": "ACTIVE_TASK_TURN",
+                                    "activeTurn": active_turn,
                                 }
                             )
-                            continue
+                        else:
+                            refresh_performed = False
+                            try:
+                                refresh_lock = _task_live_audit_refresh_lock_path(
+                                    Path(args.ledger), str(candidate["key"])
+                                )
+                                with exclusive_lock(refresh_lock, blocking=False):
+                                    locked_current = store.task_context(
+                                        issue_url=candidate["issueUrl"],
+                                        thread_id=candidate["threadId"],
+                                    )
+                                    if locked_current is None:
+                                        raise RuntimeError("registered task context is unavailable")
+                                    current = locked_current
+                                    if not _missing_worktree_live_audit_refresh_due(current):
+                                        revalidation_deferred.append(
+                                            {
+                                                "key": candidate["key"],
+                                                "reason": "LIVE_AUDIT_REFRESH_ALREADY_FRESH",
+                                            }
+                                        )
+                                    else:
+                                        evidence, verdict = _audit_intent(candidate["intent"])
+                                        target_base = current.get("targetBase")
+                                        if target_base is None and verdict.status == "ALLOW":
+                                            target_base = _resolve_intent_target_base(
+                                                candidate["intent"], evidence
+                                            )
+                                        audit_payload = _audit_payload(
+                                            evidence, verdict, target_base
+                                        ) | {"missingWorktreeRevalidation": True}
+                                        captured_at = str(audit_payload["liveAudit"]["capturedAt"])
+                                        store.record_audit_snapshot(
+                                            candidate["key"],
+                                            evidence=audit_payload,
+                                            dedupe_key=(
+                                                f"{candidate['intentId']}:{evidence.digest}:"
+                                                f"{captured_at}:missing-worktree-refresh"
+                                            ),
+                                        )
+                                        refresh_performed = True
+                            except RuntimeLockBusy:
+                                revalidation_deferred.append(
+                                    {
+                                        "key": candidate["key"],
+                                        "reason": "LIVE_AUDIT_REFRESH_LOCK_BUSY",
+                                    }
+                                )
+                            except (OSError, RuntimeError, ValueError) as exc:
+                                revalidation_errors.append(
+                                    {
+                                        "key": candidate["key"],
+                                        "error": f"{type(exc).__name__}:{str(exc)[:240]}",
+                                    }
+                                )
+                            else:
+                                if refresh_performed:
+                                    refreshed.append(
+                                        {
+                                            "key": candidate["key"],
+                                            "evidenceDigest": evidence.digest,
+                                            "status": verdict.status,
+                                            "reason": verdict.reason_code,
+                                        }
+                                    )
+                                    if verdict.status == "BLOCK":
+                                        store.record_stage(
+                                            candidate["key"],
+                                            "AUDIT_NO_GO",
+                                            evidence=audit_payload,
+                                            reason=verdict.reason_code,
+                                            dedupe_key=(
+                                                f"{candidate['intentId']}:{evidence.digest}:"
+                                                "missing-worktree-no-go"
+                                            ),
+                                        )
+                                        recorded = store.task_context(
+                                            issue_url=candidate["issueUrl"],
+                                            thread_id=candidate["threadId"],
+                                        )
+                                        if (
+                                            recorded is not None
+                                            and recorded.get("stage") == "AUDIT_NO_GO"
+                                        ):
+                                            no_go.append(
+                                                {
+                                                    "key": candidate["key"],
+                                                    "reason": verdict.reason_code,
+                                                    "source": "missing_worktree_revalidation",
+                                                }
+                                            )
+                                            missing_terminalized = True
+                                        else:
+                                            revalidation_deferred.append(
+                                                {
+                                                    "key": candidate["key"],
+                                                    "reason": "PUBLICATION_EFFECT_IN_FLIGHT",
+                                                    "auditReason": verdict.reason_code,
+                                                }
+                                            )
+                    if missing_terminalized:
+                        continue
                 unavailable.append(
                     {
                         "key": candidate["key"],
@@ -14237,32 +14468,155 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     continue
             current_audit = current.get("liveAudit")
-            if not isinstance(current_audit, dict) or not isinstance(
+            current_audit_present = isinstance(current_audit, dict) and isinstance(
                 current_audit.get("evidence"), dict
-            ):
-                evidence, verdict = _audit_intent(candidate["intent"])
-                if verdict.status != "ALLOW":
-                    store.record_stage(
-                        candidate["key"],
-                        "AUDIT_NO_GO",
-                        evidence={
-                            "authorization": verdict.as_dict(),
-                            "evidence": evidence.as_dict(),
-                        },
-                        reason=verdict.reason_code,
-                        dedupe_key=(
-                            f"{candidate['intentId']}:{evidence.digest}:context-refresh-no-go"
-                        ),
+            )
+            if _task_live_audit_refresh_due(current):
+                active_turn = _active_task_turn_for_result(candidate)
+                if active_turn is not None:
+                    revalidation_deferred.append(
+                        {
+                            "key": candidate["key"],
+                            "reason": "ACTIVE_TASK_TURN",
+                            "activeTurn": active_turn,
+                        }
                     )
-                    no_go.append({"key": candidate["key"], "reason": verdict.reason_code})
-                    continue
-                target_base = _resolve_intent_target_base(candidate["intent"], evidence)
-                store.record_audit_snapshot(
-                    candidate["key"],
-                    evidence=_audit_payload(evidence, verdict, target_base),
-                    dedupe_key=(f"{candidate['intentId']}:{evidence.digest}:context-refresh"),
-                )
-                refreshed.append({"key": candidate["key"], "evidenceDigest": evidence.digest})
+                    if not current_audit_present:
+                        continue
+                else:
+                    refresh_performed = False
+                    try:
+                        refresh_lock = _task_live_audit_refresh_lock_path(
+                            Path(args.ledger), str(candidate["key"])
+                        )
+                        with exclusive_lock(refresh_lock, blocking=False):
+                            # A controller and slow worker can both enter
+                            # context sync from the same stale snapshot. Re-read
+                            # only after owning the per-task lock so the second
+                            # process observes the first process's durable
+                            # refresh instead of spending another GitHub query.
+                            locked_current = store.task_context(
+                                issue_url=candidate["issueUrl"],
+                                thread_id=candidate["threadId"],
+                                worktree_path=candidate["worktreePath"],
+                            )
+                            if locked_current is None:
+                                raise RuntimeError("registered task context is unavailable")
+                            current = locked_current
+                            current_audit = current.get("liveAudit")
+                            current_audit_present = isinstance(current_audit, dict) and isinstance(
+                                current_audit.get("evidence"), dict
+                            )
+                            if not _task_live_audit_refresh_due(current):
+                                revalidation_deferred.append(
+                                    {
+                                        "key": candidate["key"],
+                                        "reason": "LIVE_AUDIT_REFRESH_ALREADY_FRESH",
+                                    }
+                                )
+                            else:
+                                if current_audit_present:
+                                    evidence, verdict = _refresh_active_task_live_audit(
+                                        candidate["intent"], current
+                                    )
+                                    target_base = current.get("targetBase")
+                                else:
+                                    evidence, verdict = _audit_intent(candidate["intent"])
+                                    target_base = current.get("targetBase")
+                                    if target_base is None and verdict.status == "ALLOW":
+                                        target_base = _resolve_intent_target_base(
+                                            candidate["intent"], evidence
+                                        )
+                                audit_payload = _audit_payload(evidence, verdict, target_base)
+                                captured_at = str(audit_payload["liveAudit"]["capturedAt"])
+                                store.record_audit_snapshot(
+                                    candidate["key"],
+                                    evidence=audit_payload,
+                                    dedupe_key=(
+                                        f"{candidate['intentId']}:{evidence.digest}:"
+                                        f"{captured_at}:active-context-refresh"
+                                    ),
+                                )
+                                refresh_performed = True
+                    except RuntimeLockBusy:
+                        revalidation_deferred.append(
+                            {
+                                "key": candidate["key"],
+                                "reason": "LIVE_AUDIT_REFRESH_LOCK_BUSY",
+                            }
+                        )
+                        # The lock owner will project its refreshed snapshot.
+                        # Skipping this task entirely also prevents the loser
+                        # from overwriting that projection with the stale
+                        # context it read before trying the lock.
+                        continue
+                    except (OSError, RuntimeError, ValueError) as exc:
+                        revalidation_errors.append(
+                            {
+                                "key": candidate["key"],
+                                "error": f"{type(exc).__name__}:{str(exc)[:240]}",
+                            }
+                        )
+                        if not current_audit_present:
+                            continue
+                    else:
+                        if not refresh_performed:
+                            path = write_task_context(
+                                store,
+                                issue_url=candidate["issueUrl"],
+                                thread_id=candidate["threadId"],
+                                cwd=Path(candidate["worktreePath"]),
+                            )
+                            written.append({"key": candidate["key"], "path": str(path)})
+                            continue
+                        refreshed.append(
+                            {
+                                "key": candidate["key"],
+                                "evidenceDigest": evidence.digest,
+                                "status": verdict.status,
+                                "reason": verdict.reason_code,
+                            }
+                        )
+                        if verdict.status == "BLOCK":
+                            store.record_stage(
+                                candidate["key"],
+                                "AUDIT_NO_GO",
+                                evidence=audit_payload,
+                                reason=verdict.reason_code,
+                                dedupe_key=(
+                                    f"{candidate['intentId']}:{evidence.digest}:"
+                                    "active-context-no-go"
+                                ),
+                            )
+                            path = write_task_context(
+                                store,
+                                issue_url=candidate["issueUrl"],
+                                thread_id=candidate["threadId"],
+                                cwd=Path(candidate["worktreePath"]),
+                            )
+                            written.append({"key": candidate["key"], "path": str(path)})
+                            recorded = store.task_context(
+                                issue_url=candidate["issueUrl"],
+                                thread_id=candidate["threadId"],
+                                worktree_path=candidate["worktreePath"],
+                            )
+                            if recorded is not None and recorded.get("stage") == "AUDIT_NO_GO":
+                                no_go.append(
+                                    {
+                                        "key": candidate["key"],
+                                        "reason": verdict.reason_code,
+                                        "source": "active_live_revalidation",
+                                    }
+                                )
+                            else:
+                                revalidation_deferred.append(
+                                    {
+                                        "key": candidate["key"],
+                                        "reason": "PUBLICATION_EFFECT_IN_FLIGHT",
+                                        "auditReason": verdict.reason_code,
+                                    }
+                                )
+                            continue
             path = write_task_context(
                 store,
                 issue_url=candidate["issueUrl"],
@@ -14283,6 +14637,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
         "unavailable": unavailable,
         "pendingResultIngestion": pending_result_ingestion,
         "revalidationErrors": revalidation_errors,
+        "revalidationDeferred": revalidation_deferred,
         "errors": errors,
     }
 

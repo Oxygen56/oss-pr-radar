@@ -368,6 +368,112 @@ def _publication_has_irreversible_terminal_evidence(
     return finalized is not None
 
 
+def _publication_ambiguous_effect_boundary(
+    connection: sqlite3.Connection,
+    *,
+    request_id: str,
+) -> dict[str, Any] | None:
+    """Return an effect whose external outcome must be reconciled before revocation.
+
+    ``ATTEMPTED`` is written before the executor performs its last live
+    preflight. A concurrent audit therefore cannot tell whether the executor
+    is still in that preflight or has already crossed into the external call.
+    ``RECONCILE_REQUIRED`` and a durable ``creationAttempted`` marker are even
+    stronger ambiguity boundaries. In all three cases, preserving the exact
+    request and permit until the effect reconciles is safer than creating an
+    orphan public result that the ledger can no longer consume.
+    """
+
+    rows = connection.execute(
+        """SELECT effect.effect_id,effect.action,effect.status,effect.result_json,
+                  effect.updated_at
+           FROM publication_effects effect
+           JOIN publication_permits permit ON permit.permit_id=effect.permit_id
+           WHERE permit.request_id=?
+           ORDER BY CASE WHEN effect.action='create_pr' THEN 0 ELSE 1 END,
+                    effect.updated_at DESC""",
+        (request_id,),
+    ).fetchall()
+    for row in rows:
+        try:
+            result = json.loads(str(row["result_json"] or "{}"))
+        except json.JSONDecodeError:
+            result = {}
+        creation_attempted = bool(
+            isinstance(result, dict) and result.get("creationAttempted") is True
+        )
+        if row["status"] not in {"ATTEMPTED", "RECONCILE_REQUIRED"} and not creation_attempted:
+            continue
+        return {
+            "effectId": str(row["effect_id"]),
+            "action": str(row["action"]),
+            "status": str(row["status"]),
+            "creationAttempted": creation_attempted,
+            "updatedAt": str(row["updated_at"]),
+        }
+    return None
+
+
+def _revoke_private_publication_authorizations(
+    connection: sqlite3.Connection,
+    *,
+    opportunity_key: str,
+    publication_rows: list[sqlite3.Row],
+    reason: str,
+    now: str,
+    record_event: Any,
+) -> None:
+    """Revoke unpublished requests without crossing a durable public boundary."""
+
+    for publication in publication_rows:
+        request_id = str(publication["request_id"])
+        request_status = str(publication["status"])
+        if request_status not in {"PENDING", "GRANTED"}:
+            continue
+        if _publication_has_irreversible_terminal_evidence(
+            connection,
+            request_id=request_id,
+            opportunity_key=opportunity_key,
+        ) or _publication_ambiguous_effect_boundary(
+            connection,
+            request_id=request_id,
+        ):
+            continue
+        permit = connection.execute(
+            """SELECT permit_id,status FROM publication_permits
+               WHERE request_id=?""",
+            (request_id,),
+        ).fetchone()
+        connection.execute(
+            """UPDATE publication_requests
+               SET status='BLOCKED',reason=?,updated_at=?
+               WHERE request_id=? AND status IN ('PENDING','GRANTED')""",
+            (reason, now, request_id),
+        )
+        if connection.execute("SELECT changes()").fetchone()[0] != 1:
+            continue
+        if permit is not None and permit["status"] != "CONSUMED":
+            connection.execute(
+                """UPDATE publication_permits SET status='BLOCKED',updated_at=?
+                   WHERE permit_id=? AND status<>'CONSUMED'""",
+                (now, permit["permit_id"]),
+            )
+        record_event(
+            connection,
+            opportunity_key,
+            "PUBLICATION_AUTHORIZATION_REVOKED",
+            f"{request_id}:{reason}",
+            {
+                "requestId": request_id,
+                "reason": reason,
+                "previousRequestStatus": request_status,
+                "permitId": permit["permit_id"] if permit is not None else None,
+                "previousPermitStatus": permit["status"] if permit is not None else None,
+            },
+            now,
+        )
+
+
 def _publication_authorization_is_current_or_terminal(
     connection: sqlite3.Connection,
     *,
@@ -3282,6 +3388,99 @@ class RadarLedger:
                 # event de-duplication hint.  Replaying an older result after a
                 # later result advanced the lifecycle must not apply the old
                 # stage mutation again.
+                return
+            publication_rows: list[sqlite3.Row] = []
+            irreversible_publication = None
+            ambiguous_publication = None
+            if stage == "AUDIT_NO_GO":
+                publication_rows = connection.execute(
+                    """SELECT request_id,status,permit_id FROM publication_requests
+                       WHERE opportunity_key=? ORDER BY created_at""",
+                    (key,),
+                ).fetchall()
+                irreversible_publication = next(
+                    (
+                        publication
+                        for publication in publication_rows
+                        if _publication_has_irreversible_terminal_evidence(
+                            connection,
+                            request_id=str(publication["request_id"]),
+                            opportunity_key=key,
+                        )
+                    ),
+                    None,
+                )
+                ambiguous_publication = next(
+                    (
+                        {
+                            "requestId": str(publication["request_id"]),
+                            "effect": boundary,
+                        }
+                        for publication in publication_rows
+                        if (
+                            boundary := _publication_ambiguous_effect_boundary(
+                                connection,
+                                request_id=str(publication["request_id"]),
+                            )
+                        )
+                        is not None
+                    ),
+                    None,
+                )
+                _revoke_private_publication_authorizations(
+                    connection,
+                    opportunity_key=key,
+                    publication_rows=publication_rows,
+                    reason=reason or "AUDIT_NO_GO",
+                    now=now,
+                    record_event=self._event,
+                )
+            if stage == "AUDIT_NO_GO" and irreversible_publication is not None:
+                # A delayed live audit may discover a no-go only after an
+                # external publication receipt was durably observed.  The
+                # receipt is authoritative: keep the useful lifecycle and
+                # record the late audit without pretending the PR vanished.
+                self._event(
+                    connection,
+                    key,
+                    "POST_PUBLICATION_AUDIT_NO_GO",
+                    dedupe_key or f"POST_PUBLICATION_AUDIT_NO_GO:{now}",
+                    {
+                        "preservedStage": row["stage"],
+                        "reason": reason,
+                        "evidence": evidence or {},
+                        "publicationRequestId": irreversible_publication["request_id"],
+                        "publicationBoundary": "IRREVERSIBLE_RECEIPT",
+                    },
+                    now,
+                )
+                return
+            if stage == "AUDIT_NO_GO" and ambiguous_publication is not None:
+                # The executor may already be inside an external push/PR call.
+                # Keep the exact authorization consumable until that effect is
+                # reconciled, and retain this audit as a durable deferred gate.
+                # Replaying the no-go after a confirmed no-effect will then
+                # revoke normally; a successful PR will instead establish the
+                # authoritative public boundary.
+                effect = ambiguous_publication["effect"]
+                self._event(
+                    connection,
+                    key,
+                    "PUBLICATION_AUDIT_NO_GO_DEFERRED",
+                    dedupe_key or f"PUBLICATION_AUDIT_NO_GO_DEFERRED:{now}",
+                    {
+                        "preservedStage": row["stage"],
+                        "reason": reason,
+                        "evidence": evidence or {},
+                        "publicationRequestId": ambiguous_publication["requestId"],
+                        "publicationBoundary": "IN_FLIGHT_OR_UNCERTAIN",
+                        "effectId": effect["effectId"],
+                        "effectAction": effect["action"],
+                        "effectStatus": effect["status"],
+                        "creationAttempted": effect["creationAttempted"],
+                    },
+                    now,
+                )
                 return
             if row["stage"] in PUBLISHED_STAGES and stage not in PUBLISHED_STAGES:
                 event_type = (
@@ -7364,6 +7563,8 @@ class RadarLedger:
             "publicationReceipt": publication_receipt,
             "prFollowup": pr_followup,
         }
+        if audit_payload.get("missingWorktreeRevalidation") is True:
+            result["missingWorktreeRevalidation"] = True
         if code_path_tombstone_receipt is not None and implementation_authorized:
             result["codePathTombstoneReceipt"] = code_path_tombstone_receipt
             result["codePathTombstoneContinuationHeadSha"] = code_path_tombstone_continuation_head
@@ -10873,6 +11074,37 @@ class RadarLedger:
                 },
                 now,
             )
+        self._resume_deferred_publication_no_go(effect_id)
+
+    def _resume_deferred_publication_no_go(self, effect_id: str) -> None:
+        """Reapply an audit once the exact ambiguous effect is no longer live."""
+
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT opportunity_key,dedupe_key,payload_json
+                   FROM events
+                   WHERE event_type='PUBLICATION_AUDIT_NO_GO_DEFERRED'
+                     AND json_extract(payload_json,'$.effectId')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (effect_id,),
+            ).fetchone()
+        if row is None:
+            return
+        try:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+        except json.JSONDecodeError:
+            return
+        if not isinstance(payload, dict):
+            return
+        reason = str(payload.get("reason") or "AUDIT_NO_GO")
+        evidence = payload.get("evidence")
+        self.record_stage(
+            str(row["opportunity_key"]),
+            "AUDIT_NO_GO",
+            evidence=evidence if isinstance(evidence, dict) else {},
+            reason=reason,
+            dedupe_key=str(row["dedupe_key"]),
+        )
 
     def recover_failed_publication_preflight(
         self,
@@ -14367,6 +14599,8 @@ class RadarLedger:
                     effect_id,
                 ),
             )
+        if status != "RECONCILE_REQUIRED":
+            self._resume_deferred_publication_no_go(effect_id)
 
     def mark_pull_request_creation_attempt(self, *, effect_id: str, permit_id: str) -> None:
         """Persist the boundary immediately before a real PR-create call."""

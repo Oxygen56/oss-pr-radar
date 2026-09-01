@@ -34,7 +34,9 @@ WATCHDOG_LABEL = "com.oss-pr-radar.scheduler-watchdog"
 ACTIVE_RUN_STATUSES = frozenset({"queued", "in_progress", "waiting", "requested", "pending"})
 LEGACY_CLAIM_STATES = frozenset({"CLAIMED", "REQUESTED", "UNCERTAIN"})
 EXACT_TRACKING_STATES = frozenset({"BOUND", "RUNNING"})
+RETRY_TRACKING_STATES = frozenset({"RETRY_CLAIMED", "RETRY_REQUESTED", "RETRY_UNCERTAIN"})
 MAX_RETAINED_SLOTS = 48
+MAX_FAILED_JOB_RERUNS = 1
 NATURAL_SCHEDULE_CADENCE_HOURS = 1.0
 LEGACY_TIME_PRECISION = timedelta(seconds=2)
 LEGACY_ATTRIBUTION_WINDOW = timedelta(seconds=30)
@@ -45,6 +47,7 @@ DispatchRunner = Callable[
     [str, str, str, float, int | None],
     DispatchReceipt | None,
 ]
+FailedJobRerunner = Callable[[str, int, int | None], None]
 EffectGuardFactory = Callable[[Path, Path], ContextManager[Any]]
 AuthorizationCheck = Callable[[Path], Any]
 DispatchGate = Callable[[Path], dict[str, Any]]
@@ -108,6 +111,13 @@ def _run_covers_slot(run: dict[str, Any], slot: datetime, *, ref: str) -> bool:
 def _run_id(run: dict[str, Any]) -> str | None:
     value = run.get("id")
     return str(value) if value is not None else None
+
+
+def _run_attempt(run: dict[str, Any]) -> int | None:
+    value = run.get("run_attempt")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
 
 
 def _covering_run(
@@ -235,6 +245,42 @@ def _bind_run(
     observed_at: datetime,
     attribution_kind: str,
 ) -> dict[str, Any]:
+    prior_state = str(entry.get("state") or "")
+    run_attempt = _run_attempt(run)
+    prior_run_attempt = entry.get("runAttempt")
+    retry_base_attempt = entry.get("retryBaseRunAttempt")
+    if prior_state in RETRY_TRACKING_STATES:
+        if (
+            not isinstance(retry_base_attempt, int)
+            or run_attempt is None
+            or run_attempt <= retry_base_attempt
+        ):
+            # The rerun request is write-ahead committed before the API call.
+            # Until GitHub exposes a larger run_attempt, the completed failure
+            # is still the pre-rerun observation and must not consume another
+            # retry or be misreported as the recovery attempt's conclusion.
+            entry.update(
+                {
+                    "run": _run_summary(run),
+                    "lastReconciledAt": _iso_z(observed_at),
+                    "reconcileCount": int(entry.get("reconcileCount") or 0) + 1,
+                }
+            )
+            return entry
+    if (
+        prior_state == "FAILED"
+        and isinstance(prior_run_attempt, int)
+        and run_attempt is not None
+        and run_attempt > prior_run_attempt
+    ):
+        # A same-ID rerun may be started outside this process between the
+        # initial observation and the effect lock. It consumes the single
+        # recovery budget too, preventing a duplicate rerun request.
+        entry["rerunAttempts"] = max(
+            MAX_FAILED_JOB_RERUNS,
+            int(entry.get("rerunAttempts") or 0),
+        )
+        entry["externallyObservedRerunAt"] = _iso_z(observed_at)
     state = _run_state(run)
     entry.update(
         {
@@ -247,6 +293,8 @@ def _bind_run(
             "reconcileCount": int(entry.get("reconcileCount") or 0) + 1,
         }
     )
+    if run_attempt is not None:
+        entry["runAttempt"] = run_attempt
     if state == "COVERED":
         entry["coverageKind"] = "fallback"
         entry["coveredAt"] = _iso_z(observed_at)
@@ -263,12 +311,15 @@ def _bind_run(
 
 
 def _reconciled_summary(key: str, entry: dict[str, Any]) -> dict[str, Any]:
-    return {
+    result = {
         "fallbackKey": key,
         "slotAt": entry.get("slotAt"),
         "state": entry.get("state"),
         "run": entry.get("run"),
     }
+    if int(entry.get("rerunAttempts") or 0):
+        result["rerunAttempts"] = int(entry["rerunAttempts"])
+    return result
 
 
 def _reconcile_exact_claims(
@@ -289,12 +340,13 @@ def _reconcile_exact_claims(
         if (
             run_id is None
             or entry.get("workflowRunId") is None
-            or state not in EXACT_TRACKING_STATES | LEGACY_CLAIM_STATES
+            or state
+            not in EXACT_TRACKING_STATES | LEGACY_CLAIM_STATES | RETRY_TRACKING_STATES | {"FAILED"}
         ):
             continue
         run = runs_by_id.get(run_id)
         if run is None:
-            if state not in EXACT_TRACKING_STATES:
+            if state in LEGACY_CLAIM_STATES:
                 entry["state"] = "BOUND"
                 entry["lastReconciledAt"] = _iso_z(observed_at)
                 entry["reconcileCount"] = int(entry.get("reconcileCount") or 0) + 1
@@ -393,6 +445,63 @@ def _reconcile_claims(
     return reconciled
 
 
+def _recover_interrupted_retry_claims(
+    slots: dict[str, Any],
+    *,
+    observed_at: datetime,
+) -> list[dict[str, Any]]:
+    """Turn a crash-left retry claim into bounded uncertain tracking.
+
+    ``RETRY_CLAIMED`` is persisted before the GitHub request.  Reissuing from
+    that state could create a second recovery request, while leaving it as a
+    claim forever obscures what happened.  On the next cycle we therefore
+    preserve the consumed retry budget and track only the exact run ID until
+    GitHub exposes a newer ``run_attempt``.
+    """
+
+    recovered: list[dict[str, Any]] = []
+    for key, raw_entry in sorted(slots.items()):
+        if not isinstance(raw_entry, dict) or raw_entry.get("state") != "RETRY_CLAIMED":
+            continue
+        entry = dict(raw_entry)
+        entry.update(
+            {
+                "state": "RETRY_UNCERTAIN",
+                "retryRecoveredAt": _iso_z(observed_at),
+                "lastRetryError": "PROCESS_INTERRUPTED_AFTER_DURABLE_RETRY_CLAIM",
+            }
+        )
+        slots[key] = entry
+        recovered.append(_reconciled_summary(key, entry))
+    return recovered
+
+
+def _retryable_failed_claim_key(
+    slots: dict[str, Any],
+    *,
+    exclude_key: str | None = None,
+) -> str | None:
+    candidates = [
+        (str(entry.get("slotAt") or ""), key)
+        for key, entry in slots.items()
+        if key != exclude_key and isinstance(entry, dict) and _retryable_failed_claim(entry)
+    ]
+    return min(candidates, default=("", ""))[1] or None
+
+
+def _reconciled_only_covers_old_slots(
+    reconciled: list[dict[str, Any]],
+    *,
+    current_key: str,
+) -> bool:
+    """Allow a one-cycle migration receipt only when every old claim finished."""
+
+    return bool(reconciled) and all(
+        item.get("fallbackKey") != current_key and item.get("state") == "COVERED"
+        for item in reconciled
+    )
+
+
 def _result_for_reconciled(
     reconciled: list[dict[str, Any]],
     *,
@@ -401,14 +510,20 @@ def _result_for_reconciled(
 ) -> dict[str, Any]:
     failed = next((item for item in reconciled if item["state"] == "FAILED"), None)
     tracking = next(
-        (item for item in reconciled if item["state"] in EXACT_TRACKING_STATES),
+        (
+            item
+            for item in reconciled
+            if item["state"] in EXACT_TRACKING_STATES | RETRY_TRACKING_STATES
+        ),
         None,
     )
     primary = failed or tracking or reconciled[0]
     if failed is not None:
         action = "fallback_failed"
     elif tracking is not None:
-        action = "tracking"
+        action = (
+            "fallback_retry_tracking" if tracking["state"] in RETRY_TRACKING_STATES else "tracking"
+        )
     else:
         action = covered_action
     result = {
@@ -423,6 +538,8 @@ def _result_for_reconciled(
     }
     if primary["state"] == "COVERED":
         result["coverageKind"] = "fallback"
+    if int(primary.get("rerunAttempts") or 0):
+        result["rerunAttempts"] = int(primary["rerunAttempts"])
     return result
 
 
@@ -437,6 +554,9 @@ def _result_for_existing_claim(
         ok = True
     elif state in EXACT_TRACKING_STATES:
         action = "tracking"
+        ok = True
+    elif state in RETRY_TRACKING_STATES:
+        action = "fallback_retry_tracking"
         ok = True
     elif state == "FAILED":
         action = "fallback_failed"
@@ -454,8 +574,10 @@ def _result_for_existing_claim(
         "claimState": state,
         "githubNaturalScheduleHealthy": natural_healthy,
     }
-    if state in EXACT_TRACKING_STATES | {"FAILED", "COVERED"}:
+    if state in EXACT_TRACKING_STATES | RETRY_TRACKING_STATES | {"FAILED", "COVERED"}:
         result["run"] = entry.get("run")
+    if int(entry.get("rerunAttempts") or 0):
+        result["rerunAttempts"] = int(entry["rerunAttempts"])
     if state == "COVERED":
         result["coverageKind"] = "fallback"
     return result
@@ -519,6 +641,23 @@ def _strict_state(root: Path) -> dict[str, Any]:
     if not isinstance(value.get("slots"), dict):
         raise RuntimeError("scheduler watchdog slot state is invalid")
     return value
+
+
+def proven_watchdog_run_ids(root: Path) -> frozenset[str]:
+    """Return exact workflow run IDs backed by durable watchdog claims."""
+
+    state = _strict_state(root.resolve())
+    proven: set[str] = set()
+    for raw_entry in (state.get("slots") or {}).values():
+        if not isinstance(raw_entry, dict) or not _claim_backed(raw_entry):
+            continue
+        run_id = raw_entry.get("workflowRunId")
+        if isinstance(run_id, bool) or not isinstance(run_id, (int, str)):
+            continue
+        encoded = str(run_id)
+        if encoded.isdigit() and int(encoded) > 0:
+            proven.add(encoded)
+    return frozenset(proven)
 
 
 def _write_state(root: Path, state: dict[str, Any]) -> None:
@@ -681,6 +820,34 @@ def _default_dispatch(
         raise RuntimeError(f"dispatch outcome uncertain: {exc}") from exc
 
 
+def _default_rerun_failed_jobs(repo: str, run_id: int, lock_fd: int | None) -> None:
+    """Rerun only failed jobs and their dependants inside the same run ID."""
+
+    arguments = [
+        "gh",
+        "api",
+        "--method",
+        "POST",
+        f"repos/{repo}/actions/runs/{run_id}/rerun-failed-jobs",
+        "-H",
+        "X-GitHub-Api-Version: 2026-03-10",
+    ]
+    try:
+        completed = subprocess.run(
+            arguments,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            pass_fds=(lock_fd,) if lock_fd is not None else (),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"rerun outcome uncertain: {type(exc).__name__}:{exc}") from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "GitHub rerun failed")[:300]
+        raise RuntimeError(f"rerun outcome uncertain: {detail}")
+
+
 def _default_dispatch_gate(root: Path) -> dict[str, Any]:
     return disk_pressure_gate(root, worker=WATCHDOG_WORKER)
 
@@ -691,9 +858,157 @@ def _run_summary(run: dict[str, Any]) -> dict[str, Any]:
         "event": run.get("event"),
         "status": run.get("status"),
         "conclusion": run.get("conclusion"),
+        "runAttempt": run.get("run_attempt"),
         "createdAt": run.get("created_at"),
         "url": run.get("html_url"),
     }
+
+
+def _retryable_failed_claim(entry: dict[str, Any] | None) -> bool:
+    if not isinstance(entry, dict) or entry.get("state") != "FAILED":
+        return False
+    run_id = entry.get("workflowRunId")
+    run_attempt = entry.get("runAttempt")
+    return bool(
+        _claim_backed(entry)
+        and isinstance(run_id, int)
+        and not isinstance(run_id, bool)
+        and run_id > 0
+        and isinstance(run_attempt, int)
+        and not isinstance(run_attempt, bool)
+        and run_attempt > 0
+        and int(entry.get("rerunAttempts") or 0) < MAX_FAILED_JOB_RERUNS
+    )
+
+
+def _retry_failed_claim(
+    root: Path,
+    *,
+    state: dict[str, Any],
+    slots: dict[str, Any],
+    claim_key: str,
+    repo: str,
+    workflow: str,
+    ref: str,
+    current: datetime,
+    natural_healthy: bool,
+    list_runs: RunLister,
+    rerun_failed_jobs: FailedJobRerunner,
+    effect_guard: EffectGuardFactory,
+    authorization_check: AuthorizationCheck,
+    dispatch_gate: DispatchGate,
+) -> dict[str, Any]:
+    """Write-ahead claim one same-run failed-job recovery attempt."""
+
+    guard = effect_guard(root, runtime_ledger_path(root))
+    with guard as effect_lock:
+        authorization_check(root)
+        gate = dispatch_gate(root)
+        if gate.get("allowed") is not True:
+            return {
+                "ok": True,
+                "action": "disk_gate_blocked",
+                "slotAt": (slots.get(claim_key) or {}).get("slotAt"),
+                "fallbackKey": claim_key,
+                "diskPressureGate": gate,
+                "githubNaturalScheduleHealthy": natural_healthy,
+            }
+
+        # Close the race with a user-initiated rerun before committing the
+        # recovery effect. The exact run ID, not timestamps, owns the claim.
+        refreshed = list_runs(repo, workflow)
+        _reconcile_claims(slots, refreshed, ref=ref, observed_at=current)
+        current_entry = slots.get(claim_key)
+        current_entry = dict(current_entry) if isinstance(current_entry, dict) else None
+        if not _retryable_failed_claim(current_entry):
+            state["slots"] = slots
+            _write_state(root, state)
+            if current_entry is None:
+                raise RuntimeError("scheduler watchdog failed claim disappeared")
+            return _result_for_existing_claim(
+                current_entry,
+                natural_healthy=natural_healthy,
+            )
+
+        run_id = int(current_entry["workflowRunId"])
+        run_attempt = int(current_entry["runAttempt"])
+        rerun_attempts = int(current_entry.get("rerunAttempts") or 0) + 1
+        claimed_at = _iso_z(datetime.now(UTC))
+        current_entry.update(
+            {
+                "state": "RETRY_CLAIMED",
+                "rerunAttempts": rerun_attempts,
+                "retryBaseRunAttempt": run_attempt,
+                "retryClaimedAt": claimed_at,
+            }
+        )
+        current_entry.pop("lastRetryError", None)
+        slots[claim_key] = current_entry
+        state["slots"] = slots
+        state["lastFallbackRecoveryClaim"] = {
+            "fallbackKey": claim_key,
+            "slotAt": current_entry.get("slotAt"),
+            "workflowRunId": run_id,
+            "rerunAttempt": rerun_attempts,
+            "claimedAt": claimed_at,
+        }
+        # Commit before the API request. A crash or timeout can only reconcile
+        # this same run ID; it can never create another workflow invocation.
+        _write_state(root, state)
+        lock_fd = effect_lock.fileno() if hasattr(effect_lock, "fileno") else None
+        try:
+            rerun_failed_jobs(repo, run_id, lock_fd)
+        except Exception as exc:
+            finished_at = _iso_z(datetime.now(UTC))
+            current_entry.update(
+                {
+                    "state": "RETRY_UNCERTAIN",
+                    "retryFinishedAt": finished_at,
+                    "lastRetryError": f"{type(exc).__name__}:{str(exc)[:300]}",
+                }
+            )
+            slots[claim_key] = current_entry
+            state["slots"] = slots
+            _write_state(root, state)
+            return {
+                "ok": False,
+                "action": "fallback_retry_uncertain",
+                "slotAt": current_entry.get("slotAt"),
+                "fallbackKey": claim_key,
+                "claimState": current_entry["state"],
+                "run": current_entry.get("run"),
+                "rerunAttempts": rerun_attempts,
+                "error": current_entry["lastRetryError"],
+                "githubNaturalScheduleHealthy": natural_healthy,
+            }
+
+        finished_at = _iso_z(datetime.now(UTC))
+        current_entry.update(
+            {
+                "state": "RETRY_REQUESTED",
+                "retryFinishedAt": finished_at,
+            }
+        )
+        slots[claim_key] = current_entry
+        state["slots"] = slots
+        state["lastFallbackRecoveryRequest"] = {
+            "fallbackKey": claim_key,
+            "slotAt": current_entry.get("slotAt"),
+            "workflowRunId": run_id,
+            "rerunAttempt": rerun_attempts,
+            "requestedAt": finished_at,
+        }
+        _write_state(root, state)
+        return {
+            "ok": True,
+            "action": "fallback_retry_requested",
+            "slotAt": current_entry.get("slotAt"),
+            "fallbackKey": claim_key,
+            "claimState": current_entry["state"],
+            "run": current_entry.get("run"),
+            "rerunAttempts": rerun_attempts,
+            "githubNaturalScheduleHealthy": natural_healthy,
+        }
 
 
 def watchdog_cycle(
@@ -708,6 +1023,7 @@ def watchdog_cycle(
     now: datetime | None = None,
     list_runs: RunLister = _default_list_runs,
     dispatch: DispatchRunner = _default_dispatch,
+    rerun_failed_jobs: FailedJobRerunner = _default_rerun_failed_jobs,
     effect_guard: EffectGuardFactory = outbound_effect_guard,
     authorization_check: AuthorizationCheck = require_operational_authorization,
     dispatch_gate: DispatchGate = _default_dispatch_gate,
@@ -761,27 +1077,133 @@ def watchdog_cycle(
                 ref=ref,
                 observed_at=current,
             )
+            reconciled.extend(
+                _recover_interrupted_retry_claims(
+                    slots,
+                    observed_at=current,
+                )
+            )
             if reconciled:
                 state["slots"] = slots
                 _write_state(root, state)
-                return _result_for_reconciled(
+                current_entry = slots.get(claim_key)
+                if _retryable_failed_claim(
+                    current_entry if isinstance(current_entry, dict) else None
+                ):
+                    return _retry_failed_claim(
+                        root,
+                        state=state,
+                        slots=slots,
+                        claim_key=claim_key,
+                        repo=repo,
+                        workflow=workflow,
+                        ref=ref,
+                        current=current,
+                        natural_healthy=natural_healthy,
+                        list_runs=list_runs,
+                        rerun_failed_jobs=rerun_failed_jobs,
+                        effect_guard=effect_guard,
+                        authorization_check=authorization_check,
+                        dispatch_gate=dispatch_gate,
+                    )
+                current_reconciled = [
+                    item for item in reconciled if item.get("fallbackKey") == claim_key
+                ]
+                if current_reconciled:
+                    if all(item.get("state") == "COVERED" for item in current_reconciled):
+                        historical_retry_key = _retryable_failed_claim_key(
+                            slots,
+                            exclude_key=claim_key,
+                        )
+                        if historical_retry_key is not None:
+                            return _retry_failed_claim(
+                                root,
+                                state=state,
+                                slots=slots,
+                                claim_key=historical_retry_key,
+                                repo=repo,
+                                workflow=workflow,
+                                ref=ref,
+                                current=current,
+                                natural_healthy=natural_healthy,
+                                list_runs=list_runs,
+                                rerun_failed_jobs=rerun_failed_jobs,
+                                effect_guard=effect_guard,
+                                authorization_check=authorization_check,
+                                dispatch_gate=dispatch_gate,
+                            )
+                    return _result_for_reconciled(
+                        current_reconciled,
+                        natural_healthy=natural_healthy,
+                        covered_action="covered",
+                    )
+                if _reconciled_only_covers_old_slots(
                     reconciled,
-                    natural_healthy=natural_healthy,
-                    covered_action="covered",
-                )
+                    current_key=claim_key,
+                ):
+                    # Preserve a bounded migration receipt for successfully
+                    # completed historical claims. Failed or still-tracking
+                    # historical claims must not suppress the current slot.
+                    return _result_for_reconciled(
+                        reconciled,
+                        natural_healthy=natural_healthy,
+                        covered_action="covered",
+                    )
 
             existing = slots.get(claim_key)
             existing = dict(existing) if isinstance(existing, dict) else None
             if existing is not None:
+                if _retryable_failed_claim(existing):
+                    return _retry_failed_claim(
+                        root,
+                        state=state,
+                        slots=slots,
+                        claim_key=claim_key,
+                        repo=repo,
+                        workflow=workflow,
+                        ref=ref,
+                        current=current,
+                        natural_healthy=natural_healthy,
+                        list_runs=list_runs,
+                        rerun_failed_jobs=rerun_failed_jobs,
+                        effect_guard=effect_guard,
+                        authorization_check=authorization_check,
+                        dispatch_gate=dispatch_gate,
+                    )
                 existing_state = str(existing.get("state") or "")
-                if existing_state in LEGACY_CLAIM_STATES | EXACT_TRACKING_STATES:
-                    # Durable requests never retry. Exact IDs are tracked by
-                    # read-only observation; legacy claims use bounded migration.
+                if existing_state in (
+                    LEGACY_CLAIM_STATES | EXACT_TRACKING_STATES | RETRY_TRACKING_STATES
+                ):
+                    # Ambiguous requests are never repeated. Exact IDs are
+                    # tracked by read-only observation; a completed failed run
+                    # gets at most one separately claimed same-run recovery.
                     existing["lastReconciledAt"] = _iso_z(current)
                     existing["reconcileCount"] = int(existing.get("reconcileCount") or 0) + 1
                 slots[claim_key] = existing
                 state["slots"] = slots
                 _write_state(root, state)
+                if existing_state in {"COVERED"} | EXACT_TRACKING_STATES | LEGACY_CLAIM_STATES:
+                    historical_retry_key = _retryable_failed_claim_key(
+                        slots,
+                        exclude_key=claim_key,
+                    )
+                    if historical_retry_key is not None:
+                        return _retry_failed_claim(
+                            root,
+                            state=state,
+                            slots=slots,
+                            claim_key=historical_retry_key,
+                            repo=repo,
+                            workflow=workflow,
+                            ref=ref,
+                            current=current,
+                            natural_healthy=natural_healthy,
+                            list_runs=list_runs,
+                            rerun_failed_jobs=rerun_failed_jobs,
+                            effect_guard=effect_guard,
+                            authorization_check=authorization_check,
+                            dispatch_gate=dispatch_gate,
+                        )
                 return _result_for_existing_claim(
                     existing,
                     natural_healthy=natural_healthy,
@@ -808,6 +1230,27 @@ def watchdog_cycle(
                 slots[claim_key] = entry
                 state["slots"] = slots
                 _write_state(root, state)
+                historical_retry_key = _retryable_failed_claim_key(
+                    slots,
+                    exclude_key=claim_key,
+                )
+                if historical_retry_key is not None:
+                    return _retry_failed_claim(
+                        root,
+                        state=state,
+                        slots=slots,
+                        claim_key=historical_retry_key,
+                        repo=repo,
+                        workflow=workflow,
+                        ref=ref,
+                        current=current,
+                        natural_healthy=natural_healthy,
+                        list_runs=list_runs,
+                        rerun_failed_jobs=rerun_failed_jobs,
+                        effect_guard=effect_guard,
+                        authorization_check=authorization_check,
+                        dispatch_gate=dispatch_gate,
+                    )
                 return _result_for_reconciled(
                     [_reconciled_summary(claim_key, entry)],
                     natural_healthy=natural_healthy,
@@ -839,14 +1282,33 @@ def watchdog_cycle(
                     ref=ref,
                     observed_at=current,
                 )
+                reconciled.extend(
+                    _recover_interrupted_retry_claims(
+                        slots,
+                        observed_at=current,
+                    )
+                )
                 if reconciled:
                     state["slots"] = slots
                     _write_state(root, state)
-                    return _result_for_reconciled(
+                    current_reconciled = [
+                        item for item in reconciled if item.get("fallbackKey") == claim_key
+                    ]
+                    if current_reconciled:
+                        return _result_for_reconciled(
+                            current_reconciled,
+                            natural_healthy=natural_healthy,
+                            covered_action="covered_after_lock",
+                        )
+                    if _reconciled_only_covers_old_slots(
                         reconciled,
-                        natural_healthy=natural_healthy,
-                        covered_action="covered_after_lock",
-                    )
+                        current_key=claim_key,
+                    ):
+                        return _result_for_reconciled(
+                            reconciled,
+                            natural_healthy=natural_healthy,
+                            covered_action="covered_after_lock",
+                        )
                 covered = _covering_run(
                     refreshed,
                     slot,

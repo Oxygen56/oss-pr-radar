@@ -19,11 +19,16 @@ sys.path.insert(0, str(ROOT / "src"))
 from oss_pr_radar.notifier import FeishuClient  # noqa: E402
 from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
 from oss_pr_radar.release_binding import bind_runtime, runtime_ledger_path  # noqa: E402
+from oss_pr_radar.scheduler_watchdog import (  # noqa: E402
+    eligible_slot,
+    proven_watchdog_run_ids,
+)
 from oss_pr_radar.util import parse_time, sha256_json  # noqa: E402
 
 _FULL_SCAN_EVENT = "workflow_dispatch"
 _STATE_JOBS = {"build-state", "persist-pending", "persist-receipt"}
 _MANAGED_FOLLOWUP_MAX_AGE = timedelta(minutes=150)
+_ACTIVE_RUN_STATUSES = frozenset({"queued", "in_progress", "waiting", "requested", "pending"})
 
 
 def github_json(path: str) -> object:
@@ -198,24 +203,39 @@ def health(
     *,
     now: datetime | None = None,
     coverage_window_hours: int = 12,
+    watchdog_run_ids: set[str] | frozenset[str] | None = None,
 ) -> dict:
     current = (now or datetime.now(UTC)).astimezone(UTC)
-    scheduled = [item for item in workflow_runs if item.get("event") == "schedule"]
-    successful = [item for item in scheduled if item.get("conclusion") == "success"]
-    issues: list[str] = []
+    scheduled = sorted(
+        (item for item in workflow_runs if item.get("event") == "schedule"),
+        key=lambda item: parse_time(str(item.get("created_at"))),
+        reverse=True,
+    )
+    successful = [
+        item
+        for item in scheduled
+        if item.get("status") == "completed" and item.get("conclusion") == "success"
+    ]
+    canary_issues: list[str] = []
     coverage_warnings: list[str] = []
     latest_schedule = scheduled[0] if scheduled else None
     latest_success = successful[0] if successful else None
     if not latest_schedule:
-        issues.append("NO_NATURAL_SCHEDULE_RUN")
-    elif parse_time(latest_schedule["created_at"]) < current - timedelta(hours=2, minutes=30):
-        issues.append("NATURAL_SCHEDULE_STALE")
+        canary_issues.append("NO_NATURAL_SCHEDULE_RUN")
+    else:
+        if parse_time(latest_schedule["created_at"]) < current - timedelta(hours=2, minutes=30):
+            canary_issues.append("NATURAL_SCHEDULE_STALE")
+        if not (
+            latest_schedule.get("status") == "completed"
+            and latest_schedule.get("conclusion") == "success"
+        ):
+            canary_issues.append("LATEST_NATURAL_SCHEDULE_NOT_SUCCESSFUL")
     if not latest_success:
-        issues.append("NO_SUCCESSFUL_SCHEDULE_RUN")
+        canary_issues.append("NO_SUCCESSFUL_SCHEDULE_RUN")
     elif parse_time(latest_success["updated_at"]) < current - timedelta(hours=4):
-        issues.append("SUCCESSFUL_SCHEDULE_STALE")
+        canary_issues.append("SUCCESSFUL_SCHEDULE_STALE")
     if sum(item.get("conclusion") == "failure" for item in scheduled[:3]) >= 2:
-        issues.append("REPEATED_SCHEDULE_FAILURE")
+        canary_issues.append("REPEATED_SCHEDULE_FAILURE")
 
     window_hours = max(6, min(int(coverage_window_hours), 24))
     coverage_window = timedelta(hours=window_hours)
@@ -228,7 +248,7 @@ def health(
         if item.get("created_at") and parse_time(item["created_at"]) >= window_start
     )
     expected_runs = window_hours
-    minimum_runs = max(3, window_hours // 2)
+    minimum_runs = expected_runs
     coverage_ratio = min(1.0, len(successful_times) / expected_runs)
     gap_points = [window_start, *successful_times, current]
     max_gap_minutes = max(
@@ -238,25 +258,51 @@ def health(
         ),
         default=None,
     )
-    if coverage_assessed and len(successful_times) < minimum_runs:
+    if coverage_assessed and len(successful_times) < expected_runs:
         coverage_warnings.append("NATURAL_SCHEDULE_COVERAGE_LOW")
     if coverage_assessed and max_gap_minutes is not None and max_gap_minutes > 150:
         coverage_warnings.append("NATURAL_SCHEDULE_GAP_EXCESSIVE")
+    coverage_healthy = None if not coverage_assessed else not coverage_warnings
+    canary_healthy = not canary_issues
+    natural_healthy = canary_healthy and coverage_healthy is not False
+    issues = [
+        *canary_issues,
+        *(coverage_warnings if coverage_assessed else []),
+    ]
+    full_coverage = full_slot_coverage(
+        workflow_runs,
+        now=current,
+        coverage_window_hours=window_hours,
+        watchdog_run_ids=watchdog_run_ids,
+    )
     return {
-        "healthy": not issues,
+        "healthy": natural_healthy,
         "issues": issues,
-        "healthScope": "github_actions_schedule",
-        "githubNaturalScheduleHealthy": not issues,
+        "healthScope": "github_actions_schedule_and_full_scan_slots",
+        "githubNaturalScheduleHealthy": natural_healthy,
         "githubNaturalScheduleIssues": issues,
         "githubNaturalScheduleWarnings": coverage_warnings,
+        "naturalScheduleCanaryHealthy": canary_healthy,
+        "naturalScheduleCanary": {
+            "healthy": canary_healthy,
+            "issues": canary_issues,
+            "latestRunFresh": latest_schedule is not None
+            and "NATURAL_SCHEDULE_STALE" not in canary_issues,
+            "latestSuccessfulRunFresh": latest_success is not None
+            and "SUCCESSFUL_SCHEDULE_STALE" not in canary_issues,
+            "latestRunUrl": latest_schedule.get("html_url") if latest_schedule else None,
+            "latestSuccessUrl": latest_success.get("html_url") if latest_success else None,
+            "sourceEvent": "schedule",
+        },
         # Compatibility fields for older controller prompts and reports.
-        "naturalScheduleHealthy": not issues,
+        "naturalScheduleHealthy": natural_healthy,
         "naturalScheduleIssues": issues,
         "naturalScheduleWarnings": coverage_warnings,
         "latestScheduleUrl": latest_schedule.get("html_url") if latest_schedule else None,
         "latestSuccessUrl": latest_success.get("html_url") if latest_success else None,
         "naturalScheduleCoverage": {
             "assessed": coverage_assessed,
+            "healthy": coverage_healthy,
             "windowHours": window_hours,
             "successfulRuns": len(successful_times),
             "expectedRuns": expected_runs,
@@ -265,7 +311,92 @@ def health(
             "maxGapMinutes": max_gap_minutes,
             "warnings": coverage_warnings,
         },
+        "fullSlotCoverage": full_coverage,
         "checkedAt": current.isoformat().replace("+00:00", "Z"),
+    }
+
+
+def full_slot_coverage(
+    workflow_runs: list[dict],
+    *,
+    now: datetime | None = None,
+    coverage_window_hours: int = 12,
+    slot_minute: int = 17,
+    grace_minutes: int = 13,
+    watchdog_run_ids: set[str] | frozenset[str] | None = None,
+) -> dict:
+    """Measure hourly scans proven to originate from the scheduler watchdog."""
+
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    window_hours = max(6, min(int(coverage_window_hours), 24))
+    latest_slot = eligible_slot(current, minute=slot_minute, grace_minutes=grace_minutes)
+    expected = [latest_slot - timedelta(hours=offset) for offset in reversed(range(window_hours))]
+    expected_set = set(expected)
+    proven_ids = None if watchdog_run_ids is None else {str(value) for value in watchdog_run_ids}
+    run_times = [
+        parse_time(str(item["created_at"])) for item in workflow_runs if item.get("created_at")
+    ]
+    # The oldest returned run only needs to reach the first slot's one-hour
+    # attribution interval. This stays false for short synthetic/API history.
+    assessed = bool(
+        proven_ids is not None and run_times and min(run_times) < expected[0] + timedelta(hours=1)
+    )
+    by_slot: dict[datetime, list[dict]] = {slot: [] for slot in expected}
+    for item in workflow_runs:
+        if (
+            item.get("event") != _FULL_SCAN_EVENT
+            or not item.get("created_at")
+            or proven_ids is None
+            or str(item.get("id")) not in proven_ids
+        ):
+            continue
+        created = parse_time(str(item["created_at"])).astimezone(UTC)
+        slot = eligible_slot(created, minute=slot_minute, grace_minutes=grace_minutes)
+        if slot in expected_set:
+            by_slot[slot].append(item)
+
+    covered: list[str] = []
+    active: list[str] = []
+    failed: list[str] = []
+    missing: list[str] = []
+    for slot in expected:
+        items = by_slot[slot]
+        encoded = slot.isoformat().replace("+00:00", "Z")
+        if any(
+            item.get("status") == "completed" and item.get("conclusion") == "success"
+            for item in items
+        ):
+            covered.append(encoded)
+        elif any(item.get("status") in _ACTIVE_RUN_STATUSES for item in items):
+            active.append(encoded)
+        elif items:
+            failed.append(encoded)
+        else:
+            missing.append(encoded)
+
+    ratio = len(covered) / len(expected) if expected else 0.0
+    coverage_healthy = None if not assessed else not active and not failed and not missing
+    issues: list[str] = []
+    if assessed and active:
+        issues.append("FULL_SLOT_RUN_ACTIVE")
+    if assessed and failed:
+        issues.append("FULL_SLOT_RUN_FAILED")
+    if assessed and missing:
+        issues.append("FULL_SLOT_COVERAGE_MISSING")
+    return {
+        "assessed": assessed,
+        "healthy": coverage_healthy,
+        "sourceEvent": _FULL_SCAN_EVENT,
+        "evidenceSource": "scheduler_watchdog_exact_run_id",
+        "evidenceAvailable": proven_ids is not None,
+        "windowHours": window_hours,
+        "expectedSlots": len(expected),
+        "coveredSlots": len(covered),
+        "activeSlots": active,
+        "failedSlots": failed,
+        "missingSlots": missing,
+        "coverageRatio": round(ratio, 3),
+        "issues": issues,
     }
 
 
@@ -490,7 +621,14 @@ def main() -> int:
             )
             return 2
     workflow_runs = runs(args.repo)
-    result = health(workflow_runs, coverage_window_hours=args.coverage_window_hours)
+    watchdog_run_ids = (
+        proven_watchdog_run_ids(args.runtime_root) if args.runtime_root is not None else None
+    )
+    result = health(
+        workflow_runs,
+        coverage_window_hours=args.coverage_window_hours,
+        watchdog_run_ids=watchdog_run_ids,
+    )
     component_health = workflow_component_health(args.repo, workflow_runs)
     result["componentHealth"] = component_health
     external_blocker = github_actions_external_blocker(args.repo, workflow_runs)
@@ -522,16 +660,21 @@ def main() -> int:
     result["repairError"] = None
     result["repairSuppressedReason"] = "REPAIR_OWNED_BY_SCHEDULER_WATCHDOG"
     scan_health_issues = [] if effective["fresh"] else ["EFFECTIVE_SCAN_STALE"]
-    result["operationalHealthy"] = bool(
+    full_slot_coverage_health = result["fullSlotCoverage"]
+    result["currentOperationalHealthy"] = bool(
         effective["fresh"]
         and component_health.get("healthy") is True
         and managed_coverage.get("healthy") is True
         and external_blocker is None
     )
-    result["operationalIssues"] = list(
+    result["operationalHealthy"] = bool(
+        result["currentOperationalHealthy"]
+        and result["githubNaturalScheduleHealthy"] is True
+        and full_slot_coverage_health.get("healthy") is not False
+    )
+    result["currentOperationalIssues"] = list(
         dict.fromkeys(
             [
-                *result["issues"],
                 *scan_health_issues,
                 *(component_health.get("issues") or []),
                 *(managed_coverage.get("issues") or []),
@@ -539,8 +682,18 @@ def main() -> int:
             ]
         )
     )
+    result["operationalIssues"] = list(
+        dict.fromkeys(
+            [
+                *result["currentOperationalIssues"],
+                *(full_slot_coverage_health.get("issues") or []),
+            ]
+        )
+    )
+    result["healthIssues"] = list(dict.fromkeys([*result["issues"], *result["operationalIssues"]]))
     if args.notify and (
-        not effective["fresh"]
+        result["healthy"] is not True
+        or not effective["fresh"]
         or component_health.get("healthy") is not True
         or managed_coverage.get("healthy") is not True
         or external_blocker is not None
@@ -562,13 +715,13 @@ def main() -> int:
                         "tag": "div",
                         "text": {
                             "tag": "lark_md",
-                            "content": "\n".join(result["operationalIssues"]),
+                            "content": "\n".join(result["healthIssues"]),
                         },
                     }
                 ],
             },
             idempotency_key=sha256_json(
-                {"issues": result["operationalIssues"], "hour": result["checkedAt"][:13]}
+                {"issues": result["healthIssues"], "hour": result["checkedAt"][:13]}
             ),
         )
     print(json.dumps(result, ensure_ascii=False))

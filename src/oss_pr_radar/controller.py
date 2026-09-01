@@ -213,6 +213,9 @@ def controller_cycle(
         require_ok=False,
     )
     remote_scan_active = (health.get("effectiveScan") or {}).get("recentActive") is True
+    current_operational = health.get("currentOperationalHealthy")
+    if not isinstance(current_operational, bool):
+        current_operational = health.get("operationalHealthy") is True
 
     bridge(
         "orphanReconcile",
@@ -222,7 +225,7 @@ def controller_cycle(
         require_ok=True,
     )
     bridge("terminalFeedbackBeforeSync", "publish-terminal-feedback")
-    if health.get("operationalHealthy") is True and not remote_scan_active:
+    if current_operational is True and not remote_scan_active:
         bridge("queueSync", "sync", timeout=1200)
     else:
         stages["queueSync"] = {
@@ -416,8 +419,9 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     checks = {
-        "resultIngestion": ("errors", "workBlocked"),
-        "resultIngestionAfterReview": ("errors", "workBlocked"),
+        "contextSync": ("revalidationErrors",),
+        "resultIngestion": ("errors",),
+        "resultIngestionAfterReview": ("errors",),
         "independentReview": ("candidateErrors", "retryExhausted"),
         "finalOrphans": ("blocked",),
         "finalPrFollowups": ("blocked", "unresolved", "restoreRequired"),
@@ -434,6 +438,12 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
             items = value.get(key) or []
             if items:
                 blockers.append({"stage": stage, "queue": key, "count": len(items)})
+        if stage in {"resultIngestion", "resultIngestionAfterReview"}:
+            work_blocked = _new_work_blocked(value)
+            if work_blocked:
+                blockers.append(
+                    {"stage": stage, "queue": "workBlocked", "count": len(work_blocked)}
+                )
     local_status = stages.get("finalLocalAgentStatus") or {}
     if "finalLocalAgentStatus" in stages and local_status.get("ok") is not True:
         unhealthy = [
@@ -492,6 +502,15 @@ def _compact_summary(stages: dict[str, dict[str, Any]]) -> dict[str, Any]:
     result_ingestion = stages.get("resultIngestion") or {}
     post_review_ingestion = stages.get("resultIngestionAfterReview") or {}
     local_status = stages.get("finalLocalAgentStatus") or {}
+    context_sync = stages.get("contextSync") or {}
+    natural_coverage = health.get("naturalScheduleCoverage") or {}
+    full_slot_coverage = health.get("fullSlotCoverage") or {}
+    all_work_blocked = list(result_ingestion.get("workBlocked") or []) + list(
+        post_review_ingestion.get("workBlocked") or []
+    )
+    new_work_blocked = _new_work_blocked(result_ingestion) + _new_work_blocked(
+        post_review_ingestion
+    )
     return {
         "diskPressureBlocked": (
             _disk_pressure_health_blocked(stages["diskPressureGate"])
@@ -501,19 +520,36 @@ def _compact_summary(stages: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "localAgentHealthy": (stages.get("finalLocalAgentStatus") or {}).get("ok") is True,
         "localWorkerStates": _compact_local_worker_states(local_status),
         "eventLanesHealthy": (stages.get("finalEventLaneHealth") or {}).get("healthy") is True,
+        "currentOperationalHealthy": health.get("currentOperationalHealthy") is True,
         "operationalHealthy": health.get("operationalHealthy") is True,
         "githubNaturalScheduleHealthy": health.get("githubNaturalScheduleHealthy") is True,
+        "naturalScheduleCanaryHealthy": health.get("naturalScheduleCanaryHealthy") is True,
+        "naturalScheduleCoverageHealthy": natural_coverage.get("healthy"),
+        "naturalScheduleCoverageRatio": natural_coverage.get("coverageRatio"),
+        "fullSlotCoverageHealthy": full_slot_coverage.get("healthy"),
+        "fullSlotCoverageRatio": full_slot_coverage.get("coverageRatio"),
         "drainAction": drain.get("action"),
         "drainKey": drain.get("key"),
         "decisionSessionsCreated": len(decision_sessions.get("created") or []),
         "decisionSessionsExisting": len(decision_sessions.get("existing") or []),
-        "workBlockedCount": len(result_ingestion.get("workBlocked") or [])
-        + len(post_review_ingestion.get("workBlocked") or []),
+        "workBlockedCount": len(all_work_blocked),
+        "newWorkBlockedCount": len(new_work_blocked),
+        "liveAuditRevalidationErrorCount": len(context_sync.get("revalidationErrors") or []),
         "pendingCount": len(queue.get("pending") or []),
         "submitReadyRate": quality.get("submitReadyRate"),
         "filterMissRate": quality.get("filterMissRate"),
         "hardGateEscapes": quality.get("hardGateEscapes"),
     }
+
+
+def _new_work_blocked(stage: dict[str, Any]) -> list[Any]:
+    """Return only task blockers not already durably recorded in an earlier cycle."""
+
+    return [
+        item
+        for item in (stage.get("workBlocked") or [])
+        if not isinstance(item, dict) or item.get("alreadyRecorded") is not True
+    ]
 
 
 def _compact_local_worker_states(status: dict[str, Any]) -> list[dict[str, Any]]:
