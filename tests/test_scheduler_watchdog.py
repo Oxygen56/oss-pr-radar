@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 
 from oss_pr_radar.scheduler_watchdog import (
     WATCHDOG_SCHEMA,
+    _default_dispatch,
     eligible_slot,
     fallback_key,
     watchdog_cycle,
@@ -56,6 +58,7 @@ def _run(
     created_at: str = "2026-08-31T03:20:00Z",
     status: str = "completed",
     conclusion: str | None = "success",
+    head_branch: str | None = "main",
 ) -> dict:
     return {
         "id": run_id,
@@ -64,7 +67,16 @@ def _run(
         "updated_at": created_at,
         "status": status,
         "conclusion": conclusion,
+        "head_branch": head_branch,
         "html_url": f"https://github.com/Oxygen56/oss-pr-radar/actions/runs/{run_id}",
+    }
+
+
+def _receipt(run_id: int) -> dict:
+    return {
+        "workflowRunId": run_id,
+        "runApiUrl": (f"https://api.github.com/repos/Oxygen56/oss-pr-radar/actions/runs/{run_id}"),
+        "workflowRunUrl": (f"https://github.com/Oxygen56/oss-pr-radar/actions/runs/{run_id}"),
     }
 
 
@@ -289,10 +301,13 @@ def test_delayed_dispatch_run_reconciles_claim_without_second_request(tmp_path, 
     )
     state_path = root / "state" / "scheduler-watchdog.json"
     state = json.loads(state_path.read_text())
+    state["slots"][first["fallbackKey"]]["claimedAt"] = "2026-08-31T03:31:00Z"
     state["slots"][first["fallbackKey"]]["dispatchFinishedAt"] = "2026-08-31T03:31:01Z"
     state_path.write_text(json.dumps(state))
     state_path.chmod(0o600)
-    responses[-1][0]["created_at"] = "2026-08-31T03:31:01Z"
+    # Legacy records have no exact ID. A bounded claim-time migration still
+    # accepts the observed production delay, including >2s after CLI return.
+    responses[-1][0]["created_at"] = "2026-08-31T03:31:09Z"
     second = _watchdog(
         root,
         now=NOW,
@@ -306,6 +321,214 @@ def test_delayed_dispatch_run_reconciles_claim_without_second_request(tmp_path, 
     assert second["coverageKind"] == "fallback"
     assert second["githubNaturalScheduleHealthy"] is False
     assert attempts == ["attempt"]
+
+
+def test_exact_dispatch_id_tracks_running_then_success_without_time_attribution(
+    tmp_path, monkeypatch
+):
+    root = _root(tmp_path, monkeypatch)
+    attempts = []
+    initial_responses = [[], []]
+
+    first = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: initial_responses.pop(0),
+        dispatch=lambda *_args: attempts.append("attempt") or _receipt(900),
+        effect_guard=_guard,
+    )
+
+    state_path = root / "state" / "scheduler-watchdog.json"
+    state = json.loads(state_path.read_text())
+    state["slots"][first["fallbackKey"]]["dispatchFinishedAt"] = "2026-08-31T03:31:01Z"
+    state_path.write_text(json.dumps(state))
+    state_path.chmod(0o600)
+    queued = _run(
+        event="workflow_dispatch",
+        run_id=900,
+        created_at="2026-08-31T03:31:04Z",
+        status="queued",
+        conclusion=None,
+    )
+    running = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [queued],
+        dispatch=lambda *_args: attempts.append("duplicate"),
+        effect_guard=_guard,
+    )
+    completed = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [
+            queued | {"status": "completed", "conclusion": "success"}
+        ],
+        dispatch=lambda *_args: attempts.append("duplicate"),
+        effect_guard=_guard,
+    )
+
+    assert first["action"] == "fallback_requested"
+    assert first["claimState"] == "BOUND"
+    assert first["run"]["runId"] == 900
+    assert running["action"] == "tracking"
+    assert running["claimState"] == "RUNNING"
+    assert "coverageKind" not in running
+    assert completed["action"] == "covered"
+    assert completed["claimState"] == "COVERED"
+    assert completed["coverageKind"] == "fallback"
+    assert attempts == ["attempt"]
+    state = json.loads(state_path.read_text())
+    entry = state["slots"][first["fallbackKey"]]
+    assert entry["workflowRunId"] == 900
+    assert entry["state"] == "COVERED"
+
+
+def test_exact_dispatch_id_tracks_running_then_failure_without_retry(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    attempts = []
+    initial_responses = [[], []]
+    first = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: initial_responses.pop(0),
+        dispatch=lambda *_args: attempts.append("attempt") or _receipt(901),
+        effect_guard=_guard,
+    )
+    active = _run(
+        event="workflow_dispatch",
+        run_id=901,
+        status="in_progress",
+        conclusion=None,
+    )
+    running = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [active],
+        dispatch=lambda *_args: attempts.append("duplicate"),
+        effect_guard=_guard,
+    )
+    failed = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [
+            active | {"status": "completed", "conclusion": "failure"}
+        ],
+        dispatch=lambda *_args: attempts.append("duplicate"),
+        effect_guard=_guard,
+    )
+    repeated = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [],
+        dispatch=lambda *_args: attempts.append("duplicate"),
+        effect_guard=_guard,
+    )
+
+    assert first["claimState"] == "BOUND"
+    assert running["claimState"] == "RUNNING"
+    assert failed["action"] == "fallback_failed"
+    assert failed["ok"] is False
+    assert failed["claimState"] == "FAILED"
+    assert repeated["action"] == "fallback_failed"
+    assert repeated["ok"] is False
+    assert attempts == ["attempt"]
+
+
+def test_active_temporal_run_is_not_covered_until_it_completes(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    active = _run(
+        event="workflow_dispatch",
+        run_id=902,
+        status="in_progress",
+        conclusion=None,
+    )
+    first = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [active],
+        dispatch=lambda *_args: pytest.fail("active slot is already protected"),
+        effect_guard=_guard,
+    )
+    second = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [
+            active | {"status": "completed", "conclusion": "success"}
+        ],
+        dispatch=lambda *_args: pytest.fail("tracked run must not dispatch again"),
+        effect_guard=_guard,
+    )
+
+    assert first["action"] == "tracking"
+    assert first["claimState"] == "RUNNING"
+    assert "coverageKind" not in first
+    assert second["action"] == "covered"
+    assert second["claimState"] == "COVERED"
+
+
+def test_exact_run_requires_the_requested_head_branch(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    initial_responses = [[], []]
+    first = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: initial_responses.pop(0),
+        dispatch=lambda *_args: _receipt(903),
+        effect_guard=_guard,
+    )
+
+    with pytest.raises(RuntimeError, match="exact run ref"):
+        _watchdog(
+            root,
+            now=NOW,
+            list_runs=lambda _repo, _workflow: [
+                _run(event="workflow_dispatch", run_id=903, head_branch=None)
+            ],
+            dispatch=lambda *_args: pytest.fail("invalid exact run must not retry"),
+            effect_guard=_guard,
+        )
+
+    state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
+    assert state["slots"][first["fallbackKey"]]["state"] == "BOUND"
+
+
+def test_one_exact_run_id_cannot_be_bound_to_two_slots(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    current_key = fallback_key("Oxygen56/oss-pr-radar", "radar.yml", SLOT)
+    old_slot = datetime(2026, 8, 31, 2, 17, tzinfo=UTC)
+    old_key = fallback_key("Oxygen56/oss-pr-radar", "radar.yml", old_slot)
+    state_path = root / "state" / "scheduler-watchdog.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": WATCHDOG_SCHEMA,
+                "slots": {
+                    current_key: {
+                        "fallbackKey": current_key,
+                        "slotAt": "2026-08-31T03:17:00Z",
+                        "state": "BOUND",
+                        "workflowRunId": 904,
+                    },
+                    old_key: {
+                        "fallbackKey": old_key,
+                        "slotAt": "2026-08-31T02:17:00Z",
+                        "state": "BOUND",
+                        "workflowRunId": 904,
+                    },
+                },
+            }
+        )
+    )
+    state_path.chmod(0o600)
+
+    with pytest.raises(RuntimeError, match="multiple claims"):
+        _watchdog(
+            root,
+            now=NOW,
+            list_runs=lambda _repo, _workflow: [_run(event="workflow_dispatch", run_id=904)],
+            dispatch=lambda *_args: pytest.fail("duplicate binding must fail closed"),
+            effect_guard=_guard,
+        )
 
 
 def test_cross_hour_claims_reconcile_before_temporal_slots_and_runs_are_not_reused(
@@ -526,6 +749,117 @@ def test_recheck_under_shared_effect_lock_closes_controller_race(tmp_path, monke
     assert result["action"] == "covered_after_lock"
     assert result["coverageKind"] == "fallback"
     assert dispatched == []
+
+
+def test_default_dispatch_requests_and_validates_exact_run_details(monkeypatch):
+    observed = {}
+    response = {
+        "workflow_run_id": 905,
+        "run_url": ("https://api.github.com/repos/Oxygen56/oss-pr-radar/actions/runs/905"),
+        "html_url": "https://github.com/Oxygen56/oss-pr-radar/actions/runs/905",
+    }
+
+    def run(arguments, **kwargs):
+        observed["arguments"] = arguments
+        observed["kwargs"] = kwargs
+        return subprocess.CompletedProcess(
+            arguments,
+            0,
+            stdout=json.dumps(response),
+            stderr="",
+        )
+
+    monkeypatch.setattr("oss_pr_radar.scheduler_watchdog.subprocess.run", run)
+    receipt = _default_dispatch(
+        "Oxygen56/oss-pr-radar",
+        "radar.yml",
+        "main",
+        2.0,
+        91,
+    )
+
+    assert receipt == _receipt(905)
+    assert observed["arguments"] == [
+        "gh",
+        "api",
+        "--method",
+        "POST",
+        "repos/Oxygen56/oss-pr-radar/actions/workflows/radar.yml/dispatches",
+        "-H",
+        "X-GitHub-Api-Version: 2026-03-10",
+        "--input",
+        "-",
+    ]
+    assert json.loads(observed["kwargs"]["input"]) == {
+        "ref": "main",
+        "inputs": {"window_hours": "2"},
+        "return_run_details": True,
+    }
+    assert observed["kwargs"]["pass_fds"] == (91,)
+
+
+def test_default_dispatch_supports_legacy_204_response(monkeypatch):
+    monkeypatch.setattr(
+        "oss_pr_radar.scheduler_watchdog.subprocess.run",
+        lambda arguments, **_kwargs: subprocess.CompletedProcess(
+            arguments,
+            0,
+            stdout="",
+            stderr="",
+        ),
+    )
+
+    assert (
+        _default_dispatch(
+            "Oxygen56/oss-pr-radar",
+            "radar.yml",
+            "main",
+            2.0,
+            None,
+        )
+        is None
+    )
+
+
+def test_default_dispatch_timeout_is_uncertain(monkeypatch):
+    def timeout(arguments, **_kwargs):
+        raise subprocess.TimeoutExpired(arguments, 30)
+
+    monkeypatch.setattr("oss_pr_radar.scheduler_watchdog.subprocess.run", timeout)
+    with pytest.raises(RuntimeError, match="outcome uncertain.*TimeoutExpired"):
+        _default_dispatch(
+            "Oxygen56/oss-pr-radar",
+            "radar.yml",
+            "main",
+            2.0,
+            None,
+        )
+
+
+def test_default_dispatch_rejects_mismatched_run_urls(monkeypatch):
+    response = {
+        "workflow_run_id": 906,
+        "run_url": ("https://api.github.com/repos/other/repo/actions/runs/906"),
+        "html_url": "https://github.com/Oxygen56/oss-pr-radar/actions/runs/906",
+    }
+    monkeypatch.setattr(
+        "oss_pr_radar.scheduler_watchdog.subprocess.run",
+        lambda arguments, **_kwargs: subprocess.CompletedProcess(
+            arguments,
+            0,
+            stdout=json.dumps(response),
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="outcome uncertain.*URL is invalid"):
+        _default_dispatch(
+            "Oxygen56/oss-pr-radar",
+            "radar.yml",
+            "main",
+            2.0,
+            None,
+        )
 
 
 def test_unsafe_durable_state_fails_closed(tmp_path, monkeypatch):
