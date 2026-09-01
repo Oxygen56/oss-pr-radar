@@ -7985,6 +7985,42 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly identifies a missing fallback for valid AI SDK content types in generate-to-stream.ts, with concrete repro steps and expected mappings. However, the issue is untriaged and maintainer approval is pending; the exact stream event mapping for new content types requires design confirmation to avoid API behavior changes."
   },
+  "243c492cca620f2a33442d9749bb90131a61f8d4ce5866d26114a0c8e7d29e5a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The comment from AbdulrahmanHashem claims a PR fixes the issue but degrades speed, conflicting with the issue's assertion that no fix exists yet."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/attention/backends/turboquant_attn.py",
+      "vllm/v1/worker/gpu_model_runner.py",
+      "vllm/model_executor/layers/quantization/fp8.py"
+    ],
+    "risks": [
+      "The root cause is not fully isolated; the issue mentions a hypothesis about discarded KV calibration scales, but it is not confirmed.",
+      "The fix may interact with other speculative decoding paths or quantization backends, requiring broader testing.",
+      "Hardware dependency: reproduction requires an RTX 5090 (sm120), which may not be available in CI."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided command and prompt of ~8k tokens, assert no repetition collapse (max consecutive repeat <= 1) for turboquant_4bit_nc and turboquant_3bit_nc KV caches with MTP K3.",
+      "Run the same test with fp8 KV cache as a control, ensuring clean output.",
+      "Add a regression test that runs a short prompt and a long prompt with turboquant KV and MTP, checking for repetition collapse and engine crashes."
+    ],
+    "unknowns": [
+      "Whether the related PRs (#53406, #53410) actually resolve the issue, as they lack root cause coverage and tests.",
+      "The exact kernel or numerical path causing the repetition collapse; the issue suggests a hypothesis but does not isolate it.",
+      "Whether the maintainers have acknowledged the issue or are actively investigating."
+    ],
+    "why": "The issue provides a detailed, reproducible bug with a clear root cause hypothesis (TurboQuant KV cache combined with MTP speculative decoding on sm120), concrete reproduction steps, and a validation path via comparing fp8 vs turboquant KV dtypes. The algorithm evidence confirms mechanisms in model_architecture, numerics_quantization, and kernel_algorithm, satisfying the llm_algorithm track requirements. The presence of related PRs does not block actionability as they lack root cause coverage and tests, leaving independent implementation space."
+  },
   "24574cab4d9b2ab5aec89cba1a427038a851f0dba3ce409dd47eb316fc8f3a64": {
     "confidence": 0.7,
     "contradictions": [],
@@ -16645,6 +16681,36 @@
     ],
     "why": "Issue provides a clear root cause in the CLI permission flow: the ask tier silently denies when onToolPermissionRequest callback is missing, mislabeling denial as user rejection. Concrete reproduction steps and code anchors are supplied, making the fix actionable."
   },
+  "4a1b1ba0d603870c8eee98ce120a8b4b9a2fc7b50857fd443298ea009153f81c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue title mentions assertion-backed failure; maintainer comment says validation already exists on main, but issue may be on older version"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/config.py: VllmConfig.__post_init__ validation for all2all backend",
+      "tests for config validation with use_ubatching"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #54511/#54512; need to ensure fix aligns with maintainer preferences",
+      "Changing assert to ValueError may affect other callers expecting assertion behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script with --enable-dbo and assert a clean ValueError instead of AssertionError",
+      "Add unit test constructing VllmConfig with ParallelConfig(use_ubatching=True) and unsupported all2all backend"
+    ],
+    "unknowns": [
+      "Exact vLLM version where the issue was reproduced; whether the fix should also update the error message to include nixl_ep"
+    ],
+    "why": "Issue reports a user-visible bug where --enable-dbo leads to an assertion failure during VllmConfig construction. Evidence includes a concrete reproduction command, root cause anchored in VllmConfig.__post_init__ and parallel_config.use_ubatching, and a maintainer comment confirming the validation exists but surfaces as AssertionError. The fix is actionable: replace assert with a clean config error and add a regression test."
+  },
   "4a1ebf25473d5efaed65a6f2a2f89d9f121de661e7977933522cd137215a613a": {
     "confidence": 0.85,
     "contradictions": [],
@@ -18634,6 +18700,35 @@
     ],
     "why": "Issue reports a user-visible bug in .NET agent framework where HostedCodeInterpreterTool cannot access uploaded files. However, maintainer comment suggests the code sample uses Chat Completions API instead of Responses API, which is likely the root cause. No confirmed framework defect, no maintainer approval, and design confirmation is needed."
   },
+  "5149bc867264d15b26455e113b6f10361d45240b67b21fad1fdcd7ea847f2c61": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "ConnectAsync exception handling",
+      "TryReadJsonRpcErrorAsync content-type check",
+      "Standalone GET stream error handling"
+    ],
+    "risks": [
+      "Changing content-type handling may affect servers that legitimately return non-JSON text/plain errors; need to ensure parsing only when body is valid JSON-RPC.",
+      "Catching HttpRequestException broadly might mask other transport issues; need to ensure fallback is only for discover probe failures."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that simulates a POST-only server returning text/plain JSON-RPC error for server/discover and verify fallback to initialize.",
+      "Add a regression test for the standalone GET stream failure after successful initialize to ensure graceful degradation."
+    ],
+    "unknowns": [
+      "No explicit maintainer confirmation on preferred fix approach, but this is not a blocker as the issue is actionable."
+    ],
+    "why": "The issue provides a detailed root cause analysis with a clear failure chain, specific code anchors, and a concrete reproduction via gitmcp.io. The proposed fixes are actionable and testable, and the issue is not blocked by missing information."
+  },
   "519a39760aad59235b9135a317aa03898b2d8f1feecc899a1d3015de5cba59df": {
     "confidence": 0.7,
     "contradictions": [],
@@ -20166,6 +20261,41 @@
     ],
     "why": "Issue reports a user-visible bug but lacks a clear root cause; the bot comment identifies two likely causes already fixed by merged PRs #39424 and #39587, so the issue may be resolved in a future release. No open PR competition exists, but the candidate is not actionable without confirmation that the bug persists after applying those fixes."
   },
+  "56aa4782c543d540ea35fb61fdc62651a8a499accc3a4bf655e8870030c75325": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix dtype resolution in speculative config path",
+      "Add auto mapping in FlashInferBackend.get_dtype_for_flashinfer",
+      "Add fast-fail validation for unsupported fp8 KV on SM89"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #53388, #54341, #48381; need to compare implementations",
+      "Native crash may require hardware-specific debugging",
+      "Fix may need to handle multiple attention groups correctly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided vllm serve command on SM89 with hybrid GDN model",
+      "Run unit test for get_dtype_for_flashinfer with 'auto' and speculative config",
+      "Add regression test for startup with speculative kv_cache_dtype=fp8 on SM89"
+    ],
+    "unknowns": [
+      "Exact model and draft model identifiers",
+      "Whether existing PRs fully cover the root cause"
+    ],
+    "why": "The issue provides a clear root cause: speculative kv_cache_dtype=fp8 passes unresolved 'auto' to FlashInfer, causing startup crash, and explicit bfloat16 leads to native crash on SM89. It includes reproduction steps, tracebacks, and code anchors, enabling concrete validation. The track is llm_algorithm with mechanisms in numerics_quantization and model_architecture, and the expected fix is actionable."
+  },
   "56bda772ac299bbbfcdfcfbfa5da0ef7c55e436b0963912a23c927f6834ae6e6": {
     "confidence": 0.85,
     "contradictions": [
@@ -21621,6 +21751,35 @@
       "The exact root cause of the enforcement gap in the parser or sampling logic."
     ],
     "why": "The issue identifies a concrete, reproducible bug in the gemma4 tool parser where tool_choice='required' is not enforced, leading to prose-only responses mislabeled as tool calls. The root cause is partially identified (finish_reason logic) and the enforcement gap is clearly described. The issue provides a validation path via a loop script and payload variations, and the code paths are anchored in the parser and frontend. Although the reproducer is content-dependent and not fully public, the evidence is sufficient to guide a fix and regression test."
+  },
+  "5bb3c41d63b09ff570fedae5c2a923d2466c3bc5816dc03e38499a789e815865": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "variable_detector.py: reorder detection logic to check company/organization before generic name fallback",
+      "tests/ci/test_variable_detection_company_name.py: add parametrized tests for company, organization, company_name, organization_name, and personal name fields"
+    ],
+    "risks": [
+      "Potential unintended reclassification of other fields containing 'company' or 'organization' in attributes, but scope is limited to attribute-based detection",
+      "Maintainer may prefer a different ordering or more comprehensive refactor, but this is normal implementation choice"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided pytest test file to confirm 2 failures before fix and all pass after",
+      "Add regression tests for first_name, last_name, full_name to ensure no regression",
+      "Run existing variable detection test suite to ensure no other regressions"
+    ],
+    "unknowns": [
+      "Exact location of the detection logic in the codebase (file path not explicitly stated, but inferred from imports)",
+      "Whether maintainers have any design preference for handling such classification conflicts"
+    ],
+    "why": "Issue provides a precise root cause (generic 'name' branch precedes company/organization check), a deterministic reproduction with failing test code, and a clear expected behavior. The fix is a small ordering change in variable detection logic, with regression coverage specified."
   },
   "5bf31c1c511c32742999b2776c6aaeef68a89356618185ba743d5f6376321a0c": {
     "confidence": 0.7,
@@ -25716,6 +25875,31 @@
       "Maintainer preference between suggested fix directions (circles:true vs shallow copy) is not yet known."
     ],
     "why": "Issue provides a clear regression window, exact root cause (rfdc clone of live provider with circular SDK client), and a minimal repro. The suggested fixes are concrete and testable."
+  },
+  "6b93e88c2e953d349b0f7250e6e529e67c1a1d15f95d2c2fa9b63d5c9cc1e60e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "speculative decoding scheduling logic",
+      "add per-sequence-length disable hook"
+    ],
+    "risks": [
+      "May require maintainer design preference for API extension; potential performance regression if hook not properly integrated."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided setup (RTX 4090 x4, Qwen3.5 hybrid GDN, 185k context) and assert spec-off performance is not worse than spec-on; add unit test for new sequence-length-based disable logic."
+    ],
+    "unknowns": [
+      "Exact maintainer preference for implementing the hook; whether training-time support is needed for drafter-side windowing."
+    ],
+    "why": "Issue provides detailed profiling and root cause: drafter re-scans full accumulated KV at long context, causing net slowdown. Concrete code anchors and suggested fix (per-sequence-length speculative control) are actionable."
   },
   "6b96109e69e17a6be5b40b720df2a11218f2ef1310838c08359434bc82842258": {
     "confidence": 0.85,
@@ -35513,6 +35697,34 @@
     "wait_reason": null,
     "why": "Issue identifies a concrete build blocker with a clear root cause: missing compat shim for cudaLibrary_t in cuteDslF16MoeRunner.h, which is inconsistent with sibling headers. The proposed fix is minimal and verified locally. Although the issue is a build fix, it directly affects the correctness of the MoE kernel path (f16_moe) and is actionable with a clear regression test."
   },
+  "96b1ab06899301c29714c9065243b5ce0798d49fe2b3623472e174c9fa36d3c7": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/session/filesystem-capture.ts: add sandbox.status === 'pending' guard",
+      "possibly src/workspace.ts: drop retired session's workspace reference for complete fix"
+    ],
+    "risks": [
+      "The guard changes behavior for cold non-retired sessions: previously a listing was persisted after a pointless clone; now it skips. This is intentional but may affect users relying on that behavior.",
+      "The guard does not fix the stale listing for retired-but-still-running sessions; a complete fix requires additional changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided minimal repro (github.com/petrchiriboga/mastra-factory-filesystem-capture-repro) to reproduce the three broken scenarios and verify the guard fixes them without affecting the happy path.",
+      "Add a regression test that simulates a retired session and asserts no materialization occurs and no warning is logged."
+    ],
+    "unknowns": [
+      "Maintainer design preference on whether to also address the stale listing for retired sessions in the same PR."
+    ],
+    "why": "The issue provides a clear root cause: the filesystem capture guard only checks for the existence of the sandbox handle, not its materialization status, causing unnecessary materialization and permanent failure for retired sessions. The proposed one-line guard is concrete and validated by a reproduction matrix."
+  },
   "96bdbbb5bbbdf25a43e8d85ffa4a0e4fe32de953c313ae8beae1f12ddaafd867": {
     "confidence": 0.85,
     "contradictions": [],
@@ -40640,6 +40852,36 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue is a user-visible auth bug with a clear repro, but the discussion reveals the reporter is actually using the MCP SDK's mcp.server.fastmcp, not standalone FastMCP's AzureProvider. The root cause is not confirmed in the FastMCP codebase; the reporter's environment uses mcp==1.29.0 and no standalone fastmcp package. The maintainer has not confirmed the bug or provided guidance. The candidate is not clearly actionable without maintainer confirmation of the intended fix path."
+  },
+  "ae03cbe02e9b2493b71ba576870403433c1f69b2cd01ac1d945eb82156dd4136": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue title mentions prefix caching, but the related issue #54559 is about shared memory broadcast blocks, which may be unrelated."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "vllm/collect_env.py",
+      "vllm/entrypoints/cli/collect_env.py",
+      "vllm/core/scheduler.py",
+      "vllm/worker/cache_engine.py"
+    ],
+    "risks": [
+      "Potential overlap with issue #54559, which shares stack signatures but may be a different bug; need to confirm no duplicate fix exists."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided standalone Python script to reproduce the issue and verify the fix restores deterministic output."
+    ],
+    "unknowns": [
+      "Whether the maintainers have a preferred fix approach or if there is an existing PR addressing this issue."
+    ],
+    "why": "The issue provides a concrete reproduction script and clearly describes a deterministic output change when prefix caching is enabled, indicating a real bug in the caching logic. The root cause is likely in the KV cache manager or scheduler, and the validation path is clear: run the provided script to reproduce and then test the fix."
   },
   "ae346b25f311dbd21f829ebe68f2e29c80a6db6c82c657170988b33d4209f4ce": {
     "confidence": 0.85,
@@ -52913,6 +53155,43 @@
       "Actual requested URL and response body from VSCode logs; whether the suggested base URL configuration resolves the issue; open PR status due to timeout"
     ],
     "why": "The issue reports a VSCode BYOK integration failure with LiteLLM, but the root cause is likely a VSCode configuration misunderstanding (URL should be base, not /v1) rather than a LiteLLM bug. The reporter has not confirmed the suggested fix, and the deterministic gate requires HUMAN_REVIEW. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
+  },
+  "de9486fa20ae774e78a3574934a6102a03fde669d3fad08ed708549b411274d6": {
+    "confidence": 0.8,
+    "contradictions": [
+      "The issue title mentions 'No available shared memory broadcast block found' but the body shows OOM errors",
+      "The related issue #53477 shares stack signatures but has a different title and behavior"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Investigate memory allocation in model_runner.py and related worker code",
+      "Potential fix in expert parallel or tensor parallel memory management",
+      "Possibly adjust PLE table offloading or caching logic"
+    ],
+    "risks": [
+      "The issue may be a configuration or environment problem rather than a code bug",
+      "The related PR may already address the root cause, making this issue redundant"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided command and environment",
+      "Run with smaller batch or lower memory utilization to isolate OOM",
+      "Compare memory usage with and without expert parallel",
+      "Test with different tensor parallel sizes"
+    ],
+    "unknowns": [
+      "Exact root cause of the OOM",
+      "Whether the related PR #54129 fixes this issue",
+      "Whether the issue is reproducible on other hardware or configurations"
+    ],
+    "why": "The issue reports an OOM during vLLM serving of a Qwen3.8-Flash-Next FP8 model with tensor parallelism and expert parallelism. The error is a CUDA OOM, but the root cause is not clearly identified; it could be a memory allocation bug, a configuration issue, or a kernel problem. The issue includes a reproduction command and environment details, and there is a related PR (#54129) that touches overlapping code paths, but the root cause is not confirmed."
   },
   "decfb4af480007e3c20f6277590b404625d330845775556fd7c93370356cc750": {
     "confidence": 0.85,
