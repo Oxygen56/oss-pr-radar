@@ -30053,6 +30053,31 @@
     ],
     "why": "Issue clearly identifies a logging-level bug in MCPSkillsSource where refusal paths use DEBUG instead of WARNING, causing silent skill drops. The fix is straightforward (change log levels or add summary), but the deterministic gate requires HUMAN_REVIEW and maintainer design confirmation is needed for the preferred approach (per-path WARNING vs summary line)."
   },
+  "7c02c9ed96462ae65fffbd9dee787c0901ddff3c673d3cf3c21ff3e33e15e64d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "api/extensions/ext_logging.py or ext_database.py: add LOG_TZ-aware formatter/handler to sqlalchemy.engine logger"
+    ],
+    "risks": [
+      "Potential duplicate log lines if propagation is re-enabled without deduplication; must preserve existing propagation behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Enable SQL echo logging with non-UTC LOG_TZ, capture log output, assert SQL log timestamps match configured timezone and align with application logs."
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix location (ext_logging.py vs ext_database.py) is not confirmed, but both are reasonable and do not block actionability."
+    ],
+    "why": "Issue provides a clear root cause (sqlalchemy.engine logger propagation disabled, so LOG_TZ formatter never applies) and a concrete fix location (ext_logging.py or ext_database.py). Dosu bot confirms the analysis and suggests a clean implementation path. No duplicate PR/issue found. The fix is a small, well-scoped logging configuration change with a clear validation path."
+  },
   "7c0a36fdce4eabab525e3dd5ec02037d831555d28f9f92a438f220cab0e620d7": {
     "confidence": 0.6,
     "contradictions": [],
@@ -31541,6 +31566,34 @@
       "Maintainer confirmation of the bug and desired fix approach"
     ],
     "why": "The issue describes a reproducible MTP speculative decoding corruption at concurrency >= 4, with strong evidence of a mixed-batch indexing bug in the V1 engine. However, the deterministic gate is HUMAN_REVIEW, and the repository requires AI disclosure which conflicts with automated public actions. Additionally, there is potential overlap with issue #50427 and other related issues, and the root cause is not definitively identified."
+  },
+  "82d51f0c2402a9f1541fde907f9fc3c7823e5d704338c68f9b2e3b2940f4a902": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "api/core/llm_generator/llm_generator.py: broaden exception handling in generate_suggested_questions_after_answer to catch InvokeError subclasses (e.g., InvokeConnectionError, InvokeRateLimitError, InvokeBadRequestError) and return []",
+      "api/tests/unit_tests/core/llm_generator/test_llm_generator.py: add tests for connection/rate-limit/bad-request errors during model resolution"
+    ],
+    "risks": [
+      "Potential maintainer preference for using a broader except InvokeError vs. listing specific subclasses; but this is a minor implementation choice.",
+      "Changing exception handling might alter logging behavior for other unexpected errors if not careful, but the fix is scoped to InvokeError subclasses."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit tests in test_llm_generator.py that mock model resolution to raise InvokeConnectionError, InvokeRateLimitError, and InvokeBadRequestError, asserting the method returns [] and does not log an exception traceback.",
+      "Run existing test suite for the llm_generator module to ensure no regressions."
+    ],
+    "unknowns": [
+      "Exact maintainer preference on exception handling style (specific subclasses vs. base InvokeError) is not known, but this does not block actionability."
+    ],
+    "why": "Issue identifies a concrete bug in exception handling in generate_suggested_questions_after_answer, with clear root cause (only InvokeAuthorizationError caught at line 309) and expected behavior (silent degradation for other InvokeError subclasses). Dosu comment confirms the behavior and suggests a low-risk fix. The change is localized and testable."
   },
   "82dea1ccd548c9454b5ab0eb5b73b8d8d205f83fa46dbb110c464dead2d9b1d2": {
     "confidence": 0.8,
@@ -44287,6 +44340,27 @@
     ],
     "why": "The issue provides a concrete, reproducible failure (curl command) with clear evidence that the failure is specific to the 'tools' parameter on the Ox Alpha free model, while other models work. Recent comments add strong evidence of deterministic per-session routing behavior, pointing to a sticky routing issue in the provider selection logic. The root cause is well-scoped to the provider routing/selection path, and a validation path exists via the provided curl reproduction and regression tests."
   },
+  "bb082b97c11f5f8ed9b9be8ea05159bc38c2d1355aefb4a6a7e3a4484c62ab94": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue reports bug as unresolved, but recent comment states it is fixed on main by PR #38559."
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [
+      "Whether the user has verified the fix after upgrading to a recent main build."
+    ],
+    "why": "The issue describes a real bug, but the supplied evidence shows it was already fixed by merged PR #38559, which implements the exact snapshot pattern and session refactoring proposed. The issue is on an old version (1.14.2) and the fix is available on main. No new actionable work remains."
+  },
   "bb0e43a69a836e5c64e46d2090bbc23b98ac46f1935180d98f613d6647713431": {
     "confidence": 0.7,
     "contradictions": [
@@ -51879,6 +51953,32 @@
       "Exact implementation details of the contributor's patch are not fully provided, but the approach is described sufficiently."
     ],
     "why": "Issue clearly identifies a process-wide global causing incorrect KV head splitting for multiple models, with a concrete root cause and a suggested fix mirroring an existing per-model approach. A contributor has a ready implementation with local regression tests, and the validation path is well-defined."
+  },
+  "d8898ac3319240ebd1aad960649b10316da2391693dfda249df71e8fcd56eee1": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "sglang/srt/distributed/parallel_state.py",
+      "sglang/srt/model_executor/model_runner.py"
+    ],
+    "risks": [
+      "Root cause may be in PyTorch's TCPStore behavior; fix may require coordination with upstream."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with --dp 8 on 8 GPUs, run multiple launches to observe EADDRINUSE; add a regression test that checks unique port allocation and no collision with ephemeral range."
+    ],
+    "unknowns": [
+      "Exact port allocation code path in SGLang; whether a newer version already fixes it."
+    ],
+    "why": "The issue provides a clear, reproducible race condition in distributed initialization (TCPStore EADDRINUSE) with concrete stack traces, varying ports, and a plausible root cause. It is actionable for fixing port allocation in the DP scheduler path."
   },
   "d88edf8687254ebc048af39763950f52a0fb536fbd8ee18c6f80123fecd9e663": {
     "confidence": 0.85,
