@@ -5294,6 +5294,20 @@ def test_local_receipt_candidates_bind_threadless_result_to_later_validation_def
 
     assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
 
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="late-deferred-threadless-result",
+        stage="PR_OPEN",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-recovered",
+        result_digest="late-deferred-threadless-result",
+        missing=["fresh_state_verified"],
+    )
+
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
+
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-recovered",

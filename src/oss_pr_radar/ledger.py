@@ -8074,6 +8074,7 @@ class RadarLedger:
                                              'TASK_RESULT_VALIDATION_DEFERRED'
                                          AND deferred.dedupe_key=result.dedupe_key
                                          AND deferred.id>sent.id
+                                         AND deferred.id<=result.id
                                          AND json_extract(
                                            deferred.payload_json,'$.threadId'
                                          )=i.thread_id
