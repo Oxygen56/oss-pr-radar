@@ -26224,6 +26224,31 @@
     ],
     "why": "Issue provides a clear root cause (TYPE_UNSTABLE_JOIN from split-KV path) and a minimal repro, but the deterministic gate is HUMAN_REVIEW and open PR lookup failed, so we cannot rule out existing work. Maintainer input is needed to confirm the preferred fix (pin bump vs kernel patch) and avoid duplicate effort."
   },
+  "6c5be6e8a474483ed341c7bc7335db784e5ac1087e99865e3f8409a93633ba6f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/backend/base/langflow/services/auth/service.py",
+      "src/backend/base/langflow/services/utils.py"
+    ],
+    "risks": [
+      "Changing exception handling may affect multi-worker race handling; ensure IntegrityError path remains unchanged."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that mocks db.commit to raise a non-IntegrityError exception and asserts that create_super_user re-raises and rolls back, and that setup_superuser logs an error and raises RuntimeError."
+    ],
+    "unknowns": [
+      "Exact exception type raised in the reporter's environment is not identified, but the fix is generic and does not depend on it."
+    ],
+    "why": "The issue provides a clear root cause: a bare except Exception in create_super_user swallows non-IntegrityError exceptions, returning an unpersisted User object and causing silent login failures. The suggested fix (rollback and re-raise) is concrete and actionable. The evidence includes code anchors and a reproduction scenario, though the exact exception type is unknown, which is not blocking."
+  },
   "6c606a5c5da73ff69c2abe455b426813bbf21184891b9be426dd6aa3e12820c6": {
     "confidence": 0.6,
     "contradictions": [],
@@ -43792,6 +43817,35 @@
     ],
     "why": "The issue provides a clear root cause (wiki eligibility requires a Compiler-bound template, absent for Built-in datasets), a concrete reproduction path, and expected behavior. A merged PR (#18695) already covers the core fix, but the issue remains open and the misleading error message is only partially addressed by #18691. The remaining work is actionable: improve the error message or pre-validation to guide users."
   },
+  "b8b1d51beb8219fae4effdfea28ec13c24896e5fedcfcf05eaaf023fc065f1d8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "OAuth token refresh logic in MCP client",
+      "Callback URL construction and persistence"
+    ],
+    "risks": [
+      "Potential changes to OAuth flow may affect existing integrations",
+      "Need to ensure callback URL consistency across providers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that simulates token expiry and verifies refresh token usage",
+      "Add integration test for Atlassian Rovo and GitLab OAuth flows"
+    ],
+    "unknowns": [
+      "Exact code location for OAuth handling in MCP client",
+      "Whether maintainers have design preferences for token refresh implementation"
+    ],
+    "why": "Issue clearly describes a user-visible bug: OAuth tokens for MCP servers are not refreshed, causing failures and invalid callback URL errors. Root cause is identified as missing refresh token handling and callback URL mismatch. Concrete reproduction steps and expected behavior are provided, making the fix actionable."
+  },
   "b8c191877b9da8140d54a34bbf3e553d72e5c18951b014b3a0ce1907467ca860": {
     "confidence": 0.7,
     "contradictions": [],
@@ -57692,6 +57746,33 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue describes a real user-facing failure mode with concrete code anchors and a clear proposal, but lacks a public reproduction, root-cause confirmation, and maintainer design approval. The gate decision is HUMAN_REVIEW, and the issue is labeled needs triage, so work should not start without maintainer confirmation."
+  },
+  "ec1841e17d9bee2037a7685d2bedbc84059dc42e3d3ab6b80968817680cdc1f3": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "api/core/app/apps/workflow/generate_task_pipeline.py",
+      "api/libs/broadcast_channel/redis/_subscription.py",
+      "api/libs/broadcast_channel/redis/pubsub_channel.py"
+    ],
+    "risks": [
+      "Potential behavior change if close() is called on a shared subscription; need to ensure only per-run subscriptions are closed."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that runs a schedule-triggered workflow and asserts no Redis client remains after completion, using the issue's CLIENT LIST comparison steps."
+    ],
+    "unknowns": [
+      "Exact subscription site (response topic vs inspector) not yet pinned; maintainer requested CLIENT LIST and PUBSUB CHANNELS data to confirm."
+    ],
+    "why": "Issue provides a concrete reproduction with expected/actual client counts and a clear leak mechanism (early return in _to_blocking_response skipping pubsub close). Maintainer comment confirms root cause and suggests a one-site fix with regression test."
   },
   "ec18a10e04de24bc556794a97eb8a7bd6735f44016805068b5959b8dd03c81ea": {
     "confidence": 0.85,
