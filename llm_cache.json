@@ -49248,6 +49248,38 @@
     ],
     "why": "Issue provides a clear root cause (Node --env-file does not expand $HOME, causing literal $HOME directory inside project tree and Vite watch loop), a concrete reproduction with ordered steps, and empirical HMR evidence. The proposed fix (extend server.watch.ignored) is actionable and testable. Although related PRs exist, they lack regression tests and are closed, so the issue remains actionable."
   },
+  "cff53565f909d86aff1fce125cbe7072266b248d63ee6115958b503ddd8e1f9a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #180 claims to fix QSA with sequence parallelism but lacks tests; issue still open"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Fix QSAIndexer.select_mask to handle sequence_parallel by building mask on full sequence length or adjusting indices",
+      "Add regression test for QSA with sequence_parallel"
+    ],
+    "risks": [
+      "Potential performance impact if mask building changes",
+      "Need to ensure compatibility with other parallel modes (CP, SP)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with small model, TP=2, sequence_parallel=true, long sequence > indexer_budget; verify no shape mismatch",
+      "Add unit test for QSAIndexer.select_mask with sequence_parallel enabled, comparing mask shapes and values"
+    ],
+    "unknowns": [
+      "Exact fix implementation details in PR #180",
+      "Whether PR #180 fully resolves the issue"
+    ],
+    "why": "Issue provides a concrete crash traceback and root cause: QSAIndexer.select_mask builds mask on s/TP sequence length, incompatible with sequence_parallel, causing shape mismatch in TE get_full_mask. A direct PR #180 exists but lacks tests; the issue is actionable and algorithmically relevant."
+  },
   "d02e48932ee126d283146cce35d38ee3d77314acc6ef997d084498beb9d6fab8": {
     "confidence": 0.7,
     "contradictions": [],
