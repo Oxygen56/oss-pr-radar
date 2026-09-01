@@ -12126,6 +12126,35 @@
     "wait_reason": null,
     "why": "Issue provides a clear, reproducible bug with root cause analysis and a concrete fix direction. The triage confirms the clamp fallback is insufficient and identifies the OpenAI-compatible pipeline as the primary path needing a fix. No competing PR exists; the issue is labeled ready-for-agent and is actionable."
   },
+  "36daa49cd605f4112c768eb4ddcbee76dba4822b89485c1f453269676ab3ffa4": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Modify _filter_sensitive_data_from_dict to recursively handle nested lists and tuples",
+      "Add regression tests for nested containers and preservation of non-sensitive values"
+    ],
+    "risks": [
+      "Potential behavior change for non-sensitive nested structures if not careful",
+      "Need to ensure compatibility with existing serialization format"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided failing test test_saved_history_redacts_secrets_in_nested_lists",
+      "Add tests for nested dict/list/tuple combinations and non-sensitive value preservation",
+      "Run existing sensitive-data tests and full test suite"
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix implementation (helper vs inline recursion)"
+    ],
+    "why": "Issue provides a clear root cause (recursive filter misses nested lists), a minimal failing test, and expected behavior. The fix is a targeted change to the filtering logic with regression tests. Existing PR #5626 is open but lacks root-cause coverage, leaving room for a more complete contribution."
+  },
   "36deb033ef9614205ee9f7418c95e5cf93e2a3121cf5e7f9c0e087e5d8aec869": {
     "confidence": 0.7,
     "contradictions": [],
@@ -19151,6 +19180,40 @@
     ],
     "why": "Issue provides detailed reproduction steps, systematic experiments isolating the failure to turboquant KV with MTP, and rules out alternative causes. Root cause is localized to the TurboQuant attention backend's handling of spec-decode batches, with a concrete validation path via existing PRs and reference comparisons."
   },
+  "539b56c93c6193124da4c9b97745a715fcccd9dc1fd02255558911b4ab9660e8": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/fused_moe/fused_moe.py",
+      "Kernel selection logic for FP8 dtypes based on compute capability"
+    ],
+    "risks": [
+      "Fallback to Marlin may change performance characteristics; need to ensure no regression on supported architectures",
+      "Potential interaction with other MoE backends or configurations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run Qwen3.8-Flash-Next-FP8 on SM80 (A100) with default settings to reproduce the error",
+      "Apply fix and verify startup succeeds with --moe-backend marlin fallback",
+      "Add unit test mocking device capability to ensure fp8e4nv is not selected on SM80",
+      "Run existing MoE kernel tests on SM80 and newer GPUs to ensure no regression"
+    ],
+    "unknowns": [
+      "Exact code location where capability check should be added",
+      "Whether maintainers prefer a different fallback mechanism"
+    ],
+    "why": "Issue provides a clear root cause: Triton fused-MoE kernel selects fp8e4nv without checking SM80 capability, causing startup failure on A100. A concrete workaround (--moe-backend marlin) is confirmed by a user, and a code-level fix is suggested: add compute-capability check before selecting fp8e4nv and fall back to Marlin. This is a kernel algorithm and quantization issue with a reproducible validation path."
+  },
   "53b3942bf010b63d9c2573470657b12ac45d8b8648276e15d53c472d237e6311": {
     "confidence": 0.7,
     "contradictions": [
@@ -21662,6 +21725,36 @@
     ],
     "why": "Issue provides a clear root cause in Qdrant adapter's wildcard handling, a concrete reproduction script, and a proposed fix using existing qdrant-client capabilities. The divergence from OpenSearch/Pinecone is well-documented, and the fix is minimal and testable."
   },
+  "5b7ef40076740153bfc91847ba74b78d389980ccef93b7e3c8717d06abfacb4a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The related issue #51572 is about Anthropic API authentication, which is unrelated to the MoE hang; the shared stack signatures are likely generic environment collection output, not a true duplicate."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/fused_moe/experts/trtllm_fp8_moe.py",
+      "vllm/model_executor/layers/fused_moe/runner/moe_runner.py",
+      "vllm/model_executor/layers/fused_moe/modular_kernel.py",
+      "vllm/model_executor/layers/quantization/fp8.py"
+    ],
+    "risks": [
+      "The hang may be intermittent or dependent on specific hardware (GB200) and workload, making reproduction flaky. The fix might involve changing default backend, which could affect performance for other models."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the hang by serving Kimi K2 base or DeepSeek v3 base with default moe_backend (FlashInfer TRTLLM) under DP/EP on GB200, then run a prefill-heavy workload (e.g., perplexity eval) and observe the hang. Verify that switching to triton moe_backend avoids the hang. Add a regression test that runs a small MoE model with DP/EP and FlashInfer TRTLLM backend, ensuring it completes without hanging."
+    ],
+    "unknowns": [
+      "Exact root cause in the FlashInfer TRTLLM kernel or its interaction with DP/EP is not fully identified; the issue suggests a possible relation to PR #39917 but does not confirm. Whether the hang is a deadlock or extreme slowness is not confirmed."
+    ],
+    "why": "The issue provides a clear regression scenario (FlashInfer TRTLLM MoE backend hangs under DP/EP for specific models), a bisected introduction (v0.21.0), a py-spy stack trace pinpointing the hang in flashinfer::trtllm_fp8_block_scale_moe, and a concrete validation path (reproduce with Kimi K2/DeepSeek v3 under DP/EP, compare with triton backend). The root cause is likely in the interaction between the FlashInfer TRTLLM MoE kernel and the DP/EP execution path, possibly related to PR #39917. The evidence includes code anchors and a suggested workaround, making the contribution actionable."
+  },
   "5b8626823047a8d5c6d1a27549a4d6e74c90f5c3e68d8640c7ed4e001775efee": {
     "confidence": 0.85,
     "contradictions": [],
@@ -23006,6 +23099,34 @@
       "Whether the fix is applicable to Dify Cloud or requires infrastructure changes"
     ],
     "why": "Issue reports a Dify Cloud MCP server error with a clear SQLAlchemy transaction symptom, but the root cause is only inferred by a bot comment, not confirmed by maintainers. The fix likely involves a small change in api/controllers/mcp/mcp.py, but the repository has a submission policy requiring AI disclosure, which conflicts with automatic public actions. No open PR directly addresses this issue, and the existing merged PRs are related but not directly linked. Given the need for maintainer confirmation on the root cause and the policy conflict, this is not a clean candidate for immediate work."
+  },
+  "6179b467e65724e314a3c2989e92abae47778a313ff50f51a1757155cd57c5cb": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Readiness bot requires screenshot/video and supported run method, but commenters provide reproduction via vitest command"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/api/canvas-extensions-service.test.ts",
+      "frontend canvas extension install flow"
+    ],
+    "risks": [
+      "Potential maintainer preference for different fix approach; need to ensure repo_path handling for Git/GitHub sources is preserved"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run npx vitest run src/api/canvas-extensions-service.test.ts with regression tests for Source/Path slash variants and full-directory Source behavior"
+    ],
+    "unknowns": [
+      "Exact frontend file paths and implementation details; maintainer confirmation of approach"
+    ],
+    "why": "Issue provides clear reproduction steps, expected vs actual behavior, and acceptance criteria. Commenters identified root cause as frontend/backend contract mismatch where local Source+Path are sent as separate fields but backend expects full path in source. A concrete fix and regression test are proposed."
   },
   "6181932a0933c1fbc6d5867ae3db0ba6e6f16d6a838a8c4846538fd84727697a": {
     "confidence": 0.85,
@@ -58704,6 +58825,34 @@
     ],
     "why": "The issue provides a clear root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm and the issue qualifies as a kernel/algorithmic bug with a numerical validation path."
   },
+  "f09d30c37c2655653377a8730351057fc4734c35b0769ed1ae919460c044554f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "api/core/app/apps/workflow/generate_task_pipeline.py",
+      "api/libs/broadcast_channel/redis/_subscription.py",
+      "api/libs/broadcast_channel/redis/pubsub_channel.py"
+    ],
+    "risks": [
+      "Fix may require careful generator cleanup changes that could affect streaming paths; need to ensure no behavior change for interactive API."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that runs a Schedule Trigger workflow and asserts no Redis connection remains after completion, using CLIENT LIST or a mock pubsub close call.",
+      "Run existing workflow and broadcast channel unit tests."
+    ],
+    "unknowns": [
+      "Exact code path where close() is skipped; maintainer confirmation of proposed fix."
+    ],
+    "why": "Issue provides a concrete reproduction with expected/actual client counts, identifies the Schedule Trigger path, and a maintainer bot traced the likely leak to early return in _to_blocking_response() preventing pubsub.close(). This is a clear, actionable bug with a validation path."
+  },
   "f0de309411bf797fea9f94c5b698250563f23c83efe3fb49d7255a787e77fb1e": {
     "confidence": 0.85,
     "contradictions": [
@@ -59719,6 +59868,41 @@
       "Whether the maintainer's fix in v4.1.11 fully addresses the key-agnostic requirement across all seams, or if the proposed patch is still needed."
     ],
     "why": "Issue provides a clear root cause (strict zod gate, runtime normalizer, and preview formatter each assume a fixed 'command' key), a concrete reproduction (object-form command under 'cmd' key), and a proposed three-seam fix with local patch. The maintainer comment indicates a fix in v4.1.11, but the issue remains open and the proposed fix is more comprehensive (key-agnostic across all seams). This is actionable and valuable."
+  },
+  "f5b8b1139fa6151e14b9ff128277d8cbdc856ff8192ec91fb49fa1ea1610df3b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/qwen3.py",
+      "vllm/entrypoints/cli/collect_env.py",
+      "vllm/parser/qwen3.py",
+      "MooncakeStoreConnector validation logic"
+    ],
+    "risks": [
+      "Potential overlap with issue #51572 based on shared stack signatures, though semantic overlap is low.",
+      "Fix may require coordination with MooncakeStoreConnector maintainers if validation is intentional."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction command with --kv-transfer-config and assert startup succeeds without block_size divisibility error.",
+      "Run with --prefix-match-unit 8 and assert MooncakeStoreConnector accepts the configuration.",
+      "Add a regression test that checks block_size divisibility for Qwen3.8-Flash-Next-FP8 with tensor parallel and expert parallel."
+    ],
+    "unknowns": [
+      "Exact code location where block_size divisibility is enforced.",
+      "Whether the MooncakeStoreConnector validation is intentional and should be relaxed or the model configuration adjusted."
+    ],
+    "why": "The issue provides a clear reproduction path with two staged failures, identifies the root cause as a block_size/hash_block_size divisibility mismatch and MooncakeStoreConnector validation rejecting mamba_cache_mode != 'align', and includes concrete code anchors (collect_env.py, qwen3 parser, MooncakeStoreConnector). The track is llm_algorithm with mechanisms in distributed training and quantization, and the validation path is concrete: reproduce with the provided commands and verify startup succeeds with Mooncake KV transfer."
   },
   "f5c25ff48fd056b67de74406fe8893895face7baacb2a7c417a1deadcdbbcdab": {
     "confidence": 0.7,
