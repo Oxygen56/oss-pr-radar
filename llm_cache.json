@@ -17995,6 +17995,36 @@
     ],
     "why": "Issue provides a minimal reproducer, exact traceback, root-cause analysis, and a proposed fix (skip zero-sized params in reduction). It is a concrete distributed-training bug with clear validation path."
   },
+  "4e3b53fa7fffc4f46600a47995d50f19f01f306c6596ffa0725a475771361e13": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "mem0/memory/main.py",
+      "async path equivalent",
+      "tests/memory/test_vector_fallback_repro.py"
+    ],
+    "risks": [
+      "Potential behavior change in error handling may affect existing callers expecting partial success",
+      "Need to ensure sync and async paths are updated consistently"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided regression test against current main to confirm failure",
+      "After fix, run the same test and ensure it passes",
+      "Run existing test suite for mem0/memory to check for regressions"
+    ],
+    "unknowns": [
+      "Maintainer design preference on whether to raise or skip failed records",
+      "Exact location of async path implementation"
+    ],
+    "why": "The issue provides a clear root cause: failed fallback vector inserts are logged but not removed from the records list, causing them to be returned as successful and indexed. A concrete regression test with expected/actual pair and executable command is supplied, making the fix actionable."
+  },
   "4e50b5e9d3c0dd3d53f61c47d17d93ea8c1140ecf144a30e44d225803210ebe3": {
     "confidence": 0.8,
     "contradictions": [],
@@ -18170,6 +18200,35 @@
       "Exact code path and fix location in vLLM"
     ],
     "why": "Issue reports a crash in vLLM's NixlConnector when prefix caching is enabled for Mamba-hybrid models, with a clear repro and a maintainer triage comment requesting upstream linkage and path decision. The root cause is acknowledged in source comments but no fix is proposed; the requested outcome (support vs. fail-fast) is unresolved."
+  },
+  "4f56f8213ba0cfa4434b3b1d47a92d0aeb2c5b7be93f51ca49a876e44079a291": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Update LinkedIn toolkit's pinned API version header to a currently active version",
+      "Possibly adjust default version resolution in the execution API to avoid pinning to retired versions"
+    ],
+    "risks": [
+      "Changing the default version may affect other tools or API behavior",
+      "The fix might require coordination with LinkedIn's versioning policy"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the 426 error using the provided POST request to /api/v3/tools/execute/LINKEDIN_CREATE_LINKED_IN_POST",
+      "Apply the fix (e.g., bump version header or use version=latest) and verify the request succeeds",
+      "Run existing LinkedIn toolkit tests and any relevant integration tests"
+    ],
+    "unknowns": [
+      "Exact location of the version header in the codebase",
+      "Whether the maintainer prefers a version bump vs. a configurable version"
+    ],
+    "why": "Issue provides a clear root cause (retired LinkedIn API version header) and a concrete reproduction with expected/actual pairs. Maintainer comment confirms the cause and offers a workaround, but the underlying bug (pinned outdated version) remains actionable. The fix is a version bump or config change, with a clear validation path via the provided reproduction."
   },
   "4f5e2d859dcfd656ce47760ad45f3e0b098c4367c0e794db93d63d03603d585a": {
     "confidence": 0.85,
@@ -30639,6 +30698,41 @@
     ],
     "why": "Issue reports a clear performance bug: full conversation snapshots are re-saved on every step, causing excessive storage and latency. Root cause is evident from the issue body, and the maintainer has labeled it for trio-tnt, indicating active triage. However, the deterministic gate requires HUMAN_REVIEW, and the open PR #21068 may partially address the issue but lacks explicit linkage and has requested changes. Thus, maintainer confirmation is needed before starting work."
   },
+  "7e92a92f8e5e879d7343ea75166650e8cd4f2414cc7efa29c0d17ce2397b5617": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims xgrammar bug on v0.26.0, but comment says fixed by #44993 in v0.27.0",
+      "PR #52298 overlaps with guidance facet but not directly linked"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "structured output backends (xgrammar, outlines, guidance)"
+    ],
+    "risks": [
+      "Duplicate work if PR #52298 or #44993 already covers the fix",
+      "Multiple independent bugs may require separate PRs"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with provided schema and EAGLE3 on v0.26.0; verify fix in v0.28.0; test outlines timeout thread cancellation; test guidance tokenizer validation at startup"
+    ],
+    "unknowns": [
+      "Whether PR #44993 fully resolves the xgrammar issue for kimi_k2 parser",
+      "Whether PR #52298 addresses the guidance tokenizer rejection adequately",
+      "Whether issue #54775 is a true duplicate"
+    ],
+    "why": "The issue reports multiple independent bugs (xgrammar FSM desync, outlines thread leak, guidance tokenizer rejection) with detailed reproduction, but the evidence indicates a potential duplicate issue #54775 and an open PR #52298 with semantic overlap. The root cause for the primary xgrammar bug is claimed to be fixed by PR #44993, which is not yet merged into the reported version. This creates uncertainty about whether the issue is already addressed upstream, and the presence of overlapping PRs requires manual comparison to avoid duplicate work. The evidence is incomplete for a clear actionable contribution."
+  },
   "7eb321b6edd98e34d14d6c9efb50253538a171718dfce88f8245c72f745764e6": {
     "confidence": 0.85,
     "contradictions": [
@@ -35427,6 +35521,34 @@
     ],
     "why": "The issue clearly identifies a user-visible bug: LLM config is frozen at conversation creation, causing permanent authentication failures after key rotation. The proposed fix is actionable and includes a concrete repro and multiple solution levels. No competing PR or issue found."
   },
+  "931398cc91de276c9cf96146a936ddc95a1b1263f00b563e847ca30e8f313f0a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "OAuth token refresh logic in MCP client",
+      "Callback URL construction and persistence"
+    ],
+    "risks": [
+      "Potential changes to OAuth flow may affect existing integrations",
+      "Need to ensure refresh token storage is secure"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that simulates token expiry and verifies refresh token usage",
+      "Add integration test with mock OAuth provider to validate callback URL consistency"
+    ],
+    "unknowns": [
+      "Exact code location for OAuth handling in MCP client",
+      "Whether maintainers have preferred design for token refresh"
+    ],
+    "why": "Issue clearly describes a user-visible bug: OAuth tokens for MCP servers are not refreshed, causing failures and invalid callback URL errors. Root cause is identified as missing refresh token handling and callback URL mismatch. Concrete reproduction steps and expected behavior are provided, making the fix actionable."
+  },
   "93229d36c23acd26501f5b4d3e38be3dae04e5ef671a28c50d309b2f1534c60b": {
     "confidence": 0.85,
     "contradictions": [],
@@ -36570,6 +36692,40 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The design is technically sound and addresses a real bug in local-docker upgrade version metadata persistence. It includes concrete mechanisms (strict version read, re-read stored Profile, narrow write) and a detailed verification plan. However, the maintainer explicitly requested revisions and approval before implementation starts; the latest update claims revisions but the maintainer has not yet re-reviewed. The gate decision is HUMAN_REVIEW, and the submission policy requires assignment and AI disclosure confirmation, which are not yet satisfied."
   },
+  "998d7820e343513a57cb7f733c314a96fcb2dc0a7624d1c51f11ac178c51b05a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #34432 has semantic overlap but no direct code overlap; PR #35738 and #37175 have partial overlap but not root cause"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "tool-call parser logic",
+      "PD disaggregation message routing",
+      "DCP backend handling"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #34432 which may already address DCP-related issues",
+      "Hardware requirements for TP8/DCP8 may limit testability"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run KVV test_dynamic_tools.py with the provided reproduction command and verify no timeout",
+      "Add regression test for tool_choice=required with streaming and non-streaming in 2P2D topology"
+    ],
+    "unknowns": [
+      "Exact SGLang version and environment details not provided",
+      "Whether PR #34432 already fixes this issue"
+    ],
+    "why": "The issue provides a clear reproduction with expected vs actual behavior, specific test cases, and deployment flags. The root cause is likely in the tool-call handling logic under PD disaggregation and DCP, with potential interaction with fp8 quantization. The evidence includes code anchors and a concrete validation path via KVV tests."
+  },
   "99eab2edc31a3ac702fff1d30cc640fad4373d496cb2224f9aac79f626043ab1": {
     "confidence": 0.85,
     "contradictions": [
@@ -37464,6 +37620,38 @@
       "Whether the Go route remains broken after the reported recovery"
     ],
     "why": "The issue provides a minimal curl reproduction, control experiments, and multiple independent confirmations, establishing a clear root cause: the Ox Alpha free model's tool path fails on both Zen routes. The failure is deterministic and specific to the presence of tools, with a concrete validation path via the provided curl command."
+  },
+  "9c4db56c242b4dda77df6ae81aed3615040337326b639bbbdaa0fac610520eec": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/mastra/index.ts",
+      "packages/core/src/schedules/schedules.ts",
+      "packages/server/src/server/handlers/schedules.ts",
+      "packages/playground/src/domains/schedules/hooks/use-schedules.ts"
+    ],
+    "risks": [
+      "The exact dynamic workflow API and affected versions are missing, which may affect the fix's applicability.",
+      "Potential design decision on whether schedules should be part of persisted workflow definitions."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add an integration test that dynamically registers a workflow with a schedule (using the reporter's construction snippet once provided) and asserts that GET /schedules and the Studio table include the schedule.",
+      "Run existing server and playground E2E tests for schedules to ensure no regression."
+    ],
+    "unknowns": [
+      "Exact Mastra/Mastra Studio versions before and after the regression.",
+      "The specific dynamic workflow construction/registration snippet used by the reporter."
+    ],
+    "why": "The issue describes a user-visible regression in Mastra Studio's Schedules tab for dynamically created workflows, with clear reproduction steps and expected behavior. The bot's triage provides a detailed analysis of the likely code paths and identifies the missing information (exact versions and dynamic workflow construction snippet) needed for a definitive root cause. The candidate is actionable because the reproduction path is clear and the fix likely involves adding schedule persistence/rehydration for dynamic workflows, with a concrete test plan."
   },
   "9c80e14fc2f53885dea21941fdc211baeb7d3c6cf53be248a907561b8bf389e5": {
     "confidence": 0.7,
@@ -50724,6 +50912,31 @@
       "Exact behavior expected when callback is missing (error vs warning vs distinct denial reason)"
     ],
     "why": "Issue provides a clear root cause in the CLI permission-decision path: the ask policy silently denies when onToolPermissionRequest callback is missing, mislabeling denial as user rejection. Concrete reproduction steps and code anchors are supplied, making the fix actionable. An open PR exists but lacks root-cause coverage, leaving room for a more complete contribution."
+  },
+  "d430e39a4229f45dffa4d6bc31923204ee1a6113e3117c6964b9484f8156c919": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/phoenix/server/agents/capabilities/tools/internal/bash.py",
+      "examples/computer_use_agent/tools/bash.py"
+    ],
+    "risks": [
+      "Potential maintainer preference for not auto-joining args; need to confirm design choice"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing tests for multi-line query with single quotes and -q flag, then run targeted unit tests for bash.py"
+    ],
+    "unknowns": [
+      "Maintainer design preference on auto-join vs better error message only"
+    ],
+    "why": "Issue provides clear reproduction steps, root cause (shell splitting into multiple args), and specific code pointers for argument parsing. Proposed improvements are actionable and low-risk."
   },
   "d433bfaa0f66193a1ffa1d843343163dcc0940caf0ae21c3deb9d98fb725892c": {
     "confidence": 0.85,
