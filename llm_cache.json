@@ -2297,6 +2297,37 @@
     "wait_reason": null,
     "why": "Issue reports a reproducible intermittent failure in page.evaluate when pages are created and closed in a loop, with a clear reproduction pattern and comparative data. No existing PR or related issue found, and the gate allows work. Root cause is not identified but the issue provides enough signal for a focused investigation and regression test."
   },
+  "09e801b1420604e5493b517c05b34383fd8481dc01db3f7d15c69db3abefee91": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #39094 has semantic overlap but references_issue is false and root_cause_coverage is false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/router_utils/common_utils.py",
+      "Add shared predicates for web_search/web_fetch tool types",
+      "Add deployment capability filtering for web_fetch"
+    ],
+    "risks": [
+      "Potential overlap with PR #39094; must compare implementation boundaries before proceeding",
+      "Default-to-True behavior for missing metadata may need adjustment to avoid breaking existing setups"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided deterministic reproduction script to confirm filter_web_search_deployments returns only compatible deployment",
+      "Add unit tests for web_search_20250305, web_fetch_20250910, mixed tools, missing metadata, and explicit deployment addressing"
+    ],
+    "unknowns": [
+      "Whether PR #39094 fully addresses the issue or only partially; maintainer preference on implementation approach"
+    ],
+    "why": "Issue provides a clear root cause (Anthropic tool types not recognized by router capability filter), a deterministic code-level reproduction, and a concrete expected behavior. An open PR (#39094) overlaps semantically but is not linked and lacks root-cause coverage, so a new contribution remains actionable."
+  },
   "0a08cb2cfda9252017e89a25949beb50a233bd20edafbc320a73158d983f7caa": {
     "confidence": 0.85,
     "contradictions": [
@@ -29764,6 +29795,31 @@
       "Whether PR #1937 already fixes this exact issue; maintainer preference on implementation approach."
     ],
     "why": "Issue provides a clear root cause (formatter drops encrypted_content from reasoning items), a verified local patch, and a concrete reproduction path. The fix is actionable and aligns with existing code paths."
+  },
+  "7a99bff92175d93a1da4d32475a2a51fd3296def5076ae5789a317d2b17d47e3": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/structured_output/backend_xgrammar.py",
+      "grammar_matcher.cc"
+    ],
+    "risks": [
+      "Suppressing errors might hide genuine FSM desyncs; need careful condition to only ignore post-termination token acceptance."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with Kimi-K2.6 + EAGLE3 and a strict JSON schema; verify no spurious 'Failed to advance FSM' errors after stop token while outputs remain valid."
+    ],
+    "unknowns": [
+      "Exact code path for the residual log noise and whether maintainers prefer a separate issue."
+    ],
+    "why": "The issue identifies a concrete root cause: xgrammar bitmask desync under EAGLE3 speculative decoding, with stable failing tokens and a reproducible workload. The user confirmed that upstream PR #44993 fixes the main facet in v0.28.0, leaving only residual log noise. The remaining actionable work is to suppress spurious FSM errors after stop-token termination, which is a well-defined code change in backend_xgrammar.py."
   },
   "7aa644878ca18a33a4e7eb691ce7364ed91e88d3fd2280698b872f3758874cf1": {
     "confidence": 0.85,
