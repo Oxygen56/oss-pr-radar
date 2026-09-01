@@ -3386,6 +3386,91 @@ def test_exhausted_recovery_requires_attempt_budget_not_a_forged_marker(tmp_path
     )
 
 
+def test_exhausted_recovery_accepts_completed_turn_with_invalid_outcome(tmp_path):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    root_id, recovery_id = _make_exhausted_outcome_chain(worker, lane)
+    with lane.writer() as db:
+        for event_id in (root_id, recovery_id):
+            row = db.execute(
+                "SELECT receipt_json FROM event_lane_turns WHERE event_id=?", (event_id,)
+            ).fetchone()
+            receipt = json.loads(row[0])
+            receipt["turnStatus"] = "completed"
+            receipt["outcome"] = {"error": "OUTCOME_MISSING_OR_INVALID"}
+            db.execute(
+                "UPDATE event_lane_turns SET receipt_json=? WHERE event_id=?",
+                (json.dumps(receipt), event_id),
+            )
+    result = worker._settle_exhausted_outcome_recoveries(
+        tmp_path,
+        lane,
+        transport=lambda url, _headers: (
+            (
+                200,
+                {},
+                [
+                    {
+                        "id": 17,
+                        "user": {"login": "other"},
+                        "created_at": "2026-09-02T00:00:00Z",
+                        "body": "I will take this issue.",
+                    }
+                ],
+            )
+            if "/comments" in url
+            else (200, {}, {"state": "open", "assignee": None, "assignees": []})
+        ),
+        now=100.0,
+    )
+    assert result["settled"] == 1
+
+
+def test_exhausted_recovery_rejects_valid_machine_outcome(tmp_path):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    root_id, recovery_id = _make_exhausted_outcome_chain(worker, lane)
+    key = "agentscope-ai/agentscope#1"
+    with lane.writer() as db:
+        for event_id in (root_id, recovery_id):
+            row = db.execute(
+                "SELECT receipt_json FROM event_lane_turns WHERE event_id=?", (event_id,)
+            ).fetchone()
+            receipt = json.loads(row[0])
+            receipt["turnStatus"] = "completed"
+            receipt["outcome"] = {
+                "schemaVersion": "agentscope_event_outcome_v1",
+                "eventId": event_id,
+                "publicKey": key,
+                "state": "no_action",
+            }
+            db.execute(
+                "UPDATE event_lane_turns SET receipt_json=? WHERE event_id=?",
+                (json.dumps(receipt), event_id),
+            )
+    evidence = {
+        "kind": "external_claim_comment",
+        "repo": "agentscope-ai/agentscope",
+        "number": "1",
+        "issueState": "open",
+        "commentId": "17",
+        "author": "other",
+        "createdAt": "2026-09-01T00:00:00Z",
+        "claimKind": "active_claim",
+        "excerpt": "I will take this issue.",
+    }
+    assert (
+        lane.settle_exhausted_recovery_no_action(
+            recovery_id,
+            root_event_id=root_id,
+            event_key=key,
+            reason="external_claim_comment",
+            evidence=evidence,
+        )["status"]
+        == "terminal_receipt_missing"
+    )
+
+
 def test_exhausted_recovery_does_not_close_pr_watch_for_issue_claim(tmp_path):
     worker = _event_worker_module()
     lane = EventLane(tmp_path / "events.db")
@@ -3544,7 +3629,7 @@ def test_external_claim_evidence_ignores_bots_and_old_comments():
     comments = [
         {
             "id": 1,
-            "user": {"login": "helper[bot]"},
+            "user": {"login": "helper", "type": "Bot"},
             "created_at": "2026-09-02T00:00:00Z",
             "body": "I will take this issue.",
         },
@@ -3573,6 +3658,19 @@ def test_external_claim_evidence_ignores_bots_and_old_comments():
         {"state": "open", "number": 1}, comments, root_event=root
     )
     assert evidence and evidence["claimKind"] == "conditional_claim"
+    comments.insert(
+        0,
+        {
+            "id": 4,
+            "user": {"login": "decliner"},
+            "created_at": "2026-09-01T14:00:00Z",
+            "body": "I will not take this issue.",
+        },
+    )
+    evidence = worker._external_no_action_evidence(
+        {"state": "open", "number": 1}, comments, root_event=root
+    )
+    assert evidence and evidence["commentId"] == "3"
 
 
 def test_delivered_recovery_turn_timeout_returns_to_bounded_retry(tmp_path):

@@ -62,6 +62,10 @@ _CONDITIONAL_EXTERNAL_CLAIM_RE = re.compile(
     r")",
     re.IGNORECASE | re.DOTALL,
 )
+_NEGATED_EXTERNAL_CLAIM_RE = re.compile(
+    r"\b(?:i|we)\b.{0,20}\b(?:can't|cannot|can not|won['’]?t|will not|would not|do not|don't|never)\b",
+    re.IGNORECASE | re.DOTALL,
+)
 _OPERATIONAL_AUTHORIZATION_GAP_ERRORS = frozenset(
     {
         f"operational authorization required: {reason}"
@@ -423,10 +427,10 @@ def _valid_exhausted_recovery_lineage(
     """Accept settlement only for the exact stable root/recovery pair."""
 
     key_prefix, separator, key_number = str(event_key).rpartition("#")
-    if separator != "#" or key_prefix != REPO or not key_number.isdigit() or int(key_number) <= 0:
+    if separator != "#" or key_prefix != REPO or not re.fullmatch(r"[1-9][0-9]*", key_number):
         return False
     root_kind = str(root_event.get("kind") or "")
-    root_prefix = f"github:{REPO}:{int(key_number)}:{root_kind}:"
+    root_prefix = f"github:{REPO}:{key_number}:{root_kind}:"
     if str(recovery_event_id) != _outcome_recovery_event_id(root_event_id):
         return False
     if (
@@ -631,6 +635,9 @@ def _comment_claim_evidence(
         if created is None or (not_before is not None and created < not_before):
             continue
         author = comment.get("user") if isinstance(comment.get("user"), dict) else {}
+        user_type = str(author.get("type") or author.get("userType") or "").casefold()
+        if user_type == "bot":
+            continue
         normalized = {
             "body": comment.get("body"),
             "user": author,
@@ -646,7 +653,7 @@ def _comment_claim_evidence(
         if not login or login.casefold().endswith("[bot]"):
             continue
         body = str(comment.get("body") or "").strip()
-        if not body:
+        if not body or _NEGATED_EXTERNAL_CLAIM_RE.search(body):
             continue
         claim_kind = str(signal.kind)
         if _CONDITIONAL_EXTERNAL_CLAIM_RE.search(body):
@@ -656,6 +663,7 @@ def _comment_claim_evidence(
             "claimKind": claim_kind,
             "commentId": str(comment.get("id") or "")[:80],
             "author": login[:120],
+            "authorType": user_type[:40],
             "authorAssociation": str(signal.association or "NONE")[:40],
             "createdAt": created_at[:80],
             "excerpt": " ".join(body.split())[:240],
@@ -780,14 +788,20 @@ def _settle_exhausted_outcome_recoveries(
     with lane.connect() as db:
         rows = db.execute(
             "SELECT e.event_id,e.payload_json,e.status,e.attempts,t.status AS turn_status,"
-            "t.receipt_json FROM event_lane_events e "
+            "t.receipt_json,s.value_json AS audit_json FROM event_lane_events e "
             "LEFT JOIN event_lane_turns t USING(event_id) "
+            "LEFT JOIN event_lane_state s ON s.key=('outcome-recovery-evidence:' || e.event_id) "
             "WHERE (e.status='needs_reconcile' OR "
             "(e.status='delivered' AND t.status='needs_reconcile')) "
             "AND (e.event_id LIKE 'outcome-reconcile:%' "
             "OR json_extract(e.payload_json,'$.kind')='outcome_reconcile') "
             "AND e.attempts>=? "
-            "ORDER BY e.created_at,e.event_id LIMIT 8",
+            # Prefer chains that have never been checked, then rotate older
+            # audits ahead of recently checked rows so a blocked early row
+            # cannot starve later recoveries indefinitely.
+            "ORDER BY CASE WHEN s.value_json IS NULL OR NOT json_valid(s.value_json) THEN 0 ELSE 1 END,"
+            "CASE WHEN json_valid(s.value_json) THEN json_extract(s.value_json,'$.lastCheckedAt') END,"
+            "e.created_at,e.event_id LIMIT 8",
             (lane.max_attempts,),
         ).fetchall()
     candidates = 0

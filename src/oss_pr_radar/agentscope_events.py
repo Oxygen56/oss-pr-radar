@@ -32,6 +32,10 @@ EVENT_VERSION = "agentscope_event_v1"
 EXTERNAL_RESOLUTION_REASONS = frozenset(
     {"issue_closed", "issue_assigned_external", "external_claim_comment"}
 )
+_NEGATED_EXTERNAL_CLAIM_RE = re.compile(
+    r"\b(?:i|we)\b.{0,20}\b(?:can't|cannot|can not|won['’]?t|will not|would not|do not|don't|never)\b",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _digest(value: Any) -> str:
@@ -45,6 +49,36 @@ def _parse_time(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
     except ValueError:
         return None
+
+
+def _valid_machine_outcome_receipt(receipt: dict[str, Any], event_id: str, event_key: str) -> bool:
+    """Validate the private outcome shape without importing the worker."""
+
+    outcome = receipt.get("outcome")
+    if not isinstance(outcome, dict) or outcome.get("error"):
+        return False
+    if (
+        outcome.get("schemaVersion") != "agentscope_event_outcome_v1"
+        or str(outcome.get("eventId") or "") != str(event_id)
+        or str(outcome.get("publicKey") or "") != str(event_key)
+    ):
+        return False
+    state = str(outcome.get("state") or "")
+    if state not in {"no_action", "claimed_or_pr", "design_wait"}:
+        return False
+    expected = {"schemaVersion", "eventId", "publicKey", "state"}
+    if state == "design_wait":
+        expected.update({"waitStartedAt", "waitUntil"})
+    if set(outcome) != expected:
+        return False
+    if state == "design_wait":
+        started = _parse_time(str(outcome.get("waitStartedAt") or ""))
+        until = _parse_time(str(outcome.get("waitUntil") or ""))
+        if started is None or until is None or until < started:
+            return False
+        if until - started > timedelta(hours=24):
+            return False
+    return True
 
 
 def _event_bridge_process_alive(value: object) -> bool:
@@ -1522,7 +1556,20 @@ class EventLane:
                     # an already terminal event from that old turn.
                     if event_status not in {"pending", "leased", "delivered"}:
                         continue
-                    payload = json.loads(event_row["payload_json"])
+                    try:
+                        payload = json.loads(event_row["payload_json"])
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        # A corrupt payload cannot be safely retried or
+                        # interpreted as a recovery chain.  Leave the turn
+                        # reconciliable, make the lease terminal, and avoid
+                        # crashing the whole poller.
+                        db.execute(
+                            "UPDATE event_lane_events SET status='needs_reconcile',"
+                            "delivered_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+                            "WHERE event_id=? AND status IN ('pending','leased','delivered')",
+                            (current, row["event_id"]),
+                        )
+                        continue
                     payload["terminalReason"] = receipt["terminalReason"]
                     is_recovery = payload.get("kind") == "outcome_reconcile"
                     # A detached recovery turn is acknowledged before its
@@ -1553,14 +1600,14 @@ class EventLane:
                         db.execute(
                             "UPDATE event_lane_events SET status='pending',payload_json=?,"
                             "delivered_at=NULL,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
-                            "WHERE event_id=?",
+                            "WHERE event_id=? AND status IN ('pending','leased')",
                             (json.dumps(payload, sort_keys=True), row["event_id"]),
                         )
                     else:
                         db.execute(
                             "UPDATE event_lane_events SET status='needs_reconcile',payload_json=?,"
                             "delivered_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
-                            "WHERE event_id=?",
+                            "WHERE event_id=? AND status IN ('pending','leased')",
                             (json.dumps(payload, sort_keys=True), current, row["event_id"]),
                         )
             return expired
@@ -1779,14 +1826,22 @@ class EventLane:
         lane again; no public action or synthetic success receipt is created.
         """
 
+        if not isinstance(reason, str) or reason not in EXTERNAL_RESOLUTION_REASONS:
+            return {"status": "invalid", "settled": False}
+        if (
+            isinstance(watch_seconds, bool)
+            or not isinstance(watch_seconds, int)
+            or not 0 < watch_seconds <= 7 * 24 * 60 * 60
+        ):
+            return {"status": "invalid", "settled": False}
         recovery_id = str(recovery_event_id or "")
         root_id = str(root_event_id or "")
         key = str(event_key or "")
         if not recovery_id or not root_id or not key:
             return {"status": "invalid", "settled": False}
-        if not isinstance(evidence, dict) or reason not in EXTERNAL_RESOLUTION_REASONS:
+        if not isinstance(evidence, dict):
             return {"status": "invalid", "settled": False}
-        if str(evidence.get("kind") or "") != str(reason):
+        if evidence.get("kind") != reason:
             return {"status": "invalid", "settled": False}
         required = {
             "issue_closed": {"repo", "number", "issueState"},
@@ -1805,10 +1860,16 @@ class EventLane:
             return {"status": "invalid", "settled": False}
         if str(evidence.get("repo")) != REPO:
             return {"status": "invalid", "settled": False}
-        try:
-            if int(str(evidence.get("number"))) <= 0:
-                return {"status": "invalid", "settled": False}
-        except (TypeError, ValueError):
+        evidence_number = str(evidence.get("number") or "")
+        if not re.fullmatch(r"[1-9][0-9]*", evidence_number):
+            return {"status": "invalid", "settled": False}
+        key_prefix, key_separator, key_number = key.rpartition("#")
+        if (
+            key_separator != "#"
+            or key_prefix != REPO
+            or re.fullmatch(r"[1-9][0-9]*", key_number) is None
+            or key_number != evidence_number
+        ):
             return {"status": "invalid", "settled": False}
         if reason == "issue_closed" and str(evidence.get("issueState")).casefold() != "closed":
             return {"status": "invalid", "settled": False}
@@ -1826,16 +1887,28 @@ class EventLane:
             or str(evidence.get("author") or "").casefold() == "oxygen56"
         ):
             return {"status": "invalid", "settled": False}
-        current = time.time() if now is None else float(now)
-        bounded_watch_seconds = max(1, int(watch_seconds))
+        try:
+            current = time.time() if now is None else float(now)
+        except (TypeError, ValueError, OverflowError):
+            return {"status": "invalid", "settled": False}
+        if not (current == current and abs(current) != float("inf")):
+            return {"status": "invalid", "settled": False}
+        bounded_watch_seconds = watch_seconds
+        try:
+            resolved_at = datetime.fromtimestamp(current, UTC).isoformat().replace("+00:00", "Z")
+            watch_until = (
+                datetime.fromtimestamp(current + bounded_watch_seconds, UTC)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+        except (OverflowError, OSError, ValueError):
+            return {"status": "invalid", "settled": False}
         marker = {
             "schemaVersion": "agentscope_event_recovery_resolution_v1",
             "state": "watch_only",
             "reason": str(reason),
-            "resolvedAt": datetime.fromtimestamp(current, UTC).isoformat().replace("+00:00", "Z"),
-            "watchUntil": datetime.fromtimestamp(current + bounded_watch_seconds, UTC)
-            .isoformat()
-            .replace("+00:00", "Z"),
+            "resolvedAt": resolved_at,
+            "watchUntil": watch_until,
             "evidence": {
                 str(name)[:80]: str(value)[:400]
                 for name, value in evidence.items()
@@ -1890,12 +1963,11 @@ class EventLane:
             lineage_shape_valid = (
                 key_separator == "#"
                 and key_prefix == REPO
-                and key_number.isdigit()
-                and int(key_number) > 0
+                and re.fullmatch(r"[1-9][0-9]*", key_number) is not None
                 and recovery_id == expected_recovery
                 and root_id.startswith("github:")
                 and "outcome-reconcile:" not in root_id
-                and root_id.startswith(f"github:{REPO}:{int(key_number)}:{root_kind}:")
+                and root_id.startswith(f"github:{REPO}:{key_number}:{root_kind}:")
                 and str(root_payload.get("eventId") or "") == root_id
                 and str(root_payload.get("repo") or "") == REPO
                 and str(root_payload.get("number") or "") == key_number
@@ -1928,7 +2000,11 @@ class EventLane:
                 parse_object(recovery_turn["receipt_json"]) if recovery_turn is not None else {}
             )
             root_receipt = parse_object(root_turn["receipt_json"]) if root_turn is not None else {}
-            recovery_exhausted = int(recovery["attempts"] or 0) >= self.max_attempts
+            try:
+                recovery_attempts = int(recovery["attempts"] or 0)
+            except (TypeError, ValueError, OverflowError):
+                return {"status": "not_eligible", "settled": False}
+            recovery_exhausted = recovery_attempts >= self.max_attempts
             if (
                 str(root_payload.get("number") or "") != str(evidence.get("number") or "")
                 or str(root["status"] or "") not in {"delivered", "needs_reconcile"}
@@ -1953,12 +2029,69 @@ class EventLane:
                 and (evidence_time is None or evidence_time < root_time)
             ):
                 return {"status": "not_eligible", "settled": False}
+            try:
+                chain_created_at = max(
+                    float(recovery["created_at"] or 0),
+                    float(root["created_at"] or 0),
+                    float(recovery_turn["created_at"] or 0),
+                    float(root_turn["created_at"] or 0),
+                )
+            except (TypeError, ValueError, OverflowError):
+                return {"status": "not_eligible", "settled": False}
+            # A later recovery/result for the same public key owns the latest
+            # observation.  Do not hide it while settling an older exhausted
+            # chain; let the newer chain finish normally.
+            newer_rows = db.execute(
+                "SELECT e.event_id,e.status,e.created_at,t.status AS turn_status,t.receipt_json "
+                "FROM event_lane_events e LEFT JOIN event_lane_turns t USING(event_id) "
+                "WHERE json_extract(e.payload_json,'$.eventKey')=? "
+                "AND json_extract(e.payload_json,'$.kind')='outcome_reconcile' "
+                "AND e.event_id NOT IN (?,?) AND e.created_at>?",
+                (key, root_id, recovery_id, chain_created_at),
+            ).fetchall()
+            for newer in newer_rows:
+                newer_status = str(newer["status"] or "")
+                newer_turn_status = str(newer["turn_status"] or "")
+                if newer_status in {"pending", "leased", "delivered", "needs_reconcile"} and (
+                    newer_turn_status in {"reserved", "started"}
+                    or _valid_machine_outcome_receipt(
+                        parse_object(newer["receipt_json"]), str(newer["event_id"]), key
+                    )
+                ):
+                    return {"status": "newer_recovery", "settled": False}
+            newer_valid_turn = db.execute(
+                "SELECT event_id,receipt_json FROM event_lane_turns "
+                "WHERE event_key=? AND created_at>? AND event_id NOT IN (?,?)",
+                (key, chain_created_at, root_id, recovery_id),
+            ).fetchall()
+            for newer_turn in newer_valid_turn:
+                if _valid_machine_outcome_receipt(
+                    parse_object(newer_turn["receipt_json"]), str(newer_turn["event_id"]), key
+                ):
+                    return {"status": "newer_turn", "settled": False}
             if live_process(recovery_receipt) or live_process(root_receipt):
                 return {"status": "active_turn", "settled": False}
-            if str(recovery_receipt.get("turnStatus") or "") not in {"failed", "interrupted"}:
+
+            def invalid_terminal_receipt(receipt: dict[str, Any], event_id: str) -> bool:
+                status = str(receipt.get("turnStatus") or "")
+                if status not in {"completed", "failed", "interrupted"}:
+                    return False
+                # A completed/failed wrapper is eligible only when its
+                # machine outcome is genuinely missing or invalid.  Never
+                # overwrite a valid outcome with an operator watch marker.
+                return not _valid_machine_outcome_receipt(receipt, event_id, key)
+
+            if not invalid_terminal_receipt(recovery_receipt, recovery_id):
                 return {"status": "terminal_receipt_missing", "settled": False}
-            if str(root_receipt.get("turnStatus") or "") not in {"failed", "interrupted"}:
+            if not invalid_terminal_receipt(root_receipt, root_id):
                 return {"status": "terminal_receipt_missing", "settled": False}
+            if reason == "external_claim_comment":
+                author_type = str(
+                    evidence.get("authorType") or evidence.get("userType") or ""
+                ).casefold()
+                excerpt = str(evidence.get("excerpt") or "")
+                if author_type == "bot" or _NEGATED_EXTERNAL_CLAIM_RE.search(excerpt):
+                    return {"status": "invalid", "settled": False}
             active = db.execute(
                 "SELECT event_id FROM event_lane_turns WHERE event_key=? "
                 "AND status IN ('reserved','started') AND event_id NOT IN (?,?) LIMIT 1",
