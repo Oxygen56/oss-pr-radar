@@ -627,6 +627,7 @@ def _finalize_controller_commit_for_test(
     context: dict,
     value: dict,
     result_path: Path | None = None,
+    managed_ledger: ManagedLedger | None = None,
     write_if_unchanged: bool = True,
 ):
     worktree = Path(candidate["worktreePath"]).resolve()
@@ -654,6 +655,7 @@ def _finalize_controller_commit_for_test(
             context=context,
             value=value,
             result_access=result_access,
+            managed_ledger=managed_ledger,
             write_if_unchanged=write_if_unchanged,
         )
     if result_path is not None and result_path.resolve() != private_result.resolve():
@@ -25756,6 +25758,418 @@ def test_validation_followup_recovers_a_committed_cumulative_file_handoff(tmp_pa
         write_if_unchanged=False,
     )
     assert repeated == finalized
+
+
+def _stale_context_validation_parent_fixture(tmp_path: Path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("independent_review_passed",),
+    )
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert first["errors"] == []
+    assert first["validationDeferred"][0]["key"] == "a/b#1"
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    previous_head = run_git(worktree, "rev-parse", "HEAD")
+    base_sha = str(context["selectedBaseSha"])
+    assert run_git(worktree, "rev-parse", f"{previous_head}^") == base_sha
+
+    # Reproduce the production recovery shape: the durable managed result is
+    # the implementation head, while the mutable context still carries the
+    # earlier reproduction/base receipt.
+    stale_receipt = dict(context["reproductionReceipt"])
+    stale_receipt["headSha"] = base_sha
+    stale_receipt["commitSha"] = base_sha
+    context["reproductionReceipt"] = stale_receipt
+    candidate = next(
+        item
+        for item in store.task_result_candidates()
+        if item["key"] == "a/b#1" and item["threadId"] == "thread-1"
+    )
+    managed = ManagedLedger(store.path, ensure_schema=False)
+    historical = managed.latest_authenticated_fix_ready_result_for_task(
+        "intent-1",
+        issue_url="https://github.com/a/b/issues/1",
+    )
+    assert historical is not None
+    assert historical["head_sha"] == previous_head
+    assert historical["validation"]["passed"] is False
+    assert historical["validation"]["reproductionReceiptAuthenticated"] is True
+    return store, managed, candidate, context, worktree, result_path, previous_head
+
+
+def _completed_validation_child(
+    worktree: Path,
+    result_path: Path,
+    context: dict,
+    previous_head: str,
+) -> dict:
+    test_path = worktree / "tests" / "test_runtime.py"
+    test_path.parent.mkdir(exist_ok=True)
+    test_path.write_text("def test_runtime():\n    assert True\n", encoding="utf-8")
+    run_git(worktree, "add", "tests/test_runtime.py")
+    run_git(worktree, "commit", "-m", "test: verify runtime correction")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_complete",
+            "commitSha": run_git(worktree, "rev-parse", "HEAD"),
+            "headSha": previous_head,
+            "controllerCommitChangedFiles": ["tests/test_runtime.py"],
+            "changedFiles": ["runtime.py", "tests/test_runtime.py"],
+            "codePaths": ["runtime.py", "tests/test_runtime.py"],
+        }
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    return value
+
+
+def test_non_pr_validation_accepts_latest_authenticated_managed_parent(tmp_path):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    value = _completed_validation_child(worktree, result_path, context, previous_head)
+
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate=candidate,
+        context=context,
+        value=value,
+        result_path=result_path,
+        managed_ledger=managed,
+    )
+
+    assert run_git(worktree, "rev-parse", "HEAD^") == previous_head
+    assert finalized["commitSha"] == run_git(worktree, "rev-parse", "HEAD")
+    assert finalized["headSha"] == previous_head
+    assert finalized["controllerCommitChangedFiles"] == ["tests/test_runtime.py"]
+
+    managed.record_result(
+        task_id="intent-1",
+        result_digest="f" * 64,
+        worker_state="patched",
+        head_sha=finalized["commitSha"],
+        commit_sha=finalized["commitSha"],
+        validation={
+            "passed": False,
+            "reproductionReceiptAuthenticated": True,
+        },
+        prior_head_sha=previous_head,
+        new_head_sha=finalized["commitSha"],
+        source="dispatch-result",
+        provenance={
+            "stage": "FIX_READY",
+            "issueUrl": "https://github.com/a/b/issues/1",
+        },
+    )
+    latest = managed.latest_authenticated_fix_ready_result_for_task(
+        "intent-1",
+        issue_url="https://github.com/a/b/issues/1",
+    )
+    assert latest is not None
+    assert latest["head_sha"] == finalized["commitSha"]
+    replayed = dict(finalized)
+    replayed["headSha"] = finalized["commitSha"]
+    result_path.write_text(json.dumps(replayed), encoding="utf-8")
+    repeated, _raw = _finalize_controller_commit_for_test(
+        candidate=candidate,
+        context=context,
+        value=replayed,
+        result_path=result_path,
+        managed_ledger=managed,
+        write_if_unchanged=False,
+    )
+    assert repeated == replayed
+
+
+def test_non_pr_validation_required_commits_on_latest_authenticated_managed_parent(tmp_path):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    test_path = worktree / "tests" / "test_runtime.py"
+    test_path.parent.mkdir(exist_ok=True)
+    test_path.write_text("def test_runtime():\n    assert True\n", encoding="utf-8")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "headSha": previous_head,
+            "changedFiles": ["runtime.py", "tests/test_runtime.py"],
+            "codePaths": ["runtime.py", "tests/test_runtime.py"],
+        }
+    )
+    value.pop("controllerCommitChangedFiles", None)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate=candidate,
+        context=context,
+        value=value,
+        result_path=result_path,
+        managed_ledger=managed,
+    )
+
+    assert run_git(worktree, "rev-parse", "HEAD^") == previous_head
+    assert finalized["handoffMode"] == "controller_commit_complete"
+    assert finalized["controllerCommitChangedFiles"] == ["tests/test_runtime.py"]
+    assert finalized["changedFiles"] == ["runtime.py", "tests/test_runtime.py"]
+
+
+def test_non_pr_validation_rejects_an_unmanaged_intermediate_parent(tmp_path):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    (worktree / "intermediate.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "intermediate.py")
+    run_git(worktree, "commit", "-m", "fix: unmanaged intermediate")
+    unmanaged_parent = run_git(worktree, "rev-parse", "HEAD")
+    value = _completed_validation_child(worktree, result_path, context, unmanaged_parent)
+    value["changedFiles"] = ["intermediate.py", "runtime.py", "tests/test_runtime.py"]
+    value["codePaths"] = ["intermediate.py", "runtime.py", "tests/test_runtime.py"]
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    before = result_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="parent does not match validation input"):
+        _finalize_controller_commit_for_test(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_path=result_path,
+            managed_ledger=managed,
+        )
+
+    assert previous_head != unmanaged_parent
+    assert result_path.read_bytes() == before
+
+
+def test_non_pr_validation_rejects_a_direct_child_of_stale_context_when_managed_head_exists(
+    tmp_path,
+):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    stale_context_parent = str(context["reproductionReceipt"]["commitSha"])
+    assert stale_context_parent != previous_head
+    branch = str(json.loads(result_path.read_text(encoding="utf-8"))["branch"])
+    run_git(worktree, "switch", "-C", branch, stale_context_parent)
+    (worktree / "runtime.py").write_text("value = 9\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: bypass managed validation head")
+    rogue_head = run_git(worktree, "rev-parse", "HEAD")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_complete",
+            "commitSha": rogue_head,
+            "headSha": rogue_head,
+            "controllerCommitChangedFiles": ["runtime.py"],
+            "changedFiles": ["runtime.py"],
+            "codePaths": ["runtime.py"],
+        }
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    before = result_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="parent does not match validation input"):
+        _finalize_controller_commit_for_test(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_path=result_path,
+            managed_ledger=managed,
+        )
+
+    assert run_git(worktree, "rev-parse", "HEAD^") == stale_context_parent
+    assert result_path.read_bytes() == before
+
+
+def test_non_pr_validation_rejects_a_different_task_with_shared_thread_and_worktree(tmp_path):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    value = _completed_validation_child(worktree, result_path, context, previous_head)
+    mismatched_candidate = dict(candidate) | {"intentId": "different-task"}
+    before = result_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="validation parent identity is invalid"):
+        _finalize_controller_commit_for_test(
+            candidate=mismatched_candidate,
+            context=context,
+            value=value,
+            result_path=result_path,
+            managed_ledger=managed,
+        )
+
+    assert result_path.read_bytes() == before
+
+
+def test_non_pr_validation_rejects_a_managed_parent_outside_the_context_ancestry(tmp_path):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    tree = run_git(worktree, "rev-parse", f"{previous_head}^{{tree}}")
+    unrelated = subprocess.run(
+        ["git", "commit-tree", tree],
+        cwd=worktree,
+        check=True,
+        input="unrelated context parent\n",
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    context_receipt = dict(context["reproductionReceipt"])
+    context_receipt["headSha"] = unrelated
+    context_receipt["commitSha"] = unrelated
+    context["reproductionReceipt"] = context_receipt
+    value = _completed_validation_child(worktree, result_path, context, previous_head)
+    before = result_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="parent does not match validation input"):
+        _finalize_controller_commit_for_test(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_path=result_path,
+            managed_ledger=managed,
+        )
+
+    assert result_path.read_bytes() == before
+
+
+def test_non_pr_validation_rejects_a_merge_over_the_managed_parent(tmp_path):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    run_git(worktree, "switch", "-c", "validation-side", previous_head)
+    (worktree / "runtime.py").write_text("value = 3\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "test: side validation")
+    side_head = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", "fix/1-runtime-boundary")
+    (worktree / "runtime.py").write_text("value = 4\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "test: competing validation")
+    completed = subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", side_head],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 1
+    (worktree / "runtime.py").write_text("value = 5\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "test: merge validation")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_complete",
+            "commitSha": run_git(worktree, "rev-parse", "HEAD"),
+            "headSha": previous_head,
+            "controllerCommitChangedFiles": ["runtime.py"],
+            "changedFiles": ["runtime.py"],
+            "codePaths": ["runtime.py"],
+        }
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    before = result_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="parent does not match validation input"):
+        _finalize_controller_commit_for_test(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_path=result_path,
+            managed_ledger=managed,
+        )
+
+    assert len(run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()) == 3
+    assert result_path.read_bytes() == before
+
+
+def test_non_pr_validation_rejects_tampered_managed_parent_authentication(tmp_path):
+    (
+        store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    value = _completed_validation_child(worktree, result_path, context, previous_head)
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT result_key,validation_json FROM managed_results WHERE task_id='intent-1'"
+        ).fetchone()
+        validation = json.loads(row["validation_json"])
+        validation["reproductionReceiptAuthenticated"] = False
+        connection.execute(
+            "UPDATE managed_results SET validation_json=? WHERE result_key=?",
+            (json.dumps(validation, sort_keys=True, separators=(",", ":")), row["result_key"]),
+        )
+    before = result_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="parent does not match validation input"):
+        _finalize_controller_commit_for_test(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_path=result_path,
+            managed_ledger=managed,
+        )
+
+    assert result_path.read_bytes() == before
 
 
 def test_validation_followup_required_rejects_a_wrong_parent_before_commit(tmp_path):

@@ -3595,6 +3595,68 @@ class ManagedLedger:
             return None
         return result | {"provenance": provenance}
 
+    def latest_authenticated_fix_ready_result_for_task(
+        self,
+        task_id: str,
+        *,
+        issue_url: str,
+    ) -> dict[str, Any] | None:
+        """Return the latest controller-ingested unpublished implementation head.
+
+        Validation continuations can outlive the mutable task context that
+        originally authorized implementation.  The managed result is the
+        durable authority for the exact implementation head a corrective
+        commit is allowed to extend.  Overall validation may still be pending;
+        only the reproduction binding must already be authenticated.
+        """
+
+        if not task_id or _ISSUE_URL_RE.fullmatch(issue_url) is None:
+            return None
+        connection = self._connection()
+        try:
+            row = connection.execute(
+                """SELECT * FROM managed_results
+                   WHERE task_id=? AND pr_key IS NULL AND result_type IS NULL
+                     AND head_sha=commit_sha AND is_current=1
+                     AND superseded_by IS NULL
+                   ORDER BY observed_at DESC,result_key DESC LIMIT 1""",
+                (task_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return None
+        result = dict(row)
+        provenance = json_payload(result.get("provenance_json"))
+        validation = json_payload(result.get("validation_json"))
+        if (
+            provenance.get("stage") != "FIX_READY"
+            or provenance.get("issueUrl") != issue_url
+            or result.get("source") != "dispatch-result"
+            or str(result.get("worker_state") or "").casefold() != "patched"
+            or re.fullmatch(r"[0-9a-f]{40}", str(result.get("head_sha") or "")) is None
+            or result.get("commit_sha") != result.get("head_sha")
+            or re.fullmatch(r"[0-9a-f]{64}", str(result.get("result_digest") or "")) is None
+            or validation.get("reproductionReceiptAuthenticated") is not True
+        ):
+            return None
+        return result | {"provenance": provenance, "validation": validation}
+
+    def has_unpublished_result_for_task(self, task_id: str) -> bool:
+        """Return whether any durable non-PR result already claims this task."""
+
+        if not task_id:
+            return False
+        connection = self._connection()
+        try:
+            row = connection.execute(
+                "SELECT 1 FROM managed_results WHERE task_id=? AND pr_key IS NULL LIMIT 1",
+                (task_id,),
+            ).fetchone()
+            return row is not None
+        finally:
+            connection.close()
+
     def record_published_task_result(
         self,
         *,

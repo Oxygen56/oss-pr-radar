@@ -12952,6 +12952,116 @@ def _merge_parents(worktree: Path, revision: str = "HEAD") -> list[str]:
     return values[1:]
 
 
+def _non_pr_validation_parent(
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    worktree: Path,
+    managed_ledger: ManagedLedger | None,
+) -> str:
+    """Resolve the exact implementation head a validation commit may extend."""
+
+    context_receipt = context.get("reproductionReceipt") or context.get("probeReceipt")
+    context_parent = (
+        str(context_receipt.get("commitSha") or "") if isinstance(context_receipt, dict) else ""
+    )
+    declared_head = str(value.get("headSha") or "")
+    if (
+        re.fullmatch(r"[0-9a-f]{40}", context_parent) is None
+        or re.fullmatch(r"[0-9a-f]{40}", declared_head) is None
+    ):
+        raise RuntimeError("controller commit lacks a valid validation parent")
+    worktree_head = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    validation_parent = declared_head
+    if value.get("handoffMode") == "controller_commit_complete":
+        declared_commit = str(value.get("commitSha") or "")
+        if worktree_head == context_parent:
+            if declared_head not in {worktree_head, declared_commit}:
+                raise RuntimeError("controller commit parent does not match validation input")
+            validation_parent = context_parent
+        else:
+            parents = _merge_parents(worktree, worktree_head)
+            if len(parents) != 1 or declared_head not in {
+                parents[0],
+                worktree_head,
+                declared_commit,
+            }:
+                raise RuntimeError("controller commit parent does not match validation input")
+            validation_parent = parents[0]
+    if managed_ledger is None:
+        if validation_parent == context_parent:
+            return validation_parent
+        raise RuntimeError("controller commit parent does not match validation input")
+
+    task_id = str(value.get("taskId") or candidate.get("intentId") or "")
+    key = str(candidate.get("key") or "")
+    issue_url = str(candidate.get("issueUrl") or "")
+    thread_id = str(candidate.get("threadId") or "")
+    candidate_worktree = str(candidate.get("worktreePath") or "")
+    identity = {
+        "key": key,
+        "issueUrl": issue_url,
+        "threadId": thread_id,
+        "worktreePath": candidate_worktree,
+    }
+    if (
+        not task_id
+        or not key
+        or ISSUE_URL.fullmatch(issue_url) is None
+        or not thread_id
+        or Path(candidate_worktree).resolve() != worktree.resolve()
+        or candidate.get("intentId") != task_id
+        or any(context.get(name) != expected for name, expected in identity.items())
+        or value.get("key") != key
+        or value.get("issueUrl") != issue_url
+        or value.get("threadId") != thread_id
+        or value.get("worktreePath") != str(worktree)
+        or context.get("intentId") != task_id
+        or value.get("taskId") != task_id
+    ):
+        raise RuntimeError("controller validation parent identity is invalid")
+
+    managed_task = managed_ledger.read_task(task_id)
+    if managed_task is None:
+        if validation_parent == context_parent:
+            return validation_parent
+        raise RuntimeError("controller validation parent task binding is invalid")
+    if (
+        not isinstance(managed_task, dict)
+        or managed_task.get("readSource") != "managed"
+        or managed_task.get("opportunity_key") != key
+        or managed_task.get("thread_id") != thread_id
+        or Path(str(managed_task.get("worktree_path") or "")).resolve() != worktree.resolve()
+        or managed_task.get("state") not in {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}
+    ):
+        raise RuntimeError("controller validation parent task binding is invalid")
+
+    historical = managed_ledger.latest_authenticated_fix_ready_result_for_task(
+        task_id,
+        issue_url=issue_url,
+    )
+    if historical is None:
+        if (
+            not managed_ledger.has_unpublished_result_for_task(task_id)
+            and validation_parent == context_parent
+            and managed_task.get("state") == "IMPLEMENTATION_READY"
+        ):
+            return validation_parent
+        raise RuntimeError("controller commit parent does not match validation input")
+    if historical.get("head_sha") not in {validation_parent, worktree_head}:
+        raise RuntimeError("controller commit parent does not match validation input")
+    try:
+        command(["git", "cat-file", "-e", f"{validation_parent}^{{commit}}"], cwd=worktree)
+        command(
+            ["git", "merge-base", "--is-ancestor", context_parent, validation_parent],
+            cwd=worktree,
+        )
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("controller commit parent does not match validation input") from exc
+    return validation_parent
+
+
 def _restore_tree_paths(worktree: Path, tree: str, paths: list[str]) -> None:
     for path in paths:
         present = _optional_command(["git", "cat-file", "-e", f"{tree}:{path}"], cwd=worktree)
@@ -13332,6 +13442,7 @@ def _finalize_controller_commit(
     context: dict[str, Any],
     value: dict[str, Any],
     result_access: _ValidationWorktreeDirectory,
+    managed_ledger: ManagedLedger | None = None,
     write_if_unchanged: bool = True,
 ) -> tuple[dict[str, Any], bytes]:
     if value.get("handoffMode") in {
@@ -13447,14 +13558,13 @@ def _finalize_controller_commit(
             finalized["previousCommitSha"] = previous_commit
         else:
             if is_validation_continuation:
-                context_receipt = context.get("reproductionReceipt") or context.get("probeReceipt")
-                validation_parent = (
-                    str(context_receipt.get("commitSha") or "")
-                    if isinstance(context_receipt, dict)
-                    else ""
+                validation_parent = _non_pr_validation_parent(
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    worktree=worktree,
+                    managed_ledger=managed_ledger,
                 )
-                if not re.fullmatch(r"[0-9a-f]{40}", validation_parent):
-                    raise RuntimeError("controller commit lacks a valid validation parent")
                 if head_sha != validation_parent and _merge_parents(worktree, head_sha) != [
                     validation_parent
                 ]:
@@ -13500,12 +13610,13 @@ def _finalize_controller_commit(
         if not re.fullmatch(r"[0-9a-f]{40}", expected_parent):
             raise RuntimeError("controller commit lacks a valid PR follow-up parent")
     elif is_validation_continuation:
-        context_receipt = context.get("reproductionReceipt") or context.get("probeReceipt")
-        expected_parent = (
-            str(context_receipt.get("commitSha") or "") if isinstance(context_receipt, dict) else ""
+        expected_parent = _non_pr_validation_parent(
+            candidate=candidate,
+            context=context,
+            value=value,
+            worktree=worktree,
+            managed_ledger=managed_ledger,
         )
-        if not re.fullmatch(r"[0-9a-f]{40}", expected_parent):
-            raise RuntimeError("controller commit lacks a valid validation parent")
     if actual:
         _enforce_code_path_tombstones(
             context=context,
@@ -18155,6 +18266,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     context=context,
                     value=value,
                     result_access=result_access,
+                    managed_ledger=managed_ledger,
                     write_if_unchanged=False,
                 )
                 value, raw = _bind_final_reproduction_receipt(
@@ -18695,6 +18807,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     context=context,
                     value=value,
                     result_access=result_access,
+                    managed_ledger=managed_ledger,
                     write_if_unchanged=False,
                 )
                 digest_seen = store.task_result_digest_seen(
@@ -18798,6 +18911,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     context=context,
                     value=value,
                     result_access=result_access,
+                    managed_ledger=managed_ledger,
                 )
                 reported_review_value = dict(value)
                 value, raw = _bind_final_reproduction_receipt(
