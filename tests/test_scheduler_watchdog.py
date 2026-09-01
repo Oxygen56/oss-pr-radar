@@ -698,6 +698,54 @@ def test_pending_claim_ignores_baseline_and_out_of_request_window_runs(tmp_path,
     assert "run" not in state["slots"][key]
 
 
+@pytest.mark.parametrize("head_branch", [None, "", "feature"])
+def test_legacy_claim_does_not_migrate_missing_or_wrong_branch(tmp_path, monkeypatch, head_branch):
+    root = _root(tmp_path, monkeypatch)
+    key = fallback_key("Oxygen56/oss-pr-radar", "radar.yml", SLOT)
+    state_path = root / "state" / "scheduler-watchdog.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": WATCHDOG_SCHEMA,
+                "slots": {
+                    key: {
+                        "fallbackKey": key,
+                        "slotAt": "2026-08-31T03:17:00Z",
+                        "firstObservedAt": "2026-08-31T03:31:00Z",
+                        "claimedAt": "2026-08-31T03:31:00Z",
+                        "dispatchFinishedAt": "2026-08-31T03:31:05Z",
+                        "dispatchAttempts": 1,
+                        "baselineRunIds": [],
+                        "state": "REQUESTED",
+                    }
+                },
+            }
+        )
+    )
+    state_path.chmod(0o600)
+
+    result = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [
+            _run(
+                event="workflow_dispatch",
+                run_id=82,
+                created_at="2026-08-31T03:31:09Z",
+                head_branch=head_branch,
+            )
+        ],
+        dispatch=lambda *_args: pytest.fail("untrusted branch must remain read-only"),
+        effect_guard=_guard,
+    )
+
+    assert result["action"] == "reconciling"
+    state = json.loads(state_path.read_text())
+    assert state["slots"][key]["state"] == "REQUESTED"
+    assert "workflowRunId" not in state["slots"][key]
+    assert "run" not in state["slots"][key]
+
+
 def test_late_natural_run_cannot_replace_fallback_evidence_or_trigger_again(tmp_path, monkeypatch):
     root = _root(tmp_path, monkeypatch)
     attempts = []

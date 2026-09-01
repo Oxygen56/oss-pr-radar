@@ -168,7 +168,7 @@ def _legacy_claim_candidate(
             or run_id in baseline_ids
             or run_id in reserved_run_ids
             or run.get("event") != "workflow_dispatch"
-            or run.get("head_branch") not in {None, "", ref}
+            or run.get("head_branch") != ref
             or created is None
             or created < claimed - LEGACY_TIME_PRECISION
             or created > claimed + LEGACY_ATTRIBUTION_WINDOW
