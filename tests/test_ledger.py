@@ -5206,6 +5206,11 @@ def _published_validation_followup_store(tmp_path, *, stage="PR_OPEN"):
             task_id="recovered-intent",
             thread_id="thread-recovered",
         )
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="old-threadless-result",
+        stage=stage,
+    )
     store.record_validation_deferred(
         "a/b#1",
         thread_id="thread-recovered",
@@ -5259,6 +5264,51 @@ def test_local_receipt_candidates_keep_published_validation_followup_until_new_r
     assert store.local_receipt_candidates() == []
     assert store.local_receipt_candidates() == []
     assert store.task_result_candidates()[0]["stage"] == stage
+
+
+def test_local_receipt_candidates_bind_threadless_result_to_later_validation_deferred(tmp_path):
+    store, _reservation = _published_validation_followup_store(tmp_path)
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="unbound-threadless-result",
+        stage="PR_OPEN",
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','TASK_RESULT_VALIDATION_DEFERRED',?,?,?)""",
+            (
+                "unbound-threadless-result",
+                json.dumps(
+                    {
+                        "threadId": "another-thread",
+                        "resultDigest": "unbound-threadless-result",
+                        "missing": ["relevant_tests_green"],
+                    }
+                ),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
+
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-recovered",
+        result_digest="bound-threadless-result",
+        missing=["independent_review_passed"],
+    )
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="bound-threadless-result",
+        stage="PR_OPEN",
+    )
+
+    assert store.local_receipt_candidates() == []
+    assert store.local_receipt_candidates() == []
+    assert store.task_result_candidates()[0]["stage"] == "PR_OPEN"
 
 
 @pytest.mark.parametrize(

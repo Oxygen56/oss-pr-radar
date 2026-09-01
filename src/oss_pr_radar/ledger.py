@@ -8058,8 +8058,28 @@ class RadarLedger:
                                    'PUBLISHED_TASK_RESULT_BACKFILLED'
                                  )
                                  AND result.id>sent.id
-                                 AND json_extract(result.payload_json,'$.threadId')=
-                                     i.thread_id
+                                 AND (
+                                   json_extract(result.payload_json,'$.threadId')=
+                                       i.thread_id
+                                   OR (
+                                     result.event_type='TASK_RESULT_INGESTED'
+                                     AND COALESCE(
+                                       json_extract(result.payload_json,'$.threadId'),''
+                                     )=''
+                                     AND EXISTS (
+                                       SELECT 1 FROM events deferred
+                                       WHERE deferred.opportunity_key=
+                                             sent.opportunity_key
+                                         AND deferred.event_type=
+                                             'TASK_RESULT_VALIDATION_DEFERRED'
+                                         AND deferred.dedupe_key=result.dedupe_key
+                                         AND deferred.id>sent.id
+                                         AND json_extract(
+                                           deferred.payload_json,'$.threadId'
+                                         )=i.thread_id
+                                     )
+                                   )
+                                 )
                              )
                              AND NOT EXISTS (
                                SELECT 1 FROM events cancelled
