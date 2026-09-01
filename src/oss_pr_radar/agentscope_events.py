@@ -1539,6 +1539,7 @@ class EventLane:
                 and not str(turn["turn_id"] or "")
             )
             recovery_resettable = False
+            recovery_live_process = False
             if turn is not None and not resettable and recovery_retry:
                 receipt = _receipt_object(turn["receipt_json"])
                 terminal_status = str(receipt.get("turnStatus") or "")
@@ -1560,7 +1561,28 @@ class EventLane:
                     and invalid_outcome
                     and not _receipt_has_live_bridge(receipt)
                 )
+                recovery_live_process = (
+                    str(turn["status"] or "") == "needs_reconcile"
+                    and has_terminal_marker
+                    and invalid_outcome
+                    and not recovery_resettable
+                )
             if turn is not None and not (resettable or recovery_resettable):
+                if recovery_live_process:
+                    refunded = db.execute(
+                        "UPDATE event_lane_events SET status='pending',attempts=attempts-1,"
+                        "delivered_at=NULL,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+                        "WHERE event_id=? AND status='leased' AND attempts>0 "
+                        "AND lease_owner=? AND lease_token=?",
+                        (str(event_id), str(owner), token),
+                    )
+                    if refunded.rowcount != 1:
+                        raise RuntimeError("live recovery claim changed during atomic refund")
+                    return {
+                        "status": "busy",
+                        "activeEventId": str(event_id),
+                        "reason": "recovery_process_active",
+                    }
                 return {"status": "conflict", "reason": "turn_conflict"}
             active = db.execute(
                 "SELECT event_id FROM event_lane_turns WHERE event_id<>? "

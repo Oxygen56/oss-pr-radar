@@ -675,8 +675,18 @@ def test_recovery_retry_does_not_clear_live_or_valid_bound_turn(tmp_path, monkey
         owner="worker-a",
         recovery_retry=True,
     )
-    assert live == {"status": "conflict", "reason": "turn_conflict"}
+    assert live == {
+        "status": "busy",
+        "activeEventId": event_id,
+        "reason": "recovery_process_active",
+    }
     assert lane.handler_turn(event_id)["turn_id"] == "turn-old"
+    with lane.connect() as db:
+        live_event = db.execute(
+            "SELECT status,attempts,lease_token FROM event_lane_events WHERE event_id=?",
+            (event_id,),
+        ).fetchone()
+    assert dict(live_event) == {"status": "pending", "attempts": 0, "lease_token": None}
 
     monkeypatch.setattr("oss_pr_radar.agentscope_events._event_bridge_process_alive", lambda _pid: False)
     lane2 = EventLane(tmp_path / "events-valid.db")
