@@ -58650,6 +58650,37 @@
     ],
     "why": "The issue provides a reproducible throughput regression with detailed benchmarks and bisection, and a comment identifies a plausible root cause in vLLM's pooling entrypoint executor configuration, with a concrete one-flag test to confirm. This is a valuable performance investigation with a clear validation path."
   },
+  "effa63f421553c49a9e9613d95dee31f3750c9c9ab9074ebf1afa0baea11a6cf": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #5642 is open and semantically overlaps but is not linked to the issue and lacks root-cause coverage; issue body claims no related PR"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "variable_detector.py: reorder detection logic to check company/organization before generic name fallback",
+      "tests/ci/test_variable_detection_company_name.py: add regression tests for company_name and organization_name"
+    ],
+    "risks": [
+      "Potential behavior change for fields containing both 'name' and 'company' but not intended as company (e.g., 'company_person_name')",
+      "Need to ensure personal-name fields (first_name, last_name, full_name) remain unaffected"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided pytest reproduction to confirm failure before fix and pass after",
+      "Add regression tests for all four attribute names and propagation through detect_variables_in_history"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different fix approach or have design constraints",
+      "Whether PR #5642 already fixes the issue despite not being linked"
+    ],
+    "why": "The issue provides a clear root cause (generic 'name' condition precedes company/organization check), a deterministic reproduction with expected/actual pairs, and a concrete test plan. The open PR #5642 overlaps semantically but is not linked and lacks root-cause coverage, so the issue remains actionable."
+  },
   "f015ba17b4ee68ab60260b399c2efd8354339085781bbf99045157d64ba4a658": {
     "confidence": 0.85,
     "contradictions": [],
