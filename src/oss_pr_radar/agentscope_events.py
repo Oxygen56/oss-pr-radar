@@ -1873,7 +1873,7 @@ class EventLane:
             return {"status": "invalid", "settled": False}
         if reason == "issue_closed" and str(evidence.get("issueState")).casefold() != "closed":
             return {"status": "invalid", "settled": False}
-        if reason != "issue_closed" and str(evidence.get("issueState")).casefold() == "closed":
+        if reason != "issue_closed" and str(evidence.get("issueState")).casefold() != "open":
             return {"status": "invalid", "settled": False}
         if (
             reason == "issue_assigned_external"
@@ -2044,7 +2044,8 @@ class EventLane:
             newer_rows = db.execute(
                 "SELECT e.event_id,e.status,e.created_at,t.status AS turn_status,t.receipt_json "
                 "FROM event_lane_events e LEFT JOIN event_lane_turns t USING(event_id) "
-                "WHERE json_extract(e.payload_json,'$.eventKey')=? "
+                "WHERE json_valid(e.payload_json) "
+                "AND json_extract(e.payload_json,'$.eventKey')=? "
                 "AND json_extract(e.payload_json,'$.kind')='outcome_reconcile' "
                 "AND e.event_id NOT IN (?,?) AND e.created_at>?",
                 (key, root_id, recovery_id, chain_created_at),
@@ -2052,13 +2053,15 @@ class EventLane:
             for newer in newer_rows:
                 newer_status = str(newer["status"] or "")
                 newer_turn_status = str(newer["turn_status"] or "")
-                if newer_status in {"pending", "leased", "delivered", "needs_reconcile"} and (
-                    newer_turn_status in {"reserved", "started"}
-                    or _valid_machine_outcome_receipt(
-                        parse_object(newer["receipt_json"]), str(newer["event_id"]), key
-                    )
-                ):
-                    return {"status": "newer_recovery", "settled": False}
+                if newer_status in {"pending", "leased", "delivered", "needs_reconcile"}:
+                    if (
+                        newer_status in {"pending", "leased"}
+                        or newer_turn_status in {"reserved", "started"}
+                        or _valid_machine_outcome_receipt(
+                            parse_object(newer["receipt_json"]), str(newer["event_id"]), key
+                        )
+                    ):
+                        return {"status": "newer_recovery", "settled": False}
             newer_valid_turn = db.execute(
                 "SELECT event_id,receipt_json FROM event_lane_turns "
                 "WHERE event_key=? AND created_at>? AND event_id NOT IN (?,?)",

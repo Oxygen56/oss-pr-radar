@@ -784,7 +784,12 @@ def _settle_exhausted_outcome_recoveries(
 ) -> dict[str, int]:
     """Settle only exhausted chains whose current public state proves no-op."""
 
-    current = time.time() if now is None else float(now)
+    try:
+        current = time.time() if now is None else float(now)
+    except (TypeError, ValueError, OverflowError):
+        return {"candidates": 0, "settled": 0, "alreadyApplied": 0, "skipped": 0}
+    if not (current == current and abs(current) != float("inf")):
+        return {"candidates": 0, "settled": 0, "alreadyApplied": 0, "skipped": 0}
     with lane.connect() as db:
         rows = db.execute(
             "SELECT e.event_id,e.payload_json,e.status,e.attempts,t.status AS turn_status,"
@@ -793,8 +798,9 @@ def _settle_exhausted_outcome_recoveries(
             "LEFT JOIN event_lane_state s ON s.key=('outcome-recovery-evidence:' || e.event_id) "
             "WHERE (e.status='needs_reconcile' OR "
             "(e.status='delivered' AND t.status='needs_reconcile')) "
-            "AND (e.event_id LIKE 'outcome-reconcile:%' "
-            "OR json_extract(e.payload_json,'$.kind')='outcome_reconcile') "
+            "AND (e.event_id LIKE 'outcome-reconcile:%' OR "
+            "(json_valid(e.payload_json) AND "
+            "json_extract(e.payload_json,'$.kind')='outcome_reconcile')) "
             "AND e.attempts>=? "
             # Prefer chains that have never been checked, then rotate older
             # audits ahead of recently checked rows so a blocked early row
