@@ -584,6 +584,187 @@ def test_atomic_handler_gate_preserves_reconcile_receipts_on_busy_or_conflict(
     assert lane.handler_turn("remote-reconcile") == before_remote
 
 
+def _prepare_bound_recovery_retry(lane: EventLane, *, receipt: dict) -> tuple[str, dict]:
+    """Create one leased recovery event with an already-bound old turn."""
+    event_id = "outcome-reconcile:agentscope:retry-bound"
+    event_key = "agentscope-ai/agentscope#1"
+    lane.append(
+        {
+            "eventId": event_id,
+            "eventKey": event_key,
+            "kind": "outcome_reconcile",
+            "rootEventId": "root-retry-bound",
+            "payload": {"eventId": "root-retry-bound", "publicKey": event_key},
+        },
+        priority=250,
+    )
+    claimed = lane.claim(limit=1, owner="worker-a")[0]
+    lane.reserve_handler_turn(event_key, event_id, "client:old")
+    lane.bind_handler_turn(
+        event_key,
+        event_id,
+        "thread-old",
+        "turn-old",
+        receipt,
+        status="needs_reconcile",
+    )
+    return event_id, claimed
+
+
+def test_recovery_retry_resets_dead_bound_turn_and_preserves_bounded_history(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    event_id, claimed = _prepare_bound_recovery_retry(
+        lane,
+        receipt={
+            "turnStatus": "completed",
+            "workerPid": 1_000_000_000,
+            "outcome": {"error": "OUTCOME_MISSING_OR_INVALID"},
+        },
+    )
+
+    result = lane.try_reserve_handler_turn_if_idle(
+        "agentscope-ai/agentscope#1",
+        event_id,
+        "client:new",
+        lease_token=str(claimed["leaseToken"]),
+        owner="worker-a",
+        recovery_retry=True,
+    )
+
+    assert result["status"] == "reserved"
+    turn = lane.handler_turn(event_id)
+    assert turn is not None
+    assert turn["thread_id"] == ""
+    assert turn["turn_id"] is None
+    reset_receipt = json.loads(turn["receipt_json"])
+    assert reset_receipt["retryOfTurnId"] == "turn-old"
+    assert reset_receipt["receiptHistory"][0]["receipt"]["turnStatus"] == "completed"
+
+    lane.bind_handler_turn(
+        "agentscope-ai/agentscope#1",
+        event_id,
+        "thread-new",
+        "turn-new",
+        {"turnStatus": "completed", "outcome": {"error": "again"}},
+        status="completed",
+    )
+    rebound = lane.handler_turn(event_id)
+    assert rebound is not None
+    assert json.loads(rebound["receipt_json"])["receiptHistory"][0]["receipt"]["workerPid"] == 1_000_000_000
+    thread = lane.handler_thread("agentscope-ai/agentscope#1")
+    assert thread is not None
+    assert json.loads(thread["receipt_json"])["receiptHistory"][0]["receipt"]["turnStatus"] == "completed"
+
+
+def test_recovery_retry_does_not_clear_live_or_valid_bound_turn(tmp_path, monkeypatch):
+    lane = EventLane(tmp_path / "events.db")
+    event_id, claimed = _prepare_bound_recovery_retry(
+        lane,
+        receipt={
+            "turnStatus": "completed",
+            "workerPid": 1234,
+            "outcome": {"error": "OUTCOME_MISSING_OR_INVALID"},
+        },
+    )
+    monkeypatch.setattr("oss_pr_radar.agentscope_events._event_bridge_process_alive", lambda _pid: True)
+    live = lane.try_reserve_handler_turn_if_idle(
+        "agentscope-ai/agentscope#1",
+        event_id,
+        "client:new",
+        lease_token=str(claimed["leaseToken"]),
+        owner="worker-a",
+        recovery_retry=True,
+    )
+    assert live == {"status": "conflict", "reason": "turn_conflict"}
+    assert lane.handler_turn(event_id)["turn_id"] == "turn-old"
+
+    monkeypatch.setattr("oss_pr_radar.agentscope_events._event_bridge_process_alive", lambda _pid: False)
+    lane2 = EventLane(tmp_path / "events-valid.db")
+    event_id2, claimed2 = _prepare_bound_recovery_retry(
+        lane2,
+        receipt={
+            "turnStatus": "completed",
+            "workerPid": 1_000_000_000,
+            "outcome": {
+                "schemaVersion": "agentscope_event_outcome_v1",
+                "eventId": "outcome-reconcile:agentscope:retry-bound",
+                "publicKey": "agentscope-ai/agentscope#1",
+                "state": "no_action",
+            },
+        },
+    )
+    valid = lane2.try_reserve_handler_turn_if_idle(
+        "agentscope-ai/agentscope#1",
+        event_id2,
+        "client:new",
+        lease_token=str(claimed2["leaseToken"]),
+        owner="worker-a",
+        recovery_retry=True,
+    )
+    assert valid == {"status": "conflict", "reason": "turn_conflict"}
+    assert lane2.handler_turn(event_id2)["turn_id"] == "turn-old"
+
+
+def test_reconcile_carries_launch_pid_into_terminal_receipt(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    monkeypatch.setattr("oss_pr_radar.agentscope_events._event_bridge_process_alive", lambda _pid: False)
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    event_id = worker._outcome_recovery_event_id("root-for-pid")
+    event_key = "agentscope-ai/agentscope#1"
+    lane.append(
+        {
+            "eventId": event_id,
+            "eventKey": event_key,
+            "kind": "outcome_reconcile",
+            "rootEventId": "root-for-pid",
+            "eventIdSource": "root-for-pid",
+            "payload": {"eventId": "root-for-pid", "publicKey": event_key},
+        },
+        priority=250,
+    )
+    claimed = lane.claim(limit=1)[0]
+    lane.reserve_handler_turn(event_key, event_id, "client:pid")
+    lane.bind_handler_turn(
+        event_key,
+        event_id,
+        "thread-old",
+        "turn-old",
+        {"turnStarted": True, "workerPid": 4321},
+        status="started",
+    )
+    assert lane.ack(event_id, lease_token=str(claimed["leaseToken"]))
+    receipt = worker._event_artifact_path(
+        tmp_path,
+        worker.EVENT_RECEIPT_DIR,
+        event_id,
+        attempt=1,
+        is_recovery=True,
+    )
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_text(
+        json.dumps(
+            {
+                "turnStatus": "completed",
+                "outcome": {"error": "OUTCOME_MISSING_OR_INVALID"},
+            }
+        )
+    )
+
+    assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
+    stored = json.loads(lane.handler_turn(event_id)["receipt_json"])
+    assert stored["workerPid"] == 4321
+    retry_claim = lane.claim(limit=1)[0]
+    retry = lane.try_reserve_handler_turn_if_idle(
+        event_key,
+        event_id,
+        "client:pid:retry",
+        lease_token=str(retry_claim["leaseToken"]),
+        recovery_retry=True,
+    )
+    assert retry["status"] == "reserved"
+    assert lane.handler_turn(event_id)["turn_id"] is None
+
+
 def test_github_identity_ignores_metadata_drift_and_tracks_material_revisions(tmp_path):
     lane = EventLane(tmp_path / "events.db")
     details = {

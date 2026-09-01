@@ -1169,6 +1169,7 @@ def issue_handler_delivery(
         event_id,
         client_message_id,
         lease_token=str(event.get("leaseToken") or ""),
+        recovery_retry=is_recovery,
     )
     if reservation.get("status") == "busy":
         return
@@ -1349,6 +1350,28 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
             value = json.loads(receipt.read_text(encoding="utf-8"))
         except (FileNotFoundError, OSError, json.JSONDecodeError):
             continue
+        if not isinstance(value, dict):
+            # A terminal receipt must be an object.  Leave malformed files in
+            # place for inspection instead of crashing the whole reconciler.
+            continue
+        # The detached worker's final file intentionally contains only the
+        # public turn result.  Carry the launch PID and retry history from the
+        # durable reservation so a just-finished process cannot be mistaken
+        # for a dead one during the recovery reset race.
+        existing_receipt = {}
+        try:
+            existing_receipt = json.loads(row["receipt_json"] or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            existing_receipt = {}
+        if not isinstance(existing_receipt, dict):
+            existing_receipt = {}
+        for field in ("workerPid", "pid", "processId", "launchPid"):
+            if field not in value and field in existing_receipt:
+                value[field] = existing_receipt[field]
+        launch = receipt.with_suffix(".launch.json")
+        launch_state = _load_json(launch)
+        if "workerPid" not in value and launch_state.get("pid"):
+            value["workerPid"] = launch_state.get("pid")
         terminal = str(value.get("turnStatus") or "")
         if terminal not in {"completed", "failed", "interrupted"}:
             continue

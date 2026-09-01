@@ -112,6 +112,102 @@ def _event_bridge_process_alive(value: object) -> bool:
     return "local_dispatch_bridge.py" in command and "-event-worker" in command
 
 
+_RECEIPT_HISTORY_LIMIT = 8
+_RECEIPT_HISTORY_ITEM_MAX_BYTES = 8192
+_RECOVERY_RETRY_TERMINAL_REASONS = frozenset(
+    {
+        "handler_turn_timeout",
+        "handler_reservation_timeout_retry",
+        "handler_start_exception",
+        "handler_start_retryable",
+        "handler_start_failed",
+        "central_task_thread_receipt_mismatch",
+        "outcome_recovery_attempts_exhausted",
+    }
+)
+
+
+def _receipt_object(value: object) -> dict[str, Any]:
+    """Decode a persisted turn receipt without letting corrupt JSON escape."""
+    if isinstance(value, dict):
+        return dict(value)
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return dict(parsed) if isinstance(parsed, dict) else {}
+
+
+def _receipt_has_live_bridge(receipt: dict[str, Any]) -> bool:
+    """Fail closed when any known bridge PID is still a live event worker."""
+    for field in ("workerPid", "pid", "processId", "launchPid"):
+        if receipt.get(field) and _event_bridge_process_alive(receipt.get(field)):
+            return True
+    return False
+
+
+def _bounded_receipt_history(receipt: dict[str, Any], *, captured_at: float) -> list[dict[str, Any]]:
+    """Keep a small immutable trail when a recovery turn is retried."""
+    prior = receipt.get("receiptHistory")
+    history: list[dict[str, Any]] = []
+    if isinstance(prior, list):
+        for item in prior[-_RECEIPT_HISTORY_LIMIT :]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                item_encoded = json.dumps(item, ensure_ascii=False, sort_keys=True)
+            except (TypeError, ValueError):
+                item_encoded = "{}"
+            if len(item_encoded.encode("utf-8")) > _RECEIPT_HISTORY_ITEM_MAX_BYTES:
+                item = {
+                    "truncated": True,
+                    "sha256": hashlib.sha256(item_encoded.encode("utf-8")).hexdigest(),
+                }
+            history.append(item)
+    snapshot = {key: value for key, value in receipt.items() if key != "receiptHistory"}
+    try:
+        encoded = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        encoded = "{}"
+        snapshot = {"truncated": True}
+    if len(encoded.encode("utf-8")) > _RECEIPT_HISTORY_ITEM_MAX_BYTES:
+        snapshot = {
+            "truncated": True,
+            "sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+        }
+    captured = datetime.fromtimestamp(captured_at, UTC).isoformat().replace("+00:00", "Z")
+    return (history + [{"capturedAt": captured, "receipt": snapshot}])[-_RECEIPT_HISTORY_LIMIT:]
+
+
+def _merge_receipt_history(
+    existing: dict[str, Any], incoming: dict[str, Any]
+) -> dict[str, Any]:
+    """Carry retry history through the bridge's replacement receipt."""
+    merged = dict(incoming)
+    existing_history = existing.get("receiptHistory")
+    incoming_history = merged.get("receiptHistory")
+    if isinstance(existing_history, list):
+        combined = [item for item in existing_history if isinstance(item, dict)]
+        if isinstance(incoming_history, list):
+            combined.extend(item for item in incoming_history if isinstance(item, dict))
+        # Reconciliation can bind the same terminal file twice (first as
+        # completed, then as needs_reconcile).  De-duplicate identical history
+        # entries so that bounded storage retains distinct attempts.
+        unique: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in combined:
+            try:
+                marker = json.dumps(item, ensure_ascii=False, sort_keys=True)
+            except (TypeError, ValueError):
+                marker = repr(item)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            unique.append(item)
+        merged["receiptHistory"] = unique[-_RECEIPT_HISTORY_LIMIT:]
+    return merged
+
+
 def _stable_records(
     value: Any, keys: tuple[str, ...], sort_keys: tuple[str, ...]
 ) -> list[dict[str, Any]]:
@@ -1406,8 +1502,15 @@ class EventLane:
         *,
         lease_token: str,
         owner: str = "event-lane",
+        recovery_retry: bool = False,
     ) -> dict[str, Any]:
-        """Atomically reserve the central task or refund a busy claim."""
+        """Atomically reserve the central task or refund a busy claim.
+
+        A recovery event may retry after a terminal but invalid bridge receipt.
+        In that narrow case an old bound turn is reset only after proving that
+        no detached bridge process is still alive; ordinary events retain the
+        strict turn-conflict behavior.
+        """
         token = str(lease_token or "")
         if not token:
             return {"status": "conflict", "reason": "lease_token_missing"}
@@ -1435,7 +1538,29 @@ class EventLane:
                 and not str(turn["thread_id"] or "")
                 and not str(turn["turn_id"] or "")
             )
-            if turn is not None and not resettable:
+            recovery_resettable = False
+            if turn is not None and not resettable and recovery_retry:
+                receipt = _receipt_object(turn["receipt_json"])
+                terminal_status = str(receipt.get("turnStatus") or "")
+                terminal_reason = str(receipt.get("terminalReason") or "")
+                has_terminal_marker = terminal_status in {
+                    "completed",
+                    "failed",
+                    "interrupted",
+                } or terminal_reason in _RECOVERY_RETRY_TERMINAL_REASONS
+                # A valid outcome must never be overwritten by a retry.  The
+                # worker normally catches this earlier, but keeping the check
+                # at the atomic SQL boundary protects against stale callers.
+                invalid_outcome = not _valid_machine_outcome_receipt(
+                    receipt, str(event_id), str(event_key)
+                )
+                recovery_resettable = (
+                    str(turn["status"] or "") == "needs_reconcile"
+                    and has_terminal_marker
+                    and invalid_outcome
+                    and not _receipt_has_live_bridge(receipt)
+                )
+            if turn is not None and not (resettable or recovery_resettable):
                 return {"status": "conflict", "reason": "turn_conflict"}
             active = db.execute(
                 "SELECT event_id FROM event_lane_turns WHERE event_id<>? "
@@ -1457,19 +1582,36 @@ class EventLane:
                     "activeEventId": str(active["event_id"]),
                 }
             current = time.time()
-            if resettable:
-                changed = db.execute(
-                    "UPDATE event_lane_turns SET event_key=?,client_user_message_id=?,"
-                    "thread_id='',turn_id=NULL,status='reserved',receipt_json='{}',created_at=? "
-                    "WHERE event_id=? AND status='needs_reconcile' AND thread_id='' "
-                    "AND (turn_id IS NULL OR turn_id='')",
-                    (
-                        str(event_key),
-                        str(client_user_message_id),
-                        current,
-                        str(event_id),
-                    ),
+            if resettable or recovery_resettable:
+                old_receipt = _receipt_object(turn["receipt_json"])
+                reset_receipt = (
+                    {
+                        "receiptHistory": _bounded_receipt_history(
+                            old_receipt, captured_at=current
+                        ),
+                        "retryOfTurnId": str(turn["turn_id"] or ""),
+                        "retryPreparedAt": datetime.fromtimestamp(current, UTC)
+                        .isoformat()
+                        .replace("+00:00", "Z"),
+                    }
+                    if recovery_resettable
+                    else {}
                 )
+                reset_query = (
+                    "UPDATE event_lane_turns SET event_key=?,client_user_message_id=?,"
+                    "thread_id='',turn_id=NULL,status='reserved',receipt_json=?,created_at=? "
+                    "WHERE event_id=? AND status='needs_reconcile'"
+                )
+                reset_params: tuple[object, ...] = (
+                    str(event_key),
+                    str(client_user_message_id),
+                    json.dumps(reset_receipt, sort_keys=True),
+                    current,
+                    str(event_id),
+                )
+                if not recovery_resettable:
+                    reset_query += " AND thread_id='' AND (turn_id IS NULL OR turn_id='')"
+                changed = db.execute(reset_query, reset_params)
                 if changed.rowcount != 1:
                     raise RuntimeError("handler turn changed during atomic reservation")
             else:
@@ -1755,6 +1897,12 @@ class EventLane:
         value = dict(receipt)
         value["terminalReason"] = str(reason)
         with self.writer() as db:
+            existing = db.execute(
+                "SELECT receipt_json FROM event_lane_turns WHERE event_id=?",
+                (str(event_id),),
+            ).fetchone()
+            existing_receipt = _receipt_object(existing["receipt_json"]) if existing else {}
+            value = _merge_receipt_history(existing_receipt, value)
             result = db.execute(
                 "UPDATE event_lane_turns SET status='needs_reconcile',receipt_json=? "
                 "WHERE event_id=? AND status='reserved'",
@@ -2195,6 +2343,12 @@ class EventLane:
     ) -> None:
         """Bind a real thread/turn receipt without changing another event's turn."""
         with self.writer() as db:
+            existing = db.execute(
+                "SELECT receipt_json FROM event_lane_turns WHERE event_id=?",
+                (str(event_id),),
+            ).fetchone()
+            existing_receipt = _receipt_object(existing["receipt_json"]) if existing else {}
+            incoming_receipt = _merge_receipt_history(existing_receipt, dict(receipt))
             db.execute(
                 "UPDATE event_lane_turns SET event_key=?,thread_id=?,turn_id=?,status=?,receipt_json=? "
                 "WHERE event_id=?",
@@ -2203,7 +2357,7 @@ class EventLane:
                     str(thread_id),
                     str(turn_id),
                     str(status),
-                    json.dumps(receipt, sort_keys=True),
+                    json.dumps(incoming_receipt, sort_keys=True),
                     str(event_id),
                 ),
             )
@@ -2217,7 +2371,7 @@ class EventLane:
                     str(thread_id),
                     str(turn_id),
                     str(status),
-                    json.dumps(receipt, sort_keys=True),
+                    json.dumps(incoming_receipt, sort_keys=True),
                 ),
             )
 
