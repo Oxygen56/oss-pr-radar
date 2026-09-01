@@ -31,8 +31,10 @@ WATCHDOG_LOCK = "scheduler-watchdog.lock"
 WATCHDOG_WORKER = "scheduler-watchdog"
 WATCHDOG_LABEL = "com.oss-pr-radar.scheduler-watchdog"
 ACTIVE_RUN_STATUSES = frozenset({"queued", "in_progress", "waiting", "requested", "pending"})
+PENDING_CLAIM_STATES = frozenset({"CLAIMED", "REQUESTED", "UNCERTAIN"})
 MAX_RETAINED_SLOTS = 48
 NATURAL_SCHEDULE_CADENCE_HOURS = 1.0
+REQUEST_TIME_PRECISION = timedelta(seconds=2)
 
 RunLister = Callable[[str, str], list[dict[str, Any]]]
 DispatchRunner = Callable[[str, str, str, float, int | None], None]
@@ -96,9 +98,189 @@ def _run_covers_slot(run: dict[str, Any], slot: datetime, *, ref: str) -> bool:
     return status in ACTIVE_RUN_STATUSES or (status == "completed" and conclusion == "success")
 
 
-def _covering_run(runs: list[dict[str, Any]], slot: datetime, *, ref: str) -> dict[str, Any] | None:
-    candidates = [run for run in runs if _run_covers_slot(run, slot, ref=ref)]
+def _run_id(run: dict[str, Any]) -> str | None:
+    value = run.get("id")
+    return str(value) if value is not None else None
+
+
+def _covering_run(
+    runs: list[dict[str, Any]],
+    slot: datetime,
+    *,
+    ref: str,
+    excluded_run_ids: frozenset[str] = frozenset(),
+) -> dict[str, Any] | None:
+    candidates = [
+        run
+        for run in runs
+        if _run_id(run) not in excluded_run_ids and _run_covers_slot(run, slot, ref=ref)
+    ]
     return max(candidates, key=lambda item: _run_time(item) or slot, default=None)
+
+
+def _entry_run_id(entry: dict[str, Any]) -> str | None:
+    run = entry.get("run")
+    if not isinstance(run, dict):
+        return None
+    value = run.get("runId")
+    return str(value) if value is not None else None
+
+
+def _claim_backed(entry: dict[str, Any]) -> bool:
+    return isinstance(entry.get("baselineRunIds"), list) and bool(entry.get("claimedAt"))
+
+
+def _claim_request_window(entry: dict[str, Any]) -> tuple[datetime, datetime] | None:
+    try:
+        claimed = parse_time(str(entry["claimedAt"])).astimezone(UTC)
+    except (KeyError, TypeError, ValueError):
+        return None
+    raw_finished = entry.get("dispatchFinishedAt")
+    if raw_finished:
+        try:
+            finished = parse_time(str(raw_finished)).astimezone(UTC)
+        except (TypeError, ValueError):
+            return None
+        if finished + REQUEST_TIME_PRECISION < claimed:
+            return None
+    else:
+        # A crash may leave the fsynced CLAIMED record behind while the
+        # at-most-30-second dispatch request was already in flight.
+        finished = claimed + timedelta(seconds=30)
+    return claimed - REQUEST_TIME_PRECISION, finished + REQUEST_TIME_PRECISION
+
+
+def _claim_candidate(
+    runs: list[dict[str, Any]],
+    entry: dict[str, Any],
+    *,
+    ref: str,
+    reserved_run_ids: set[str],
+) -> dict[str, Any] | None:
+    baseline = entry.get("baselineRunIds")
+    request_window = _claim_request_window(entry)
+    if not isinstance(baseline, list) or request_window is None:
+        return None
+    baseline_ids = {str(value) for value in baseline}
+    requested_after, requested_before = request_window
+    candidates: list[dict[str, Any]] = []
+    for run in runs:
+        run_id = _run_id(run)
+        created = _run_time(run)
+        if (
+            run_id is None
+            or run_id in baseline_ids
+            or run_id in reserved_run_ids
+            or run.get("event") != "workflow_dispatch"
+            or run.get("head_branch") not in {None, "", ref}
+            or created is None
+            or not requested_after <= created <= requested_before
+        ):
+            continue
+        status = str(run.get("status") or "")
+        if status in ACTIVE_RUN_STATUSES or status == "completed":
+            candidates.append(run)
+    return min(
+        candidates,
+        key=lambda item: (_run_time(item) or requested_before, _run_id(item) or ""),
+        default=None,
+    )
+
+
+def _assigned_run_ids(slots: dict[str, Any], *, except_key: str | None = None) -> frozenset[str]:
+    assigned: set[str] = set()
+    for key, raw_entry in slots.items():
+        if key == except_key or not isinstance(raw_entry, dict):
+            continue
+        run_id = _entry_run_id(raw_entry)
+        if run_id is not None:
+            assigned.add(run_id)
+    return frozenset(assigned)
+
+
+def _reconcile_pending_claims(
+    slots: dict[str, Any],
+    runs: list[dict[str, Any]],
+    *,
+    ref: str,
+    observed_at: datetime,
+) -> list[dict[str, Any]]:
+    """Bind post-request runs to their durable claims before temporal slot matching."""
+
+    reserved_run_ids = {
+        run_id
+        for raw_entry in slots.values()
+        if isinstance(raw_entry, dict)
+        and _claim_backed(raw_entry)
+        and (run_id := _entry_run_id(raw_entry)) is not None
+    }
+    pending = sorted(
+        (
+            (key, dict(raw_entry))
+            for key, raw_entry in slots.items()
+            if isinstance(raw_entry, dict)
+            and str(raw_entry.get("state") or "") in PENDING_CLAIM_STATES
+        ),
+        key=lambda item: (str(item[1].get("claimedAt") or ""), item[0]),
+    )
+    reconciled: list[dict[str, Any]] = []
+    for key, entry in pending:
+        candidate = _claim_candidate(
+            runs,
+            entry,
+            ref=ref,
+            reserved_run_ids=reserved_run_ids,
+        )
+        if candidate is None:
+            continue
+        run_id = _run_id(candidate)
+        if run_id is None:  # pragma: no cover - guarded by _claim_candidate
+            continue
+
+        # Older releases could first attribute the same delayed run to the
+        # next clock-hour slot.  A request-backed claim is authoritative, so
+        # remove only those unclaimed temporal projections while preserving
+        # every independently claimed assignment.
+        for other_key, raw_other in list(slots.items()):
+            if other_key == key or not isinstance(raw_other, dict):
+                continue
+            if _entry_run_id(raw_other) != run_id:
+                continue
+            if _claim_backed(raw_other):
+                raise RuntimeError("scheduler watchdog run is assigned to multiple claims")
+            del slots[other_key]
+
+        status = str(candidate.get("status") or "")
+        conclusion = str(candidate.get("conclusion") or "")
+        covered = status in ACTIVE_RUN_STATUSES or (
+            status == "completed" and conclusion == "success"
+        )
+        entry.update(
+            {
+                "state": "COVERED" if covered else "FAILED",
+                "coverageKind": "fallback",
+                "run": _run_summary(candidate),
+                "lastReconciledAt": _iso_z(observed_at),
+                "reconcileCount": int(entry.get("reconcileCount") or 0) + 1,
+            }
+        )
+        if covered:
+            entry["coveredAt"] = _iso_z(observed_at)
+            entry.pop("failedAt", None)
+        else:
+            entry["failedAt"] = _iso_z(observed_at)
+            entry.pop("coveredAt", None)
+        slots[key] = entry
+        reserved_run_ids.add(run_id)
+        reconciled.append(
+            {
+                "fallbackKey": key,
+                "slotAt": entry.get("slotAt"),
+                "state": entry["state"],
+                "run": entry["run"],
+            }
+        )
+    return reconciled
 
 
 def _latest_natural(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -294,9 +476,57 @@ def watchdog_cycle(
                     },
                 }
             )
+            reconciled = _reconcile_pending_claims(
+                slots,
+                runs,
+                ref=ref,
+                observed_at=current,
+            )
+            if reconciled:
+                state["slots"] = slots
+                _write_state(root, state)
+                failed = next(
+                    (item for item in reconciled if item["state"] == "FAILED"),
+                    None,
+                )
+                primary = failed or reconciled[0]
+                return {
+                    "ok": failed is None,
+                    "action": "fallback_failed" if failed is not None else "covered",
+                    "slotAt": primary["slotAt"],
+                    "fallbackKey": primary["fallbackKey"],
+                    "coverageKind": "fallback",
+                    "run": primary["run"],
+                    "reconciledClaims": reconciled,
+                    "githubNaturalScheduleHealthy": natural_healthy,
+                }
+
             existing = slots.get(claim_key)
             existing = dict(existing) if isinstance(existing, dict) else None
-            covered = _covering_run(runs, slot, ref=ref)
+            if existing is not None and str(existing.get("state") or "") in PENDING_CLAIM_STATES:
+                # A durable request may only be completed by a run that is new
+                # relative to its own baseline and falls in its request window.
+                # Do not let an unrelated run from the same clock hour satisfy it.
+                existing["lastReconciledAt"] = _iso_z(current)
+                existing["reconcileCount"] = int(existing.get("reconcileCount") or 0) + 1
+                slots[claim_key] = existing
+                state["slots"] = slots
+                _write_state(root, state)
+                return {
+                    "ok": True,
+                    "action": "reconciling",
+                    "slotAt": slot_at,
+                    "fallbackKey": claim_key,
+                    "claimState": existing.get("state"),
+                    "githubNaturalScheduleHealthy": natural_healthy,
+                }
+
+            covered = _covering_run(
+                runs,
+                slot,
+                ref=ref,
+                excluded_run_ids=_assigned_run_ids(slots, except_key=claim_key),
+            )
             if covered is not None:
                 entry = existing or {
                     "fallbackKey": claim_key,
@@ -360,7 +590,36 @@ def watchdog_cycle(
                 # Close the race with a natural run or the controller after
                 # obtaining the shared outbound-effect lock.
                 refreshed = list_runs(repo, workflow)
-                covered = _covering_run(refreshed, slot, ref=ref)
+                reconciled = _reconcile_pending_claims(
+                    slots,
+                    refreshed,
+                    ref=ref,
+                    observed_at=current,
+                )
+                if reconciled:
+                    state["slots"] = slots
+                    _write_state(root, state)
+                    failed = next(
+                        (item for item in reconciled if item["state"] == "FAILED"),
+                        None,
+                    )
+                    primary = failed or reconciled[0]
+                    return {
+                        "ok": failed is None,
+                        "action": "fallback_failed" if failed is not None else "covered_after_lock",
+                        "slotAt": primary["slotAt"],
+                        "fallbackKey": primary["fallbackKey"],
+                        "coverageKind": "fallback",
+                        "run": primary["run"],
+                        "reconciledClaims": reconciled,
+                        "githubNaturalScheduleHealthy": natural_healthy,
+                    }
+                covered = _covering_run(
+                    refreshed,
+                    slot,
+                    ref=ref,
+                    excluded_run_ids=_assigned_run_ids(slots, except_key=claim_key),
+                )
                 if covered is not None:
                     entry = {
                         "fallbackKey": claim_key,

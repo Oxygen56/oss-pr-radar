@@ -287,6 +287,12 @@ def test_delayed_dispatch_run_reconciles_claim_without_second_request(tmp_path, 
         dispatch=lambda *_args: attempts.append("attempt"),
         effect_guard=_guard,
     )
+    state_path = root / "state" / "scheduler-watchdog.json"
+    state = json.loads(state_path.read_text())
+    state["slots"][first["fallbackKey"]]["dispatchFinishedAt"] = "2026-08-31T03:31:01Z"
+    state_path.write_text(json.dumps(state))
+    state_path.chmod(0o600)
+    responses[-1][0]["created_at"] = "2026-08-31T03:31:01Z"
     second = _watchdog(
         root,
         now=NOW,
@@ -300,6 +306,173 @@ def test_delayed_dispatch_run_reconciles_claim_without_second_request(tmp_path, 
     assert second["coverageKind"] == "fallback"
     assert second["githubNaturalScheduleHealthy"] is False
     assert attempts == ["attempt"]
+
+
+def test_cross_hour_claims_reconcile_before_temporal_slots_and_runs_are_not_reused(
+    tmp_path, monkeypatch
+):
+    root = _root(tmp_path, monkeypatch)
+    old_slot_a = datetime(2026, 8, 31, 4, 17, tzinfo=UTC)
+    wrong_slot_a = datetime(2026, 8, 31, 5, 17, tzinfo=UTC)
+    old_slot_b = datetime(2026, 9, 1, 0, 17, tzinfo=UTC)
+    wrong_slot_b = datetime(2026, 9, 1, 1, 17, tzinfo=UTC)
+    old_key_a = fallback_key("Oxygen56/oss-pr-radar", "radar.yml", old_slot_a)
+    wrong_key_a = fallback_key("Oxygen56/oss-pr-radar", "radar.yml", wrong_slot_a)
+    old_key_b = fallback_key("Oxygen56/oss-pr-radar", "radar.yml", old_slot_b)
+    wrong_key_b = fallback_key("Oxygen56/oss-pr-radar", "radar.yml", wrong_slot_b)
+    run_a = _run(
+        event="workflow_dispatch",
+        run_id=33360380108,
+        created_at="2026-08-31T05:23:37Z",
+    )
+    run_b = _run(
+        event="workflow_dispatch",
+        run_id=33458844757,
+        created_at="2026-09-01T01:27:57Z",
+    )
+    state_path = root / "state" / "scheduler-watchdog.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": WATCHDOG_SCHEMA,
+                "slots": {
+                    old_key_a: {
+                        "fallbackKey": old_key_a,
+                        "slotAt": "2026-08-31T04:17:00Z",
+                        "firstObservedAt": "2026-08-31T05:23:29.889424Z",
+                        "claimedAt": "2026-08-31T05:23:29.889424Z",
+                        "dispatchFinishedAt": "2026-08-31T05:23:37.463249Z",
+                        "dispatchAttempts": 1,
+                        "baselineRunIds": ["33351051712"],
+                        "state": "REQUESTED",
+                    },
+                    wrong_key_a: {
+                        "fallbackKey": wrong_key_a,
+                        "slotAt": "2026-08-31T05:17:00Z",
+                        "firstObservedAt": "2026-08-31T05:33:40.324246Z",
+                        "state": "COVERED",
+                        "coverageKind": "fallback",
+                        "run": {
+                            "runId": 33360380108,
+                            "event": "workflow_dispatch",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "createdAt": "2026-08-31T05:23:37Z",
+                        },
+                    },
+                    old_key_b: {
+                        "fallbackKey": old_key_b,
+                        "slotAt": "2026-09-01T00:17:00Z",
+                        "firstObservedAt": "2026-09-01T01:27:48.032006Z",
+                        "claimedAt": "2026-09-01T01:27:48.032006Z",
+                        "dispatchFinishedAt": "2026-09-01T01:27:57.507629Z",
+                        "dispatchAttempts": 1,
+                        "baselineRunIds": ["33360380108", "33452336547"],
+                        "state": "REQUESTED",
+                    },
+                    wrong_key_b: {
+                        "fallbackKey": wrong_key_b,
+                        "slotAt": "2026-09-01T01:17:00Z",
+                        "firstObservedAt": "2026-09-01T01:32:57.670070Z",
+                        "state": "COVERED",
+                        "coverageKind": "fallback",
+                        "run": {
+                            "runId": 33458844757,
+                            "event": "workflow_dispatch",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "createdAt": "2026-09-01T01:27:57Z",
+                        },
+                    },
+                },
+            }
+        )
+    )
+    state_path.chmod(0o600)
+    dispatched = []
+
+    reconciled = _watchdog(
+        root,
+        now=datetime(2026, 9, 1, 1, 38, tzinfo=UTC),
+        list_runs=lambda _repo, _workflow: [run_b, run_a],
+        dispatch=lambda *_args: dispatched.append("unexpected"),
+        effect_guard=_guard,
+    )
+
+    assert reconciled["action"] == "covered"
+    assert len(reconciled["reconciledClaims"]) == 2
+    assert dispatched == []
+    state = json.loads(state_path.read_text())
+    assert wrong_key_a not in state["slots"]
+    assert wrong_key_b not in state["slots"]
+    assert state["slots"][old_key_a]["state"] == "COVERED"
+    assert state["slots"][old_key_a]["run"]["runId"] == 33360380108
+    assert state["slots"][old_key_b]["state"] == "COVERED"
+    assert state["slots"][old_key_b]["run"]["runId"] == 33458844757
+    assigned = [
+        entry.get("run", {}).get("runId")
+        for entry in state["slots"].values()
+        if isinstance(entry, dict)
+    ]
+    assert assigned.count(33360380108) == 1
+    assert assigned.count(33458844757) == 1
+
+    next_cycle = _watchdog(
+        root,
+        now=datetime(2026, 9, 1, 1, 38, tzinfo=UTC),
+        list_runs=lambda _repo, _workflow: [run_b, run_a],
+        dispatch=lambda *_args: dispatched.append("next-slot"),
+        effect_guard=_guard,
+    )
+
+    assert next_cycle["action"] == "fallback_requested"
+    assert next_cycle["fallbackKey"] == wrong_key_b
+    assert dispatched == ["next-slot"]
+    state = json.loads(state_path.read_text())
+    assert state["slots"][wrong_key_b]["state"] == "REQUESTED"
+    assert "run" not in state["slots"][wrong_key_b]
+
+
+def test_pending_claim_ignores_baseline_and_out_of_request_window_runs(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    key = fallback_key("Oxygen56/oss-pr-radar", "radar.yml", SLOT)
+    state_path = root / "state" / "scheduler-watchdog.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": WATCHDOG_SCHEMA,
+                "slots": {
+                    key: {
+                        "fallbackKey": key,
+                        "slotAt": "2026-08-31T03:17:00Z",
+                        "firstObservedAt": "2026-08-31T03:31:00Z",
+                        "claimedAt": "2026-08-31T03:31:00Z",
+                        "dispatchFinishedAt": "2026-08-31T03:31:05Z",
+                        "dispatchAttempts": 1,
+                        "baselineRunIds": ["80"],
+                        "state": "REQUESTED",
+                    }
+                },
+            }
+        )
+    )
+    state_path.chmod(0o600)
+
+    result = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [
+            _run(event="workflow_dispatch", run_id=80, created_at="2026-08-31T03:31:02Z"),
+            _run(event="workflow_dispatch", run_id=81, created_at="2026-08-31T03:40:00Z"),
+        ],
+        dispatch=lambda *_args: pytest.fail("pending claim must remain read-only"),
+        effect_guard=_guard,
+    )
+
+    assert result["action"] == "reconciling"
+    state = json.loads(state_path.read_text())
+    assert state["slots"][key]["state"] == "REQUESTED"
+    assert "run" not in state["slots"][key]
 
 
 def test_late_natural_run_cannot_replace_fallback_evidence_or_trigger_again(tmp_path, monkeypatch):
