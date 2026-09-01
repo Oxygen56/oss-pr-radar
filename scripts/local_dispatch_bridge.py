@@ -209,6 +209,18 @@ TERMINAL_PUBLICATION_BLOCK_REASONS = {
     "ACTIVE_OR_CONDITIONAL_CLAIM",
     "STRONG_EXISTING_PR",
 }
+RECOVERED_LIVE_TERMINAL_REASONS = frozenset(
+    {
+        "ISSUE_NOT_OPEN",
+        "STRONG_EXISTING_PR",
+        "ISSUE_ASSIGNED",
+        "ACTIVE_OR_CONDITIONAL_CLAIM",
+        "SECURITY_SENSITIVE",
+        "UNSOLICITED_PRS_BLOCKED",
+        "NONSTANDARD_CONTRIBUTION_AGREEMENT",
+        "AI_USE_PROHIBITED",
+    }
+)
 TASK_RESULT_EVIDENCE_POLICY_REVISION = "managed-reproduction-scope-v4"
 VALIDATION_PARENT_BINDING_INVALID = "VALIDATION_PARENT_BINDING_INVALID"
 TASK_CACHE_CLEANUP_SCHEMA = "radar-task-cache-cleanup-v1"
@@ -3972,8 +3984,15 @@ def suppress_dispatch_notifications(args: argparse.Namespace) -> dict[str, Any]:
 
 def _candidate(intent: dict[str, Any]) -> dict[str, Any]:
     category = intent.get("category")
+    recovered_without_category = False
     if not isinstance(category, str) or not category.strip():
-        raise ValueError("intent category is missing")
+        if intent.get("recoveredFromTaskContext") is not True:
+            raise ValueError("intent category is missing")
+        # Old task-context recovery receipts predate the category field.  They
+        # still carry enough immutable identity to run a live terminal check,
+        # but not enough authority to recreate a positive dispatch decision.
+        category = "WAIT_MAINTAINER"
+        recovered_without_category = True
     return {
         "repo": intent["repo"],
         "num": intent["issueNumber"],
@@ -3981,8 +4000,8 @@ def _candidate(intent: dict[str, Any]) -> dict[str, Any]:
         "title": intent["title"],
         "track": intent.get("track"),
         "category": category,
-        "gate_decision": intent.get("scanGate"),
-        "auto_spawn": intent.get("autoSpawn") is True,
+        "gate_decision": None if recovered_without_category else intent.get("scanGate"),
+        "auto_spawn": False if recovered_without_category else intent.get("autoSpawn") is True,
         "submission_policy": intent.get("submissionPolicy") or "normal",
         "public_submission_allowed": intent.get("publicSubmissionAllowed") is True,
         "llm_review": intent.get("llmReview") or {},
@@ -4277,6 +4296,47 @@ def _audit_intent(intent: dict[str, Any]) -> tuple[Any, Any]:
     return evidence, verdict
 
 
+def _recovered_intent_missing_category(intent: dict[str, Any]) -> bool:
+    category = intent.get("category")
+    return intent.get("recoveredFromTaskContext") is True and (
+        not isinstance(category, str) or not category.strip()
+    )
+
+
+def _recovered_terminal_verdict(verdict: Any) -> Any:
+    if verdict.status == "BLOCK" and verdict.reason_code not in RECOVERED_LIVE_TERMINAL_REASONS:
+        return replace(verdict, status="HOLD")
+    return verdict
+
+
+def _audit_recovered_terminal_intent(intent: dict[str, Any]) -> tuple[Any, Any]:
+    """Check only live external terminal facts for a legacy recovered task.
+
+    Recovered contexts can predate scan category and selected-base evidence.
+    Those missing historical fields must neither suppress a current terminal
+    fact nor become a terminal reason themselves.
+    """
+
+    match = ISSUE_URL.match(str(intent.get("issueUrl") or ""))
+    if not match:
+        raise RuntimeError("invalid issue URL")
+    repo, number = match.groups()
+    evidence = collect_evidence(
+        GitHubClient(),
+        repo,
+        int(number),
+        current_actor=os.environ.get("GITHUB_ACTOR", "Oxygen56"),
+        hardware_inventory=_hardware_inventory(),
+    )
+    return evidence, _recovered_terminal_verdict(authorize(_candidate(intent), evidence))
+
+
+def _audit_context_intent(intent: dict[str, Any]) -> tuple[Any, Any]:
+    if _recovered_intent_missing_category(intent):
+        return _audit_recovered_terminal_intent(intent)
+    return _audit_intent(intent)
+
+
 def _resolve_intent_target_base(intent: dict[str, Any], evidence: Any) -> dict[str, str]:
     evidence_value = evidence.as_dict()
     issue = evidence_value.get("issue")
@@ -4395,7 +4455,10 @@ def _refresh_active_task_live_audit(
             or "UNVERIFIED"
         ),
     )
-    return evidence, authorize(_candidate(intent), evidence)
+    verdict = authorize(_candidate(intent), evidence)
+    if _recovered_intent_missing_category(intent):
+        verdict = _recovered_terminal_verdict(verdict)
+    return evidence, verdict
 
 
 def _private_task_limit() -> int | None:
@@ -4715,14 +4778,27 @@ def _publication_review_context(
         )
     ):
         raise RuntimeError("publication independent review signed context mismatch")
+    request_intent = request.get("intent")
+    request_intent = request_intent if isinstance(request_intent, dict) else {}
     review_context = {
+        "schemaVersion": TASK_CONTEXT_SCHEMA,
         "key": key,
         "issueUrl": request["issueUrl"],
         "intentId": task_id,
+        "track": request_intent.get("track") or value.get("track"),
+        "algorithmEvidence": request_intent.get("algorithmEvidence")
+        if "algorithmEvidence" in request_intent
+        else value.get("algorithmEvidence"),
         "threadId": thread_id,
         "worktreePath": str(Path(worktree_path).resolve()),
+        "contextDigest": value.get("contextDigest"),
+        "targetBase": request.get("targetBase")
+        if "targetBase" in request
+        else value.get("targetBase"),
         "prFollowup": snapshot,
     }
+    if value.get("codePathTombstoneReceipt") is not None:
+        review_context["codePathTombstoneReceipt"] = value["codePathTombstoneReceipt"]
     resolution_files = controller_merge_resolution_scope(
         Path(worktree_path),
         context=review_context,
@@ -14333,7 +14409,9 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
                                             }
                                         )
                                     else:
-                                        evidence, verdict = _audit_intent(candidate["intent"])
+                                        evidence, verdict = _audit_context_intent(
+                                            candidate["intent"]
+                                        )
                                         target_base = current.get("targetBase")
                                         if target_base is None and verdict.status == "ALLOW":
                                             target_base = _resolve_intent_target_base(
@@ -14521,7 +14599,7 @@ def sync_task_contexts(args: argparse.Namespace) -> dict[str, Any]:
                                     )
                                     target_base = current.get("targetBase")
                                 else:
-                                    evidence, verdict = _audit_intent(candidate["intent"])
+                                    evidence, verdict = _audit_context_intent(candidate["intent"])
                                     target_base = current.get("targetBase")
                                     if target_base is None and verdict.status == "ALLOW":
                                         target_base = _resolve_intent_target_base(

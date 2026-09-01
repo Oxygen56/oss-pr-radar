@@ -474,6 +474,11 @@ def test_failed_recovery_attempt_is_terminal_and_never_creates_second_invocation
         dispatch=lambda *_args: _receipt(905),
         effect_guard=_guard,
     )
+    initial_state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
+    initial_entry = initial_state["slots"][first["fallbackKey"]]
+    assert initial_entry["fullWorkflowRerunProtocol"] == "full-workflow-v1"
+    assert initial_entry["fullWorkflowRerunAttempts"] == 0
+    assert initial_entry["legacyFailedJobRerunAttempts"] == 0
     failed_attempt_one = _run(
         event="workflow_dispatch",
         run_id=905,
@@ -517,6 +522,178 @@ def test_failed_recovery_attempt_is_terminal_and_never_creates_second_invocation
     assert terminal["rerunAttempts"] == 1
     assert repeated["action"] == "fallback_failed"
     assert repeated["rerunAttempts"] == 1
+
+    state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
+    entry = state["slots"][first["fallbackKey"]]
+    assert entry["fullWorkflowRerunProtocol"] == "full-workflow-v1"
+    assert entry["fullWorkflowRerunAttempts"] == 1
+    assert entry["legacyFailedJobRerunAttempts"] == 0
+
+
+def test_legacy_failed_jobs_attempt_gets_one_independent_full_workflow_rerun(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    key = fallback_key("Oxygen56/oss-pr-radar", "radar.yml", SLOT)
+    state_path = root / "state" / "scheduler-watchdog.json"
+    failed_attempt_two = _run(
+        event="workflow_dispatch",
+        run_id=33514112897,
+        status="completed",
+        conclusion="failure",
+        run_attempt=2,
+    )
+    state_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": WATCHDOG_SCHEMA,
+                "slots": {
+                    key: {
+                        "fallbackKey": key,
+                        "slotAt": SLOT.isoformat().replace("+00:00", "Z"),
+                        "claimedAt": "2026-08-31T03:31:00Z",
+                        "baselineRunIds": [],
+                        "dispatchAttempts": 1,
+                        "state": "FAILED",
+                        "workflowRunId": 33514112897,
+                        "runAttempt": 2,
+                        # Deployed v1 used this one attempt on
+                        # rerun-failed-jobs and had no full-workflow budget.
+                        "rerunAttempts": 1,
+                        "run": {
+                            "runId": 33514112897,
+                            "event": "workflow_dispatch",
+                            "status": "completed",
+                            "conclusion": "failure",
+                            "runAttempt": 2,
+                            "createdAt": failed_attempt_two["created_at"],
+                            "url": failed_attempt_two["html_url"],
+                        },
+                    }
+                },
+            }
+        )
+    )
+    state_path.chmod(0o600)
+    reruns = []
+
+    requested = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [failed_attempt_two],
+        dispatch=lambda *_args: pytest.fail("the exact run must be reused"),
+        rerun_failed_jobs=lambda _repo, run_id, _lock_fd: reruns.append(run_id),
+        effect_guard=_guard,
+    )
+
+    assert requested["action"] == "fallback_retry_requested"
+    assert reruns == [33514112897]
+    state = json.loads(state_path.read_text())
+    entry = state["slots"][key]
+    assert entry["state"] == "RETRY_REQUESTED"
+    assert entry["rerunAttempts"] == 2
+    assert entry["legacyFailedJobRerunAttempts"] == 1
+    assert entry["fullWorkflowRerunAttempts"] == 1
+    assert entry["fullWorkflowRerunProtocol"] == "full-workflow-v1"
+
+    tracking = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [failed_attempt_two],
+        dispatch=lambda *_args: pytest.fail("the exact run must be reused"),
+        rerun_failed_jobs=lambda *_args: pytest.fail("full rerun must not repeat"),
+        effect_guard=_guard,
+    )
+    assert tracking["action"] == "fallback_retry_tracking"
+
+    failed_attempt_three = failed_attempt_two | {"run_attempt": 3}
+    terminal = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [failed_attempt_three],
+        dispatch=lambda *_args: pytest.fail("the exact run must be reused"),
+        rerun_failed_jobs=lambda *_args: pytest.fail("full rerun budget is exhausted"),
+        effect_guard=_guard,
+    )
+    assert terminal["action"] == "fallback_failed"
+    assert terminal["run"]["runAttempt"] == 3
+    assert terminal["rerunAttempts"] == 2
+
+
+def test_externally_observed_same_run_attempt_consumes_full_workflow_budget(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    key = fallback_key("Oxygen56/oss-pr-radar", "radar.yml", SLOT)
+    state_path = root / "state" / "scheduler-watchdog.json"
+    failed_attempt_two = _run(
+        event="workflow_dispatch",
+        run_id=33514112897,
+        status="completed",
+        conclusion="failure",
+        run_attempt=2,
+    )
+    state_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": WATCHDOG_SCHEMA,
+                "slots": {
+                    key: {
+                        "fallbackKey": key,
+                        "slotAt": SLOT.isoformat().replace("+00:00", "Z"),
+                        "claimedAt": "2026-08-31T03:31:00Z",
+                        "baselineRunIds": [],
+                        "dispatchAttempts": 1,
+                        "state": "FAILED",
+                        "workflowRunId": 33514112897,
+                        "runAttempt": 2,
+                        "rerunAttempts": 1,
+                        "run": {
+                            "runId": 33514112897,
+                            "event": "workflow_dispatch",
+                            "status": "completed",
+                            "conclusion": "failure",
+                            "runAttempt": 2,
+                            "createdAt": failed_attempt_two["created_at"],
+                            "url": failed_attempt_two["html_url"],
+                        },
+                    }
+                },
+            }
+        )
+    )
+    state_path.chmod(0o600)
+    attempt_three = failed_attempt_two | {
+        "run_attempt": 3,
+        "status": "in_progress",
+        "conclusion": None,
+    }
+
+    tracking = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [attempt_three],
+        dispatch=lambda *_args: pytest.fail("the exact run must be reused"),
+        rerun_failed_jobs=lambda *_args: pytest.fail("observed rerun must not be duplicated"),
+        effect_guard=_guard,
+    )
+
+    assert tracking["action"] == "tracking"
+    state = json.loads(state_path.read_text())
+    entry = state["slots"][key]
+    assert entry["rerunAttempts"] == 2
+    assert entry["legacyFailedJobRerunAttempts"] == 1
+    assert entry["fullWorkflowRerunAttempts"] == 1
+    assert entry["fullWorkflowRerunBudgetSource"] == "external_same_run_attempt"
+
+    terminal = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [
+            attempt_three | {"status": "completed", "conclusion": "failure"}
+        ],
+        dispatch=lambda *_args: pytest.fail("the exact run must be reused"),
+        rerun_failed_jobs=lambda *_args: pytest.fail("observed rerun consumed the budget"),
+        effect_guard=_guard,
+    )
+    assert terminal["action"] == "fallback_failed"
+    assert terminal["rerunAttempts"] == 2
 
 
 def test_observed_same_run_rerun_consumes_budget_without_duplicate_request(tmp_path, monkeypatch):
@@ -588,9 +765,7 @@ def test_observed_same_run_rerun_consumes_budget_without_duplicate_request(tmp_p
     assert terminal["rerunAttempts"] == 1
 
 
-def test_old_failed_claim_does_not_block_current_slot_and_is_retried_after_coverage(
-    tmp_path, monkeypatch
-):
+def test_old_failed_claim_is_superseded_by_later_success_without_stale_rerun(tmp_path, monkeypatch):
     root = _root(tmp_path, monkeypatch)
     current = NOW + timedelta(hours=1)
     current_slot = SLOT + timedelta(hours=1)
@@ -609,11 +784,11 @@ def test_old_failed_claim_does_not_block_current_slot_and_is_retried_after_cover
                         "baselineRunIds": [],
                         "dispatchAttempts": 1,
                         "state": "BOUND",
-                        "workflowRunId": 901,
+                        "workflowRunId": 33514112897,
                         "runAttempt": 1,
                         "run": _run(
                             event="workflow_dispatch",
-                            run_id=901,
+                            run_id=33514112897,
                             status="in_progress",
                             conclusion=None,
                         ),
@@ -625,7 +800,7 @@ def test_old_failed_claim_does_not_block_current_slot_and_is_retried_after_cover
     state_path.chmod(0o600)
     failed_old = _run(
         event="workflow_dispatch",
-        run_id=901,
+        run_id=33514112897,
         status="completed",
         conclusion="failure",
     )
@@ -635,7 +810,7 @@ def test_old_failed_claim_does_not_block_current_slot_and_is_retried_after_cover
         root,
         now=current,
         list_runs=lambda _repo, _workflow: [failed_old],
-        dispatch=lambda *_args: dispatched.append(902) or _receipt(902),
+        dispatch=lambda *_args: dispatched.append(33543998578) or _receipt(33543998578),
         rerun_failed_jobs=lambda *_args: pytest.fail(
             "the uncovered current slot has priority over historical recovery"
         ),
@@ -644,12 +819,11 @@ def test_old_failed_claim_does_not_block_current_slot_and_is_retried_after_cover
 
     assert current_requested["action"] == "fallback_requested"
     assert current_requested["fallbackKey"] == current_key
-    assert dispatched == [902]
+    assert dispatched == [33543998578]
     state = json.loads(state_path.read_text())
     assert state["slots"][old_key]["state"] == "FAILED"
     assert state["slots"][current_key]["state"] == "BOUND"
 
-    reruns = []
     recovered_old = _watchdog(
         root,
         now=current,
@@ -657,23 +831,111 @@ def test_old_failed_claim_does_not_block_current_slot_and_is_retried_after_cover
             failed_old,
             _run(
                 event="workflow_dispatch",
-                run_id=902,
+                run_id=33543998578,
                 created_at="2026-08-31T04:31:00Z",
             ),
         ],
         dispatch=lambda *_args: pytest.fail("the current slot is already bound"),
+        rerun_failed_jobs=lambda *_args: pytest.fail(
+            "a later successful full run supersedes the stale failed claim"
+        ),
+        effect_guard=_guard,
+    )
+
+    assert recovered_old["action"] == "covered"
+    assert recovered_old["fallbackKey"] == current_key
+    assert recovered_old["run"]["runId"] == 33543998578
+    state = json.loads(state_path.read_text())
+    assert state["slots"][current_key]["state"] == "COVERED"
+    assert state["slots"][old_key]["state"] == "SUPERSEDED"
+    assert state["slots"][old_key]["supersededReason"] == "LATER_SUCCESSFUL_FULL_RUN"
+    assert state["slots"][old_key]["supersededByRun"]["runId"] == 33543998578
+    assert state["slots"][old_key].get("fullWorkflowRerunAttempts", 0) == 0
+
+
+def test_only_latest_full_run_can_receive_a_recovery_rerun(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    old_slot = SLOT - timedelta(hours=1)
+    old_key = fallback_key("Oxygen56/oss-pr-radar", "radar.yml", old_slot)
+    latest_key = fallback_key("Oxygen56/oss-pr-radar", "radar.yml", SLOT)
+    old_failed = _run(
+        event="workflow_dispatch",
+        run_id=900,
+        created_at="2026-08-31T02:31:00Z",
+        status="completed",
+        conclusion="failure",
+    )
+    latest_failed = _run(
+        event="workflow_dispatch",
+        run_id=901,
+        created_at="2026-08-31T03:31:00Z",
+        status="completed",
+        conclusion="failure",
+    )
+    state_path = root / "state" / "scheduler-watchdog.json"
+    entries = {}
+    for key, slot, run in (
+        (old_key, old_slot, old_failed),
+        (latest_key, SLOT, latest_failed),
+    ):
+        entries[key] = {
+            "fallbackKey": key,
+            "slotAt": slot.isoformat().replace("+00:00", "Z"),
+            "claimedAt": run["created_at"],
+            "baselineRunIds": [],
+            "dispatchAttempts": 1,
+            "state": "FAILED",
+            "workflowRunId": run["id"],
+            "runAttempt": 1,
+            "run": {
+                "runId": run["id"],
+                "event": run["event"],
+                "status": run["status"],
+                "conclusion": run["conclusion"],
+                "runAttempt": run["run_attempt"],
+                "createdAt": run["created_at"],
+                "url": run["html_url"],
+            },
+        }
+    state_path.write_text(json.dumps({"schemaVersion": WATCHDOG_SCHEMA, "slots": entries}))
+    state_path.chmod(0o600)
+    reruns = []
+
+    requested = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [old_failed, latest_failed],
+        dispatch=lambda *_args: pytest.fail("the latest slot already has an exact run"),
         rerun_failed_jobs=lambda _repo, run_id, _lock_fd: reruns.append(run_id),
         effect_guard=_guard,
     )
 
-    assert recovered_old["action"] == "fallback_retry_requested"
-    assert recovered_old["fallbackKey"] == old_key
-    assert recovered_old["run"]["runId"] == 901
+    assert requested["action"] == "fallback_retry_requested"
+    assert requested["fallbackKey"] == latest_key
     assert reruns == [901]
     state = json.loads(state_path.read_text())
-    assert state["slots"][current_key]["state"] == "COVERED"
-    assert state["slots"][old_key]["state"] == "RETRY_REQUESTED"
-    assert state["slots"][old_key]["rerunAttempts"] == 1
+    assert state["slots"][old_key]["state"] == "FAILED"
+    assert state["slots"][old_key].get("fullWorkflowRerunAttempts", 0) == 0
+
+    terminal = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [
+            old_failed,
+            latest_failed | {"run_attempt": 2},
+        ],
+        dispatch=lambda *_args: pytest.fail("the latest slot already has an exact run"),
+        rerun_failed_jobs=lambda *_args: pytest.fail(
+            "an older failure must not inherit the latest run's exhausted recovery budget"
+        ),
+        effect_guard=_guard,
+    )
+
+    assert terminal["action"] == "fallback_failed"
+    assert terminal["fallbackKey"] == latest_key
+    state = json.loads(state_path.read_text())
+    assert state["slots"][old_key]["state"] == "FAILED"
+    assert state["slots"][old_key].get("fullWorkflowRerunAttempts", 0) == 0
 
 
 def test_crash_left_retry_claim_becomes_uncertain_without_blocking_new_slot(tmp_path, monkeypatch):
@@ -823,6 +1085,10 @@ def test_uncertain_failed_job_rerun_is_reconciled_without_repeating_request(tmp_
     assert requested["action"] == "fallback_retry_uncertain"
     assert requested["claimState"] == "RETRY_UNCERTAIN"
     assert calls == [906]
+    state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
+    entry = state["slots"][requested["fallbackKey"]]
+    assert entry["fullWorkflowRerunAttempts"] == 1
+    assert entry["fullWorkflowRerunBudgetSource"] == "watchdog_request"
     assert unchanged["action"] == "fallback_retry_tracking"
     assert unchanged["claimState"] == "RETRY_UNCERTAIN"
     assert recovered["action"] == "covered"
@@ -830,7 +1096,7 @@ def test_uncertain_failed_job_rerun_is_reconciled_without_repeating_request(tmp_
     assert recovered["run"]["runAttempt"] == 2
 
 
-def test_default_failed_job_rerun_uses_same_run_id(monkeypatch):
+def test_default_retry_reruns_entire_workflow_to_refresh_state_restore_baseline(monkeypatch):
     observed = {}
 
     def fake_run(arguments, **kwargs):
@@ -847,7 +1113,7 @@ def test_default_failed_job_rerun_uses_same_run_id(monkeypatch):
         "api",
         "--method",
         "POST",
-        "repos/Oxygen56/oss-pr-radar/actions/runs/12345/rerun-failed-jobs",
+        "repos/Oxygen56/oss-pr-radar/actions/runs/12345/rerun",
         "-H",
         "X-GitHub-Api-Version: 2026-03-10",
     ]

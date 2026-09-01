@@ -79,7 +79,10 @@ def workflow_component_health(repo: str, workflow_runs: list[dict]) -> dict:
     ]
     latest = max(
         completed,
-        key=lambda item: parse_time(str(item.get("updated_at") or item.get("created_at"))),
+        key=lambda item: (
+            parse_time(str(item.get("created_at") or item.get("updated_at"))),
+            int(item["id"]),
+        ),
         default=None,
     )
     if latest is None:

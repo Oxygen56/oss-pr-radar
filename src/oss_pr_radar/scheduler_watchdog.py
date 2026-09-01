@@ -36,7 +36,8 @@ LEGACY_CLAIM_STATES = frozenset({"CLAIMED", "REQUESTED", "UNCERTAIN"})
 EXACT_TRACKING_STATES = frozenset({"BOUND", "RUNNING"})
 RETRY_TRACKING_STATES = frozenset({"RETRY_CLAIMED", "RETRY_REQUESTED", "RETRY_UNCERTAIN"})
 MAX_RETAINED_SLOTS = 48
-MAX_FAILED_JOB_RERUNS = 1
+MAX_FULL_WORKFLOW_RERUNS = 1
+FULL_WORKFLOW_RERUN_PROTOCOL = "full-workflow-v1"
 NATURAL_SCHEDULE_CADENCE_HOURS = 1.0
 LEGACY_TIME_PRECISION = timedelta(seconds=2)
 LEGACY_ATTRIBUTION_WINDOW = timedelta(seconds=30)
@@ -118,6 +119,49 @@ def _run_attempt(run: dict[str, Any]) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         return None
     return value
+
+
+def _run_order_key(run: dict[str, Any]) -> tuple[datetime, int] | None:
+    created = _run_time(run)
+    run_id = _run_id(run)
+    if created is None or run_id is None or not run_id.isdigit() or int(run_id) <= 0:
+        return None
+    return created, int(run_id)
+
+
+def _entry_run_order_key(entry: dict[str, Any]) -> tuple[datetime, int] | None:
+    run = entry.get("run")
+    run = run if isinstance(run, dict) else {}
+    raw_created = run.get("createdAt") or run.get("created_at")
+    raw_run_id = entry.get("workflowRunId")
+    if raw_run_id is None:
+        raw_run_id = run.get("runId") or run.get("id")
+    if isinstance(raw_run_id, bool) or not isinstance(raw_run_id, (int, str)):
+        return None
+    encoded_run_id = str(raw_run_id)
+    if not encoded_run_id.isdigit() or int(encoded_run_id) <= 0 or not raw_created:
+        return None
+    try:
+        created = parse_time(str(raw_created)).astimezone(UTC)
+    except (TypeError, ValueError):
+        return None
+    return created, int(encoded_run_id)
+
+
+def _full_run(run: dict[str, Any], *, ref: str) -> bool:
+    return (
+        run.get("event") == "workflow_dispatch"
+        and run.get("head_branch") == ref
+        and _run_order_key(run) is not None
+    )
+
+
+def _latest_full_run(runs: list[dict[str, Any]], *, ref: str) -> dict[str, Any] | None:
+    return max(
+        (run for run in runs if _full_run(run, ref=ref)),
+        key=lambda run: _run_order_key(run) or (datetime.min.replace(tzinfo=UTC), 0),
+        default=None,
+    )
 
 
 def _covering_run(
@@ -274,11 +318,22 @@ def _bind_run(
         and run_attempt > prior_run_attempt
     ):
         # A same-ID rerun may be started outside this process between the
-        # initial observation and the effect lock. It consumes the single
-        # recovery budget too, preventing a duplicate rerun request.
-        entry["rerunAttempts"] = max(
-            MAX_FAILED_JOB_RERUNS,
-            int(entry.get("rerunAttempts") or 0),
+        # initial observation and the effect lock. Conservatively consume the
+        # independent full-workflow budget too, preventing a duplicate rerun
+        # request even though GitHub does not expose which rerun endpoint an
+        # external actor used.
+        legacy_attempts, full_attempts, total_attempts = _rerun_audit_counts(entry)
+        if full_attempts < MAX_FULL_WORKFLOW_RERUNS:
+            full_attempts += 1
+            total_attempts += 1
+            entry["fullWorkflowRerunBudgetSource"] = "external_same_run_attempt"
+        entry.update(
+            {
+                "rerunAttempts": max(total_attempts, run_attempt - 1),
+                "legacyFailedJobRerunAttempts": legacy_attempts,
+                "fullWorkflowRerunAttempts": full_attempts,
+                "fullWorkflowRerunProtocol": FULL_WORKFLOW_RERUN_PROTOCOL,
+            }
         )
         entry["externallyObservedRerunAt"] = _iso_z(observed_at)
     state = _run_state(run)
@@ -319,6 +374,8 @@ def _reconciled_summary(key: str, entry: dict[str, Any]) -> dict[str, Any]:
     }
     if int(entry.get("rerunAttempts") or 0):
         result["rerunAttempts"] = int(entry["rerunAttempts"])
+    if entry.get("state") == "SUPERSEDED":
+        result["supersededByRun"] = entry.get("supersededByRun")
     return result
 
 
@@ -421,6 +478,58 @@ def _reconcile_legacy_claims(
     return reconciled
 
 
+def _supersede_failed_claims(
+    slots: dict[str, Any],
+    runs: list[dict[str, Any]],
+    *,
+    ref: str,
+    observed_at: datetime,
+) -> list[dict[str, Any]]:
+    """Terminalize failed claims covered by a logically newer successful full run."""
+
+    successful_runs = [
+        run
+        for run in runs
+        if _full_run(run, ref=ref)
+        and run.get("status") == "completed"
+        and run.get("conclusion") == "success"
+    ]
+    latest_success = max(
+        successful_runs,
+        key=lambda run: _run_order_key(run) or (datetime.min.replace(tzinfo=UTC), 0),
+        default=None,
+    )
+    if latest_success is None:
+        return []
+    success_key = _run_order_key(latest_success)
+    if success_key is None:  # pragma: no cover - filtered above
+        return []
+
+    superseded: list[dict[str, Any]] = []
+    for key, raw_entry in sorted(slots.items()):
+        if (
+            not isinstance(raw_entry, dict)
+            or raw_entry.get("state") != "FAILED"
+            or not _claim_backed(raw_entry)
+        ):
+            continue
+        entry = dict(raw_entry)
+        failed_key = _entry_run_order_key(entry)
+        if failed_key is None or success_key <= failed_key:
+            continue
+        entry.update(
+            {
+                "state": "SUPERSEDED",
+                "supersededAt": _iso_z(observed_at),
+                "supersededReason": "LATER_SUCCESSFUL_FULL_RUN",
+                "supersededByRun": _run_summary(latest_success),
+            }
+        )
+        slots[key] = entry
+        superseded.append(_reconciled_summary(key, entry))
+    return superseded
+
+
 def _reconcile_claims(
     slots: dict[str, Any],
     runs: list[dict[str, Any]],
@@ -442,6 +551,16 @@ def _reconcile_claims(
             observed_at=observed_at,
         )
     )
+    superseded = _supersede_failed_claims(
+        slots,
+        runs,
+        ref=ref,
+        observed_at=observed_at,
+    )
+    if superseded:
+        superseded_keys = {item["fallbackKey"] for item in superseded}
+        reconciled = [item for item in reconciled if item.get("fallbackKey") not in superseded_keys]
+        reconciled.extend(superseded)
     return reconciled
 
 
@@ -481,12 +600,20 @@ def _retryable_failed_claim_key(
     *,
     exclude_key: str | None = None,
 ) -> str | None:
-    candidates = [
-        (str(entry.get("slotAt") or ""), key)
+    # A newer slot, even while still tracking, makes every older failed claim
+    # historical. Only when the newest durable slot itself is a retryable
+    # failure may the worker replay its exact run ID.
+    entries = [
+        (str(entry.get("slotAt") or ""), key, entry)
         for key, entry in slots.items()
-        if key != exclude_key and isinstance(entry, dict) and _retryable_failed_claim(entry)
+        if isinstance(entry, dict)
     ]
-    return min(candidates, default=("", ""))[1] or None
+    if not entries:
+        return None
+    _, key, entry = max(entries, key=lambda item: (item[0], item[1]))
+    if key == exclude_key or not _retryable_failed_claim(entry):
+        return None
+    return key
 
 
 def _reconciled_only_covers_old_slots(
@@ -517,13 +644,16 @@ def _result_for_reconciled(
         ),
         None,
     )
-    primary = failed or tracking or reconciled[0]
+    superseded = next((item for item in reconciled if item["state"] == "SUPERSEDED"), None)
+    primary = failed or tracking or superseded or reconciled[0]
     if failed is not None:
         action = "fallback_failed"
     elif tracking is not None:
         action = (
             "fallback_retry_tracking" if tracking["state"] in RETRY_TRACKING_STATES else "tracking"
         )
+    elif superseded is not None:
+        action = "fallback_superseded"
     else:
         action = covered_action
     result = {
@@ -538,6 +668,8 @@ def _result_for_reconciled(
     }
     if primary["state"] == "COVERED":
         result["coverageKind"] = "fallback"
+    elif primary["state"] == "SUPERSEDED":
+        result["supersededByRun"] = primary.get("supersededByRun")
     if int(primary.get("rerunAttempts") or 0):
         result["rerunAttempts"] = int(primary["rerunAttempts"])
     return result
@@ -564,6 +696,9 @@ def _result_for_existing_claim(
     elif state == "COVERED":
         action = "covered"
         ok = True
+    elif state == "SUPERSEDED":
+        action = "fallback_superseded"
+        ok = True
     else:
         raise RuntimeError("scheduler watchdog claim state is invalid")
     result = {
@@ -574,12 +709,18 @@ def _result_for_existing_claim(
         "claimState": state,
         "githubNaturalScheduleHealthy": natural_healthy,
     }
-    if state in EXACT_TRACKING_STATES | RETRY_TRACKING_STATES | {"FAILED", "COVERED"}:
+    if state in EXACT_TRACKING_STATES | RETRY_TRACKING_STATES | {
+        "FAILED",
+        "COVERED",
+        "SUPERSEDED",
+    }:
         result["run"] = entry.get("run")
     if int(entry.get("rerunAttempts") or 0):
         result["rerunAttempts"] = int(entry["rerunAttempts"])
     if state == "COVERED":
         result["coverageKind"] = "fallback"
+    elif state == "SUPERSEDED":
+        result["supersededByRun"] = entry.get("supersededByRun")
     return result
 
 
@@ -821,14 +962,22 @@ def _default_dispatch(
 
 
 def _default_rerun_failed_jobs(repo: str, run_id: int, lock_fd: int | None) -> None:
-    """Rerun only failed jobs and their dependants inside the same run ID."""
+    """Rerun the whole workflow inside the same run ID.
+
+    A failed-jobs-only rerun reuses successful jobs and their artifacts from
+    the previous attempt.  For a historical Radar run that leaves
+    ``state/base_sha.txt`` bound to an old state-branch head, so a recovered
+    publish deterministically fails after newer hourly runs advance the
+    branch.  A full rerun preserves the exact run ID while rebuilding every
+    state artifact from a fresh restore.
+    """
 
     arguments = [
         "gh",
         "api",
         "--method",
         "POST",
-        f"repos/{repo}/actions/runs/{run_id}/rerun-failed-jobs",
+        f"repos/{repo}/actions/runs/{run_id}/rerun",
         "-H",
         "X-GitHub-Api-Version: 2026-03-10",
     ]
@@ -864,6 +1013,31 @@ def _run_summary(run: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _nonnegative_count(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
+def _rerun_audit_counts(entry: dict[str, Any]) -> tuple[int, int, int]:
+    """Return legacy, full-workflow, and total rerun audit counts.
+
+    Records written before ``full-workflow-v1`` only contain
+    ``rerunAttempts``.  Those attempts used GitHub's failed-jobs endpoint and
+    therefore remain a separate legacy count rather than consuming the new
+    full-workflow recovery budget.
+    """
+
+    total = _nonnegative_count(entry.get("rerunAttempts"))
+    full = _nonnegative_count(entry.get("fullWorkflowRerunAttempts"))
+    explicit_legacy = entry.get("legacyFailedJobRerunAttempts")
+    if isinstance(explicit_legacy, int) and not isinstance(explicit_legacy, bool):
+        legacy = max(0, explicit_legacy)
+    else:
+        legacy = max(0, total - full)
+    return legacy, full, max(total, legacy + full)
+
+
 def _retryable_failed_claim(entry: dict[str, Any] | None) -> bool:
     if not isinstance(entry, dict) or entry.get("state") != "FAILED":
         return False
@@ -877,7 +1051,7 @@ def _retryable_failed_claim(entry: dict[str, Any] | None) -> bool:
         and isinstance(run_attempt, int)
         and not isinstance(run_attempt, bool)
         and run_attempt > 0
-        and int(entry.get("rerunAttempts") or 0) < MAX_FAILED_JOB_RERUNS
+        and _rerun_audit_counts(entry)[1] < MAX_FULL_WORKFLOW_RERUNS
     )
 
 
@@ -898,7 +1072,7 @@ def _retry_failed_claim(
     authorization_check: AuthorizationCheck,
     dispatch_gate: DispatchGate,
 ) -> dict[str, Any]:
-    """Write-ahead claim one same-run failed-job recovery attempt."""
+    """Write-ahead claim one same-run full-workflow recovery attempt."""
 
     guard = effect_guard(root, runtime_ledger_path(root))
     with guard as effect_lock:
@@ -920,7 +1094,13 @@ def _retry_failed_claim(
         _reconcile_claims(slots, refreshed, ref=ref, observed_at=current)
         current_entry = slots.get(claim_key)
         current_entry = dict(current_entry) if isinstance(current_entry, dict) else None
-        if not _retryable_failed_claim(current_entry):
+        latest_full = _latest_full_run(refreshed, ref=ref)
+        latest_full_id = _run_id(latest_full) if latest_full is not None else None
+        if (
+            not _retryable_failed_claim(current_entry)
+            or _retryable_failed_claim_key(slots) != claim_key
+            or latest_full_id != _entry_run_id(current_entry)
+        ):
             state["slots"] = slots
             _write_state(root, state)
             if current_entry is None:
@@ -932,12 +1112,18 @@ def _retry_failed_claim(
 
         run_id = int(current_entry["workflowRunId"])
         run_attempt = int(current_entry["runAttempt"])
-        rerun_attempts = int(current_entry.get("rerunAttempts") or 0) + 1
+        legacy_attempts, full_attempts, total_attempts = _rerun_audit_counts(current_entry)
+        full_attempts += 1
+        rerun_attempts = total_attempts + 1
         claimed_at = _iso_z(datetime.now(UTC))
         current_entry.update(
             {
                 "state": "RETRY_CLAIMED",
                 "rerunAttempts": rerun_attempts,
+                "legacyFailedJobRerunAttempts": legacy_attempts,
+                "fullWorkflowRerunAttempts": full_attempts,
+                "fullWorkflowRerunProtocol": FULL_WORKFLOW_RERUN_PROTOCOL,
+                "fullWorkflowRerunBudgetSource": "watchdog_request",
                 "retryBaseRunAttempt": run_attempt,
                 "retryClaimedAt": claimed_at,
             }
@@ -950,6 +1136,8 @@ def _retry_failed_claim(
             "slotAt": current_entry.get("slotAt"),
             "workflowRunId": run_id,
             "rerunAttempt": rerun_attempts,
+            "fullWorkflowRerunAttempt": full_attempts,
+            "fullWorkflowRerunProtocol": FULL_WORKFLOW_RERUN_PROTOCOL,
             "claimedAt": claimed_at,
         }
         # Commit before the API request. A crash or timeout can only reconcile
@@ -996,6 +1184,8 @@ def _retry_failed_claim(
             "slotAt": current_entry.get("slotAt"),
             "workflowRunId": run_id,
             "rerunAttempt": rerun_attempts,
+            "fullWorkflowRerunAttempt": full_attempts,
+            "fullWorkflowRerunProtocol": FULL_WORKFLOW_RERUN_PROTOCOL,
             "requestedAt": finished_at,
         }
         _write_state(root, state)
@@ -1086,10 +1276,7 @@ def watchdog_cycle(
             if reconciled:
                 state["slots"] = slots
                 _write_state(root, state)
-                current_entry = slots.get(claim_key)
-                if _retryable_failed_claim(
-                    current_entry if isinstance(current_entry, dict) else None
-                ):
+                if _retryable_failed_claim_key(slots) == claim_key:
                     return _retry_failed_claim(
                         root,
                         state=state,
@@ -1153,7 +1340,7 @@ def watchdog_cycle(
             existing = slots.get(claim_key)
             existing = dict(existing) if isinstance(existing, dict) else None
             if existing is not None:
-                if _retryable_failed_claim(existing):
+                if _retryable_failed_claim_key(slots) == claim_key:
                     return _retry_failed_claim(
                         root,
                         state=state,
@@ -1350,6 +1537,10 @@ def watchdog_cycle(
                     "claimedAt": _iso_z(claimed_at),
                     "baselineRunIds": baseline_ids,
                     "dispatchAttempts": 1,
+                    "rerunAttempts": 0,
+                    "legacyFailedJobRerunAttempts": 0,
+                    "fullWorkflowRerunAttempts": 0,
+                    "fullWorkflowRerunProtocol": FULL_WORKFLOW_RERUN_PROTOCOL,
                 }
                 slots[claim_key] = entry
                 state["slots"] = slots

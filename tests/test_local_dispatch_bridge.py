@@ -12884,29 +12884,100 @@ def test_task_live_audit_refresh_due_is_stage_and_ttl_bounded():
     assert MODULE._task_live_audit_refresh_due(published, now=now) is False
 
 
-def test_context_sync_isolates_recovered_task_with_missing_category(tmp_path):
-    store, worktree = registered_store(tmp_path)
-    with store.transaction() as connection:
-        row = connection.execute(
-            "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
-        ).fetchone()
-        payload = json.loads(row["payload_json"])
-        payload.pop("category", None)
-        payload["recoveredFromTaskContext"] = True
-        connection.execute(
-            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
-            (json.dumps(payload),),
-        )
+def test_context_sync_terminalizes_recovered_task_with_missing_category_on_live_block(
+    monkeypatch, tmp_path
+):
+    source, worktree = registered_store(tmp_path / "source")
+    source.record_stage("a/b#1", "FIX_READY", evidence={})
+    context_path = MODULE.write_task_context(
+        source,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    context.pop("category", None)
+    store = RadarLedger(tmp_path / "recovered.sqlite3")
+    restored = store.restore_task_context(context)
+    assert restored["intentRestored"] is True
+    recovered_intent = store.task_context_candidates()[0]["intent"]
+    assert recovered_intent["recoveredFromTaskContext"] is True
+    assert recovered_intent.get("defaultBranch") is None
+    assert recovered_intent.get("preTaskEvidence") is None
+
+    evidence, _unused = _live_audit_result("BLOCK", "STRONG_EXISTING_PR")
+    monkeypatch.setattr(MODULE, "collect_evidence", lambda *_args, **_kwargs: evidence)
+
+    def authorize_recovered(candidate, observed):
+        assert observed is evidence
+        assert candidate["category"] == "WAIT_MAINTAINER"
+        assert candidate["gate_decision"] is None
+        assert candidate["auto_spawn"] is False
+        return AuthorizationDecision("BLOCK", "STRONG_EXISTING_PR", {}, evidence.digest)
+
+    monkeypatch.setattr(MODULE, "authorize", authorize_recovered)
     shutil.rmtree(worktree)
 
-    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
 
     assert synced["ok"] is True
     assert synced["errors"] == []
-    assert synced["unavailable"][0]["reason"] == "TASK_WORKTREE_UNAVAILABLE"
-    assert synced["revalidationErrors"] == [
-        {"key": "a/b#1", "error": "ValueError:intent category is missing"}
+    assert synced["unavailable"] == []
+    assert synced["revalidationErrors"] == []
+    assert synced["noGo"] == [
+        {
+            "key": "a/b#1",
+            "reason": "STRONG_EXISTING_PR",
+            "source": "missing_worktree_revalidation",
+        }
     ]
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert context["stage"] == "AUDIT_NO_GO"
+
+
+def test_recovered_missing_category_metadata_block_does_not_terminalize(monkeypatch, tmp_path):
+    source, worktree = registered_store(tmp_path / "source")
+    source.record_stage("a/b#1", "FIX_READY", evidence={})
+    context_path = MODULE.write_task_context(
+        source,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    context.pop("category", None)
+    store = RadarLedger(tmp_path / "recovered.sqlite3")
+    store.restore_task_context(context)
+    evidence, _unused = _live_audit_result("BLOCK", "ALGORITHM_EVIDENCE_MISSING")
+    monkeypatch.setattr(MODULE, "collect_evidence", lambda *_args, **_kwargs: evidence)
+    monkeypatch.setattr(
+        MODULE,
+        "authorize",
+        lambda *_args: AuthorizationDecision(
+            "BLOCK", "ALGORITHM_EVIDENCE_MISSING", {}, evidence.digest
+        ),
+    )
+    shutil.rmtree(worktree)
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["noGo"] == []
+    assert synced["unavailable"][0]["reason"] == "TASK_WORKTREE_UNAVAILABLE"
+    current = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert current["stage"] == "FIX_READY"
+
+
+def test_candidate_still_rejects_non_recovered_intent_without_category():
+    with pytest.raises(ValueError, match="intent category is missing"):
+        MODULE._candidate(
+            {
+                "repo": "a/b",
+                "issueNumber": 1,
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "title": "Runtime bug",
+            }
+        )
 
 
 def test_ingest_skips_consumed_result_after_followup_context_refresh(tmp_path):

@@ -530,6 +530,65 @@ def test_component_health_checks_each_required_job_below_green_run(monkeypatch):
     assert result["issues"] == []
 
 
+def test_component_health_uses_logically_newest_run_not_latest_rerun_update(monkeypatch):
+    workflow_runs = [
+        {
+            "id": 7,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "failure",
+            "created_at": "2026-08-04T01:00:00Z",
+            "updated_at": "2026-08-04T04:00:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/7",
+        },
+        {
+            "id": 8,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "failure",
+            "created_at": "2026-08-04T02:00:00Z",
+            "updated_at": "2026-08-04T03:00:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/8",
+        },
+        {
+            "id": 9,
+            "event": "workflow_dispatch",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-08-04T02:00:00Z",
+            "updated_at": "2026-08-04T02:30:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/9",
+        },
+    ]
+    monkeypatch.setattr(
+        MODULE,
+        "github_json",
+        lambda path: (
+            {
+                "jobs": [
+                    {"name": name, "conclusion": "success"}
+                    for name in (
+                        "scan",
+                        "pr-followup",
+                        "build-state",
+                        "persist-pending",
+                        "notify",
+                        "persist-receipt",
+                    )
+                ]
+            }
+            if path == "repos/a/b/actions/runs/9/jobs?per_page=100"
+            else pytest.fail(path)
+        ),
+    )
+
+    result = MODULE.workflow_component_health("a/b", workflow_runs)
+
+    assert result["runId"] == 9
+    assert result["healthy"] is True
+    assert result["issues"] == []
+
+
 def test_component_health_ignores_schedule_canary_after_cancelled_dispatch(monkeypatch):
     workflow_runs = [
         {
