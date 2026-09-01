@@ -29,6 +29,9 @@ from .util import canonical_json
 
 REPO = "agentscope-ai/agentscope"
 EVENT_VERSION = "agentscope_event_v1"
+EXTERNAL_RESOLUTION_REASONS = frozenset(
+    {"issue_closed", "issue_assigned_external", "external_claim_comment"}
+)
 
 
 def _digest(value: Any) -> str:
@@ -1509,14 +1512,44 @@ class EventLane:
                     (receipt_json, row["event_key"]),
                 )
                 event_row = db.execute(
-                    "SELECT payload_json FROM event_lane_events WHERE event_id=? "
-                    "AND status IN ('pending','leased')",
+                    "SELECT status,attempts,payload_json FROM event_lane_events WHERE event_id=?",
                     (row["event_id"],),
                 ).fetchone()
                 if event_row:
+                    event_status = str(event_row["status"] or "")
+                    # A settlement/closeout may have won the writer lock
+                    # before this stale turn was examined.  Never resurrect
+                    # an already terminal event from that old turn.
+                    if event_status not in {"pending", "leased", "delivered"}:
+                        continue
                     payload = json.loads(event_row["payload_json"])
                     payload["terminalReason"] = receipt["terminalReason"]
-                    if retry_reservation:
+                    is_recovery = payload.get("kind") == "outcome_reconcile"
+                    # A detached recovery turn is acknowledged before its
+                    # result arrives, so the event is often already
+                    # ``delivered`` when the turn timeout is observed.  Put
+                    # that recovery back into the bounded retry state instead
+                    # of leaving a delivered+needs_reconcile pair that can
+                    # never be claimed again.
+                    if is_recovery and event_status == "delivered":
+                        attempts = int(event_row["attempts"] or 0)
+                        exhausted = attempts >= self.max_attempts
+                        if exhausted:
+                            payload["terminalReason"] = "outcome_recovery_attempts_exhausted"
+                            payload["recoveryExhausted"] = True
+                            payload["recoveryAttempts"] = attempts
+                        db.execute(
+                            "UPDATE event_lane_events SET status=?,payload_json=?,"
+                            "delivered_at=?,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+                            "WHERE event_id=? AND status='delivered'",
+                            (
+                                "needs_reconcile" if exhausted else "pending",
+                                json.dumps(payload, sort_keys=True),
+                                current if exhausted else None,
+                                row["event_id"],
+                            ),
+                        )
+                    elif retry_reservation:
                         db.execute(
                             "UPDATE event_lane_events SET status='pending',payload_json=?,"
                             "delivered_at=NULL,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
@@ -1724,6 +1757,295 @@ class EventLane:
                 (status, json.dumps(payload, sort_keys=True), time.time(), str(event_id)),
             )
             return db.total_changes > 0
+
+    def settle_exhausted_recovery_no_action(
+        self,
+        recovery_event_id: str,
+        *,
+        root_event_id: str,
+        event_key: str,
+        reason: str,
+        evidence: dict[str, Any],
+        now: float | None = None,
+        watch_seconds: int = 24 * 60 * 60,
+    ) -> dict[str, Any]:
+        """Move a demonstrably superseded recovery chain to watch-only.
+
+        Exhaustion is a terminal *infrastructure* state, not a successful
+        outcome.  We only close the recovery row when the stable lineage and a
+        small, allow-listed GitHub observation prove that another actor has
+        taken over (or the issue is closed).  The original event and public
+        tracking record remain watchable so a later GitHub update can wake the
+        lane again; no public action or synthetic success receipt is created.
+        """
+
+        recovery_id = str(recovery_event_id or "")
+        root_id = str(root_event_id or "")
+        key = str(event_key or "")
+        if not recovery_id or not root_id or not key:
+            return {"status": "invalid", "settled": False}
+        if not isinstance(evidence, dict) or reason not in EXTERNAL_RESOLUTION_REASONS:
+            return {"status": "invalid", "settled": False}
+        if str(evidence.get("kind") or "") != str(reason):
+            return {"status": "invalid", "settled": False}
+        required = {
+            "issue_closed": {"repo", "number", "issueState"},
+            "issue_assigned_external": {"repo", "number", "issueState", "assignee"},
+            "external_claim_comment": {
+                "repo",
+                "number",
+                "issueState",
+                "commentId",
+                "author",
+                "createdAt",
+                "excerpt",
+            },
+        }[reason]
+        if any(not str(evidence.get(field) or "") for field in required):
+            return {"status": "invalid", "settled": False}
+        if str(evidence.get("repo")) != REPO:
+            return {"status": "invalid", "settled": False}
+        try:
+            if int(str(evidence.get("number"))) <= 0:
+                return {"status": "invalid", "settled": False}
+        except (TypeError, ValueError):
+            return {"status": "invalid", "settled": False}
+        if reason == "issue_closed" and str(evidence.get("issueState")).casefold() != "closed":
+            return {"status": "invalid", "settled": False}
+        if reason != "issue_closed" and str(evidence.get("issueState")).casefold() == "closed":
+            return {"status": "invalid", "settled": False}
+        if (
+            reason == "issue_assigned_external"
+            and str(evidence.get("assignee") or "").casefold() == "oxygen56"
+        ):
+            return {"status": "invalid", "settled": False}
+        if reason == "external_claim_comment" and (
+            _parse_time(str(evidence["createdAt"])) is None
+            or str(evidence.get("claimKind") or "") not in {"active_claim", "conditional_claim"}
+            or str(evidence.get("author") or "").casefold().endswith("[bot]")
+            or str(evidence.get("author") or "").casefold() == "oxygen56"
+        ):
+            return {"status": "invalid", "settled": False}
+        current = time.time() if now is None else float(now)
+        bounded_watch_seconds = max(1, int(watch_seconds))
+        marker = {
+            "schemaVersion": "agentscope_event_recovery_resolution_v1",
+            "state": "watch_only",
+            "reason": str(reason),
+            "resolvedAt": datetime.fromtimestamp(current, UTC).isoformat().replace("+00:00", "Z"),
+            "watchUntil": datetime.fromtimestamp(current + bounded_watch_seconds, UTC)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "evidence": {
+                str(name)[:80]: str(value)[:400]
+                for name, value in evidence.items()
+                if str(name) and value is not None
+            },
+        }
+
+        def parse_object(raw: object) -> dict[str, Any]:
+            try:
+                value = json.loads(str(raw or "{}"))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return {}
+            return value if isinstance(value, dict) else {}
+
+        def live_process(receipt: dict[str, Any]) -> bool:
+            pid = (
+                receipt.get("workerPid")
+                or receipt.get("pid")
+                or receipt.get("processId")
+                or receipt.get("launchPid")
+            )
+            return bool(pid and _event_bridge_process_alive(pid))
+
+        expected_recovery = (
+            "outcome-reconcile:agentscope:" + hashlib.sha256(root_id.encode("utf-8")).hexdigest()
+        )
+        with self.writer() as db:
+            recovery = db.execute(
+                "SELECT status,attempts,payload_json,created_at FROM event_lane_events WHERE event_id=?",
+                (recovery_id,),
+            ).fetchone()
+            root = db.execute(
+                "SELECT status,payload_json,created_at FROM event_lane_events WHERE event_id=?",
+                (root_id,),
+            ).fetchone()
+            recovery_turn = db.execute(
+                "SELECT event_key,thread_id,turn_id,status,receipt_json,created_at "
+                "FROM event_lane_turns WHERE event_id=?",
+                (recovery_id,),
+            ).fetchone()
+            root_turn = db.execute(
+                "SELECT event_key,thread_id,turn_id,status,receipt_json,created_at "
+                "FROM event_lane_turns WHERE event_id=?",
+                (root_id,),
+            ).fetchone()
+            if recovery is None or root is None:
+                return {"status": "missing", "settled": False}
+            recovery_payload = parse_object(recovery["payload_json"])
+            root_payload = parse_object(root["payload_json"])
+            key_prefix, key_separator, key_number = key.rpartition("#")
+            root_kind = str(root_payload.get("kind") or "")
+            lineage_shape_valid = (
+                key_separator == "#"
+                and key_prefix == REPO
+                and key_number.isdigit()
+                and int(key_number) > 0
+                and recovery_id == expected_recovery
+                and root_id.startswith("github:")
+                and "outcome-reconcile:" not in root_id
+                and root_id.startswith(f"github:{REPO}:{int(key_number)}:{root_kind}:")
+                and str(root_payload.get("eventId") or "") == root_id
+                and str(root_payload.get("repo") or "") == REPO
+                and str(root_payload.get("number") or "") == key_number
+                and str(root_payload.get("eventKey") or "") == key
+                and root_kind in {"issue_update", "pr_update"}
+                and str(recovery_payload.get("eventId") or "") == recovery_id
+                and recovery_payload.get("kind") == "outcome_reconcile"
+                and str(recovery_payload.get("eventKey") or "") == key
+                and str(recovery_payload.get("rootEventId") or "") == root_id
+                and str(recovery_payload.get("eventIdSource") or "") == root_id
+                and isinstance(recovery_payload.get("payload"), dict)
+                and str(recovery_payload["payload"].get("eventId") or "") == root_id
+                and str(recovery_payload["payload"].get("rootEventId") or "") == root_id
+                and str(recovery_payload["payload"].get("publicKey") or "") == key
+            )
+            if not lineage_shape_valid:
+                return {"status": "not_eligible", "settled": False}
+            already_done = (
+                str(recovery["status"] or "") == "coalesced"
+                and str(root["status"] or "") in {"watch_only", "coalesced"}
+                and (recovery_turn is None or str(recovery_turn["status"] or "") == "superseded")
+                and (
+                    root_turn is None
+                    or str(root_turn["status"] or "") in {"watch_only", "superseded"}
+                )
+            )
+            if already_done:
+                return {"status": "already_applied", "settled": False}
+            recovery_receipt = (
+                parse_object(recovery_turn["receipt_json"]) if recovery_turn is not None else {}
+            )
+            root_receipt = parse_object(root_turn["receipt_json"]) if root_turn is not None else {}
+            recovery_exhausted = int(recovery["attempts"] or 0) >= self.max_attempts
+            if (
+                str(root_payload.get("number") or "") != str(evidence.get("number") or "")
+                or str(root["status"] or "") not in {"delivered", "needs_reconcile"}
+                or str(recovery["status"] or "") not in {"needs_reconcile", "delivered"}
+                or not recovery_exhausted
+                or recovery_turn is None
+                or root_turn is None
+                or str(recovery_turn["event_key"] or "") != key
+                or str(root_turn["event_key"] or "") != key
+                or str(recovery_turn["status"] or "") != "needs_reconcile"
+                or str(root_turn["status"] or "") != "needs_reconcile"
+                or (reason != "issue_closed" and root_kind != "issue_update")
+            ):
+                return {"status": "not_eligible", "settled": False}
+            root_time = _parse_time(str(root_payload.get("updatedAt") or ""))
+            if root_time is None and isinstance(root_payload.get("issue"), dict):
+                root_time = _parse_time(str(root_payload["issue"].get("updated_at") or ""))
+            evidence_time = _parse_time(str(evidence.get("createdAt") or ""))
+            if (
+                reason == "external_claim_comment"
+                and root_time is not None
+                and (evidence_time is None or evidence_time < root_time)
+            ):
+                return {"status": "not_eligible", "settled": False}
+            if live_process(recovery_receipt) or live_process(root_receipt):
+                return {"status": "active_turn", "settled": False}
+            if str(recovery_receipt.get("turnStatus") or "") not in {"failed", "interrupted"}:
+                return {"status": "terminal_receipt_missing", "settled": False}
+            if str(root_receipt.get("turnStatus") or "") not in {"failed", "interrupted"}:
+                return {"status": "terminal_receipt_missing", "settled": False}
+            active = db.execute(
+                "SELECT event_id FROM event_lane_turns WHERE event_key=? "
+                "AND status IN ('reserved','started') AND event_id NOT IN (?,?) LIMIT 1",
+                (key, root_id, recovery_id),
+            ).fetchone()
+            if active is not None:
+                return {"status": "active_turn", "settled": False}
+
+            recovery_payload["terminalReason"] = "exhausted_recovery_settled_watch_only"
+            recovery_payload["operatorResolution"] = marker
+            root_payload["terminalReason"] = "external_claim_watch_only"
+            root_payload["operatorResolution"] = marker
+            recovery_receipt["operatorResolution"] = marker
+            recovery_receipt["terminalReason"] = "exhausted_recovery_settled_watch_only"
+            root_receipt["operatorResolution"] = marker
+            root_receipt["terminalReason"] = "external_claim_watch_only"
+            changed_recovery = db.execute(
+                "UPDATE event_lane_events SET status='coalesced',payload_json=?,delivered_at=?,"
+                "lease_until=NULL,lease_owner=NULL,lease_token=NULL WHERE event_id=? "
+                "AND status IN ('needs_reconcile','delivered')",
+                (json.dumps(recovery_payload, sort_keys=True), current, recovery_id),
+            )
+            changed_root = db.execute(
+                "UPDATE event_lane_events SET status='watch_only',payload_json=?,delivered_at=?,"
+                "lease_until=NULL,lease_owner=NULL,lease_token=NULL WHERE event_id=? "
+                "AND status IN ('delivered','needs_reconcile')",
+                (json.dumps(root_payload, sort_keys=True), current, root_id),
+            )
+            if changed_recovery.rowcount != 1 or changed_root.rowcount != 1:
+                raise RuntimeError("exhausted recovery changed during watch-only settlement")
+            db.execute(
+                "UPDATE event_lane_turns SET status='superseded',receipt_json=? "
+                "WHERE event_id=? AND status='needs_reconcile'",
+                (json.dumps(recovery_receipt, sort_keys=True), recovery_id),
+            )
+            db.execute(
+                "UPDATE event_lane_turns SET status='watch_only',receipt_json=? "
+                "WHERE event_id=? AND status='needs_reconcile'",
+                (json.dumps(root_receipt, sort_keys=True), root_id),
+            )
+            db.execute(
+                "UPDATE event_lane_threads SET status='watch_only',receipt_json=? "
+                "WHERE event_key=? AND status='needs_reconcile' AND "
+                "((thread_id=? AND turn_id=?) OR (thread_id=? AND turn_id=?))",
+                (
+                    json.dumps(root_receipt, sort_keys=True),
+                    key,
+                    str(recovery_turn["thread_id"] or ""),
+                    str(recovery_turn["turn_id"] or ""),
+                    str(root_turn["thread_id"] or ""),
+                    str(root_turn["turn_id"] or ""),
+                ),
+            )
+            newer_turn = db.execute(
+                "SELECT 1 FROM event_lane_turns WHERE event_key=? AND created_at>? "
+                "AND event_id NOT IN (?,?) LIMIT 1",
+                (
+                    key,
+                    max(
+                        float(recovery_turn["created_at"] or 0), float(root_turn["created_at"] or 0)
+                    ),
+                    root_id,
+                    recovery_id,
+                ),
+            ).fetchone()
+            public = db.execute(
+                "SELECT status,source FROM event_lane_public_work WHERE event_key=?",
+                (key,),
+            ).fetchone()
+            if (
+                public is not None
+                and str(public["source"] or "") == "outcome-invalid"
+                and str(public["status"] or "") in {"active", "design_wait"}
+                and newer_turn is None
+            ):
+                db.execute(
+                    "UPDATE event_lane_public_work SET status='watch_only',watch_until=?,"
+                    "source='external-claim',updated_at=? WHERE event_key=? "
+                    "AND source='outcome-invalid' AND status IN ('active','design_wait')",
+                    (current + bounded_watch_seconds, current, key),
+                )
+            return {
+                "status": "applied",
+                "settled": True,
+                "reason": str(reason),
+                "state": "watch_only",
+            }
 
     def bind_handler_turn(
         self,

@@ -3126,6 +3126,485 @@ def test_recovery_retry_uses_distinct_bridge_identity_and_evidence_paths(tmp_pat
     )
 
 
+def _make_exhausted_outcome_chain(worker, lane, key="agentscope-ai/agentscope#1"):
+    number = int(key.rsplit("#", 1)[1])
+    root_id = f"github:agentscope-ai/agentscope:{number}:issue_update:failed"
+    recovery_id = worker._outcome_recovery_event_id(root_id)
+    lane.append(
+        {
+            "eventId": root_id,
+            "eventKey": key,
+            "repo": "agentscope-ai/agentscope",
+            "number": number,
+            "kind": "issue_update",
+        }
+    )
+    lane.append(
+        {
+            "eventId": recovery_id,
+            "eventKey": key,
+            "kind": "outcome_reconcile",
+            "rootEventId": root_id,
+            "eventIdSource": root_id,
+            "payload": {"eventId": root_id, "rootEventId": root_id, "publicKey": key},
+        },
+        priority=250,
+    )
+    for event_id in (root_id, recovery_id):
+        lane.reserve_handler_turn(key, event_id, f"client:{event_id}")
+        lane.bind_handler_turn(
+            key,
+            event_id,
+            "thread-1",
+            f"turn-{event_id}",
+            {"turnStatus": "failed", "turnStarted": True},
+            status="needs_reconcile",
+        )
+        with lane.writer() as db:
+            db.execute(
+                "UPDATE event_lane_events SET status='needs_reconcile',attempts=3 WHERE event_id=?",
+                (event_id,),
+            )
+    lane.register_public_work(key, status="active", source="outcome-invalid")
+    return root_id, recovery_id
+
+
+def test_exhausted_recovery_settles_only_after_external_claim_evidence(tmp_path):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    root_id, recovery_id = _make_exhausted_outcome_chain(worker, lane)
+
+    def transport(url, _headers):
+        if "/comments" in url:
+            return (
+                200,
+                {},
+                [
+                    {
+                        "id": 17,
+                        "user": {"login": "another-contributor"},
+                        "created_at": "2026-09-01T00:00:00Z",
+                        "body": "I'd like to take this issue and submit a PR shortly.",
+                    }
+                ],
+            )
+        return 200, {}, {"state": "open", "assignee": None, "assignees": []}
+
+    result = worker._settle_exhausted_outcome_recoveries(
+        tmp_path, lane, transport=transport, now=100.0
+    )
+    assert result == {"candidates": 1, "settled": 1, "alreadyApplied": 0, "skipped": 0}
+    with lane.connect() as db:
+        rows = db.execute(
+            "SELECT event_id,status,payload_json FROM event_lane_events ORDER BY event_id"
+        ).fetchall()
+        turns = db.execute(
+            "SELECT event_id,status,receipt_json FROM event_lane_turns ORDER BY event_id"
+        ).fetchall()
+    statuses = {row["event_id"]: row["status"] for row in rows}
+    assert statuses[recovery_id] == "coalesced"
+    assert statuses[root_id] == "watch_only"
+    turn_statuses = {row["event_id"]: row["status"] for row in turns}
+    assert turn_statuses[recovery_id] == "superseded"
+    assert turn_statuses[root_id] == "watch_only"
+    assert all(
+        json.loads(row["payload_json"]).get("operatorResolution", {}).get("state") == "watch_only"
+        for row in rows
+    )
+    assert lane.public_status("agentscope-ai/agentscope#1") == "watch_only"
+    assert worker._settle_exhausted_outcome_recoveries(
+        tmp_path, lane, transport=transport, now=101.0
+    ) == {"candidates": 0, "settled": 0, "alreadyApplied": 0, "skipped": 0}
+    assert root_id and recovery_id
+
+
+def test_exhausted_recovery_stays_blocked_without_strong_public_evidence(tmp_path):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    _make_exhausted_outcome_chain(worker, lane)
+
+    def transport(url, _headers):
+        if "/comments" in url:
+            return 200, {}, [{"id": 18, "user": {"login": "reviewer"}, "body": "Thanks!"}]
+        return 200, {}, {"state": "open", "assignee": None, "assignees": []}
+
+    result = worker._settle_exhausted_outcome_recoveries(tmp_path, lane, transport=transport)
+    assert result == {"candidates": 1, "settled": 0, "alreadyApplied": 0, "skipped": 1}
+    with lane.connect() as db:
+        assert (
+            db.execute(
+                "SELECT status FROM event_lane_events WHERE event_id LIKE 'outcome-reconcile:%'"
+            ).fetchone()[0]
+            == "needs_reconcile"
+        )
+
+
+def test_exhausted_recovery_does_not_supersede_live_turn(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    _root_id, recovery_id = _make_exhausted_outcome_chain(worker, lane)
+    events_module = importlib.import_module("oss_pr_radar.agentscope_events")
+    monkeypatch.setattr(events_module, "_event_bridge_process_alive", lambda _pid: True)
+    with lane.writer() as db:
+        row = db.execute(
+            "SELECT receipt_json FROM event_lane_turns WHERE event_id=?", (recovery_id,)
+        ).fetchone()
+        receipt = json.loads(row[0])
+        receipt["workerPid"] = 1234
+        db.execute(
+            "UPDATE event_lane_turns SET receipt_json=? WHERE event_id=?",
+            (json.dumps(receipt), recovery_id),
+        )
+
+    result = worker._settle_exhausted_outcome_recoveries(
+        tmp_path,
+        lane,
+        transport=lambda url, _headers: (
+            (
+                200,
+                {},
+                [{"id": 1, "user": {"login": "other"}, "body": "I will take this issue."}],
+            )
+            if "/comments" in url
+            else (200, {}, {"state": "open", "assignee": None, "assignees": []})
+        ),
+    )
+    assert result["settled"] == 0
+    assert lane.handler_turn(recovery_id)["status"] == "needs_reconcile"
+
+
+def test_exhausted_recovery_rejects_forged_lineage_and_untrusted_reason(tmp_path):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    root_id, recovery_id = _make_exhausted_outcome_chain(worker, lane)
+    evidence = {
+        "kind": "external_claim_comment",
+        "repo": "agentscope-ai/agentscope",
+        "number": "1",
+        "issueState": "open",
+        "commentId": "17",
+        "author": "other",
+        "createdAt": "2026-09-01T00:00:00Z",
+        "excerpt": "I will take this issue.",
+    }
+    assert (
+        lane.settle_exhausted_recovery_no_action(
+            recovery_id,
+            root_event_id=root_id,
+            event_key="agentscope-ai/agentscope#1",
+            reason="not-a-public-reason",
+            evidence=evidence,
+        )["status"]
+        == "invalid"
+    )
+    forged_id = "outcome-reconcile:agentscope:forged"
+    lane.append(
+        {
+            "eventId": forged_id,
+            "eventKey": "agentscope-ai/agentscope#1",
+            "kind": "outcome_reconcile",
+            "rootEventId": root_id,
+            "eventIdSource": root_id,
+            "payload": {"eventId": root_id, "publicKey": "agentscope-ai/agentscope#1"},
+        },
+        priority=250,
+    )
+    lane.reserve_handler_turn("agentscope-ai/agentscope#1", forged_id, "client:forged")
+    lane.bind_handler_turn(
+        "agentscope-ai/agentscope#1",
+        forged_id,
+        "thread-1",
+        "turn-forged",
+        {"turnStatus": "failed"},
+        status="needs_reconcile",
+    )
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET status='needs_reconcile',attempts=3 WHERE event_id=?",
+            (forged_id,),
+        )
+
+    result = worker._settle_exhausted_outcome_recoveries(
+        tmp_path,
+        lane,
+        transport=lambda url, _headers: (
+            (
+                200,
+                {},
+                [
+                    {
+                        "id": 17,
+                        "user": {"login": "other"},
+                        "created_at": "2026-09-01T00:00:00Z",
+                        "body": "I'd like to take this issue.",
+                    }
+                ],
+            )
+            if "/comments" in url
+            else (200, {}, {"state": "open", "assignee": None, "assignees": []})
+        ),
+        now=100.0,
+    )
+    assert result["settled"] == 1
+    assert lane.handler_turn(forged_id)["status"] == "needs_reconcile"
+
+
+def test_exhausted_recovery_requires_attempt_budget_not_a_forged_marker(tmp_path):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    root_id, recovery_id = _make_exhausted_outcome_chain(worker, lane)
+    with lane.writer() as db:
+        row = db.execute(
+            "SELECT payload_json FROM event_lane_events WHERE event_id=?", (recovery_id,)
+        ).fetchone()
+        payload = json.loads(row[0])
+        payload["recoveryExhausted"] = True
+        db.execute(
+            "UPDATE event_lane_events SET attempts=0,payload_json=? WHERE event_id=?",
+            (json.dumps(payload), recovery_id),
+        )
+    evidence = {
+        "kind": "external_claim_comment",
+        "repo": "agentscope-ai/agentscope",
+        "number": "1",
+        "issueState": "open",
+        "commentId": "17",
+        "author": "other",
+        "createdAt": "2026-09-01T00:00:00Z",
+        "claimKind": "active_claim",
+        "excerpt": "I will take this issue.",
+    }
+    assert (
+        lane.settle_exhausted_recovery_no_action(
+            recovery_id,
+            root_event_id=root_id,
+            event_key="agentscope-ai/agentscope#1",
+            reason="external_claim_comment",
+            evidence=evidence,
+        )["status"]
+        == "not_eligible"
+    )
+
+
+def test_exhausted_recovery_does_not_close_pr_watch_for_issue_claim(tmp_path):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    key = "agentscope-ai/agentscope#2463"
+    root_id = "github:agentscope-ai/agentscope:2463:pr_update:2026-09-01T00:00:00Z"
+    recovery_id = worker._outcome_recovery_event_id(root_id)
+    lane.append(
+        {
+            "eventId": root_id,
+            "eventKey": key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 2463,
+            "kind": "pr_update",
+            "updatedAt": "2026-09-01T00:00:00Z",
+        }
+    )
+    lane.append(
+        {
+            "eventId": recovery_id,
+            "eventKey": key,
+            "kind": "outcome_reconcile",
+            "rootEventId": root_id,
+            "eventIdSource": root_id,
+            "payload": {
+                "eventId": root_id,
+                "rootEventId": root_id,
+                "publicKey": key,
+            },
+        },
+        priority=250,
+    )
+    for event_id in (root_id, recovery_id):
+        lane.reserve_handler_turn(key, event_id, f"client:{event_id}")
+        lane.bind_handler_turn(
+            key,
+            event_id,
+            "thread-1",
+            f"turn-{event_id}",
+            {"turnStatus": "failed", "turnStarted": True},
+            status="needs_reconcile",
+        )
+        with lane.writer() as db:
+            db.execute(
+                "UPDATE event_lane_events SET status='needs_reconcile',attempts=3 WHERE event_id=?",
+                (event_id,),
+            )
+    lane.register_public_work(key, status="active", source="outcome-invalid")
+    result = worker._settle_exhausted_outcome_recoveries(
+        tmp_path,
+        lane,
+        transport=lambda url, _headers: (
+            (
+                200,
+                {},
+                [
+                    {
+                        "id": 17,
+                        "user": {"login": "other"},
+                        "created_at": "2026-09-02T00:00:00Z",
+                        "body": "I'd like to take this issue.",
+                    }
+                ],
+            )
+            if "/comments" in url
+            else (200, {}, {"state": "open", "assignee": None, "assignees": []})
+        ),
+        now=100.0,
+    )
+    assert result["settled"] == 0
+    assert lane.public_status(key) == "active"
+
+
+def test_exhausted_recovery_preserves_newer_public_work(tmp_path):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    root_id, recovery_id = _make_exhausted_outcome_chain(worker, lane)
+    key = "agentscope-ai/agentscope#1"
+    newer_id = "newer-turn"
+    lane.append(
+        {
+            "eventId": newer_id,
+            "eventKey": key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 1,
+            "kind": "issue_update",
+        }
+    )
+    lane.reserve_handler_turn(key, newer_id, "client:newer")
+    lane.bind_handler_turn(
+        key,
+        newer_id,
+        "thread-newer",
+        "turn-newer",
+        {"turnStatus": "failed"},
+        status="needs_reconcile",
+    )
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_turns SET created_at=9999999999 WHERE event_id=?", (newer_id,)
+        )
+
+    result = worker._settle_exhausted_outcome_recoveries(
+        tmp_path,
+        lane,
+        transport=lambda url, _headers: (
+            (
+                200,
+                {},
+                [
+                    {
+                        "id": 17,
+                        "user": {"login": "other"},
+                        "created_at": "2026-09-01T00:00:00Z",
+                        "body": "I'd like to take this issue.",
+                    }
+                ],
+            )
+            if "/comments" in url
+            else (200, {}, {"state": "open", "assignee": None, "assignees": []})
+        ),
+        now=100.0,
+    )
+    assert result["settled"] == 1
+    with lane.connect() as db:
+        public = db.execute(
+            "SELECT status,source FROM event_lane_public_work WHERE event_key=?", (key,)
+        ).fetchone()
+    assert dict(public) == {"status": "active", "source": "outcome-invalid"}
+
+
+def test_exhausted_recovery_evidence_audit_is_rate_limited(tmp_path):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    _make_exhausted_outcome_chain(worker, lane)
+    calls = []
+
+    def transport(url, _headers):
+        calls.append(url)
+        if "/comments" in url:
+            return 200, {}, [{"id": 1, "user": {"login": "reviewer"}, "body": "Thanks"}]
+        return 200, {}, {"state": "open", "assignee": None, "assignees": []}
+
+    first = worker._settle_exhausted_outcome_recoveries(
+        tmp_path, lane, transport=transport, now=100.0
+    )
+    second = worker._settle_exhausted_outcome_recoveries(
+        tmp_path, lane, transport=transport, now=101.0
+    )
+    assert first["skipped"] == 1 and second["skipped"] == 1
+    assert len(calls) == 2
+
+
+def test_external_claim_evidence_ignores_bots_and_old_comments():
+    worker = _event_worker_module()
+    root = {"kind": "issue_update", "updatedAt": "2026-09-01T12:00:00Z"}
+    comments = [
+        {
+            "id": 1,
+            "user": {"login": "helper[bot]"},
+            "created_at": "2026-09-02T00:00:00Z",
+            "body": "I will take this issue.",
+        },
+        {
+            "id": 2,
+            "user": {"login": "other"},
+            "created_at": "2026-09-01T11:00:00Z",
+            "body": "I'd like to take this issue.",
+        },
+    ]
+    assert (
+        worker._external_no_action_evidence(
+            {"state": "open", "number": 1}, comments, root_event=root
+        )
+        is None
+    )
+    comments.append(
+        {
+            "id": 3,
+            "user": {"login": "other"},
+            "created_at": "2026-09-01T13:00:00Z",
+            "body": "I'd like to take this issue if nobody else is working on it.",
+        }
+    )
+    evidence = worker._external_no_action_evidence(
+        {"state": "open", "number": 1}, comments, root_event=root
+    )
+    assert evidence and evidence["claimKind"] == "conditional_claim"
+
+
+def test_delivered_recovery_turn_timeout_returns_to_bounded_retry(tmp_path):
+    lane = EventLane(tmp_path / "events.db", turn_timeout_seconds=10)
+    event = {
+        "eventId": "outcome-reconcile:agentscope:timeout",
+        "eventKey": "agentscope-ai/agentscope#1",
+        "kind": "outcome_reconcile",
+        "payload": {"eventId": "root", "publicKey": "agentscope-ai/agentscope#1"},
+    }
+    lane.append(event)
+    claimed = lane.claim(now=0)[0]
+    lane.reserve_handler_turn(event["eventKey"], event["eventId"], "client:timeout")
+    lane.bind_handler_turn(
+        event["eventKey"],
+        event["eventId"],
+        "thread-1",
+        "turn-1",
+        {"turnStarted": True},
+        status="started",
+    )
+    assert lane.ack(event["eventId"], lease_token=claimed["leaseToken"])
+    with lane.writer() as db:
+        db.execute("UPDATE event_lane_turns SET created_at=0 WHERE event_id=?", (event["eventId"],))
+    assert lane.expire_handler_turns(now=11) == 1
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id=?", (event["eventId"],)
+        ).fetchone()
+    assert dict(row) == {"status": "pending", "attempts": 1}
+
+
 def test_foreign_pr_is_not_an_event_source_and_closed_issue_is_noop(tmp_path):
     worker = _event_worker_module()
     foreign = _issue(77, "2026-08-23T00:00:00Z", pr=True) | {

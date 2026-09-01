@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -21,6 +23,7 @@ from oss_pr_radar.agentscope_events import (  # noqa: E402
     dispatch_once,
     github_event_effective_time,
 )
+from oss_pr_radar.claims import detect_claims  # noqa: E402
 from oss_pr_radar.local_publication import run_bridge  # noqa: E402
 from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
 from scripts.migrate_event_recovery_chains import (  # noqa: E402
@@ -50,6 +53,15 @@ CENTRAL_CWD = Path("/Users/oxygen/Documents/github/agentscope")
 RECOVERY_EVENT_NAMESPACE = "agentscope"
 EVENT_RECEIPT_DIR = "agentscope_event_receipts"
 EVENT_OUTCOME_DIR = "agentscope_event_outcomes"
+EXHAUSTED_EVIDENCE_RECHECK_SECONDS = 15 * 60
+EXTERNAL_CLAIM_WATCH_SECONDS = 24 * 60 * 60
+_CONDITIONAL_EXTERNAL_CLAIM_RE = re.compile(
+    r"(?:"
+    r"\b(?:if|unless)\b.{0,160}\b(?:i(?:['’]?d|['’]?ll| am| will| would)|we)\b"
+    r"|\bif\b.{0,160}\b(?:no one|nobody|not(?: already)?|still available|unclaimed)\b"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
 _OPERATIONAL_AUTHORIZATION_GAP_ERRORS = frozenset(
     {
         f"operational authorization required: {reason}"
@@ -401,6 +413,51 @@ def _outcome_recovery_event_id(root_event_id: str) -> str:
     return f"outcome-reconcile:{RECOVERY_EVENT_NAMESPACE}:{digest}"
 
 
+def _valid_exhausted_recovery_lineage(
+    recovery_event_id: str,
+    recovery_event: dict,
+    root_event: dict,
+    root_event_id: str,
+    event_key: str,
+) -> bool:
+    """Accept settlement only for the exact stable root/recovery pair."""
+
+    key_prefix, separator, key_number = str(event_key).rpartition("#")
+    if separator != "#" or key_prefix != REPO or not key_number.isdigit() or int(key_number) <= 0:
+        return False
+    root_kind = str(root_event.get("kind") or "")
+    root_prefix = f"github:{REPO}:{int(key_number)}:{root_kind}:"
+    if str(recovery_event_id) != _outcome_recovery_event_id(root_event_id):
+        return False
+    if (
+        not root_event_id.startswith("github:")
+        or "outcome-reconcile:" in root_event_id
+        or not root_event_id.startswith(root_prefix)
+        or str(root_event.get("eventId") or "") != root_event_id
+        or str(root_event.get("repo") or "") != REPO
+        or str(root_event.get("number") or "") != key_number
+        or str(root_event.get("eventKey") or "") != event_key
+        or root_kind not in {"issue_update", "pr_update"}
+    ):
+        return False
+    if (
+        str(recovery_event.get("eventId") or "") != str(recovery_event_id)
+        or recovery_event.get("kind") != "outcome_reconcile"
+        or str(recovery_event.get("eventKey") or "") != event_key
+        or str(recovery_event.get("rootEventId") or "") != root_event_id
+        or str(recovery_event.get("eventIdSource") or "") != root_event_id
+    ):
+        return False
+    payload = recovery_event.get("payload")
+    if not isinstance(payload, dict):
+        return False
+    return (
+        str(payload.get("eventId") or "") == root_event_id
+        and str(payload.get("publicKey") or "") == event_key
+        and str(payload.get("rootEventId") or "") == root_event_id
+    )
+
+
 def _valid_machine_outcome(event_id: str, event_key: str, outcome: dict) -> bool:
     """Accept only the exact restricted terminal receipt for this event."""
     if outcome.get("error"):
@@ -464,8 +521,8 @@ def _enqueue_unresolved_outcome_recoveries(lane: EventLane) -> dict[str, int]:
         if event_id.startswith("outcome-reconcile:") or value.get("kind") == "outcome_reconcile":
             recovery_events.add(event_id)
             if not (
-                str(row["status"] or "") == "coalesced"
-                and str(row["turn_status"] or "") in {"", "superseded"}
+                str(row["status"] or "") in {"coalesced", "watch_only"}
+                and str(row["turn_status"] or "") in {"", "superseded", "watch_only"}
             ):
                 unresolved_recoveries.add(event_id)
 
@@ -555,6 +612,266 @@ def _enqueue_unresolved_outcome_recoveries(lane: EventLane) -> dict[str, int]:
         "candidates": candidates,
         "inserted": inserted,
         "existing": existing,
+        "skipped": skipped,
+    }
+
+
+def _comment_claim_evidence(
+    comments: list[dict],
+    *,
+    not_before: datetime | None = None,
+) -> dict[str, str] | None:
+    """Return a normalized claim signal, excluding bots and old comments."""
+
+    for comment in comments:
+        if not isinstance(comment, dict):
+            continue
+        created_at = str(comment.get("created_at") or comment.get("createdAt") or "")
+        created = _parse_time(created_at)
+        if created is None or (not_before is not None and created < not_before):
+            continue
+        author = comment.get("user") if isinstance(comment.get("user"), dict) else {}
+        normalized = {
+            "body": comment.get("body"),
+            "user": author,
+            "author_association": comment.get("author_association")
+            or comment.get("authorAssociation"),
+            "created_at": created_at,
+        }
+        signals = detect_claims([normalized], current_actor="oxygen56")
+        if not signals:
+            continue
+        signal = signals[0]
+        login = str(author.get("login") or signal.author or "")
+        if not login or login.casefold().endswith("[bot]"):
+            continue
+        body = str(comment.get("body") or "").strip()
+        if not body:
+            continue
+        claim_kind = str(signal.kind)
+        if _CONDITIONAL_EXTERNAL_CLAIM_RE.search(body):
+            claim_kind = "conditional_claim"
+        return {
+            "kind": "external_claim_comment",
+            "claimKind": claim_kind,
+            "commentId": str(comment.get("id") or "")[:80],
+            "author": login[:120],
+            "authorAssociation": str(signal.association or "NONE")[:40],
+            "createdAt": created_at[:80],
+            "excerpt": " ".join(body.split())[:240],
+            "commentUrl": str(comment.get("html_url") or comment.get("url") or "")[:400],
+        }
+    return None
+
+
+def _external_no_action_evidence(
+    issue: dict,
+    comments: list[dict],
+    *,
+    root_event: dict | None = None,
+) -> dict[str, str] | None:
+    """Return conservative public evidence for a watch-only closeout."""
+
+    state = str(issue.get("state") or "open").casefold()
+    repository = issue.get("repository") if isinstance(issue.get("repository"), dict) else {}
+    repo = str(repository.get("full_name") or REPO)
+    number = issue.get("number")
+    if state == "closed":
+        return {
+            "kind": "issue_closed",
+            "repo": repo,
+            "number": str(number or ""),
+            "issueState": state,
+            "issueUrl": str(issue.get("html_url") or "")[:400],
+        }
+    assignees = issue.get("assignees") if isinstance(issue.get("assignees"), list) else []
+    assignee = issue.get("assignee") if isinstance(issue.get("assignee"), dict) else None
+    names = [
+        value
+        for value in ([assignee] if assignee else []) + assignees
+        if isinstance(value, dict) and str(value.get("login") or "")
+    ]
+    external = [value for value in names if str(value.get("login") or "").casefold() != "oxygen56"]
+    # An assignment or claim only supersedes an issue event.  A PR watch event
+    # must continue to observe the user's own PR even if an issue has an
+    # unrelated assignee or comment.
+    root_kind = str((root_event or {}).get("kind") or "issue_update")
+    if external and root_kind == "issue_update":
+        value = external[0]
+        return {
+            "kind": "issue_assigned_external",
+            "repo": repo,
+            "number": str(number or ""),
+            "issueState": state,
+            "assignee": str(value.get("login") or "")[:120],
+            "issueUrl": str(issue.get("html_url") or "")[:400],
+        }
+    not_before = None
+    if root_event:
+        not_before = _parse_time(
+            str(root_event.get("updatedAt") or root_event.get("createdAt") or "")
+        )
+    claim = _comment_claim_evidence(comments, not_before=not_before)
+    if claim and root_kind == "issue_update":
+        claim.update(
+            {
+                "repo": repo,
+                "number": str(number or ""),
+                "issueState": state,
+                "issueUrl": str(issue.get("html_url") or "")[:400],
+            }
+        )
+        return claim
+    return None
+
+
+def _live_exhausted_recovery_evidence(
+    root: Path,
+    event: dict,
+    *,
+    transport=None,
+) -> dict[str, str] | None:
+    """Read current issue state and look for a deterministic no-action proof.
+
+    This helper performs GET-only requests and intentionally returns no proof
+    when GitHub is unavailable or the issue remains genuinely actionable.
+    """
+
+    repo = str(event.get("repo") or REPO)
+    number = _pr_number(event)
+    if repo != REPO or number is None:
+        return None
+    state_path = root / "state" / "agentscope-poll.json"
+    state = _load_json(state_path)
+    try:
+        poller = (
+            GitHubIssuePoller(state_path, transport=transport)
+            if transport
+            else GitHubIssuePoller(state_path)
+        )
+        headers = poller._headers(state, conditional=False, require_auth=transport is None)
+        base = f"https://api.github.com/repos/{repo}/issues/{number}"
+        status, _response_headers, issue = poller.transport(base, headers)
+        if status != 200 or not isinstance(issue, dict):
+            return None
+        comments_url = f"{base}/comments?per_page=100&page=1&sort=created&direction=desc"
+        comment_status, _comment_headers, comments = poller.transport(comments_url, headers)
+        if comment_status != 200 or not isinstance(comments, list):
+            comments = []
+        issue = dict(issue)
+        if not issue.get("number"):
+            issue["number"] = number
+        issue["repository"] = {"full_name": repo}
+        return _external_no_action_evidence(issue, comments, root_event=event)
+    except Exception:  # noqa: BLE001 - an unavailable proof must fail closed
+        return None
+
+
+def _settle_exhausted_outcome_recoveries(
+    root: Path,
+    lane: EventLane,
+    *,
+    transport=None,
+    now: float | None = None,
+) -> dict[str, int]:
+    """Settle only exhausted chains whose current public state proves no-op."""
+
+    current = time.time() if now is None else float(now)
+    with lane.connect() as db:
+        rows = db.execute(
+            "SELECT e.event_id,e.payload_json,e.status,e.attempts,t.status AS turn_status,"
+            "t.receipt_json FROM event_lane_events e "
+            "LEFT JOIN event_lane_turns t USING(event_id) "
+            "WHERE (e.status='needs_reconcile' OR "
+            "(e.status='delivered' AND t.status='needs_reconcile')) "
+            "AND (e.event_id LIKE 'outcome-reconcile:%' "
+            "OR json_extract(e.payload_json,'$.kind')='outcome_reconcile') "
+            "AND e.attempts>=? "
+            "ORDER BY e.created_at,e.event_id LIMIT 8",
+            (lane.max_attempts,),
+        ).fetchall()
+    candidates = 0
+    settled = 0
+    already_applied = 0
+    skipped = 0
+    for row in rows:
+        try:
+            event = json.loads(row["payload_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            skipped += 1
+            continue
+        if not isinstance(event, dict) or event.get("kind") != "outcome_reconcile":
+            skipped += 1
+            continue
+        root_event_id = _recovery_source_event_id(event)
+        event_key = str(event.get("eventKey") or "")
+        if not root_event_id or not event_key:
+            skipped += 1
+            continue
+        with lane.connect() as db:
+            root_row = db.execute(
+                "SELECT payload_json FROM event_lane_events WHERE event_id=?",
+                (root_event_id,),
+            ).fetchone()
+        if root_row is None:
+            skipped += 1
+            continue
+        try:
+            root_event = json.loads(root_row["payload_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            root_event = {}
+        if not isinstance(root_event, dict):
+            skipped += 1
+            continue
+        if not _valid_exhausted_recovery_lineage(
+            str(row["event_id"]), event, root_event, root_event_id, event_key
+        ):
+            skipped += 1
+            continue
+        candidates += 1
+        audit_key = f"outcome-recovery-evidence:{row['event_id']}"
+        audit = lane.state_value(audit_key)
+        last_checked = _parse_time(
+            str(audit.get("lastCheckedAt") or "") if isinstance(audit, dict) else ""
+        )
+        if (
+            last_checked is not None
+            and current - last_checked.timestamp() < EXHAUSTED_EVIDENCE_RECHECK_SECONDS
+        ):
+            skipped += 1
+            continue
+        lane.set_state_value(
+            audit_key,
+            {
+                "schemaVersion": "agentscope_event_recovery_audit_v1",
+                "lastCheckedAt": datetime.fromtimestamp(current, UTC)
+                .isoformat()
+                .replace("+00:00", "Z"),
+            },
+        )
+        evidence = _live_exhausted_recovery_evidence(root, root_event, transport=transport)
+        if not evidence:
+            skipped += 1
+            continue
+        result = lane.settle_exhausted_recovery_no_action(
+            str(row["event_id"]),
+            root_event_id=root_event_id,
+            event_key=event_key,
+            reason=str(evidence.get("kind") or "external_state_superseded"),
+            evidence=evidence,
+            now=current,
+            watch_seconds=EXTERNAL_CLAIM_WATCH_SECONDS,
+        )
+        if result.get("status") == "applied":
+            settled += 1
+        elif result.get("status") == "already_applied":
+            already_applied += 1
+        else:
+            skipped += 1
+    return {
+        "candidates": candidates,
+        "settled": settled,
+        "alreadyApplied": already_applied,
         "skipped": skipped,
     }
 
@@ -1247,7 +1564,6 @@ def run_once(
         apply=True,
     )
     authorization_gap_repair = _repair_exhausted_worker_binding_failures(root, lane)
-    recovery_queue = _enqueue_unresolved_outcome_recoveries(lane)
     poll = GitHubIssuePoller(state / "agentscope-poll.json")
     had_poll_state = (state / "agentscope-poll.json").exists()
     try:
@@ -1347,6 +1663,12 @@ def run_once(
         audit["terminalized"] = bootstrap["terminalized"]
         lane.set_state_value(BOOTSTRAP_BOUNDARY_STATE_KEY, audit)
     pr_snapshots_coalesced = lane.coalesce_pending_pr_updates(now=current.timestamp())
+    recovery_settlement = _settle_exhausted_outcome_recoveries(
+        root,
+        lane,
+        now=current.timestamp(),
+    )
+    recovery_queue = _enqueue_unresolved_outcome_recoveries(lane)
     drained = {"claimed": 0, "delivered": 0, "pending": lane.pending()}
     central_task_busy = production_delivery and _central_handler_busy(lane)
     if deliver is None:
@@ -1378,6 +1700,7 @@ def run_once(
         "turnsExpired": turns_expired,
         "recoveryMigration": recovery_migration,
         "recoveryQueue": recovery_queue,
+        "recoverySettlement": recovery_settlement,
         "authorizationGapRepair": authorization_gap_repair,
         "centralTaskBusy": central_task_busy,
         "fullReconciliation": bool(full_result is not None),
