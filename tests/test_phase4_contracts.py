@@ -113,7 +113,17 @@ def test_partial_failures_are_visible_without_skipping_durable_state():
     assert "needs.scan.result == 'success'" in build_state_header
     assert "needs.pr-followup.result == 'failure'" in build_state_header
 
+    persist_pending_header = workflow.split("\n  persist-pending:\n", 1)[1].split(
+        "\n    runs-on:", 1
+    )[0]
+    assert "always() && needs.build-state.result == 'success'" in persist_pending_header
+
+    notify_header = workflow.split("\n  notify:\n", 1)[1].split("\n    runs-on:", 1)[0]
+    assert "always() && needs.persist-pending.result == 'success'" in notify_header
+
     receipt_header = workflow.split("\n  persist-receipt:\n", 1)[1].split("\n    runs-on:", 1)[0]
+    assert "always()" in receipt_header
+    assert "needs.notify.result == 'success'" in receipt_header
     assert "needs.notify.result == 'failure'" in receipt_header
 
 
@@ -129,19 +139,36 @@ def test_radar_scan_applies_controller_decision_feedback_before_scanning():
 def test_radar_receipt_persistence_consumes_the_current_pending_state():
     workflow = (ROOT / ".github/workflows/radar.yml").read_text(encoding="utf-8")
     section = workflow.split("\n  persist-receipt:\n", 1)[1]
-    assert "name: pending-state-${{ github.run_id }}" in section
+    assert "name: pending-state-${{ github.run_id }}-${{ github.run_attempt }}" in section
     assert "path: pending-state" in section
     assert (
         "cp pending-state/state/war_room_feishu_outbox.json state/war_room_feishu_outbox.json"
         in section
     )
-    assert "name: war-room-receipt-${{ github.run_id }}" in section
+    assert "name: war-room-receipt-${{ github.run_id }}-${{ github.run_attempt }}" in section
     assert "scripts/apply_war_room_receipt.py" in section
     assert (
         section.index("scripts/merge_war_room_receipt.py")
         < section.index("scripts/apply_war_room_receipt.py")
         < section.index("scripts/export_managed_snapshot.py")
     )
+
+
+def test_radar_artifacts_are_bound_to_one_workflow_attempt():
+    workflow = (ROOT / ".github/workflows/radar.yml").read_text(encoding="utf-8")
+    artifact_names = (
+        "watch-state",
+        "pr-followup-state",
+        "scan-bundle",
+        "pending-state",
+        "war-room-receipt",
+    )
+    for name in artifact_names:
+        expected = f"name: {name}-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}"
+        assert expected in workflow
+        assert f"name: {name}-${{{{ github.run_id }}}}\n" not in workflow
+
+    assert workflow.count("${{ github.run_attempt }}") == 12
 
 
 def test_war_room_sender_cannot_send_without_the_source_artifact():

@@ -62,7 +62,7 @@ jobs:
       - name: Upload watch state
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: watch-state-${{ github.run_id }}
+          name: watch-state-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             reports/watch_updates.json
             state/watchlist.json
@@ -107,7 +107,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pr-followup-state-${{ github.run_id }}
+          name: pr-followup-state-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             reports/pr_updates.json
             state/pr_followup.json
@@ -179,7 +179,7 @@ jobs:
       - name: Restore fresh watch results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: watch-state-${{ github.run_id }}
+          name: watch-state-${{ github.run_id }}-${{ github.run_attempt }}
           path: .
 
       - name: Scan and review candidates
@@ -203,7 +203,7 @@ jobs:
       - name: Upload scan bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: scan-bundle-${{ github.run_id }}
+          name: scan-bundle-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             reports/latest_scan.json
             reports/watch_updates.json
@@ -236,11 +236,11 @@ jobs:
           python-version: "3.12"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: scan-bundle-${{ github.run_id }}
+          name: scan-bundle-${{ github.run_id }}-${{ github.run_attempt }}
           path: .
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: pr-followup-state-${{ github.run_id }}
+          name: pr-followup-state-${{ github.run_id }}-${{ github.run_attempt }}
           path: .
 
       - name: Import authenticated scan and follow-up state
@@ -277,7 +277,7 @@ jobs:
       - name: Upload pending state
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pending-state-${{ github.run_id }}
+          name: pending-state-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             reports/*.json
             state/*.json
@@ -288,7 +288,9 @@ jobs:
 
   persist-pending:
     needs: build-state
-    if: github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      always() && needs.build-state.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -303,14 +305,16 @@ jobs:
           python-version: "3.12"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: pending-state-${{ github.run_id }}
+          name: pending-state-${{ github.run_id }}-${{ github.run_attempt }}
           path: .
       - name: Commit pending outbox and signed queue
         run: python scripts/state_branch.py publish
 
   notify:
     needs: persist-pending
-    if: github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      always() && needs.persist-pending.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -328,7 +332,7 @@ jobs:
           python-version: "3.12"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: pending-state-${{ github.run_id }}
+          name: pending-state-${{ github.run_id }}-${{ github.run_attempt }}
           path: .
       - name: Send authenticated War Room Feishu projection
         id: war_room_send
@@ -342,7 +346,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: war-room-receipt-${{ github.run_id }}
+          name: war-room-receipt-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             receipt/war_room_feishu_outbox.json
           if-no-files-found: error
@@ -379,13 +383,13 @@ jobs:
           --allow-missing
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: pending-state-${{ github.run_id }}
+          name: pending-state-${{ github.run_id }}-${{ github.run_attempt }}
           path: pending-state
       - name: Copy only the current War Room outbox
         run: cp pending-state/state/war_room_feishu_outbox.json state/war_room_feishu_outbox.json
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: war-room-receipt-${{ github.run_id }}
+          name: war-room-receipt-${{ github.run_id }}-${{ github.run_attempt }}
           path: receipt
       - name: Merge War Room receipt without accepting new events
         run: >-
