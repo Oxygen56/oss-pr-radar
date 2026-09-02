@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import plistlib
 import re
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -19,7 +21,11 @@ from typing import Any
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
+from oss_pr_radar.launch_config import parse_launchctl_config  # noqa: E402
+from oss_pr_radar.operational_auth import (  # noqa: E402
+    require_operational_authorization,
+    worker_staging_transaction_lock,
+)
 from oss_pr_radar.release_binding import verify_release  # noqa: E402
 
 LANES = {
@@ -37,35 +43,59 @@ LANES = {
 ACTIVE_EVENT_STATUSES = {"pending", "leased", "needs_reconcile"}
 ACTIVE_TURN_STATUSES = {"reserved", "started", "needs_reconcile"}
 TURN_STALE_SECONDS = 20 * 60
+POLL_SUCCESS_MAX_AGE_SECONDS = 5 * 60
+POLL_FAILURE_WINDOW_SECONDS = 15 * 60
+POLL_FAILURE_WINDOW_MAX_ATTEMPTS = 20
+POLL_DEGRADED_CONSECUTIVE_FAILURES = 3
+POLL_DEGRADED_MIN_WINDOW_ATTEMPTS = 3
+POLL_DEGRADED_FAILURE_RATE = 0.5
+POLL_SUCCESS_STALE_SECONDS = 15 * 60
+POLL_OUTCOME_WINDOW = 20
+EVENT_RECONCILE_SCHEMA = "oss-pr-radar.event-lane-reconcile.v1"
+EVENT_RECONCILE_TIMEOUT_SECONDS = 90.0
+EVENT_RECONCILE_POLL_INTERVAL_SECONDS = 5.0
+EVENT_MANIFEST = "event-lane-manifest.json"
+EVENT_MANIFEST_DIGEST = "event-lane-manifest.sha256"
+
+
+def _launchctl(*arguments: str, check: bool = False) -> subprocess.CompletedProcess[str]:
+    """Run one launchctl operation through a narrow, testable seam."""
+
+    return subprocess.run(
+        ["launchctl", *arguments],
+        capture_output=True,
+        text=True,
+        check=check,
+        timeout=15,
+    )
 
 
 def _launch_status(label: str) -> dict[str, Any]:
     service = f"gui/{os.getuid()}/{label}"
     try:
-        completed = subprocess.run(
-            ["launchctl", "print", service],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=10,
-        )
+        completed = _launchctl("print", service, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         return {
             "service": service,
             "available": False,
             "lastExitCode": None,
+            "plistPath": None,
             "error": f"launch_status_unavailable:{type(exc).__name__}",
         }
-    output = completed.stdout + completed.stderr
+    output = (completed.stdout or "") + (completed.stderr or "")
     runs = re.search(r"\bruns = (\d+)", output)
     exit_code = re.search(r"\blast exit code = (-?\d+)", output)
     state = re.search(r"\bstate = ([^\n]+)", output)
+    parsed = parse_launchctl_config(output)
     return {
         "service": service,
         "available": completed.returncode == 0,
         "state": state.group(1).strip() if state else None,
         "runs": int(runs.group(1)) if runs else None,
         "lastExitCode": int(exit_code.group(1)) if exit_code else None,
+        "programArguments": parsed.get("ProgramArguments"),
+        "workingDirectory": parsed.get("WorkingDirectory"),
+        "plistPath": parsed.get("PlistPath"),
     }
 
 
@@ -99,46 +129,349 @@ def _launch_healthy(launch: dict[str, Any]) -> bool:
     return bool(launch.get("available") and launch.get("lastExitCode") == 0)
 
 
-def _plist_health(path: Path, *, root: Path, namespace: str) -> dict[str, Any]:
-    lane = LANES[namespace]
+def _parse_poll_timestamp(value: object) -> float | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC).timestamp()
+
+
+def _read_poll_health(path: Path, *, now: float) -> dict[str, Any]:
+    """Read durable poll evidence; launchd's predecessor exit is not enough."""
     result: dict[str, Any] = {
         "path": str(path),
         "exists": path.is_file() and not path.is_symlink(),
+        "available": False,
+        "healthy": False,
+        "status": "unknown",
+        "issues": [],
+    }
+    if not result["exists"]:
+        result["issues"].append("POLL_STATE_MISSING")
+        return result
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        result["issues"].append(f"POLL_STATE_INVALID:{type(exc).__name__}")
+        return result
+    if not isinstance(value, dict):
+        result["issues"].append("POLL_STATE_INVALID:object_required")
+        return result
+    result["available"] = True
+    result["schemaVersion"] = value.get("schemaVersion")
+    result["pollHealthSchema"] = value.get("pollHealthSchema")
+    result["lastAttemptAt"] = value.get("lastAttemptAt")
+    result["lastSuccessAt"] = value.get("lastSuccessAt")
+    result["lastFailureAt"] = value.get("lastFailureAt")
+    result["lastError"] = str(value.get("lastError") or "")[:400] or None
+    attempt_at = _parse_poll_timestamp(value.get("lastAttemptAt"))
+    success_at = _parse_poll_timestamp(value.get("lastSuccessAt"))
+    result["lastAttemptAgeSeconds"] = max(0.0, now - attempt_at) if attempt_at is not None else None
+    result["lastSuccessAgeSeconds"] = max(0.0, now - success_at) if success_at is not None else None
+    if attempt_at is None:
+        result["issues"].append("POLL_ATTEMPT_MISSING_OR_INVALID")
+    if success_at is None:
+        result["issues"].append("POLL_SUCCESS_MISSING_OR_INVALID")
+    elif now - success_at > POLL_SUCCESS_MAX_AGE_SECONDS:
+        result["issues"].append("POLL_SUCCESS_STALE")
+    if attempt_at is not None and now - attempt_at > POLL_SUCCESS_MAX_AGE_SECONDS:
+        result["issues"].append("POLL_ATTEMPT_STALE")
+
+    try:
+        consecutive = max(0, int(value.get("consecutiveFailures") or 0))
+    except (TypeError, ValueError):
+        consecutive = 0
+        result["issues"].append("POLL_CONSECUTIVE_INVALID")
+    result["consecutiveFailures"] = consecutive
+
+    raw_window = value.get("failureWindow")
+    window: list[dict[str, Any]] = []
+    invalid_window = False
+    if raw_window is not None and not isinstance(raw_window, list):
+        invalid_window = True
+    elif isinstance(raw_window, list):
+        for entry in raw_window:
+            if not isinstance(entry, dict) or not isinstance(entry.get("ok"), bool):
+                invalid_window = True
+                continue
+            entry_at = _parse_poll_timestamp(entry.get("at"))
+            if entry_at is None:
+                invalid_window = True
+                continue
+            if entry_at > now or now - entry_at > POLL_FAILURE_WINDOW_SECONDS:
+                continue
+            window.append({"at": entry.get("at"), "ok": bool(entry["ok"])})
+    if invalid_window:
+        result["issues"].append("POLL_FAILURE_WINDOW_INVALID")
+    window = window[-POLL_FAILURE_WINDOW_MAX_ATTEMPTS:]
+    attempts = len(window)
+    failures = sum(1 for entry in window if not entry["ok"])
+    rate = round(failures / attempts, 3) if attempts else 0.0
+    result.update(
+        {
+            "failureWindow": window,
+            "failureWindowAttempts": attempts,
+            "failureWindowFailures": failures,
+            "failureRate": rate,
+            "persistedFailureRate": value.get("failureRate"),
+            "pollHealthStatus": str(value.get("pollHealthStatus") or "unknown"),
+        }
+    )
+    degraded_evidence = consecutive >= POLL_DEGRADED_CONSECUTIVE_FAILURES or (
+        attempts >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS and rate >= POLL_DEGRADED_FAILURE_RATE
+    )
+    status = result["pollHealthStatus"]
+    if degraded_evidence or status == "degraded":
+        result["status"] = "degraded"
+        result["issues"].append("POLL_FAILURES_SUSTAINED")
+    elif success_at is not None and attempt_at is not None:
+        result["status"] = "recovering" if consecutive or status == "recovering" else "healthy"
+    else:
+        result["status"] = "unknown"
+    # A recent successful poll keeps a single recoverable failure from making
+    # the whole controller fatal. Missing/stale success or sustained failures
+    # remain unhealthy even when launchd reports an old exit code of zero.
+    result["healthy"] = bool(
+        result["status"] in {"healthy", "recovering"}
+        and success_at is not None
+        and attempt_at is not None
+        and now - success_at <= POLL_SUCCESS_MAX_AGE_SECONDS
+        and now - attempt_at <= POLL_SUCCESS_MAX_AGE_SECONDS
+        and not invalid_window
+        and not degraded_evidence
+    )
+    return result
+
+
+def _read_event_manifest(code_root: Path, *, namespace: str) -> dict[str, Any]:
+    """Verify the lane-specific manifest and its sidecar digest.
+
+    Event lanes are released independently.  Their Radar release manifests
+    therefore have different ``releaseId`` and ``manifestSha256`` values.  A
+    shared event-lane manifest is still verified *inside each release*; it is
+    the trust boundary for the configured repository/thread mapping, not a
+    reason to require the two executable releases to have the same identity.
+    """
+
+    manifest_path = code_root / EVENT_MANIFEST
+    digest_path = code_root / EVENT_MANIFEST_DIGEST
+    result: dict[str, Any] = {
+        "path": str(manifest_path),
+        "digestPath": str(digest_path),
+        "ok": False,
+        "sha256": None,
+    }
+    try:
+        manifest_meta = manifest_path.lstat()
+        digest_meta = digest_path.lstat()
+    except OSError as exc:
+        result["error"] = f"event_manifest_unavailable:{type(exc).__name__}"
+        return result
+    if (
+        manifest_path.is_symlink()
+        or digest_path.is_symlink()
+        or not stat.S_ISREG(manifest_meta.st_mode)
+        or not stat.S_ISREG(digest_meta.st_mode)
+    ):
+        result["error"] = "event_manifest_must_be_regular"
+        return result
+    try:
+        manifest_bytes = manifest_path.read_bytes()
+        expected = digest_path.read_text(encoding="utf-8").strip().split()[0]
+        value = json.loads(manifest_bytes.decode("utf-8"))
+    except (IndexError, OSError, UnicodeError, json.JSONDecodeError) as exc:
+        result["error"] = f"event_manifest_invalid:{type(exc).__name__}"
+        return result
+    actual = hashlib.sha256(manifest_bytes).hexdigest()
+    if expected != actual or not re.fullmatch(r"[0-9a-f]{64}", expected):
+        result["error"] = "event_manifest_digest_mismatch"
+        result["sha256"] = actual
+        return result
+    repositories = value.get("repositories") if isinstance(value, dict) else None
+    entry = (
+        repositories.get(str(LANES[namespace]["repo"])) if isinstance(repositories, dict) else None
+    )
+    if (
+        not isinstance(value, dict)
+        or value.get("schemaVersion") != "oss-pr-radar-event-lane-v1"
+        or not isinstance(entry, dict)
+        or not str(entry.get("activeThreadId") or "")
+        or not str(entry.get("cwd") or "")
+    ):
+        result["error"] = "event_manifest_binding_invalid"
+        result["sha256"] = actual
+        return result
+    result.update(
+        {
+            "ok": True,
+            "sha256": actual,
+            "schemaVersion": value.get("schemaVersion"),
+            "repository": str(LANES[namespace]["repo"]),
+            "activeThreadId": str(entry["activeThreadId"]),
+            "cwd": str(entry["cwd"]),
+        }
+    )
+    return result
+
+
+def _trusted_event_program(root: Path, code_root: Path, namespace: str) -> list[str]:
+    """Return the one launch command accepted for an event lane.
+
+    Event workers are installed from the runtime virtualenv and must execute
+    the lane worker in the verified immutable release.  The plist is an
+    untrusted input, so its command is compared to this independently derived
+    value instead of being used to construct the expected value.
+    """
+
+    root = root.absolute()
+    code_root = code_root.absolute()
+    interpreter = root / ".venv" / "bin" / "python"
+    worker = code_root / "scripts" / str(LANES[namespace]["worker"])
+    return [str(interpreter), str(worker), "--root", str(root)]
+
+
+def _stable_plist_bytes(path: Path, metadata: os.stat_result) -> tuple[bytes, str]:
+    """Read plist bytes and reject replacement or mutation during the read."""
+
+    raw = path.read_bytes()
+    after = path.lstat()
+    before_identity = (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+        metadata.st_mode,
+        metadata.st_uid,
+    )
+    after_identity = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+        after.st_mode,
+        after.st_uid,
+    )
+    if before_identity != after_identity:
+        raise RuntimeError("event plist changed while being read")
+    return raw, hashlib.sha256(raw).hexdigest()
+
+
+def _plist_health(path: Path, *, root: Path, namespace: str) -> dict[str, Any]:
+    path = path.absolute()
+    root = root.absolute()
+    lane = LANES[namespace]
+    result: dict[str, Any] = {
+        "path": str(path),
+        "exists": False,
+        "regular": False,
+        "symlink": path.is_symlink(),
+        "mode": None,
+        "ownerUid": None,
         "bindingOk": False,
         "label": lane["label"],
         "worker": lane["worker"],
+        "plistSha256": None,
+        "programArguments": None,
+        "expectedProgramArguments": None,
+        "programArgumentsOk": False,
+        "launchConfigOk": False,
     }
-    if not result["exists"]:
-        return result
     try:
-        value = plistlib.loads(path.read_bytes())
-        arguments = [str(item) for item in value.get("ProgramArguments") or []]
-        code_root = Path(str(value.get("WorkingDirectory") or "")).absolute()
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return result
+    except OSError as exc:
+        result["error"] = f"binding_unavailable:{type(exc).__name__}:{str(exc)[:160]}"
+        return result
+    result["exists"] = True
+    try:
+        result["regular"] = stat.S_ISREG(metadata.st_mode)
+        result["mode"] = oct(stat.S_IMODE(metadata.st_mode))
+        result["ownerUid"] = metadata.st_uid
+        if not result["regular"] or result["symlink"]:
+            result["error"] = "binding_invalid:plist_must_be_regular"
+            return result
+        raw, plist_sha256 = _stable_plist_bytes(path, metadata)
+        result["plistSha256"] = plist_sha256
+        value = plistlib.loads(raw)
+        if not isinstance(value, dict):
+            raise ValueError("plist object required")
+        raw_arguments = value.get("ProgramArguments")
+        arguments_ok_type = isinstance(raw_arguments, list) and all(
+            isinstance(item, str) for item in raw_arguments
+        )
+        arguments = list(raw_arguments) if arguments_ok_type else []
+        result["programArguments"] = arguments
+        working_directory = value.get("WorkingDirectory")
+        if not isinstance(working_directory, str) or not working_directory:
+            raise ValueError("WorkingDirectory string required")
+        code_root = Path(working_directory).absolute()
+        expected_arguments = _trusted_event_program(root, code_root, namespace)
+        result["expectedProgramArguments"] = expected_arguments
+        result["programArgumentsOk"] = arguments_ok_type and arguments == expected_arguments
+        if not arguments_ok_type:
+            raise ValueError("ProgramArguments string list required")
         manifest = verify_release(code_root)
     except (OSError, ValueError, plistlib.InvalidFileException, RuntimeError) as exc:
         result["error"] = f"binding_invalid:{type(exc).__name__}:{str(exc)[:160]}"
         return result
-    try:
-        root_index = arguments.index("--root") + 1
-        runtime_argument = Path(arguments[root_index]).absolute()
-    except (ValueError, IndexError):
-        runtime_argument = None
+    runtime_argument = (
+        Path(arguments[-1]).absolute()
+        if len(arguments) == 4 and arguments[-2] == "--root"
+        else None
+    )
     worker_path = code_root / "scripts" / str(lane["worker"])
     worker_argument = Path(arguments[1]).absolute() if len(arguments) > 1 else None
     release_id = str(manifest.get("releaseId") or "")
+    event_manifest = _read_event_manifest(code_root, namespace=namespace)
     launch = _settle_launch_status(str(lane["label"]), _launch_status(str(lane["label"])))
+    loaded_arguments = launch.get("programArguments")
+    expected_plist_path = str(path)
+    loaded_plist_path = launch.get("plistPath")
+    launch_path_ok = loaded_plist_path == expected_plist_path
+    launch_config_ok = bool(
+        launch.get("available")
+        and loaded_arguments == expected_arguments
+        and launch.get("workingDirectory") == str(code_root)
+        and launch_path_ok
+    )
+    releases_root = (root / "releases").absolute()
+    release_root_ok = code_root.parent == releases_root
     result.update(
         {
             "observedLabel": value.get("Label"),
             "releaseId": release_id or None,
+            "releaseManifestSha256": manifest.get("manifestSha256"),
+            "eventManifestSha256": event_manifest.get("sha256"),
+            "eventManifest": event_manifest,
             "codeRoot": str(code_root),
             "runtimeRoot": str(runtime_argument) if runtime_argument else None,
+            "releaseRootOk": release_root_ok,
+            "loadedPlistPath": loaded_plist_path,
+            "launchPathOk": launch_path_ok,
+            "launchConfigOk": launch_config_ok,
             "bindingOk": bool(
                 value.get("Label") == lane["label"]
+                and result["regular"]
+                and stat.S_IMODE(metadata.st_mode) == 0o600
+                and metadata.st_uid == os.getuid()
+                and release_root_ok
                 and release_id == code_root.name
                 and worker_path.is_file()
+                and not worker_path.is_symlink()
                 and worker_argument == worker_path
                 and runtime_argument == root
+                and result["programArgumentsOk"]
+                and (root / ".venv" / "bin" / "python").is_file()
+                and os.access(root / ".venv" / "bin" / "python", os.X_OK)
+                and event_manifest.get("ok") is True
             ),
             "launch": launch,
         }
@@ -272,6 +605,113 @@ def _read_only_database(path: Path, *, namespace: str, now: float) -> dict[str, 
     return result
 
 
+def _poll_health(path: Path, *, now: float) -> dict[str, Any]:
+    """Read durable poll outcomes and detect sustained transport failures.
+
+    ``failureWindow`` is the current event-lane format.  The older
+    ``recentPollOutcomes`` shape is accepted for one release so a mixed
+    rollout remains observable; a state file with neither shape is unknown,
+    never silently healthy.
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        raw = None
+    if isinstance(raw, dict) and "failureWindow" in raw:
+        parsed = _read_poll_health(path, now=now)
+        failures = int(parsed.get("failureWindowFailures") or 0)
+        attempts = int(parsed.get("failureWindowAttempts") or 0)
+        return {
+            **parsed,
+            "telemetryAvailable": bool(parsed.get("lastAttemptAt") or parsed.get("failureWindow")),
+            "degraded": parsed.get("status") == "degraded",
+            "recentOutcomeCount": attempts,
+            "recentFailureCount": failures,
+            "recentFailureRate": parsed.get("failureRate", 0.0),
+            "successStale": "POLL_SUCCESS_STALE" in parsed.get("issues", []),
+            "degradedReasons": parsed.get("issues", [])
+            if parsed.get("status") == "degraded"
+            else [],
+        }
+    # Compatibility with the first telemetry patch, which called the bounded
+    # journal recentPollOutcomes.  It still requires a fresh successful sample.
+    if isinstance(raw, dict) and isinstance(raw.get("recentPollOutcomes"), list):
+        outcomes = [item for item in raw["recentPollOutcomes"] if isinstance(item, dict)][
+            -POLL_OUTCOME_WINDOW:
+        ]
+        failures = [item for item in outcomes if item.get("ok") is False]
+        try:
+            consecutive = max(0, int(raw.get("consecutiveFailures") or 0))
+        except (TypeError, ValueError, OverflowError):
+            consecutive = 0
+        last_success = _parse_iso_timestamp(raw.get("lastSuccessAt"))
+        last_attempt = _parse_iso_timestamp(raw.get("lastAttemptAt"))
+        stale = last_success is None or now - last_success > POLL_SUCCESS_STALE_SECONDS
+        attempt_stale = last_attempt is None or now - last_attempt > POLL_SUCCESS_STALE_SECONDS
+        rate = (len(failures) / len(outcomes)) if outcomes else 0.0
+        degraded = bool(
+            consecutive >= POLL_DEGRADED_CONSECUTIVE_FAILURES
+            or (
+                len(outcomes) >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS
+                and rate >= POLL_DEGRADED_FAILURE_RATE
+            )
+            or stale
+            or attempt_stale
+        )
+        reasons: list[str] = []
+        if consecutive >= POLL_DEGRADED_CONSECUTIVE_FAILURES:
+            reasons.append("consecutive_failures")
+        if (
+            len(outcomes) >= POLL_DEGRADED_MIN_WINDOW_ATTEMPTS
+            and rate >= POLL_DEGRADED_FAILURE_RATE
+        ):
+            reasons.append("recent_failure_rate")
+        if stale:
+            reasons.append("last_success_stale")
+        if attempt_stale:
+            reasons.append("last_attempt_stale")
+        return {
+            "path": str(path),
+            "telemetryAvailable": bool(raw.get("lastAttemptAt") or outcomes),
+            "healthy": not degraded,
+            "degraded": degraded,
+            "status": "degraded" if degraded else ("recovering" if consecutive else "healthy"),
+            "consecutiveFailures": consecutive,
+            "lastAttemptAt": raw.get("lastAttemptAt"),
+            "lastSuccessAt": raw.get("lastSuccessAt"),
+            "recentOutcomeCount": len(outcomes),
+            "recentFailureCount": len(failures),
+            "recentFailureRate": round(rate, 4),
+            "successStale": stale,
+            "issues": (["POLL_SUCCESS_STALE"] if stale else [])
+            + (["POLL_ATTEMPT_STALE"] if attempt_stale else []),
+            "degradedReasons": reasons,
+        }
+    return {
+        "path": str(path),
+        "telemetryAvailable": False,
+        "healthy": False,
+        "degraded": False,
+        "status": "unknown",
+        "consecutiveFailures": 0,
+        "recentOutcomeCount": 0,
+        "recentFailureCount": 0,
+        "recentFailureRate": 0.0,
+        "successStale": True,
+        "issues": ["POLL_STATE_MISSING_OR_LEGACY"],
+        "degradedReasons": [],
+    }
+
+
+def _parse_iso_timestamp(value: object) -> float | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def audit(root: Path, *, home: Path | None = None, now: float | None = None) -> dict[str, Any]:
     root = root.absolute()
     home = (home or Path.home()).absolute()
@@ -292,6 +732,10 @@ def audit(root: Path, *, home: Path | None = None, now: float | None = None) -> 
         )
         for namespace in LANES
     }
+    poll_states = {
+        namespace: _poll_health(root / "state" / f"{namespace}-poll.json", now=current)
+        for namespace in LANES
+    }
     try:
         authorization = require_operational_authorization(root)
         authorization_valid = isinstance(authorization, dict)
@@ -303,15 +747,27 @@ def audit(root: Path, *, home: Path | None = None, now: float | None = None) -> 
     for namespace in LANES:
         plist = plists[namespace]
         database = databases[namespace]
+        poll_state = poll_states[namespace]
         launch = plist.get("launch") or {}
         lane_health[namespace] = {
             "healthy": bool(
-                plist.get("bindingOk") and _launch_healthy(launch) and database.get("healthy")
+                plist.get("bindingOk")
+                and plist.get("launchConfigOk")
+                and _launch_healthy(launch)
+                and database.get("healthy")
+                and poll_state.get("healthy")
             ),
             "bindingOk": bool(plist.get("bindingOk")),
+            "launchConfigOk": bool(plist.get("launchConfigOk")),
             "launchHealthy": _launch_healthy(launch),
             "databaseHealthy": bool(database.get("healthy")),
+            "pollHealthy": bool(poll_state.get("healthy")),
+            "pollTelemetryAvailable": bool(poll_state.get("telemetryAvailable")),
+            "pollStatus": poll_state.get("status"),
+            "pollError": poll_state.get("lastError"),
             "releaseId": plist.get("releaseId"),
+            "releaseManifestSha256": plist.get("releaseManifestSha256"),
+            "eventManifestSha256": plist.get("eventManifestSha256"),
         }
     healthy = authorization_valid and all(item.get("healthy") for item in lane_health.values())
     return {
@@ -323,17 +779,358 @@ def audit(root: Path, *, home: Path | None = None, now: float | None = None) -> 
         "lanes": lane_health,
         "plists": plists,
         "databases": databases,
+        "pollStates": poll_states,
     }
+
+
+def _binding_fingerprint(snapshot: dict[str, Any]) -> dict[str, tuple[Any, ...]]:
+    """Return immutable plist and launch binding fields for a TOCTOU check."""
+
+    fingerprints: dict[str, tuple[Any, ...]] = {}
+    for namespace in LANES:
+        value = (snapshot.get("plists") or {}).get(namespace) or {}
+        launch = value.get("launch") if isinstance(value.get("launch"), dict) else {}
+        program_arguments = value.get("programArguments")
+        expected_arguments = value.get("expectedProgramArguments")
+        loaded_arguments = launch.get("programArguments")
+        fingerprints[namespace] = (
+            value.get("path"),
+            value.get("plistSha256"),
+            value.get("exists"),
+            value.get("regular"),
+            value.get("symlink"),
+            value.get("mode"),
+            value.get("ownerUid"),
+            value.get("observedLabel"),
+            value.get("worker"),
+            value.get("codeRoot"),
+            value.get("releaseId"),
+            value.get("releaseManifestSha256"),
+            value.get("eventManifestSha256"),
+            value.get("runtimeRoot"),
+            value.get("releaseRootOk"),
+            tuple(program_arguments) if isinstance(program_arguments, list) else None,
+            tuple(expected_arguments) if isinstance(expected_arguments, list) else None,
+            value.get("programArgumentsOk"),
+            value.get("bindingOk"),
+            value.get("loadedPlistPath"),
+            value.get("launchPathOk"),
+            value.get("launchConfigOk"),
+            launch.get("plistPath"),
+            tuple(loaded_arguments) if isinstance(loaded_arguments, list) else None,
+            launch.get("workingDirectory"),
+        )
+    return fingerprints
+
+
+def _reconcile_precondition_errors(snapshot: dict[str, Any]) -> list[str]:
+    """Return reasons that make a repair unsafe instead of merely transient."""
+
+    errors: list[str] = []
+    if snapshot.get("operationalAuthorizationValid") is not True:
+        errors.append("OPERATIONAL_AUTHORIZATION_REQUIRED")
+    plists = snapshot.get("plists") if isinstance(snapshot.get("plists"), dict) else {}
+    databases = snapshot.get("databases") if isinstance(snapshot.get("databases"), dict) else {}
+    for namespace in LANES:
+        plist = plists.get(namespace) if isinstance(plists.get(namespace), dict) else {}
+        database = databases.get(namespace) if isinstance(databases.get(namespace), dict) else {}
+        if plist.get("exists") is not True:
+            errors.append(f"{namespace.upper()}_PLIST_MISSING")
+        elif plist.get("bindingOk") is not True:
+            errors.append(f"{namespace.upper()}_BINDING_INVALID")
+        if database.get("healthy") is not True:
+            errors.append(f"{namespace.upper()}_DATABASE_UNHEALTHY")
+    return errors
+
+
+def _lane_repair_actions(plist: dict[str, Any], poll: dict[str, Any]) -> list[str]:
+    """Choose the smallest launchd action set for one already-validated lane."""
+
+    launch = plist.get("launch") if isinstance(plist.get("launch"), dict) else {}
+    if launch.get("available") is not True:
+        return ["bootstrap", "kickstart"]
+    if plist.get("launchConfigOk") is not True:
+        return ["reload", "bootstrap", "kickstart"]
+    if not _launch_healthy(launch) or poll.get("healthy") is not True:
+        return ["kickstart"]
+    return []
+
+
+def _command_detail(result: subprocess.CompletedProcess[str]) -> str:
+    detail = (result.stderr or result.stdout or "launchctl operation failed").strip()
+    return detail[:240]
+
+
+def _run_reconcile_action(
+    namespace: str,
+    action: str,
+    *,
+    plist_path: Path,
+    launchctl_runner: Any,
+) -> dict[str, Any]:
+    """Execute one allowlisted launchd action and return private evidence."""
+
+    label = str(LANES[namespace]["label"])
+    service = f"gui/{os.getuid()}/{label}"
+    domain = f"gui/{os.getuid()}"
+    if action == "reload":
+        bootout = launchctl_runner("bootout", service, check=False)
+        if bootout.returncode != 0:
+            return {
+                "ok": False,
+                "action": action,
+                "error": f"LAUNCHCTL_BOOTOUT_FAILED:{_command_detail(bootout)}",
+            }
+        return {"ok": True, "action": action, "command": "bootout"}
+    if action == "bootstrap":
+        loaded = launchctl_runner("bootstrap", domain, str(plist_path), check=False)
+        if loaded.returncode != 0:
+            return {
+                "ok": False,
+                "action": action,
+                "error": f"LAUNCHCTL_BOOTSTRAP_FAILED:{_command_detail(loaded)}",
+            }
+        return {"ok": True, "action": action, "command": "bootstrap"}
+    if action == "kickstart":
+        kicked = launchctl_runner("kickstart", "-k", service, check=False)
+        if kicked.returncode != 0:
+            return {
+                "ok": False,
+                "action": action,
+                "error": f"LAUNCHCTL_KICKSTART_FAILED:{_command_detail(kicked)}",
+            }
+        return {"ok": True, "action": action, "command": "kickstart"}
+    raise RuntimeError(f"unknown event-lane reconcile action: {action}")
+
+
+def _fresh_poll(
+    snapshot: dict[str, Any],
+    *,
+    namespaces: set[str],
+    baseline_attempts: dict[str, float | None],
+    now: float,
+) -> bool:
+    """Require a new durable attempt for each repaired lane and a green audit."""
+
+    if snapshot.get("healthy") is not True:
+        return False
+    poll_states = snapshot.get("pollStates") if isinstance(snapshot.get("pollStates"), dict) else {}
+    for namespace in namespaces:
+        poll = poll_states.get(namespace) if isinstance(poll_states.get(namespace), dict) else {}
+        attempt = _parse_poll_timestamp(poll.get("lastAttemptAt"))
+        baseline = baseline_attempts.get(namespace)
+        if attempt is None or (baseline is not None and attempt <= baseline):
+            return False
+        if now - attempt > POLL_SUCCESS_MAX_AGE_SECONDS:
+            return False
+    return True
+
+
+def reconcile(
+    root: Path,
+    *,
+    home: Path | None = None,
+    now: float | None = None,
+    timeout_seconds: float = EVENT_RECONCILE_TIMEOUT_SECONDS,
+    poll_interval_seconds: float = EVENT_RECONCILE_POLL_INTERVAL_SECONDS,
+    audit_reader: Any | None = None,
+    launchctl_runner: Any | None = None,
+    sleeper: Any | None = None,
+    monotonic: Any | None = None,
+) -> dict[str, Any]:
+    """Idempotently re-load unhealthy event lanes without inventing bindings.
+
+    Only an existing, regular plist whose code root and manifests pass the
+    read-only audit may be acted on.  Missing or invalid cross-repository
+    bindings are deliberately reported as blockers; the controller never
+    guesses an installer path or silently rewrites a lane configuration.
+    """
+
+    root = root.absolute()
+    home = (home or Path.home()).absolute()
+    read_audit = audit_reader or audit
+    run_launchctl = launchctl_runner or _launchctl
+    wait = sleeper or time.sleep
+    tick = monotonic or time.monotonic
+    result: dict[str, Any] = {
+        "schemaVersion": EVENT_RECONCILE_SCHEMA,
+        "checkedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "actions": [],
+        "errors": [],
+        "freshPoll": False,
+    }
+    try:
+        before = read_audit(root, home=home, now=now)
+    except Exception as exc:  # noqa: BLE001 - repair must fail closed
+        result.update(
+            {
+                "ok": False,
+                "action": "blocked",
+                "errors": [f"AUDIT_FAILED:{type(exc).__name__}:{str(exc)[:240]}"],
+            }
+        )
+        return result
+    if not isinstance(before, dict):
+        result.update(
+            {
+                "ok": False,
+                "action": "blocked",
+                "errors": ["AUDIT_FAILED:EVENT_LANE_AUDIT_NOT_OBJECT"],
+            }
+        )
+        return result
+    result["before"] = before
+    precondition_errors = _reconcile_precondition_errors(before)
+    if precondition_errors:
+        result.update({"ok": False, "action": "blocked", "errors": precondition_errors})
+        return result
+    try:
+        # Validate the runtime layout before the transaction lock can create
+        # or chmod anything under ``state``.  The locked re-check below closes
+        # the race with a simultaneous release cutover.
+        require_operational_authorization(root)
+    except Exception as exc:  # noqa: BLE001 - repair must fail closed
+        result.update(
+            {
+                "ok": False,
+                "action": "blocked",
+                "errors": [f"{type(exc).__name__}:{str(exc)[:240]}"],
+            }
+        )
+        return result
+
+    poll_states = before.get("pollStates") if isinstance(before.get("pollStates"), dict) else {}
+    plans: dict[str, list[str]] = {}
+    baseline_attempts: dict[str, float | None] = {}
+    for namespace in LANES:
+        plist = (before.get("plists") or {}).get(namespace) or {}
+        poll = poll_states.get(namespace) if isinstance(poll_states.get(namespace), dict) else {}
+        plans[namespace] = _lane_repair_actions(plist, poll)
+        baseline_attempts[namespace] = _parse_poll_timestamp(poll.get("lastAttemptAt"))
+
+    required = {namespace for namespace, actions in plans.items() if actions}
+    if not required:
+        result.update(
+            {
+                "ok": before.get("healthy") is True,
+                "action": "noop",
+                "after": before,
+                "freshPoll": before.get("healthy") is True,
+            }
+        )
+        return result
+
+    repaired: set[str] = set()
+    try:
+        # Release cutover and worker staging use the same lock.  This keeps a
+        # service from being reloaded against a release while its pointer is
+        # being changed, without broadening the controller's lock scope.
+        with worker_staging_transaction_lock(root):
+            require_operational_authorization(root)
+            locked = read_audit(root, home=home, now=now)
+            if _reconcile_precondition_errors(locked):
+                result["errors"] = _reconcile_precondition_errors(locked)
+                result.update({"ok": False, "action": "blocked", "after": locked})
+                return result
+            if _binding_fingerprint(locked) != _binding_fingerprint(before):
+                result.update(
+                    {
+                        "ok": False,
+                        "action": "blocked",
+                        "errors": ["EVENT_LANE_BINDING_CHANGED_DURING_RECONCILE"],
+                        "after": locked,
+                    }
+                )
+                return result
+            locked_polls = (
+                locked.get("pollStates") if isinstance(locked.get("pollStates"), dict) else {}
+            )
+            for namespace in sorted(required):
+                plist = (locked.get("plists") or {}).get(namespace) or {}
+                poll = (
+                    locked_polls.get(namespace)
+                    if isinstance(locked_polls.get(namespace), dict)
+                    else {}
+                )
+                actions = _lane_repair_actions(plist, poll)
+                if not actions:
+                    continue
+                repaired.add(namespace)
+                plist_path = Path(str(plist.get("path") or ""))
+                for action in actions:
+                    if action == "reload":
+                        outcome = _run_reconcile_action(
+                            namespace,
+                            "reload",
+                            plist_path=plist_path,
+                            launchctl_runner=run_launchctl,
+                        )
+                        result["actions"].append({"namespace": namespace, **outcome})
+                        if outcome.get("ok") is not True:
+                            result["errors"].append(str(outcome.get("error") or "reload failed"))
+                            break
+                        continue
+                    outcome = _run_reconcile_action(
+                        namespace,
+                        action,
+                        plist_path=plist_path,
+                        launchctl_runner=run_launchctl,
+                    )
+                    result["actions"].append({"namespace": namespace, **outcome})
+                    if outcome.get("ok") is not True:
+                        result["errors"].append(str(outcome.get("error") or f"{action} failed"))
+                        break
+                if result["errors"]:
+                    break
+    except Exception as exc:  # noqa: BLE001 - the repair command must fail closed
+        result["errors"].append(f"{type(exc).__name__}:{str(exc)[:240]}")
+        result.update({"ok": False, "action": "failed"})
+        return result
+
+    if result["errors"]:
+        result.update({"ok": False, "action": "failed"})
+        return result
+
+    try:
+        deadline = tick() + max(0.0, float(timeout_seconds))
+        after = read_audit(root, home=home, now=now)
+        while True:
+            current_now = time.time() if now is None else now
+            if _fresh_poll(
+                after,
+                namespaces=repaired,
+                baseline_attempts=baseline_attempts,
+                now=current_now,
+            ):
+                result["freshPoll"] = True
+                break
+            if tick() >= deadline:
+                break
+            wait(max(0.0, float(poll_interval_seconds)))
+            after = read_audit(root, home=home, now=now)
+    except Exception as exc:  # noqa: BLE001 - repair must fail closed
+        result["errors"].append(f"{type(exc).__name__}:{str(exc)[:240]}")
+        result.update({"ok": False, "action": "failed"})
+        return result
+    result["after"] = after
+    result["ok"] = bool(result["freshPoll"] and after.get("healthy") is True)
+    result["action"] = "reconciled" if result["ok"] else "failed"
+    if not result["ok"] and not result["errors"]:
+        result["errors"] = ["EVENT_LANE_FRESH_POLL_TIMEOUT"]
+    return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--home", type=Path)
+    parser.add_argument("--repair", action="store_true")
     args = parser.parse_args()
-    result = audit(args.root, home=args.home)
+    result = (
+        reconcile(args.root, home=args.home) if args.repair else audit(args.root, home=args.home)
+    )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return 0 if result["healthy"] is True else 2
+    return 0 if (result.get("ok") if args.repair else result.get("healthy")) is True else 2
 
 
 if __name__ == "__main__":

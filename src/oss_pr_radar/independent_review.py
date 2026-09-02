@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -17,6 +18,7 @@ from typing import Any
 
 from .ledger import RadarLedger
 from .metrics import QUALITY_FIELDS
+from .repo_probe import verify_merge_resolution_scope_receipt
 from .util import atomic_write_json, sha256_json
 
 TASK_PRIVATE_DIR = ".oss-pr-radar"
@@ -106,21 +108,267 @@ def controller_merge_conflict_scope(
     return conflict_files
 
 
-def _bound_merge_resolution_scope(worktree: Path, value: dict[str, Any]) -> list[str]:
-    context_path = worktree / TASK_PRIVATE_DIR / "task-context.json"
-    if context_path.is_symlink() or not context_path.is_file():
-        raise RuntimeError("independent review merge context is unavailable")
-    try:
-        context = json.loads(context_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError("independent review merge context is invalid") from exc
-    if not isinstance(context, dict):
-        raise RuntimeError("independent review merge context is invalid")
-    previous_revision = str(value.get("previousCommitSha") or "")
-    secondary_revision = str(value.get("mergeBaseSha") or "")
-    signed_files = controller_merge_conflict_scope(
+def controller_merge_resolution_scope(
+    worktree: Path,
+    *,
+    context: dict[str, Any],
+    expected_head: str,
+    expected_base: str,
+) -> list[str]:
+    """Return the exact signed file set allowed to participate in resolution."""
+
+    conflict_files = controller_merge_conflict_scope(
         worktree,
         context=context,
+        expected_head=expected_head,
+        expected_base=expected_base,
+    )
+    followup = context.get("prFollowup")
+    evidence = followup.get("evidence") if isinstance(followup, dict) else None
+    if not isinstance(evidence, dict):
+        raise RuntimeError("controller merge lacks a signed resolution snapshot")
+    authorized = evidence.get("authorizedResolutionFiles")
+    receipt = evidence.get("mergeResolutionScopeReceipt")
+    if authorized is None and receipt is None:
+        return conflict_files
+    try:
+        resolution_files = _safe_changed_files(authorized)
+    except RuntimeError as exc:
+        raise RuntimeError("controller merge resolution scope is invalid") from exc
+    receipt_prepared_head = (
+        str(receipt.get("preparedHeadSha") or "") if isinstance(receipt, dict) else ""
+    )
+    if (
+        not isinstance(receipt, dict)
+        or receipt_prepared_head != expected_head
+        or not verify_merge_resolution_scope_receipt(
+            receipt,
+            key=str(context.get("key") or ""),
+            issue_url=str(context.get("issueUrl") or ""),
+            intent_id=str(context.get("intentId") or ""),
+            thread_id=str(context.get("threadId") or ""),
+            worktree_path_fingerprint=hashlib.sha256(
+                str(worktree.resolve()).encode("utf-8")
+            ).hexdigest(),
+            pr_url=str(followup.get("prUrl") or ""),
+            current_wake_digest=str(followup.get("wakeDigest") or ""),
+            head_sha=str(followup.get("headSha") or ""),
+            prepared_head_sha=receipt_prepared_head,
+            base_sha=expected_base,
+            merge_conflict_files=conflict_files,
+            authorized_resolution_files=resolution_files,
+        )
+    ):
+        raise RuntimeError("controller merge resolution scope receipt is invalid")
+    return resolution_files
+
+
+def verify_controller_merge_tree_scope(
+    worktree: Path,
+    *,
+    context: dict[str, Any],
+    merge_commit: str,
+    expected_head: str,
+    expected_base: str,
+) -> list[str]:
+    """Rebuild the automatic merge and prove only signed paths resolve differently.
+
+    The replay starts from the two signed parents, so every clean base-side or
+    automatic merge change is retained.  It then substitutes only the signed
+    resolution paths from the candidate merge commit.  Exact tree equality is
+    therefore the authorization boundary, including during crash recovery.
+    """
+
+    conflict_files = controller_merge_conflict_scope(
+        worktree,
+        context=context,
+        expected_head=expected_head,
+        expected_base=expected_base,
+    )
+    resolution_files = controller_merge_resolution_scope(
+        worktree,
+        context=context,
+        expected_head=expected_head,
+        expected_base=expected_base,
+    )
+    if not re.fullmatch(r"[0-9a-f]{40}", merge_commit):
+        raise RuntimeError("controller merge commit is invalid")
+    parents = _git(worktree, "rev-list", "--parents", "-n", "1", merge_commit).split()
+    if parents[1:] != [expected_head, expected_base]:
+        raise RuntimeError("controller merge commit parent binding failed")
+
+    mechanical_merge = subprocess.run(
+        [
+            "git",
+            "merge-tree",
+            "--write-tree",
+            "--no-messages",
+            "--name-only",
+            "-z",
+            expected_head,
+            expected_base,
+        ],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        timeout=120,
+    )
+    try:
+        merge_tree_items = [
+            item.decode("utf-8") for item in mechanical_merge.stdout.split(b"\0") if item
+        ]
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("controller merge tree replay conflict set mismatch") from exc
+    if (
+        mechanical_merge.returncode != 1
+        or not merge_tree_items
+        or not re.fullmatch(r"[0-9a-f]{40}", merge_tree_items[0])
+        or sorted(merge_tree_items[1:]) != conflict_files
+    ):
+        raise RuntimeError("controller merge tree replay conflict set mismatch")
+    automatic_tree = merge_tree_items[0]
+
+    with tempfile.TemporaryDirectory(prefix="oss-pr-radar-merge-index-") as temporary:
+        index_path = Path(temporary) / "index"
+        index_environment = os.environ.copy()
+        index_environment["GIT_INDEX_FILE"] = str(index_path)
+
+        initialized = subprocess.run(
+            ["git", "read-tree", automatic_tree],
+            cwd=worktree,
+            env=index_environment,
+            check=False,
+            capture_output=True,
+            timeout=60,
+        )
+        if initialized.returncode != 0:
+            raise RuntimeError("controller merge tree replay index initialization failed")
+
+        for path in resolution_files:
+            entry = subprocess.run(
+                [
+                    "git",
+                    "--literal-pathspecs",
+                    "ls-tree",
+                    "-z",
+                    merge_commit,
+                    "--",
+                    path,
+                ],
+                cwd=worktree,
+                check=False,
+                capture_output=True,
+                timeout=30,
+            )
+            if entry.returncode != 0:
+                raise RuntimeError("controller merge tree replay entry lookup failed")
+            if not entry.stdout:
+                updated = subprocess.run(
+                    [
+                        "git",
+                        "--literal-pathspecs",
+                        "update-index",
+                        "--force-remove",
+                        "--",
+                        path,
+                    ],
+                    cwd=worktree,
+                    env=index_environment,
+                    check=False,
+                    capture_output=True,
+                    timeout=30,
+                )
+            else:
+                records = [item for item in entry.stdout.split(b"\0") if item]
+                if len(records) != 1 or b"\t" not in records[0]:
+                    raise RuntimeError("controller merge tree replay entry is invalid")
+                metadata, entry_path = records[0].split(b"\t", 1)
+                fields = metadata.split()
+                try:
+                    decoded_entry_path = entry_path.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise RuntimeError("controller merge tree replay entry is invalid") from exc
+                if (
+                    len(fields) != 3
+                    or fields[1] != b"blob"
+                    or decoded_entry_path != path
+                    or not re.fullmatch(rb"[0-7]{6}", fields[0])
+                    or not re.fullmatch(rb"[0-9a-f]{40}", fields[2])
+                ):
+                    raise RuntimeError("controller merge tree replay entry is invalid")
+                updated = subprocess.run(
+                    ["git", "update-index", "-z", "--index-info"],
+                    cwd=worktree,
+                    env=index_environment,
+                    input=fields[0] + b" " + fields[2] + b"\t" + entry_path + b"\0",
+                    check=False,
+                    capture_output=True,
+                    timeout=30,
+                )
+            if updated.returncode != 0:
+                raise RuntimeError("controller merge tree replay index update failed")
+
+        written = subprocess.run(
+            ["git", "write-tree"],
+            cwd=worktree,
+            env=index_environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if written.returncode != 0:
+            raise RuntimeError("controller merge tree replay write failed")
+        replay_tree = written.stdout.strip()
+    merge_tree = _git(worktree, "rev-parse", f"{merge_commit}^{{tree}}")
+    if replay_tree != merge_tree:
+        raise RuntimeError("controller merge tree contains changes outside signed resolution scope")
+    return resolution_files
+
+
+def _bound_merge_resolution_scope(
+    worktree: Path,
+    value: dict[str, Any],
+    *,
+    review_context: dict[str, Any] | None = None,
+) -> list[str]:
+    if review_context is None:
+        context_path = worktree / TASK_PRIVATE_DIR / "task-context.json"
+        if context_path.is_symlink() or not context_path.is_file():
+            raise RuntimeError("independent review merge context is unavailable")
+        try:
+            context = json.loads(context_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError("independent review merge context is invalid") from exc
+        if not isinstance(context, dict):
+            raise RuntimeError("independent review merge context is invalid")
+    else:
+        if not isinstance(review_context, dict) or not str(
+            review_context.get("worktreePath") or ""
+        ):
+            raise RuntimeError("independent review historical merge context is invalid")
+        context = review_context
+        followup = context.get("prFollowup")
+        result_task_id = str(value.get("taskId") or value.get("intentId") or "")
+        result_pr_url = str(value.get("prUrl") or "")
+        if (
+            context.get("key") != value.get("key")
+            or context.get("issueUrl") != value.get("issueUrl")
+            or context.get("threadId") != value.get("threadId")
+            or context.get("intentId") != result_task_id
+            or Path(str(context.get("worktreePath") or "")).resolve() != worktree.resolve()
+            or not isinstance(followup, dict)
+            or followup.get("wakeDigest") != value.get("followupDigest")
+            or followup.get("prUrl") != result_pr_url
+            or followup.get("preparedHeadSha") != value.get("previousCommitSha")
+        ):
+            raise RuntimeError("independent review historical merge context mismatch")
+    previous_revision = str(value.get("previousCommitSha") or "")
+    secondary_revision = str(value.get("mergeBaseSha") or "")
+    signed_files = verify_controller_merge_tree_scope(
+        worktree,
+        context=context,
+        merge_commit=str(value.get("commitSha") or ""),
         expected_head=previous_revision,
         expected_base=secondary_revision,
     )
@@ -128,7 +376,7 @@ def _bound_merge_resolution_scope(worktree: Path, value: dict[str, Any]) -> list
     controller_files = _safe_changed_files(value.get("controllerCommitChangedFiles"))
     if resolution_files != signed_files or controller_files != signed_files:
         raise RuntimeError(
-            "independent review merge files do not match the signed conflict snapshot"
+            "independent review merge files do not match the signed resolution snapshot"
         )
     return signed_files
 
@@ -149,6 +397,138 @@ def _source_digest(value: dict[str, Any]) -> str:
             normalized_quality["policy_verified"] = True
         normalized["quality"] = normalized_quality
     return sha256_json(normalized)
+
+
+def _context_review_binding_digest(
+    context: dict[str, Any], value: dict[str, Any] | None = None
+) -> str:
+    """Bind the task authority while allowing live audit and lifecycle projection changes."""
+
+    followup = context.get("prFollowup")
+    followup_evidence = followup.get("evidence") if isinstance(followup, dict) else None
+    prepared_head = followup.get("preparedHeadSha") if isinstance(followup, dict) else None
+    if isinstance(value, dict) and value.get("handoffMode") == "controller_merge_complete":
+        projected_head = str(value.get("commitSha") or "")
+        historical_head = str(value.get("previousCommitSha") or "")
+        if prepared_head in {projected_head, historical_head}:
+            prepared_head = projected_head
+    payload = {
+        "schemaVersion": context.get("schemaVersion"),
+        "key": context.get("key"),
+        "issueUrl": context.get("issueUrl"),
+        "intentId": context.get("intentId"),
+        "track": context.get("track"),
+        "algorithmEvidence": context.get("algorithmEvidence"),
+        "threadId": context.get("threadId"),
+        "worktreePath": context.get("worktreePath"),
+        "targetBase": context.get("targetBase"),
+        "prFollowupPreparedHeadSha": prepared_head,
+    }
+    if "codePathTombstoneReceipt" in context:
+        payload["codePathTombstoneReceipt"] = context.get("codePathTombstoneReceipt")
+    if isinstance(followup_evidence, dict) and "mergeResolutionScopeReceipt" in followup_evidence:
+        payload["mergeResolutionScopeReceipt"] = followup_evidence.get(
+            "mergeResolutionScopeReceipt"
+        )
+    return sha256_json(payload)
+
+
+def _legacy_review_context_compatible(
+    candidate: dict[str, Any],
+    value: dict[str, Any],
+    context: dict[str, Any],
+    review: dict[str, Any],
+) -> bool:
+    """Prove an old receipt still belongs to a live-audit-only refresh.
+
+    Historical receipts predate ``contextReviewBindingDigest``.  They may be
+    reused only when the durable ledger candidate, result and current context
+    independently agree on every authority-bearing field available to them.
+    """
+
+    worktree = Path(str(candidate.get("worktreePath") or "")).resolve()
+    identities = {
+        "key": candidate.get("key"),
+        "issueUrl": candidate.get("issueUrl"),
+        "threadId": candidate.get("threadId"),
+        "worktreePath": str(worktree),
+    }
+    for key, expected in identities.items():
+        if context.get(key) != expected or value.get(key) != expected:
+            return False
+
+    intent = candidate.get("intent")
+    intent = intent if isinstance(intent, dict) else {}
+    intent_id = str(candidate.get("intentId") or intent.get("intentId") or "")
+    if intent_id:
+        if str(context.get("intentId") or "") != intent_id:
+            return False
+        result_intent_id = str(value.get("taskId") or value.get("intentId") or "")
+        if result_intent_id and result_intent_id != intent_id:
+            return False
+    elif context.get("intentId") or value.get("taskId") or value.get("intentId"):
+        return False
+
+    # These fields are either immutable intent authority or result scope.  If
+    # an older artifact carries one, the current context must carry the exact
+    # same value; absence is not treated as a wildcard.
+    for field in (
+        "track",
+        "algorithmEvidence",
+        "submissionPolicy",
+        "publicSubmissionAllowed",
+        "authorizationSource",
+        "publicationMode",
+        "selectedBaseSha",
+        "probeReceiptDigest",
+        "codePaths",
+    ):
+        if field in intent and context.get(field) != intent.get(field):
+            return False
+        if field in value and context.get(field) != value.get(field):
+            return False
+
+    target_base = context.get("targetBase")
+    for source in (intent, value):
+        if "targetBase" in source and source.get("targetBase") != target_base:
+            return False
+    if target_base is not None:
+        if not isinstance(target_base, dict):
+            return False
+        target_branch = str(target_base.get("branch") or "")
+        target_sha = str(target_base.get("sha") or "")
+        publication = value.get("publication")
+        result_branch = (
+            str(publication.get("baseBranch") or "") if isinstance(publication, dict) else ""
+        )
+        if not target_branch or result_branch != target_branch:
+            return False
+        if not re.fullmatch(r"[0-9a-f]{40}", target_sha):
+            return False
+        if str(review.get("baseRevision") or "") != target_sha:
+            return False
+
+    followup = context.get("prFollowup")
+    result_wake = str(value.get("followupDigest") or "")
+    if isinstance(followup, dict):
+        if not result_wake or str(followup.get("wakeDigest") or "") != result_wake:
+            return False
+        result_pr_url = str(value.get("prUrl") or "")
+        if result_pr_url and str(followup.get("prUrl") or "") != result_pr_url:
+            return False
+    elif followup is not None or result_wake:
+        return False
+
+    tombstone = context.get("codePathTombstoneReceipt")
+    intent_tombstone = intent.get("codePathTombstoneReceipt")
+    result_tombstone = value.get("codePathTombstoneReceipt")
+    if intent_tombstone is not None and intent_tombstone != tombstone:
+        return False
+    if result_tombstone is not None and result_tombstone != tombstone:
+        return False
+    if tombstone is not None and intent_tombstone is None and result_tombstone is None:
+        return False
+    return True
 
 
 def _receipt_path(root: Path, *, key: str, commit_sha: str, source_digest: str) -> Path:
@@ -294,7 +674,13 @@ def _review_failure_attempts(
     return max(0, int(value.get("attempts") or 0))
 
 
-def _load_review_receipt(root: Path, value: dict[str, Any]) -> dict[str, Any] | None:
+def _load_review_receipt(
+    root: Path,
+    value: dict[str, Any],
+    *,
+    review_context: dict[str, Any] | None = None,
+    candidate: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     key = str(value.get("key") or "")
     commit_sha = str(value.get("commitSha") or "")
     if not key or not re.fullmatch(r"[0-9a-f]{40}", commit_sha):
@@ -333,6 +719,24 @@ def _load_review_receipt(root: Path, value: dict[str, Any]) -> dict[str, Any] | 
         return None
     if any(review.get(name) != normalized[name] for name in normalized):
         return None
+    if review_context is not None:
+        context_binding = receipt.get("contextReviewBindingDigest")
+        if context_binding is not None:
+            if (
+                not isinstance(context_binding, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", context_binding)
+                or context_binding != _context_review_binding_digest(review_context, value)
+            ):
+                return None
+        elif candidate is not None and not _legacy_review_context_compatible(
+            candidate, value, review_context, review
+        ):
+            return None
+        elif candidate is None and (
+            not str(review_context.get("contextDigest") or "")
+            or review_context.get("contextDigest") != value.get("contextDigest")
+        ):
+            return None
     worktree = Path(str(value.get("worktreePath") or "")).resolve()
     try:
         if (
@@ -342,10 +746,55 @@ def _load_review_receipt(root: Path, value: dict[str, Any]) -> dict[str, Any] | 
         ):
             return None
         if value.get("handoffMode") == "controller_merge_complete":
-            _bound_merge_resolution_scope(worktree, value)
+            _bound_merge_resolution_scope(
+                worktree,
+                value,
+                review_context=review_context,
+            )
     except RuntimeError:
         return None
     return review
+
+
+def _upgrade_legacy_review_context_binding(
+    root: Path,
+    value: dict[str, Any],
+    *,
+    candidate: dict[str, Any],
+    review_context: dict[str, Any],
+) -> dict[str, Any]:
+    """Atomically upgrade one triple-verified legacy receipt envelope."""
+
+    review = _load_review_receipt(
+        root,
+        value,
+        review_context=review_context,
+        candidate=candidate,
+    )
+    if review is None:
+        raise RuntimeError("legacy independent review context binding is invalid")
+    path = _receipt_path(
+        root,
+        key=str(value.get("key") or ""),
+        commit_sha=str(value.get("commitSha") or ""),
+        source_digest=_source_digest(value),
+    )
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("legacy independent review receipt is unavailable") from exc
+    if not isinstance(receipt, dict):
+        raise RuntimeError("legacy independent review receipt is invalid")
+    if receipt.get("contextReviewBindingDigest") is None:
+        atomic_write_json(
+            path,
+            receipt
+            | {"contextReviewBindingDigest": _context_review_binding_digest(review_context, value)},
+        )
+    upgraded = _load_review_receipt(root, value, review_context=review_context)
+    if upgraded is None:
+        raise RuntimeError("upgraded independent review context binding is invalid")
+    return upgraded
 
 
 def controller_review_result(
@@ -353,10 +802,15 @@ def controller_review_result(
     value: dict[str, Any],
     *,
     state_root: Path | None = None,
+    review_context: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Return the controller-private review bound to this exact result and checkout."""
 
-    return _load_review_receipt((state_root or root).resolve(), value)
+    return _load_review_receipt(
+        (state_root or root).resolve(),
+        value,
+        review_context=review_context,
+    )
 
 
 def controller_review_passed(
@@ -364,10 +818,16 @@ def controller_review_passed(
     value: dict[str, Any],
     *,
     state_root: Path | None = None,
+    review_context: dict[str, Any] | None = None,
 ) -> bool:
     """Return true only for a controller-private PASS receipt bound to this result."""
 
-    review = controller_review_result(root, value, state_root=state_root)
+    review = controller_review_result(
+        root,
+        value,
+        state_root=state_root,
+        review_context=review_context,
+    )
     return bool(review and review.get("verdict") == "PASS")
 
 
@@ -865,7 +1325,11 @@ def migrate_legacy_review_state(runtime_root: Path) -> dict[str, int]:
         )
 
 
-def _candidate_result(candidate: dict[str, Any]) -> tuple[Path, dict[str, Any]] | None:
+def _candidate_result(
+    candidate: dict[str, Any],
+    *,
+    receipt_root: Path | None = None,
+) -> tuple[Path, dict[str, Any], dict[str, Any] | None] | None:
     if str(candidate.get("stage") or "") not in REVIEWABLE_STAGES:
         return None
     worktree = Path(str(candidate.get("worktreePath") or "")).resolve()
@@ -884,10 +1348,19 @@ def _candidate_result(candidate: dict[str, Any]) -> tuple[Path, dict[str, Any]] 
         if value.get(key) != expected:
             raise RuntimeError(f"independent review task result mismatch: {key}")
     context_path = worktree / TASK_PRIVATE_DIR / "task-context.json"
+    context: dict[str, Any] | None = None
     if context_path.is_file() and not context_path.is_symlink():
         context = json.loads(context_path.read_text(encoding="utf-8"))
         if not isinstance(context, dict):
             raise RuntimeError("independent review found an invalid task context")
+        for key, expected in {
+            "key": candidate.get("key"),
+            "issueUrl": candidate.get("issueUrl"),
+            "threadId": candidate.get("threadId"),
+            "worktreePath": str(worktree),
+        }.items():
+            if key in context and context.get(key) != expected:
+                raise RuntimeError(f"independent review task context mismatch: {key}")
         context_digest = str(context.get("contextDigest") or "")
         result_context_digest = str(value.get("contextDigest") or "")
         if context_digest and result_context_digest and context_digest != result_context_digest:
@@ -895,12 +1368,34 @@ def _candidate_result(candidate: dict[str, Any]) -> tuple[Path, dict[str, Any]] 
             current_wake_digest = (
                 str(followup.get("wakeDigest") or "") if isinstance(followup, dict) else ""
             )
+            existing_review = (
+                _load_review_receipt(receipt_root, value) if receipt_root is not None else None
+            )
             if current_wake_digest:
                 if str(value.get("followupDigest") or "") != current_wake_digest:
                     return None
+                if existing_review is not None and (
+                    _load_review_receipt(
+                        receipt_root,
+                        value,
+                        review_context=context,
+                        candidate=candidate,
+                    )
+                    is None
+                ):
+                    raise RuntimeError("independent review task result context digest mismatch")
             elif str(candidate.get("stage") or "") in PUBLISHED_STAGES:
                 return None
-            else:
+            elif (
+                existing_review is None
+                or _load_review_receipt(
+                    receipt_root,
+                    value,
+                    review_context=context,
+                    candidate=candidate,
+                )
+                is None
+            ):
                 raise RuntimeError("independent review task result context digest mismatch")
     quality = value.get("quality")
     if value.get("stage") != "FIX_READY" or not isinstance(quality, dict):
@@ -918,10 +1413,15 @@ def _candidate_result(candidate: dict[str, Any]) -> tuple[Path, dict[str, Any]] 
     if _git(worktree, "rev-parse", "HEAD") != commit_sha:
         return None
     _safe_changed_files(value.get("changedFiles"))
-    return result_path, value
+    return result_path, value, context
 
 
-def _review_scope(worktree: Path, value: dict[str, Any]) -> tuple[str, str, str | None, list[str]]:
+def _review_scope(
+    worktree: Path,
+    value: dict[str, Any],
+    *,
+    review_context: dict[str, Any] | None = None,
+) -> tuple[str, str, str | None, list[str]]:
     head_revision = str(value["commitSha"])
     handoff_mode = str(value.get("handoffMode") or "")
     previous_revision = str(value.get("previousCommitSha") or "")
@@ -936,7 +1436,11 @@ def _review_scope(worktree: Path, value: dict[str, Any]) -> tuple[str, str, str 
             secondary_revision,
         ]:
             raise RuntimeError("independent review merge parents do not match the result")
-        changed_files = _bound_merge_resolution_scope(worktree, value)
+        changed_files = _bound_merge_resolution_scope(
+            worktree,
+            value,
+            review_context=review_context,
+        )
         visible: set[str] = set()
         for parent in (previous_revision, secondary_revision):
             visible.update(
@@ -991,6 +1495,122 @@ def _review_scope(worktree: Path, value: dict[str, Any]) -> tuple[str, str, str 
     return "full_change", base_revision, None, changed_files
 
 
+def migrate_controller_review_receipt(
+    root: Path,
+    source_value: dict[str, Any],
+    target_value: dict[str, Any],
+    *,
+    state_root: Path | None = None,
+) -> dict[str, Any]:
+    """Rebind one verified review to an equivalent controller-owned result shape."""
+
+    receipt_root = (state_root or root).resolve()
+    source_review = _load_review_receipt(receipt_root, source_value)
+    if source_review is None:
+        raise RuntimeError("source independent review receipt is invalid")
+    source_path = _receipt_path(
+        receipt_root,
+        key=str(source_value.get("key") or ""),
+        commit_sha=str(source_value.get("commitSha") or ""),
+        source_digest=_source_digest(source_value),
+    )
+    source_envelope = _safe_state_object(source_path)
+    if source_envelope is None:
+        raise RuntimeError("source independent review receipt is invalid")
+    context_binding = source_envelope.get("contextReviewBindingDigest")
+    if context_binding is not None:
+        if (
+            not isinstance(context_binding, str)
+            or re.fullmatch(r"[0-9a-f]{64}", context_binding) is None
+            or not str(source_value.get("contextDigest") or "")
+            or source_value.get("contextDigest") != target_value.get("contextDigest")
+        ):
+            raise RuntimeError("independent review receipt migration context mismatch")
+
+    source_key = str(source_value.get("key") or "")
+    target_key = str(target_value.get("key") or "")
+    source_commit = str(source_value.get("commitSha") or "")
+    target_commit = str(target_value.get("commitSha") or "")
+    source_worktree = Path(str(source_value.get("worktreePath") or "")).resolve()
+    target_worktree = Path(str(target_value.get("worktreePath") or "")).resolve()
+    if source_key != target_key:
+        raise RuntimeError("independent review receipt migration key mismatch")
+    if source_commit != target_commit:
+        raise RuntimeError("independent review receipt migration commit mismatch")
+    if source_worktree != target_worktree:
+        raise RuntimeError("independent review receipt migration worktree mismatch")
+    if _review_scope(source_worktree, source_value) != _review_scope(target_worktree, target_value):
+        raise RuntimeError("independent review receipt migration scope mismatch")
+
+    target_digest = _source_digest(target_value)
+    target_path = _receipt_path(
+        receipt_root,
+        key=target_key,
+        commit_sha=target_commit,
+        source_digest=target_digest,
+    )
+    state_dir = receipt_root / "state"
+    if state_dir.exists() and (state_dir.is_symlink() or not state_dir.is_dir()):
+        raise RuntimeError("independent review durable state directory is unsafe")
+    state_dir.mkdir(parents=True, exist_ok=True)
+    receipt_dir = target_path.parent
+    if receipt_dir.exists() and (receipt_dir.is_symlink() or not receipt_dir.is_dir()):
+        raise RuntimeError("independent review receipt directory is unsafe")
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = state_dir / "independent_review.lock"
+    if lock_path.is_symlink():
+        raise RuntimeError("independent review durable lock is unsafe")
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("independent review is active; retry receipt migration") from exc
+
+        verified_source = _load_review_receipt(receipt_root, source_value)
+        if verified_source != source_review:
+            raise RuntimeError("source independent review receipt changed during migration")
+        canonical_review = _load_review_receipt(receipt_root, target_value)
+        if canonical_review is not None:
+            if context_binding is not None:
+                target_envelope = _safe_state_object(target_path)
+                if (
+                    target_envelope is None
+                    or target_envelope.get("contextReviewBindingDigest") != context_binding
+                ):
+                    raise RuntimeError("canonical independent review context binding conflicts")
+            return canonical_review
+        try:
+            target_path.lstat()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise RuntimeError("canonical independent review receipt is unavailable") from exc
+        else:
+            raise RuntimeError("canonical independent review receipt conflicts")
+
+        migrated_review = dict(source_review)
+        migrated_review["sourceDigest"] = target_digest
+        atomic_write_json(
+            target_path,
+            {
+                "schemaVersion": REVIEW_SCHEMA,
+                "key": target_key,
+                "commitSha": target_commit,
+                "sourceDigest": target_digest,
+                **(
+                    {"contextReviewBindingDigest": context_binding}
+                    if context_binding is not None
+                    else {}
+                ),
+                "review": migrated_review,
+            },
+        )
+        verified_target = _load_review_receipt(receipt_root, target_value)
+        if verified_target is None:
+            raise RuntimeError("migrated independent review receipt failed verification")
+        return verified_target
+
+
 def review_once(
     root: Path,
     ledger_path: Path,
@@ -1024,10 +1644,10 @@ def review_once(
             source_digest = ""
             commit_sha = ""
             try:
-                prepared = _candidate_result(candidate)
+                prepared = _candidate_result(candidate, receipt_root=state_root)
                 if prepared is None:
                     continue
-                result_path, value = prepared
+                result_path, value, review_context = prepared
                 source_digest = _source_digest(value)
                 commit_sha = str(value.get("commitSha") or "")
                 attempts = _review_failure_attempts(
@@ -1050,6 +1670,18 @@ def review_once(
                 result_snapshot_digest = sha256_json(value)
                 receipt_review = _load_review_receipt(state_root, value)
                 if receipt_review is not None:
+                    if (
+                        review_context is not None
+                        and review_context.get("contextDigest")
+                        and value.get("contextDigest")
+                        and review_context.get("contextDigest") != value.get("contextDigest")
+                    ):
+                        receipt_review = _upgrade_legacy_review_context_binding(
+                            state_root,
+                            value,
+                            candidate=candidate,
+                            review_context=review_context,
+                        )
                     skipped.append(
                         {
                             "key": str(candidate["key"]),
@@ -1074,7 +1706,7 @@ def review_once(
                 )
                 review_attempted = True
                 review = _normalized_review(reviewer(worktree, schema_path, prompt, timeout))
-                latest_prepared = _candidate_result(candidate)
+                latest_prepared = _candidate_result(candidate, receipt_root=state_root)
                 if latest_prepared is None:
                     _advance_review_cursor(
                         state_root,
@@ -1097,11 +1729,12 @@ def review_once(
                         "retryExhausted": retry_exhausted,
                         "errors": errors,
                     }
-                latest_result_path, latest_value = latest_prepared
+                latest_result_path, latest_value, latest_review_context = latest_prepared
                 latest_scope = _review_scope(worktree, latest_value)
                 if (
                     latest_result_path != result_path
                     or sha256_json(latest_value) != result_snapshot_digest
+                    or latest_review_context != review_context
                     or latest_scope
                     != (review_mode, base_revision, secondary_base_revision, changed_files)
                 ):
@@ -1147,6 +1780,15 @@ def review_once(
                         "key": str(candidate["key"]),
                         "commitSha": head_revision,
                         "sourceDigest": source_digest,
+                        **(
+                            {
+                                "contextReviewBindingDigest": (
+                                    _context_review_binding_digest(review_context, value)
+                                )
+                            }
+                            if review_context is not None
+                            else {}
+                        ),
                         "review": finalized_review,
                     },
                 )

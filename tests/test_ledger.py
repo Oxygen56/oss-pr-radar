@@ -284,6 +284,54 @@ def insert_publication_preflight(
         )
 
 
+def insert_succeeded_pr_creation(
+    store: RadarLedger,
+    *,
+    pr_url: str,
+    created: bool,
+    request_id: str = "notice-request-1",
+    permit_id: str = "notice-permit-1",
+    effect_id: str = "notice-effect-1",
+) -> None:
+    now = iso_z(datetime.now(UTC))
+    expires_at = iso_z(datetime.now(UTC) + timedelta(minutes=10))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES (?,'a/b#1','thread-1',?,'fix/runtime','/tmp/worktree',
+                       'notice-evidence','CONSUMED',?,?,?)""",
+            (
+                request_id,
+                "b" * 40,
+                json.dumps({"publicationKind": "PR_CREATE"}),
+                now,
+                now,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES (?,?,'https://github.com/a/b/issues/1',?,'fix/runtime','CONSUMED',
+                       ?,?,'{}',?,?)""",
+            (permit_id, request_id, "b" * 40, expires_at, pr_url, now, now),
+        )
+        connection.execute(
+            """INSERT INTO publication_effects
+               (effect_id,permit_id,action,request_digest,status,result_json,created_at,updated_at)
+               VALUES (?,?,'create_pr','notice-digest','SUCCEEDED',?,?,?)""",
+            (
+                effect_id,
+                permit_id,
+                json.dumps({"ok": True, "prUrl": pr_url, "created": created}),
+                now,
+                now,
+            ),
+        )
+
+
 def test_lease_is_exclusive_and_commit_is_idempotent(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     assert store.enqueue(intent()) is True
@@ -468,6 +516,159 @@ def test_verified_task_context_rebuilds_publication_and_suppresses_duplicate(tmp
     assert store.pr_followup_candidates() == []
 
 
+@pytest.mark.parametrize("update_status", ["PENDING", "BLOCKED"])
+def test_task_context_keeps_consumed_pr_until_update_is_consumed(tmp_path, update_status):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    store.commit_dispatch(
+        "intent-1",
+        owner="controller",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/worktree",
+    )
+    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": "https://github.com/a/b/pull/9"})
+    published_at = iso_z(datetime.now(UTC) - timedelta(minutes=2))
+    update_at = iso_z(datetime.now(UTC) - timedelta(minutes=1))
+    old_commit = "a" * 40
+    new_commit = "b" * 40
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES ('request-create','a/b#1','thread-1',?,'fix/runtime','/tmp/worktree',
+                       'evidence-create','CONSUMED','{}',?,?)""",
+            (old_commit, published_at, published_at),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES ('permit-create','request-create','https://github.com/a/b/issues/1',?,
+                       'fix/runtime','CONSUMED',?,'https://github.com/a/b/pull/9','{}',?,?)""",
+            (
+                old_commit,
+                iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                published_at,
+                published_at,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,reason,request_json,created_at,updated_at)
+               VALUES ('request-update','a/b#1','thread-1',?,'fix/runtime','/tmp/worktree',
+                       'evidence-update',?,?,'{"publicationKind":"PR_UPDATE"}',?,?)""",
+            (
+                new_commit,
+                update_status,
+                "ACTIVE_OR_CONDITIONAL_CLAIM" if update_status == "BLOCKED" else None,
+                update_at,
+                update_at,
+            ),
+        )
+
+    pending_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+
+    assert pending_context is not None
+    assert pending_context["publicationReceipt"] == {
+        "status": "PR_OPEN",
+        "prUrl": "https://github.com/a/b/pull/9",
+        "commitSha": old_commit,
+        "branch": "fix/runtime",
+        "requestedAt": published_at,
+        "updatedAt": published_at,
+    }
+
+    consumed_at = iso_z(datetime.now(UTC))
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE publication_requests
+               SET status='CONSUMED',reason=NULL,permit_id='permit-update',updated_at=?
+               WHERE request_id='request-update'""",
+            (consumed_at,),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES ('permit-update','request-update','https://github.com/a/b/issues/1',?,
+                       'fix/runtime','CONSUMED',?,'https://github.com/a/b/pull/9','{}',?,?)""",
+            (
+                new_commit,
+                iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                update_at,
+                consumed_at,
+            ),
+        )
+
+    consumed_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+
+    assert consumed_context is not None
+    assert consumed_context["publicationReceipt"] == {
+        "status": "PR_OPEN",
+        "prUrl": "https://github.com/a/b/pull/9",
+        "commitSha": new_commit,
+        "branch": "fix/runtime",
+        "requestedAt": update_at,
+        "updatedAt": consumed_at,
+    }
+
+
+@pytest.mark.parametrize("request_status", ["PENDING", "BLOCKED"])
+def test_task_context_without_consumed_pr_projects_current_request(tmp_path, request_status):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    store.commit_dispatch(
+        "intent-1",
+        owner="controller",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/worktree",
+    )
+    requested_at = iso_z(datetime.now(UTC))
+    commit_sha = "b" * 40
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,reason,request_json,created_at,updated_at)
+               VALUES ('request-update','a/b#1','thread-1',?,'fix/runtime','/tmp/worktree',
+                       'evidence-update',?,?,'{"publicationKind":"PR_UPDATE"}',?,?)""",
+            (
+                commit_sha,
+                request_status,
+                "ACTIVE_OR_CONDITIONAL_CLAIM" if request_status == "BLOCKED" else None,
+                requested_at,
+                requested_at,
+            ),
+        )
+
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+
+    assert context is not None
+    assert context["publicationReceipt"] == {
+        "status": request_status,
+        "prUrl": None,
+        "commitSha": commit_sha,
+        "branch": "fix/runtime",
+        "requestedAt": requested_at,
+        "updatedAt": requested_at,
+    }
+
+
 def test_published_context_recovery_ignores_expired_prepublication_freshness(tmp_path):
     old = iso_z(datetime.now(UTC) - timedelta(hours=2))
     context = published_task_context(liveAuditRecordedAt=old)
@@ -641,6 +842,250 @@ def test_published_terminal_missing_worktree_gate_requires_followup_result(tmp_p
     assert store.published_task_result_is_terminal(
         "a/b#1",
         thread_id="thread-recovered",
+    )
+
+
+def test_published_terminal_missing_worktree_gate_ignores_foreign_followup_result(
+    tmp_path,
+):
+    """A replacement intent's result must not close the published task."""
+
+    store = RadarLedger(tmp_path / "published-terminal-followup-binding.sqlite3")
+    store.restore_task_context(published_task_context())
+    # Bind the base task result explicitly so adding a second complete intent
+    # below cannot make this prerequisite look like an ambiguous legacy row.
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="published-result",
+        stage="PR_OPEN",
+        task_id="recovered-intent",
+        thread_id="thread-recovered",
+    )
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": iso_z(datetime.now(UTC)),
+            "items": [
+                {
+                    "url": "https://github.com/a/b/pull/9",
+                    "headSha": "a" * 40,
+                    "actionDigest": "action",
+                    "taskActionDigest": "task-action",
+                    "checkedAt": iso_z(datetime.now(UTC)),
+                    "taskActions": ["current branch check failed"],
+                    "taskFollowupRequired": True,
+                    "evidence": {"baseIntegrationRequired": True},
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id="thread-recovered",
+        wake_digest=candidate["wakeDigest"],
+    )
+    store.commit_pr_followup(
+        thread_id="thread-recovered",
+        wake_digest=candidate["wakeDigest"],
+    )
+
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="replacement-intent",
+        thread_id="replacement-thread",
+        worktree_path="/tmp/replacement-worktree",
+        status="COMPLETED",
+    )
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_FOLLOWUP_RESULT_INGESTED",
+            candidate["wakeDigest"],
+            {
+                "intentId": "replacement-intent",
+                "threadId": "replacement-thread",
+                "worktreePath": "/tmp/replacement-worktree",
+                "resultDigest": "foreign-followup-result",
+                "stage": "PR_OPEN",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+
+    assert not store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+        intent_id="recovered-intent",
+        worktree_path="/tmp/recovered-worktree",
+    )
+
+
+def _published_terminal_store_without_own_publication(tmp_path: Path) -> RadarLedger:
+    """Build a completed task whose publication evidence is intentionally absent."""
+
+    store = RadarLedger(tmp_path / "published-terminal-foreign-publication.sqlite3")
+    store.restore_task_context(published_task_context())
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="published-result",
+        stage="CI_GREEN",
+        task_id="recovered-intent",
+        thread_id="thread-recovered",
+    )
+    with store.connect() as connection:
+        connection.execute("DELETE FROM events WHERE event_type='PR_OPEN'")
+        connection.execute("DELETE FROM publication_permits")
+        connection.execute("DELETE FROM publication_requests")
+        connection.execute(
+            "UPDATE opportunities SET stage='CI_GREEN',updated_at=? WHERE key='a/b#1'",
+            (iso_z(datetime.now(UTC)),),
+        )
+    return store
+
+
+def test_published_terminal_does_not_use_foreign_intent_pr_open_evidence(tmp_path):
+    """A PR_OPEN from another task cannot establish this task's terminal gate."""
+
+    store = _published_terminal_store_without_own_publication(tmp_path)
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="foreign-intent",
+        thread_id="foreign-thread",
+        worktree_path="/tmp/foreign-worktree",
+        status="COMPLETED",
+    )
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_OPEN",
+            "https://github.com/a/b/pull/99",
+            {
+                "intentId": "foreign-intent",
+                "threadId": "foreign-thread",
+                "worktreePath": "/tmp/foreign-worktree",
+                "prUrl": "https://github.com/a/b/pull/99",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+
+    assert not store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+        intent_id="recovered-intent",
+        worktree_path="/tmp/recovered-worktree",
+    )
+
+
+def test_published_terminal_does_not_use_foreign_intent_publication_permit(tmp_path):
+    """A consumed permit for another task cannot establish terminality."""
+
+    store = _published_terminal_store_without_own_publication(tmp_path)
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="foreign-intent",
+        thread_id="foreign-thread",
+        worktree_path="/tmp/foreign-worktree",
+        status="COMPLETED",
+    )
+    now = iso_z(datetime.now(UTC))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,permit_id,request_json,created_at,updated_at)
+               VALUES ('foreign-request','a/b#1','foreign-thread',?,'fix/foreign',?,
+                       'foreign-evidence','CONSUMED','foreign-permit',?,?,?)""",
+            (
+                "f" * 40,
+                "/tmp/foreign-worktree",
+                json.dumps(
+                    {
+                        "intentId": "foreign-intent",
+                        "threadId": "foreign-thread",
+                        "worktreePath": "/tmp/foreign-worktree",
+                    },
+                    sort_keys=True,
+                ),
+                now,
+                now,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES ('foreign-permit','foreign-request','https://github.com/a/b/issues/1',
+                       ?,'fix/foreign','CONSUMED',?,?, '{}',?,?)""",
+            (
+                "f" * 40,
+                iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                "https://github.com/a/b/pull/99",
+                now,
+                now,
+            ),
+        )
+
+    assert not store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+        intent_id="recovered-intent",
+        worktree_path="/tmp/recovered-worktree",
+    )
+
+
+def test_published_terminal_ignores_foreign_intent_pending_publication_request(tmp_path):
+    """A pending request for another task cannot keep this task non-terminal."""
+
+    store = RadarLedger(tmp_path / "published-terminal-foreign-pending.sqlite3")
+    store.restore_task_context(published_task_context())
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="published-result",
+        stage="CI_GREEN",
+        task_id="recovered-intent",
+        thread_id="thread-recovered",
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="foreign-intent",
+        thread_id="foreign-thread",
+        worktree_path="/tmp/foreign-worktree",
+        status="COMPLETED",
+    )
+    now = iso_z(datetime.now(UTC))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES ('foreign-pending','a/b#1','foreign-thread',?,'fix/foreign',?,
+                       'foreign-pending-evidence','PENDING',?,?,?)""",
+            (
+                "f" * 40,
+                "/tmp/foreign-worktree",
+                json.dumps(
+                    {
+                        "intentId": "foreign-intent",
+                        "threadId": "foreign-thread",
+                        "worktreePath": "/tmp/foreign-worktree",
+                    },
+                    sort_keys=True,
+                ),
+                now,
+                now,
+            ),
+        )
+
+    assert store.published_task_result_is_terminal(
+        "a/b#1",
+        thread_id="thread-recovered",
+        intent_id="recovered-intent",
+        worktree_path="/tmp/recovered-worktree",
     )
 
 
@@ -2542,7 +2987,14 @@ def test_archived_prior_thread_does_not_hide_later_no_go_thread(tmp_path):
         worktree_path="/tmp/worktree-2",
         title_time="08-05 20:35",
     )
-    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="WRONG_REPO")
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="WRONG_REPO",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path="/tmp/worktree-1",
+    )
 
     second_title = store.title_candidates()
     assert [item["threadId"] for item in second_title] == ["thread-2"]
@@ -3212,6 +3664,56 @@ def test_implementation_recovery_reservation_rechecks_new_result_in_transaction(
         )
 
 
+def test_explicit_task_id_only_result_binds_to_implementation_attempt(tmp_path):
+    """Old result records with only taskId must still retire recovery safely."""
+
+    store = RadarLedger(tmp_path / "task-id-only-result.sqlite3")
+    store.enqueue(
+        intent(
+            taskStage="IMPLEMENTATION_READY",
+            probeLevel="REPRODUCED_VALIDATED",
+            probeReceiptDigest="probe-receipt",
+        )
+    )
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/task-id-only-worktree",
+    )
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "IMPLEMENTATION_FOLLOWUP_SENT",
+            "implementation-attempt",
+            {
+                "intentId": "intent-1",
+                "threadId": "thread-1",
+                "worktreePath": "/tmp/task-id-only-worktree",
+                "resultDigest": "implementation-result",
+                "attemptDigest": "implementation-attempt",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "TASK_RESULT_INGESTED",
+            "later-result",
+            {"taskId": "intent-1", "stage": "FIX_READY"},
+            iso_z(datetime.now(UTC)),
+        )
+
+    assert [
+        item
+        for item in store.recovery_candidates(min_age_minutes=0)
+        if item["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
+    ] == []
+
+
 def test_new_result_clears_exhausted_dispatched_recovery_blocker(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())
@@ -3281,7 +3783,14 @@ def test_terminal_stage_retires_unsent_recovery_reservation(tmp_path):
     store.reserve_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
     assert store.unresolved_recoveries()[0]["threadId"] == "thread-1"
 
-    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="WRONG_REPO")
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="WRONG_REPO",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path="/tmp/worktree",
+    )
 
     assert store.unresolved_recoveries() == []
 
@@ -4213,6 +4722,86 @@ def test_validation_followup_is_write_ahead_and_rearms_for_a_new_result(tmp_path
     assert store.validation_followup_was_sent(thread_id="missing-thread") is False
 
 
+def test_validation_followup_sent_is_scoped_to_opportunity_when_thread_reused(tmp_path):
+    """A sent marker in one issue must not suppress another issue's thread."""
+
+    store = RadarLedger(tmp_path / "validation-thread-reuse.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="shared-thread",
+        project_id="repo-project",
+        worktree_path="/tmp/validation-one",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="shared-thread",
+        intent_id="intent-1",
+        worktree_path="/tmp/validation-one",
+        result_digest="result-one",
+        missing=["relevant_tests_green"],
+    )
+    store.record_stage(
+        "a/b#1",
+        "VALIDATION_PENDING",
+        intent_id="intent-1",
+        thread_id="shared-thread",
+        worktree_path="/tmp/validation-one",
+    )
+    store.reserve_validation_followup(
+        thread_id="shared-thread",
+        result_digest="result-one",
+        intent_id="intent-1",
+        worktree_path="/tmp/validation-one",
+    )
+    store.commit_validation_followup(
+        thread_id="shared-thread",
+        result_digest="result-one",
+        intent_id="intent-1",
+        worktree_path="/tmp/validation-one",
+    )
+
+    store.enqueue(
+        intent(
+            intentId="intent-2",
+            key="c/d#2",
+            repo="c/d",
+            issueNumber=2,
+            issueUrl="https://github.com/c/d/issues/2",
+            decisionDigest="decision-2",
+        )
+    )
+    store.claim("intent-2", "worker")
+    store.commit_dispatch(
+        "intent-2",
+        owner="worker",
+        thread_id="shared-thread",
+        project_id="repo-project",
+        worktree_path="/tmp/validation-two",
+    )
+
+    assert (
+        store.validation_followup_was_sent(
+            key="a/b#1",
+            thread_id="shared-thread",
+            intent_id="intent-1",
+            worktree_path="/tmp/validation-one",
+        )
+        is True
+    )
+    assert (
+        store.validation_followup_was_sent(
+            key="c/d#2",
+            thread_id="shared-thread",
+            intent_id="intent-2",
+            worktree_path="/tmp/validation-two",
+        )
+        is False
+    )
+
+
 def test_stale_validation_followup_requires_result_from_same_thread(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())
@@ -4563,6 +5152,81 @@ def test_validation_delivery_same_reservation_concurrent_start_is_idempotent(tmp
             ).fetchone()[0]
             == 1
         )
+
+
+def test_task_turn_authorization_resolves_identity_before_newest_row(tmp_path):
+    """A newer reservation from another task must not hide the requested one."""
+
+    store = RadarLedger(tmp_path / "task-turn-binding.sqlite3")
+    reservations = []
+    for number, task_id in ((1, "intent-old"), (2, "intent-new")):
+        key = f"a/b#{number}"
+        value = intent(
+            intentId=task_id,
+            key=key,
+            repo="a/b",
+            issueNumber=number,
+            issueUrl=f"https://github.com/a/b/issues/{number}",
+        )
+        store.enqueue(value)
+        store.claim(task_id, "worker")
+        worktree = tmp_path / task_id
+        worktree.mkdir()
+        thread_id = "shared-task-thread"
+        store.commit_dispatch(
+            task_id,
+            owner="worker",
+            thread_id=thread_id,
+            project_id="github",
+            worktree_path=str(worktree),
+        )
+        with store.transaction() as connection:
+            store._event(
+                connection,
+                key,
+                "IMPLEMENTATION_FOLLOWUP_RESERVED",
+                "shared-attempt",
+                {
+                    "intentId": task_id,
+                    "threadId": thread_id,
+                    "worktreePath": str(worktree),
+                    "resultDigest": "shared-result",
+                    "attemptDigest": "shared-attempt",
+                },
+                iso_z(datetime.now(UTC)),
+            )
+        reservations.append((task_id, worktree))
+
+    with pytest.raises(LedgerError, match="ambiguous"):
+        store.authorize_task_turn_delivery(
+            delivery_kind="implementation-followup",
+            thread_id="shared-task-thread",
+            delivery_token="shared-result",
+            delivery_attempt_digest="shared-attempt",
+        )
+
+    old_id, old_worktree = reservations[0]
+    old_binding = store.authorize_task_turn_delivery(
+        delivery_kind="implementation-followup",
+        thread_id="shared-task-thread",
+        delivery_token="shared-result",
+        delivery_attempt_digest="shared-attempt",
+        intent_id=old_id,
+        worktree_path=str(old_worktree),
+    )
+    assert old_binding["intentId"] == old_id
+    assert old_binding["worktreePath"] == str(old_worktree)
+
+    new_id, new_worktree = reservations[1]
+    new_binding = store.authorize_task_turn_delivery(
+        delivery_kind="implementation-followup",
+        thread_id="shared-task-thread",
+        delivery_token="shared-result",
+        delivery_attempt_digest="shared-attempt",
+        intent_id=new_id,
+        worktree_path=str(new_worktree),
+    )
+    assert new_binding["intentId"] == new_id
 
 
 def test_validation_delivery_rejects_worktree_input_path_escape(tmp_path):
@@ -4958,22 +5622,279 @@ def test_local_receipt_candidates_keep_unfinished_validation_followup(tmp_path):
     assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
 
 
+def _record_local_receipt_completion(store, event_type, *, digest, stage, task_id, thread_id):
+    if event_type == "TASK_RESULT_INGESTED":
+        store.record_task_result_ingested(
+            "a/b#1",
+            digest=digest,
+            stage=stage,
+            task_id=task_id,
+            thread_id=thread_id,
+        )
+        return
+    store.record_published_task_result_backfilled(
+        "a/b#1",
+        task_id=task_id,
+        thread_id=thread_id,
+        digest=digest,
+        stage=stage,
+        pr_url="https://github.com/a/b/pull/9",
+        head_sha="b" * 40,
+    )
+
+
+def _published_validation_followup_store(tmp_path, *, stage="PR_OPEN"):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.restore_task_context(published_task_context(stage=stage))
+    old = iso_z(datetime.now(UTC) - timedelta(minutes=5))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','PR_FOLLOWUP_SENT','published-followup',?,?)""",
+            (json.dumps({"threadId": "thread-recovered"}), old),
+        )
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest="published-followup",
+        result_digest="published-followup-result",
+        stage=stage,
+    )
+    for event_type in ("TASK_RESULT_INGESTED", "PUBLISHED_TASK_RESULT_BACKFILLED"):
+        _record_local_receipt_completion(
+            store,
+            event_type,
+            digest="published-followup-result",
+            stage=stage,
+            task_id="recovered-intent",
+            thread_id="thread-recovered",
+        )
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="old-threadless-result",
+        stage=stage,
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-recovered",
+        result_digest="published-followup-result",
+        missing=["relevant_tests_green"],
+    )
+    reservation = store.reserve_validation_followup(
+        thread_id="thread-recovered",
+        result_digest="published-followup-result",
+    )
+    store.commit_validation_followup(
+        thread_id="thread-recovered",
+        result_digest="published-followup-result",
+        reservation_digest=reservation["reservationDigest"],
+    )
+    return store, reservation
+
+
+@pytest.mark.parametrize("stage", ["PR_OPEN", "CI_GREEN"])
+@pytest.mark.parametrize(
+    "completion_event", ["TASK_RESULT_INGESTED", "PUBLISHED_TASK_RESULT_BACKFILLED"]
+)
+def test_local_receipt_candidates_keep_published_validation_followup_until_new_result(
+    tmp_path, stage, completion_event
+):
+    store, _reservation = _published_validation_followup_store(tmp_path, stage=stage)
+
+    _record_local_receipt_completion(
+        store,
+        completion_event,
+        digest="wrong-thread-result",
+        stage=stage,
+        task_id="another-intent",
+        thread_id="another-thread",
+    )
+
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
+    assert store.task_result_candidates()[0]["stage"] == stage
+
+    for _attempt in range(2):
+        _record_local_receipt_completion(
+            store,
+            completion_event,
+            digest="validation-followup-result",
+            stage=stage,
+            task_id="recovered-intent",
+            thread_id="thread-recovered",
+        )
+
+    assert store.local_receipt_candidates() == []
+    assert store.local_receipt_candidates() == []
+    assert store.task_result_candidates()[0]["stage"] == stage
+
+
+def test_local_receipt_candidates_bind_threadless_result_to_later_validation_deferred(tmp_path):
+    store, _reservation = _published_validation_followup_store(tmp_path)
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="unbound-threadless-result",
+        stage="PR_OPEN",
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','TASK_RESULT_VALIDATION_DEFERRED',?,?,?)""",
+            (
+                "unbound-threadless-result",
+                json.dumps(
+                    {
+                        "threadId": "another-thread",
+                        "resultDigest": "unbound-threadless-result",
+                        "missing": ["relevant_tests_green"],
+                    }
+                ),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="late-deferred-threadless-result",
+        stage="PR_OPEN",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-recovered",
+        result_digest="late-deferred-threadless-result",
+        missing=["fresh_state_verified"],
+    )
+
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
+
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-recovered",
+        result_digest="bound-threadless-result",
+        missing=["independent_review_passed"],
+    )
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="bound-threadless-result",
+        stage="PR_OPEN",
+    )
+
+    assert store.local_receipt_candidates() == []
+    assert store.local_receipt_candidates() == []
+    assert store.task_result_candidates()[0]["stage"] == "PR_OPEN"
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload"),
+    [
+        (
+            "VALIDATION_FOLLOWUP_DELIVERY_ABANDONED",
+            {
+                "threadId": "thread-recovered",
+                "resultDigest": "published-followup-result",
+            },
+        ),
+        (
+            "VALIDATION_FOLLOWUP_RESERVATION_CANCELLED",
+            {
+                "threadId": "thread-recovered",
+                "resultDigest": "published-followup-result",
+                "reservationDigest": "reservation",
+            },
+        ),
+    ],
+)
+def test_local_receipt_candidates_ignore_retired_published_validation_followup(
+    tmp_path, event_type, payload
+):
+    store, _reservation = _published_validation_followup_store(tmp_path)
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1',?,?,?,?)""",
+            (
+                event_type,
+                f"wrong-thread-{event_type}",
+                json.dumps(payload | {"threadId": "another-thread"}),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
+
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1',?,?,?,?)""",
+            (
+                event_type,
+                f"retired-{event_type}",
+                json.dumps(payload),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+
+    assert store.local_receipt_candidates() == []
+
+
+def test_local_receipt_candidates_require_new_sent_after_validation_rearm(tmp_path):
+    store, _reservation = _published_validation_followup_store(tmp_path)
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','VALIDATION_FOLLOWUP_NO_PROGRESS',?,?,?)""",
+            (
+                "published-followup-result",
+                json.dumps(
+                    {
+                        "threadId": "thread-recovered",
+                        "resultDigest": "published-followup-result",
+                    }
+                ),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+
+    assert store.local_receipt_candidates() == []
+    assert store.rearm_validation_no_progress_for_review(
+        key="a/b#1",
+        result_digest="published-followup-result",
+        review_marker="changed-review",
+        reason="CONTROLLER_REVIEW_FEEDBACK_AVAILABLE",
+    )
+    assert store.local_receipt_candidates() == []
+
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-recovered",
+        result_digest="new-validation-result",
+        missing=["independent_review_passed"],
+    )
+    next_reservation = store.reserve_validation_followup(
+        thread_id="thread-recovered",
+        result_digest="new-validation-result",
+    )
+    store.commit_validation_followup(
+        thread_id="thread-recovered",
+        result_digest="new-validation-result",
+        reservation_digest=next_reservation["reservationDigest"],
+    )
+
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
+
+
 def test_local_receipt_candidates_exclude_active_quarantine_without_changing_audit_scope(
     tmp_path,
 ):
-    store = RadarLedger(tmp_path / "ledger.sqlite3")
-    store.enqueue(intent())
-    store.claim("intent-1", "worker")
-    store.commit_dispatch(
-        "intent-1",
-        owner="worker",
-        thread_id="thread-1",
-        project_id="repo-project",
-        worktree_path="/tmp/worktree",
-    )
-    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": "https://github.com/a/b/pull/9"})
+    store, _reservation = _published_validation_followup_store(tmp_path)
     assert [item["key"] for item in store.task_result_candidates()] == ["a/b#1"]
-    assert store.local_receipt_candidates() == []
+    assert [item["key"] for item in store.local_receipt_candidates()] == ["a/b#1"]
 
     store.record_shared_context_quarantine(
         key="a/b#1",
@@ -5125,6 +6046,2618 @@ def _make_pr_followup_candidate(
     )
     assert imported["inserted"] == 1
     return key
+
+
+def _insert_pr_update_request(
+    store: RadarLedger,
+    *,
+    status: str,
+    commit_sha: str,
+    reason: str | None = None,
+    request_payload: dict | None = None,
+) -> None:
+    now = iso_z(datetime.now(UTC))
+    permit_id = "permit-update" if status in {"GRANTED", "CONSUMED"} else None
+    payload = {
+        "requestId": "request-update",
+        "publicationKind": "PR_UPDATE",
+        "commitSha": commit_sha,
+        "existingPrUrl": "https://github.com/a/b/pull/9",
+    }
+    payload.update(request_payload or {})
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,permit_id,request_json,created_at,updated_at)
+               VALUES ('request-update','a/b#1','thread-1',?,'fix/intent-1','/tmp/worktree',
+                       'evidence-update',?,?,?,?,?)""",
+            (
+                commit_sha,
+                status,
+                permit_id,
+                json.dumps(payload),
+                now,
+                now,
+            ),
+        )
+        if permit_id is not None:
+            connection.execute(
+                """INSERT INTO publication_permits
+                   (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                    evidence_json,created_at,updated_at)
+                   VALUES (?,'request-update','https://github.com/a/b/issues/1',?,
+                           'fix/intent-1',?,?,?,'{}',?,?)""",
+                (
+                    permit_id,
+                    commit_sha,
+                    "CONSUMED" if status == "CONSUMED" else "ACTIVE",
+                    iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                    "https://github.com/a/b/pull/9" if status == "CONSUMED" else None,
+                    now,
+                    now,
+                ),
+            )
+        if reason is not None:
+            connection.execute(
+                "UPDATE publication_requests SET reason=? WHERE request_id='request-update'",
+                (reason,),
+            )
+
+
+def _insert_rollover_intent(
+    store: RadarLedger,
+    *,
+    key: str,
+    intent_id: str,
+    thread_id: str,
+    worktree_path: str,
+    status: str = "DISPATCHED",
+    task_stage: str = "IMPLEMENTATION_READY",
+    result_receipt_digest: str = "rollover-receipt",
+) -> None:
+    value = intent(
+        intentId=intent_id,
+        key=key,
+        decisionDigest=f"decision-{intent_id}",
+        taskStage=task_stage,
+        probeLevel="REPRODUCED_VALIDATED",
+        probeReceiptDigest=result_receipt_digest,
+        issuedAt=iso_z(datetime.now(UTC) + timedelta(seconds=1)),
+        expiresAt=iso_z(datetime.now(UTC) + timedelta(hours=2)),
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?, ?,?,?,?,?,?,?,?)""",
+            (
+                intent_id,
+                key,
+                f"decision-{intent_id}",
+                status,
+                value["issuedAt"],
+                value["expiresAt"],
+                thread_id,
+                "github",
+                worktree_path,
+                json.dumps(value, sort_keys=True),
+                iso_z(datetime.now(UTC) + timedelta(seconds=2)),
+            ),
+        )
+
+
+def test_task_result_candidates_do_not_project_stage_onto_historical_intent_after_rollover(
+    tmp_path,
+):
+    """A replacement intent must own the current result-ingestion candidate."""
+
+    store = RadarLedger(tmp_path / "task-result-rollover.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-old",
+        project_id="project-1",
+        worktree_path="/tmp/result-old",
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="STALE_RESULT")
+
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="thread-new",
+        worktree_path="/tmp/result-new",
+    )
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE opportunities SET stage='FIX_READY',terminal_reason=NULL WHERE key=?",
+            ("a/b#1",),
+        )
+
+    candidates = store.task_result_candidates()
+    assert [(item["intentId"], item["threadId"]) for item in candidates] == [
+        ("intent-1", "thread-old"),
+        ("intent-2", "thread-new"),
+    ]
+    ingest_candidates = store.task_result_candidates_for_ingestion()
+    assert [(item["intentId"], item["threadId"]) for item in ingest_candidates] == [
+        ("intent-2", "thread-new")
+    ]
+
+    old_value = {
+        "schemaVersion": "oss-pr-radar.task-result.v1",
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "taskId": "intent-1",
+        "threadId": "thread-old",
+        "worktreePath": "/tmp/result-old",
+    }
+    old_candidate = candidates[0]
+    new_candidate = ingest_candidates[0]
+    assert store.task_result_binding_gate(old_candidate, old_value) is True
+    assert store.task_result_binding_gate(new_candidate, old_value) is False
+    legacy_value = dict(old_value)
+    legacy_value.pop("taskId")
+    assert store.task_result_binding_gate(old_candidate, legacy_value) is True
+
+
+def test_cleanup_candidate_and_commit_are_bound_to_current_intent_after_rollover(tmp_path):
+    """Cleanup must never archive a historical task sharing the issue/thread."""
+
+    store = RadarLedger(tmp_path / "cleanup-rollover.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="shared-thread",
+        project_id="project-1",
+        worktree_path="/tmp/cleanup-old",
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="OLD_NO_GO")
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE intents SET title_synced_state='AUDIT_NO_GO' WHERE intent_id='intent-1'"
+        )
+
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="shared-thread",
+        worktree_path="/tmp/cleanup-new",
+    )
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE opportunities SET stage='AUDIT_NO_GO',terminal_reason='NEW_NO_GO' WHERE key=?",
+            ("a/b#1",),
+        )
+        connection.execute(
+            "UPDATE intents SET title_synced_state='AUDIT_NO_GO' WHERE intent_id='intent-2'"
+        )
+
+    candidates = store.cleanup_candidates()
+    assert [(item["intentId"], item["worktreePath"]) for item in candidates] == [
+        ("intent-2", "/tmp/cleanup-new")
+    ]
+    current = candidates[0]
+    with pytest.raises(LedgerError, match="cleanup authorization"):
+        store.commit_cleanup(
+            thread_id="shared-thread",
+            nonce=current["cleanupNonce"],
+            intent_id="intent-1",
+        )
+    store.commit_cleanup(
+        thread_id=current["threadId"],
+        nonce=current["cleanupNonce"],
+        intent_id=current["intentId"],
+        worktree_path=current["worktreePath"],
+    )
+    with store.connect() as connection:
+        archived = connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='THREAD_ARCHIVED'"
+        ).fetchone()
+    assert archived is not None
+    assert json.loads(archived["payload_json"]) == {
+        "cleanupNonce": current["cleanupNonce"],
+        "intentId": "intent-2",
+        "threadId": "shared-thread",
+        "worktreePath": "/tmp/cleanup-new",
+    }
+
+
+def test_task_result_binding_gate_rejects_ambiguous_legacy_identity_after_rollover(tmp_path):
+    store = RadarLedger(tmp_path / "task-result-legacy-ambiguity.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="shared-thread",
+        project_id="project-1",
+        worktree_path="/tmp/shared-result",
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="OLD_NO_GO")
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="shared-thread",
+        worktree_path="/tmp/shared-result",
+    )
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE opportunities SET stage='FIX_READY',terminal_reason=NULL WHERE key=?",
+            ("a/b#1",),
+        )
+
+    old = next(item for item in store.task_result_candidates() if item["intentId"] == "intent-1")
+    legacy_value = {
+        "schemaVersion": "oss-pr-radar.task-result.v1",
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "shared-thread",
+        "worktreePath": "/tmp/shared-result",
+    }
+    assert store.task_result_binding_gate(old, legacy_value) is False
+
+
+def _local_receipt_rollover_store(tmp_path):
+    store = RadarLedger(tmp_path / "local-receipt-rollover.sqlite3")
+    store.enqueue(intent(intentId="intent-old", decisionDigest="decision-old"))
+    store.claim("intent-old", "worker")
+    store.commit_dispatch(
+        "intent-old",
+        owner="worker",
+        thread_id="shared-thread",
+        project_id="project-1",
+        worktree_path="/tmp/local-receipt-old",
+    )
+    with store.connect() as connection:
+        connection.execute("UPDATE intents SET status='COMPLETED' WHERE intent_id='intent-old'")
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-new",
+        thread_id="shared-thread",
+        worktree_path="/tmp/local-receipt-new",
+        status="COMPLETED",
+    )
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE opportunities SET stage='PR_OPEN',terminal_reason=NULL WHERE key=?",
+            ("a/b#1",),
+        )
+    return store
+
+
+@pytest.mark.parametrize(
+    ("event_type", "dedupe_key", "payload"),
+    [
+        (
+            "TASK_RESULT_INGESTED",
+            "old-result",
+            {"resultDigest": "old-result", "stage": "PR_OPEN"},
+        ),
+        (
+            "PUBLISHED_TASK_RESULT_BACKFILLED",
+            "old-backfill",
+            {"resultDigest": "old-backfill", "stage": "PR_OPEN"},
+        ),
+        (
+            "VALIDATION_FOLLOWUP_RESERVATION_CANCELLED",
+            "old-cancel",
+            {"resultDigest": "new-wake"},
+        ),
+        (
+            "VALIDATION_FOLLOWUP_DELIVERY_ABANDONED",
+            "old-abandon",
+            {"resultDigest": "new-wake"},
+        ),
+        (
+            "VALIDATION_FOLLOWUP_NO_PROGRESS",
+            "new-wake",
+            {"resultDigest": "new-wake"},
+        ),
+        (
+            "VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED",
+            "old-rearm",
+            {"resultDigest": "new-wake"},
+        ),
+    ],
+)
+def test_local_receipt_validation_markers_cannot_retire_another_intent(
+    tmp_path, event_type, dedupe_key, payload
+):
+    store = _local_receipt_rollover_store(tmp_path)
+    current_identity = {
+        "intentId": "intent-new",
+        "threadId": "shared-thread",
+        "worktreePath": "/tmp/local-receipt-new",
+    }
+    old_identity = {
+        "intentId": "intent-old",
+        "threadId": "shared-thread",
+        "worktreePath": "/tmp/local-receipt-old",
+    }
+    now = iso_z(datetime.now(UTC))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','VALIDATION_FOLLOWUP_SENT','new-wake',?,?)""",
+            (json.dumps(current_identity | {"resultDigest": "new-wake"}), now),
+        )
+        cursor = connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1',?,?,?,?)""",
+            (event_type, dedupe_key, json.dumps(old_identity | payload), now),
+        )
+        marker_id = int(cursor.lastrowid)
+
+    assert [
+        (item["intentId"], item["worktreePath"]) for item in store.local_receipt_candidates()
+    ] == [("intent-new", "/tmp/local-receipt-new")]
+
+    # The equivalent marker from the current intent must still retire the
+    # receipt candidate; otherwise the fix would merely ignore all markers.
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE events SET payload_json=? WHERE id=?",
+            (json.dumps(current_identity | payload), marker_id),
+        )
+    assert store.local_receipt_candidates() == []
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload"),
+    [
+        ("PR_FOLLOWUP_RESULT_INGESTED", {"resultDigest": "old-result"}),
+        ("PR_FOLLOWUP_DELIVERY_ABANDONED", {"wakeDigest": "new-wake"}),
+    ],
+)
+def test_local_receipt_pr_markers_cannot_retire_another_intent(tmp_path, event_type, payload):
+    store = _local_receipt_rollover_store(tmp_path)
+    current_identity = {
+        "intentId": "intent-new",
+        "threadId": "shared-thread",
+        "worktreePath": "/tmp/local-receipt-new",
+    }
+    old_identity = {
+        "intentId": "intent-old",
+        "threadId": "shared-thread",
+        "worktreePath": "/tmp/local-receipt-old",
+    }
+    now = iso_z(datetime.now(UTC))
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','PR_FOLLOWUP_SENT','new-wake',?,?)""",
+            (json.dumps(current_identity), now),
+        )
+        cursor = connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1',?,'new-wake',?,?)""",
+            (event_type, json.dumps(old_identity | payload), now),
+        )
+        marker_id = int(cursor.lastrowid)
+
+    assert [
+        (item["intentId"], item["worktreePath"]) for item in store.local_receipt_candidates()
+    ] == [("intent-new", "/tmp/local-receipt-new")]
+
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE events SET payload_json=? WHERE id=?",
+            (json.dumps(current_identity | payload), marker_id),
+        )
+    assert store.local_receipt_candidates() == []
+
+
+def test_implementation_followup_candidates_stay_with_result_intent_after_rollover(
+    tmp_path,
+):
+    """A newer task must not inherit an older implementation result."""
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    old = intent(
+        intentId="intent-old",
+        taskStage="IMPLEMENTATION_READY",
+        probeLevel="REPRODUCED_VALIDATED",
+        probeReceiptDigest="old-receipt",
+    )
+    store.enqueue(old)
+    store.claim("intent-old", "worker")
+    store.commit_dispatch(
+        "intent-old",
+        owner="worker",
+        thread_id="thread-old",
+        project_id="github",
+        worktree_path="/tmp/worktree-old",
+    )
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="result-old",
+        stage="IMPLEMENTATION_READY",
+        task_id="intent-old",
+        thread_id="thread-old",
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-new",
+        thread_id="thread-new",
+        worktree_path="/tmp/worktree-new",
+        result_receipt_digest="new-receipt",
+    )
+
+    candidates = store.implementation_followup_candidates()
+    assert [(item["intentId"], item["threadId"], item["resultDigest"]) for item in candidates] == [
+        ("intent-old", "thread-old", "result-old")
+    ]
+
+
+def test_unresolved_implementation_followup_stays_with_reserved_intent_after_rollover(
+    tmp_path,
+):
+    """A newer intent must not steal an older implementation reservation."""
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    old = intent(
+        intentId="intent-old",
+        taskStage="IMPLEMENTATION_READY",
+        probeLevel="REPRODUCED_VALIDATED",
+        probeReceiptDigest="old-receipt",
+    )
+    store.enqueue(old)
+    store.claim("intent-old", "worker")
+    store.commit_dispatch(
+        "intent-old",
+        owner="worker",
+        thread_id="thread-old",
+        project_id="github",
+        worktree_path="/tmp/worktree-old",
+    )
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="result-old",
+        stage="IMPLEMENTATION_READY",
+        task_id="intent-old",
+        thread_id="thread-old",
+    )
+    reservation = store.reserve_implementation_followup(
+        thread_id="thread-old",
+        result_digest="result-old",
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-new",
+        thread_id="thread-new",
+        worktree_path="/tmp/worktree-new",
+        result_receipt_digest="new-receipt",
+    )
+
+    unresolved = store.unresolved_implementation_followups()
+    assert len(unresolved) == 1
+    assert (
+        unresolved[0]["intentId"],
+        unresolved[0]["threadId"],
+        unresolved[0]["worktreePath"],
+        unresolved[0]["resultDigest"],
+    ) == ("intent-old", "thread-old", "/tmp/worktree-old", "result-old")
+    assert (
+        unresolved[0]["implementationFollowupAttemptDigest"]
+        == reservation["implementationFollowupAttemptDigest"]
+    )
+
+
+def test_implementation_followup_reserve_and_commit_require_exact_identity_when_ambiguous(
+    tmp_path, monkeypatch
+):
+    """A shared thread/result digest must never select an arbitrary task."""
+
+    store = RadarLedger(tmp_path / "implementation-binding-ambiguous.sqlite3")
+    for task_intent, key, issue_url, worktree in (
+        (
+            "intent-one",
+            "a/b#1",
+            "https://github.com/a/b/issues/1",
+            "/tmp/implementation-one",
+        ),
+        (
+            "intent-two",
+            "c/d#2",
+            "https://github.com/c/d/issues/2",
+            "/tmp/implementation-two",
+        ),
+    ):
+        value = intent(
+            intentId=task_intent,
+            key=key,
+            repo=key.split("#", 1)[0],
+            issueNumber=int(key.rsplit("#", 1)[1]),
+            issueUrl=issue_url,
+            taskStage="IMPLEMENTATION_READY",
+            probeLevel="REPRODUCED_VALIDATED",
+            probeReceiptDigest=f"receipt-{task_intent}",
+        )
+        store.enqueue(value)
+        store.claim(task_intent, "worker")
+        store.commit_dispatch(
+            task_intent,
+            owner="worker",
+            thread_id="shared-implementation-thread",
+            project_id="github",
+            worktree_path=worktree,
+        )
+
+    shared_result = "a" * 64
+    candidates = [
+        {
+            "key": "a/b#1",
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "intentId": "intent-one",
+            "threadId": "shared-implementation-thread",
+            "worktreePath": "/tmp/implementation-one",
+            "resultDigest": shared_result,
+            "implementationFollowupAttemptDigest": "b" * 64,
+        },
+        {
+            "key": "c/d#2",
+            "issueUrl": "https://github.com/c/d/issues/2",
+            "intentId": "intent-two",
+            "threadId": "shared-implementation-thread",
+            "worktreePath": "/tmp/implementation-two",
+            "resultDigest": shared_result,
+            "implementationFollowupAttemptDigest": "c" * 64,
+        },
+    ]
+    monkeypatch.setattr(store, "implementation_followup_candidates", lambda: candidates)
+
+    with pytest.raises(LedgerError, match="stale or invalid"):
+        store.reserve_implementation_followup(
+            thread_id="shared-implementation-thread", result_digest=shared_result
+        )
+
+    first = store.reserve_implementation_followup(
+        thread_id="shared-implementation-thread",
+        result_digest=shared_result,
+        intent_id="intent-one",
+        worktree_path="/tmp/implementation-one",
+    )
+    second = store.reserve_implementation_followup(
+        thread_id="shared-implementation-thread",
+        result_digest=shared_result,
+        intent_id="intent-two",
+        worktree_path="/tmp/implementation-two",
+    )
+    assert first["intentId"] == "intent-one"
+    assert second["intentId"] == "intent-two"
+
+    with pytest.raises(LedgerError, match="unavailable"):
+        store.commit_implementation_followup(
+            thread_id="shared-implementation-thread", result_digest=shared_result
+        )
+    store.commit_implementation_followup(
+        thread_id="shared-implementation-thread",
+        result_digest=shared_result,
+        intent_id="intent-one",
+        worktree_path="/tmp/implementation-one",
+    )
+    store.commit_implementation_followup(
+        thread_id="shared-implementation-thread",
+        result_digest=shared_result,
+        intent_id="intent-two",
+        worktree_path="/tmp/implementation-two",
+    )
+    with store.connect() as connection:
+        sent = connection.execute(
+            "SELECT payload_json FROM events "
+            "WHERE event_type='IMPLEMENTATION_FOLLOWUP_SENT' ORDER BY id"
+        ).fetchall()
+    assert [json.loads(row[0])["intentId"] for row in sent] == ["intent-one", "intent-two"]
+
+
+def test_implementation_followup_rejects_cross_intent_dedupe_collision(tmp_path, monkeypatch):
+    """A shared attempt digest cannot make a second task look reserved/sent."""
+
+    store = RadarLedger(tmp_path / "implementation-dedupe-collision.sqlite3")
+    value = intent(
+        intentId="intent-one",
+        key="a/b#1",
+        repo="a/b",
+        issueNumber=1,
+        issueUrl="https://github.com/a/b/issues/1",
+        taskStage="IMPLEMENTATION_READY",
+        probeLevel="REPRODUCED_VALIDATED",
+        probeReceiptDigest="receipt-intent-one",
+    )
+    store.enqueue(value)
+    store.claim("intent-one", "worker")
+    store.commit_dispatch(
+        "intent-one",
+        owner="worker",
+        thread_id="shared-implementation-thread",
+        project_id="github",
+        worktree_path="/tmp/implementation-one",
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-two",
+        thread_id="shared-implementation-thread",
+        worktree_path="/tmp/implementation-two",
+        result_receipt_digest="receipt-intent-two",
+    )
+    shared_result = "a" * 64
+    shared_attempt = "b" * 64
+    candidates = [
+        {
+            "key": "a/b#1",
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "intentId": task_intent,
+            "threadId": "shared-implementation-thread",
+            "worktreePath": worktree,
+            "resultDigest": shared_result,
+            "implementationFollowupAttemptDigest": shared_attempt,
+        }
+        for task_intent, worktree in (
+            ("intent-one", "/tmp/implementation-one"),
+            ("intent-two", "/tmp/implementation-two"),
+        )
+    ]
+    monkeypatch.setattr(store, "implementation_followup_candidates", lambda: candidates)
+
+    store.reserve_implementation_followup(
+        thread_id="shared-implementation-thread",
+        result_digest=shared_result,
+        intent_id="intent-one",
+        worktree_path="/tmp/implementation-one",
+    )
+    with pytest.raises(LedgerError, match="stale or invalid"):
+        store.reserve_implementation_followup(
+            thread_id="shared-implementation-thread",
+            result_digest=shared_result,
+            intent_id="intent-two",
+            worktree_path="/tmp/implementation-two",
+        )
+
+    with store.connect() as connection:
+        reservation = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='IMPLEMENTATION_FOLLOWUP_RESERVED'"""
+        ).fetchone()
+    assert reservation is not None
+    assert json.loads(reservation[0])["intentId"] == "intent-one"
+
+    # A foreign sent event with the same dedupe key must not let commit silently
+    # report success for intent-one.
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','IMPLEMENTATION_FOLLOWUP_SENT',?,?,?)""",
+            (
+                shared_attempt,
+                json.dumps(
+                    {
+                        "intentId": "intent-two",
+                        "threadId": "shared-implementation-thread",
+                        "worktreePath": "/tmp/implementation-two",
+                        "resultDigest": shared_result,
+                        "attemptDigest": shared_attempt,
+                    }
+                ),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+    with pytest.raises(LedgerError, match="unavailable"):
+        store.commit_implementation_followup(
+            thread_id="shared-implementation-thread",
+            result_digest=shared_result,
+            intent_id="intent-one",
+            worktree_path="/tmp/implementation-one",
+        )
+
+
+def test_result_event_dedupe_rejects_cross_intent_identity(tmp_path):
+    """A legacy digest key must not swallow another intent's result event."""
+
+    store = RadarLedger(tmp_path / "result-event-dedupe.sqlite3")
+    old = intent(
+        intentId="intent-old",
+        taskStage="IMPLEMENTATION_READY",
+        probeLevel="REPRODUCED_VALIDATED",
+        probeReceiptDigest="old-receipt",
+    )
+    store.enqueue(old)
+    store.claim("intent-old", "worker")
+    store.commit_dispatch(
+        "intent-old",
+        owner="worker",
+        thread_id="thread-old",
+        project_id="github",
+        worktree_path="/tmp/worktree-old",
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-new",
+        thread_id="thread-new",
+        worktree_path="/tmp/worktree-new",
+        result_receipt_digest="new-receipt",
+    )
+
+    shared_result = "shared-result-digest"
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=shared_result,
+        stage="FIX_READY",
+        task_id="intent-old",
+        thread_id="thread-old",
+    )
+    with pytest.raises(LedgerError, match="event dedupe binding mismatch"):
+        store.record_task_result_ingested(
+            "a/b#1",
+            digest=shared_result,
+            stage="FIX_READY",
+            task_id="intent-new",
+            thread_id="thread-new",
+        )
+
+    shared_deferred = "shared-deferred-digest"
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="thread-old",
+        intent_id="intent-old",
+        worktree_path="/tmp/worktree-old",
+        result_digest=shared_deferred,
+        missing=["relevant_tests_green"],
+    )
+    with pytest.raises(LedgerError, match="event dedupe binding mismatch"):
+        store.record_validation_deferred(
+            "a/b#1",
+            thread_id="thread-new",
+            intent_id="intent-new",
+            worktree_path="/tmp/worktree-new",
+            result_digest=shared_deferred,
+            missing=["relevant_tests_green"],
+        )
+
+    shared_backfill = "shared-backfill-digest"
+    store.record_published_task_result_backfilled(
+        "a/b#1",
+        task_id="intent-old",
+        thread_id="thread-old",
+        digest=shared_backfill,
+        stage="PR_OPEN",
+        pr_url="https://github.com/a/b/pull/9",
+        head_sha="a" * 40,
+    )
+    with pytest.raises(LedgerError, match="event dedupe binding mismatch"):
+        store.record_published_task_result_backfilled(
+            "a/b#1",
+            task_id="intent-new",
+            thread_id="thread-new",
+            digest=shared_backfill,
+            stage="PR_OPEN",
+            pr_url="https://github.com/a/b/pull/9",
+            head_sha="b" * 40,
+        )
+
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_FOLLOWUP_RESULT_INGESTED",
+            "shared-wake",
+            {
+                "intentId": "intent-old",
+                "threadId": "thread-old",
+                "worktreePath": "/tmp/worktree-old",
+                "resultDigest": "followup-result",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+    with pytest.raises(LedgerError, match="event dedupe binding mismatch"):
+        with store.transaction() as connection:
+            store._event(
+                connection,
+                "a/b#1",
+                "PR_FOLLOWUP_RESULT_INGESTED",
+                "shared-wake",
+                {
+                    "intentId": "intent-new",
+                    "threadId": "thread-new",
+                    "worktreePath": "/tmp/worktree-new",
+                    "resultDigest": "followup-result",
+                },
+                iso_z(datetime.now(UTC)),
+            )
+
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "VALIDATION_FOLLOWUP_SENT",
+            "shared-validation-result",
+            {
+                "intentId": "intent-old",
+                "threadId": "thread-old",
+                "worktreePath": "/tmp/worktree-old",
+                "resultDigest": "shared-validation-result",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+    with pytest.raises(LedgerError, match="event dedupe binding mismatch"):
+        with store.transaction() as connection:
+            store._event(
+                connection,
+                "a/b#1",
+                "VALIDATION_FOLLOWUP_SENT",
+                "shared-validation-result",
+                {
+                    "intentId": "intent-new",
+                    "threadId": "thread-new",
+                    "worktreePath": "/tmp/worktree-new",
+                    "resultDigest": "shared-validation-result",
+                },
+                iso_z(datetime.now(UTC)),
+            )
+
+    # Delivery-abandoned markers use the same wake/digest key across intent
+    # generations in the wild.  The newer intent must not be swallowed by
+    # INSERT OR IGNORE when an older marker already owns that key.
+    for event_type in (
+        "VALIDATION_FOLLOWUP_DELIVERY_ABANDONED",
+        "PR_FOLLOWUP_DELIVERY_ABANDONED",
+    ):
+        dedupe_key = f"shared-{event_type.lower()}"
+        with store.transaction() as connection:
+            store._event(
+                connection,
+                "a/b#1",
+                event_type,
+                dedupe_key,
+                {
+                    "intentId": "intent-old",
+                    "threadId": "thread-old",
+                    "worktreePath": "/tmp/worktree-old",
+                    "wakeDigest": dedupe_key,
+                },
+                iso_z(datetime.now(UTC)),
+            )
+        with pytest.raises(LedgerError, match="event dedupe binding mismatch"):
+            with store.transaction() as connection:
+                store._event(
+                    connection,
+                    "a/b#1",
+                    event_type,
+                    dedupe_key,
+                    {
+                        "intentId": "intent-new",
+                        "threadId": "thread-new",
+                        "worktreePath": "/tmp/worktree-new",
+                        "wakeDigest": dedupe_key,
+                    },
+                    iso_z(datetime.now(UTC)),
+                )
+
+    with store.connect() as connection:
+        counts = {
+            event_type: connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key='a/b#1' AND event_type=? AND dedupe_key=?""",
+                (event_type, dedupe_key),
+            ).fetchone()[0]
+            for event_type, dedupe_key in (
+                ("TASK_RESULT_INGESTED", shared_result),
+                ("PUBLISHED_TASK_RESULT_BACKFILLED", shared_backfill),
+                ("PR_FOLLOWUP_RESULT_INGESTED", "shared-wake"),
+                ("VALIDATION_FOLLOWUP_SENT", "shared-validation-result"),
+                (
+                    "VALIDATION_FOLLOWUP_DELIVERY_ABANDONED",
+                    "shared-validation_followup_delivery_abandoned",
+                ),
+                (
+                    "PR_FOLLOWUP_DELIVERY_ABANDONED",
+                    "shared-pr_followup_delivery_abandoned",
+                ),
+            )
+        }
+    assert counts == {
+        "TASK_RESULT_INGESTED": 1,
+        "PUBLISHED_TASK_RESULT_BACKFILLED": 1,
+        "PR_FOLLOWUP_RESULT_INGESTED": 1,
+        "VALIDATION_FOLLOWUP_SENT": 1,
+        "VALIDATION_FOLLOWUP_DELIVERY_ABANDONED": 1,
+        "PR_FOLLOWUP_DELIVERY_ABANDONED": 1,
+    }
+
+
+def test_reconcile_superseded_pr_followups_keeps_intents_separate(tmp_path):
+    """A later result from another intent must not close this reservation."""
+
+    store = RadarLedger(tmp_path / "pr-followup-reconcile-binding.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-old",
+        project_id="project-1",
+        worktree_path="/tmp/pr-followup-old",
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="thread-new",
+        worktree_path="/tmp/pr-followup-new",
+    )
+    now = iso_z(datetime.now(UTC))
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_FOLLOWUP_RESERVED",
+            "wake-old",
+            {
+                "intentId": "intent-1",
+                "threadId": "thread-old",
+                "worktreePath": "/tmp/pr-followup-old",
+                "prUrl": "https://github.com/a/b/pull/1",
+            },
+            now,
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_FOLLOWUP_RESULT_INGESTED",
+            "wake-new-result",
+            {
+                "intentId": "intent-2",
+                "threadId": "thread-new",
+                "worktreePath": "/tmp/pr-followup-new",
+                "resultDigest": "new-result",
+            },
+            now,
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_FOLLOWUP_RESERVED",
+            "wake-new",
+            {
+                "intentId": "intent-2",
+                "threadId": "thread-new",
+                "worktreePath": "/tmp/pr-followup-new",
+                "prUrl": "https://github.com/a/b/pull/1",
+            },
+            now,
+        )
+
+    assert store.reconcile_superseded_pr_followups() == []
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                     AND dedupe_key='wake-old'"""
+            ).fetchone()[0]
+            == 0
+        )
+
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_FOLLOWUP_RESULT_INGESTED",
+            "wake-old-result",
+            {
+                "intentId": "intent-1",
+                "threadId": "thread-old",
+                "worktreePath": "/tmp/pr-followup-old",
+                "resultDigest": "old-result",
+            },
+            iso_z(datetime.now(UTC) + timedelta(seconds=1)),
+        )
+    reconciled = store.reconcile_superseded_pr_followups()
+    assert reconciled == [
+        {"key": "a/b#1", "wakeDigest": "wake-old", "supersededBy": "wake-old-result"}
+    ]
+
+
+def test_publication_feedback_sent_marker_is_bound_to_intent(tmp_path):
+    """An old intent's PR reply must not suppress the replacement intent."""
+
+    store = RadarLedger(tmp_path / "publication-feedback-binding.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="shared-publication-thread",
+        project_id="project-1",
+        worktree_path="/tmp/publication-old",
+    )
+    with store.connect() as connection:
+        connection.execute("UPDATE intents SET status='SUPERSEDED' WHERE intent_id='intent-1'")
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="shared-publication-thread",
+        worktree_path="/tmp/publication-new",
+        task_stage="IMPLEMENTATION_READY",
+    )
+    pr_url = "https://github.com/a/b/pull/42"
+    now = iso_z(datetime.now(UTC))
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE opportunities SET stage='PR_OPEN',updated_at=? WHERE key='a/b#1'",
+            (now,),
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_OPEN",
+            pr_url,
+            {
+                "intentId": "intent-2",
+                "threadId": "shared-publication-thread",
+                "worktreePath": "/tmp/publication-new",
+                "prUrl": pr_url,
+            },
+            now,
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "THREAD_PUBLICATION_STATUS_SENT",
+            pr_url,
+            {
+                "intentId": "intent-1",
+                "threadId": "shared-publication-thread",
+                "worktreePath": "/tmp/publication-old",
+                "prUrl": pr_url,
+            },
+            now,
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "THREAD_PUBLICATION_STATUS_RESERVED",
+            "old-reservation",
+            {
+                "intentId": "intent-1",
+                "threadId": "shared-publication-thread",
+                "worktreePath": "/tmp/publication-old",
+                "prUrl": pr_url,
+                "reservationNonce": "old-reservation",
+            },
+            now,
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "THREAD_PUBLICATION_STATUS_ABANDONED",
+            "old-reservation",
+            {
+                "intentId": "intent-1",
+                "threadId": "shared-publication-thread",
+                "worktreePath": "/tmp/publication-old",
+                "prUrl": pr_url,
+                "reservationNonce": "old-reservation",
+            },
+            now,
+        )
+
+    candidates = store.publication_feedback_candidates()
+    assert [(item["intentId"], item["worktreePath"]) for item in candidates] == [
+        ("intent-2", "/tmp/publication-new")
+    ]
+    reservation = store.reserve_publication_feedback(
+        thread_id="shared-publication-thread",
+        pr_url=pr_url,
+        intent_id="intent-2",
+        worktree_path="/tmp/publication-new",
+    )
+    assert reservation["intentId"] == "intent-2"
+    unresolved = store.unresolved_publication_feedback()
+    assert [(item["intentId"], item["worktreePath"]) for item in unresolved] == [
+        ("intent-2", "/tmp/publication-new")
+    ]
+
+
+def test_publication_feedback_old_pr_is_not_hidden_by_newer_intent_pr(tmp_path):
+    """A newer PR_OPEN must not hide an older intent's pending reply."""
+
+    store = RadarLedger(tmp_path / "publication-feedback-multiple-prs.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="publication-old-thread",
+        project_id="project-1",
+        worktree_path="/tmp/publication-old",
+    )
+    old_pr = "https://github.com/a/b/pull/41"
+    store.record_stage(
+        "a/b#1",
+        "PR_OPEN",
+        evidence={"prUrl": old_pr},
+        dedupe_key=old_pr,
+        intent_id="intent-1",
+        thread_id="publication-old-thread",
+        worktree_path="/tmp/publication-old",
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="publication-new-thread",
+        worktree_path="/tmp/publication-new",
+    )
+    new_pr = "https://github.com/a/b/pull/42"
+    store.record_stage(
+        "a/b#1",
+        "PR_OPEN",
+        evidence={"prUrl": new_pr},
+        dedupe_key=new_pr,
+        intent_id="intent-2",
+        thread_id="publication-new-thread",
+        worktree_path="/tmp/publication-new",
+    )
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "THREAD_PUBLICATION_STATUS_SENT",
+            new_pr,
+            {
+                "intentId": "intent-2",
+                "threadId": "publication-new-thread",
+                "worktreePath": "/tmp/publication-new",
+                "prUrl": new_pr,
+            },
+            iso_z(datetime.now(UTC)),
+        )
+
+    candidates = store.publication_feedback_candidates()
+    assert [(item["intentId"], item["prUrl"]) for item in candidates] == [("intent-1", old_pr)]
+
+
+def test_publication_feedback_same_pr_url_claimed_by_two_intents_fails_closed(tmp_path):
+    """A PR URL claimed by two task generations must not be sent to either."""
+
+    store = RadarLedger(tmp_path / "publication-feedback-url-conflict.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="publication-conflict-old",
+        project_id="project-1",
+        worktree_path="/tmp/publication-conflict-old",
+    )
+    pr_url = "https://github.com/a/b/pull/43"
+    store.record_stage(
+        "a/b#1",
+        "PR_OPEN",
+        evidence={"prUrl": pr_url},
+        dedupe_key="old-claim",
+        intent_id="intent-1",
+        thread_id="publication-conflict-old",
+        worktree_path="/tmp/publication-conflict-old",
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="publication-conflict-new",
+        worktree_path="/tmp/publication-conflict-new",
+    )
+    store.record_stage(
+        "a/b#1",
+        "PR_OPEN",
+        evidence={"prUrl": pr_url},
+        dedupe_key="new-claim",
+        intent_id="intent-2",
+        thread_id="publication-conflict-new",
+        worktree_path="/tmp/publication-conflict-new",
+    )
+
+    assert store.publication_feedback_candidates() == []
+
+
+def test_implementation_recovery_keeps_each_sent_attempt_after_rollover(tmp_path):
+    """Recovery must not drop the older attempt when a newer one is sent."""
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    old = intent(
+        intentId="intent-old",
+        taskStage="IMPLEMENTATION_READY",
+        probeLevel="REPRODUCED_VALIDATED",
+        probeReceiptDigest="old-receipt",
+    )
+    store.enqueue(old)
+    store.claim("intent-old", "worker")
+    store.commit_dispatch(
+        "intent-old",
+        owner="worker",
+        thread_id="thread-old",
+        project_id="github",
+        worktree_path="/tmp/worktree-old",
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-new",
+        thread_id="thread-new",
+        worktree_path="/tmp/worktree-new",
+        result_receipt_digest="new-receipt",
+    )
+    old_at = iso_z(datetime.now(UTC) - timedelta(hours=3))
+    new_at = iso_z(datetime.now(UTC) - timedelta(hours=2, minutes=59))
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "IMPLEMENTATION_FOLLOWUP_SENT",
+            "attempt-old",
+            {
+                "intentId": "intent-old",
+                "threadId": "thread-old",
+                "worktreePath": "/tmp/worktree-old",
+                "resultDigest": "result-old",
+                "attemptDigest": "attempt-old",
+            },
+            old_at,
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "IMPLEMENTATION_FOLLOWUP_SENT",
+            "attempt-new",
+            {
+                "intentId": "intent-new",
+                "threadId": "thread-new",
+                "worktreePath": "/tmp/worktree-new",
+                "resultDigest": "result-new",
+                "attemptDigest": "attempt-new",
+            },
+            new_at,
+        )
+
+    recoveries = [
+        item
+        for item in store.recovery_candidates(min_age_minutes=0)
+        if item["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
+    ]
+    assert {
+        (item["intentId"], item["threadId"], item["followupDigest"]) for item in recoveries
+    } == {
+        ("intent-old", "thread-old", "attempt-old"),
+        ("intent-new", "thread-new", "attempt-new"),
+    }
+
+
+def test_implementation_recovery_ignores_malformed_event_payload(tmp_path):
+    """Malformed lifecycle JSON must be ignored rather than guessed or raised."""
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    old = intent(
+        intentId="intent-old",
+        taskStage="IMPLEMENTATION_READY",
+        probeLevel="REPRODUCED_VALIDATED",
+        probeReceiptDigest="old-receipt",
+    )
+    store.enqueue(old)
+    store.claim("intent-old", "worker")
+    store.commit_dispatch(
+        "intent-old",
+        owner="worker",
+        thread_id="thread-old",
+        project_id="github",
+        worktree_path="/tmp/worktree-old",
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','IMPLEMENTATION_FOLLOWUP_SENT','malformed','{not-json}',?)""",
+            (iso_z(datetime.now(UTC) - timedelta(hours=2)),),
+        )
+
+    assert store.implementation_followup_candidates() == []
+    assert store.recovery_candidates(min_age_minutes=0) == []
+
+
+def test_pr_followup_binding_stays_with_original_intent_after_rollover(tmp_path):
+    """A newer historical intent must not steal an older PR follow-up wake."""
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(
+        store,
+        intent_id="intent-old",
+        thread_id="thread-old",
+        worktree_path="/tmp/worktree-old",
+    )
+    candidate = store.pr_followup_candidates()[0]
+    assert (candidate["intentId"], candidate["threadId"], candidate["worktreePath"]) == (
+        "intent-old",
+        "thread-old",
+        "/tmp/worktree-old",
+    )
+
+    newer = intent(
+        intentId="intent-new",
+        decisionDigest="decision-new",
+        issuedAt=iso_z(datetime.now(UTC) + timedelta(seconds=1)),
+        expiresAt=iso_z(datetime.now(UTC) + timedelta(hours=2)),
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?,'DISPATCHED',?,?,?,?,?,?,?)""",
+            (
+                "intent-new",
+                key,
+                "decision-new",
+                newer["issuedAt"],
+                newer["expiresAt"],
+                "thread-new",
+                "github",
+                "/tmp/worktree-new",
+                json.dumps(newer, sort_keys=True),
+                iso_z(datetime.now(UTC) + timedelta(seconds=2)),
+            ),
+        )
+
+    # Candidate materialization remains bound to the persisted old identity.
+    candidate = store.pr_followup_candidates()[0]
+    assert (candidate["intentId"], candidate["threadId"], candidate["worktreePath"]) == (
+        "intent-old",
+        "thread-old",
+        "/tmp/worktree-old",
+    )
+    tracked = store.tracked_pull_requests()
+    assert len(tracked) == 1
+    assert (tracked[0]["intent_id"], tracked[0]["thread_id"], tracked[0]["worktree_path"]) == (
+        "intent-old",
+        "thread-old",
+        "/tmp/worktree-old",
+    )
+
+    store.reserve_pr_followup(
+        thread_id="thread-old",
+        wake_digest=str(candidate["wakeDigest"]),
+        prepared_head_sha="d" * 40,
+    )
+    store.complete_pr_followup_reservation(
+        thread_id="thread-old", wake_digest=str(candidate["wakeDigest"])
+    )
+    unresolved = store.unresolved_pr_followups()
+    assert len(unresolved) == 1
+    assert unresolved[0]["intent_id"] == "intent-old"
+    assert unresolved[0]["thread_id"] == "thread-old"
+    assert unresolved[0]["worktree_path"] == "/tmp/worktree-old"
+
+
+def test_task_context_publication_receipt_stays_with_selected_intent_after_rollover(tmp_path):
+    """A newer PR publication must not appear in an older task context."""
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(
+        store,
+        intent_id="intent-old",
+        thread_id="thread-old",
+        worktree_path="/tmp/worktree-old",
+        pr_url="https://github.com/a/b/pull/1",
+    )
+    old_intent = intent(
+        intentId="intent-old",
+        key=key,
+        decisionDigest="decision-old",
+    )
+    newer = intent(
+        intentId="intent-new",
+        key=key,
+        decisionDigest="decision-new",
+        issuedAt=iso_z(datetime.now(UTC) + timedelta(seconds=1)),
+        expiresAt=iso_z(datetime.now(UTC) + timedelta(hours=2)),
+    )
+    with store.connect() as connection:
+        # Keep the historical old dispatch and add a newer task identity for
+        # the same issue.  This is normally produced by a rollover/recovery.
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-old'",
+            (json.dumps(old_intent, sort_keys=True),),
+        )
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?,'COMPLETED',?,?,?,?,?,?,?)""",
+            (
+                "intent-new",
+                key,
+                "decision-new",
+                newer["issuedAt"],
+                newer["expiresAt"],
+                "thread-new",
+                "github",
+                "/tmp/worktree-new",
+                json.dumps(newer, sort_keys=True),
+                iso_z(datetime.now(UTC) + timedelta(seconds=2)),
+            ),
+        )
+        now = iso_z(datetime.now(UTC) + timedelta(seconds=3))
+        request = {
+            "requestId": "request-intent-new",
+            "intentId": "intent-new",
+            "opportunityKey": key,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "threadId": "thread-new",
+            "worktreePath": "/tmp/worktree-new",
+            "commitSha": "c" * 40,
+            "branch": "fix/intent-new",
+        }
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,permit_id,request_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,'CONSUMED',?,?,?,?)""",
+            (
+                "request-intent-new",
+                key,
+                "thread-new",
+                "c" * 40,
+                "fix/intent-new",
+                "/tmp/worktree-new",
+                "evidence-new",
+                "permit-intent-new",
+                json.dumps(request, sort_keys=True),
+                now,
+                now,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,'CONSUMED',?,?,'{}',?,?)""",
+            (
+                "permit-intent-new",
+                "request-intent-new",
+                "https://github.com/a/b/issues/1",
+                "c" * 40,
+                "fix/intent-new",
+                iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                "https://github.com/a/b/pull/2",
+                now,
+                now,
+            ),
+        )
+
+    old_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-old",
+        worktree_path="/tmp/worktree-old",
+    )
+    new_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-new",
+        worktree_path="/tmp/worktree-new",
+    )
+    assert old_context is not None and new_context is not None
+    assert old_context["intentId"] == "intent-old"
+    assert new_context["intentId"] == "intent-new"
+    assert old_context["publicationReceipt"]["prUrl"] == "https://github.com/a/b/pull/1"
+    assert new_context["publicationReceipt"]["prUrl"] == "https://github.com/a/b/pull/2"
+
+
+def test_task_context_publication_request_task_id_alias_is_bound_exactly(tmp_path):
+    """A legacy taskId must not project a request onto another intent row."""
+
+    store = RadarLedger(tmp_path / "task-context-publication-task-id.sqlite3")
+    key = _make_pr_followup_candidate(
+        store,
+        intent_id="intent-old",
+        thread_id="thread-old",
+        worktree_path="/tmp/worktree-old",
+        pr_url="https://github.com/a/b/pull/1",
+    )
+    newer = intent(
+        intentId="intent-new",
+        key=key,
+        decisionDigest="decision-new",
+        issuedAt=iso_z(datetime.now(UTC) + timedelta(seconds=1)),
+        expiresAt=iso_z(datetime.now(UTC) + timedelta(hours=2)),
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?,'COMPLETED',?,?,?,?,?,?,?)""",
+            (
+                "intent-new",
+                key,
+                "decision-new",
+                newer["issuedAt"],
+                newer["expiresAt"],
+                "thread-new",
+                "github",
+                "/tmp/worktree-new",
+                json.dumps(newer, sort_keys=True),
+                iso_z(datetime.now(UTC) + timedelta(seconds=2)),
+            ),
+        )
+        now = iso_z(datetime.now(UTC) + timedelta(seconds=3))
+        request = {
+            "requestId": "request-task-id",
+            # ``taskId`` is the legacy spelling of ``intentId``.  Deliberately
+            # point it at the old generation while the SQL columns point at
+            # the new one; this must fail closed.
+            "taskId": "intent-old",
+            "threadId": "thread-new",
+            "worktreePath": "/tmp/worktree-new",
+        }
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,permit_id,request_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,'CONSUMED',?,?,?,?)""",
+            (
+                "request-task-id",
+                key,
+                "thread-new",
+                "c" * 40,
+                "fix/task-id",
+                "/tmp/worktree-new",
+                "evidence-task-id",
+                "permit-task-id",
+                json.dumps(request, sort_keys=True),
+                now,
+                now,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,'CONSUMED',?,?,'{}',?,?)""",
+            (
+                "permit-task-id",
+                "request-task-id",
+                "https://github.com/a/b/issues/1",
+                "c" * 40,
+                "fix/task-id",
+                iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                "https://github.com/a/b/pull/2",
+                now,
+                now,
+            ),
+        )
+
+    new_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-new",
+        worktree_path="/tmp/worktree-new",
+    )
+    assert new_context is not None
+    assert new_context["publicationReceipt"] is None
+
+    # Once the legacy alias is corrected to the selected immutable id, the
+    # same request is visible to that intent and no other one.
+    with store.connect() as connection:
+        request["taskId"] = "intent-new"
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id=?",
+            (json.dumps(request, sort_keys=True), "request-task-id"),
+        )
+    corrected = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-new",
+        worktree_path="/tmp/worktree-new",
+    )
+    assert corrected is not None
+    assert corrected["publicationReceipt"]["prUrl"] == "https://github.com/a/b/pull/2"
+
+
+def test_task_context_hides_ambiguous_partial_followup_binding_after_rollover(tmp_path):
+    """A NULL/partial follow-up identity must not wake either historical task."""
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(
+        store,
+        intent_id="intent-old",
+        thread_id="thread-old",
+        worktree_path="/tmp/worktree-old",
+    )
+    newer = intent(
+        intentId="intent-new",
+        key=key,
+        decisionDigest="decision-new",
+        issuedAt=iso_z(datetime.now(UTC) + timedelta(seconds=1)),
+        expiresAt=iso_z(datetime.now(UTC) + timedelta(hours=2)),
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?,'COMPLETED',?,?,?,?,?,?,?)""",
+            (
+                "intent-new",
+                key,
+                "decision-new",
+                newer["issuedAt"],
+                newer["expiresAt"],
+                "thread-new",
+                "github",
+                "/tmp/worktree-new",
+                json.dumps(newer, sort_keys=True),
+                iso_z(datetime.now(UTC) + timedelta(seconds=2)),
+            ),
+        )
+        # Simulate an old ledger row that could not be unambiguously migrated.
+        # The row remains opportunity-scoped but must not be projected into
+        # either task context.
+        connection.execute(
+            """UPDATE pr_followups
+               SET intent_id=NULL,thread_id=NULL,worktree_path=NULL
+               WHERE opportunity_key=?""",
+            (key,),
+        )
+
+    old_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-old",
+        worktree_path="/tmp/worktree-old",
+    )
+    new_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-new",
+        worktree_path="/tmp/worktree-new",
+    )
+    assert old_context is not None and new_context is not None
+    assert old_context.get("prFollowup") is None
+    assert new_context.get("prFollowup") is None
+
+
+def test_pr_followup_binding_migration_uses_consumed_request_identity(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(
+        store,
+        intent_id="intent-old",
+        thread_id="thread-old",
+        worktree_path="/tmp/worktree-old",
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE pr_followups
+               SET intent_id=NULL,thread_id=NULL,worktree_path=NULL
+               WHERE opportunity_key=?""",
+            (key,),
+        )
+
+    # Opening an old ledger copy runs the additive binding migration.  It must
+    # use the consumed publication request, not the most recently updated
+    # intent (which is intentionally added below).
+    newer = intent(intentId="intent-new", decisionDigest="decision-new")
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?,'DISPATCHED',?,?,?,?,?,?,?)""",
+            (
+                "intent-new",
+                key,
+                "decision-new",
+                newer["issuedAt"],
+                newer["expiresAt"],
+                "thread-new",
+                "github",
+                "/tmp/worktree-new",
+                json.dumps(newer, sort_keys=True),
+                iso_z(datetime.now(UTC) + timedelta(seconds=3)),
+            ),
+        )
+    reopened = RadarLedger(store.path)
+    with reopened.connect() as connection:
+        binding = connection.execute(
+            """SELECT intent_id,thread_id,worktree_path
+               FROM pr_followups WHERE opportunity_key=?""",
+            (key,),
+        ).fetchone()
+    assert tuple(binding) == ("intent-old", "thread-old", "/tmp/worktree-old")
+
+
+def test_resolution_scope_authorization_uses_source_intent_after_rollover(tmp_path, monkeypatch):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(
+        store,
+        intent_id="intent-old",
+        thread_id="thread-old",
+        worktree_path="/tmp/worktree-old",
+    )
+    candidate = store.pr_followup_candidates()[0]
+    source_wake = str(candidate["wakeDigest"])
+    checked_at = str(candidate["checkedAt"])
+    conflict_files = ["runtime.py"]
+    evidence = {
+        "mergeConflict": True,
+        "baseSha": "c" * 40,
+        "mergeConflictFiles": conflict_files,
+    }
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE pr_followups SET evidence_json=? WHERE opportunity_key=?",
+            (json.dumps(evidence, sort_keys=True), key),
+        )
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_PREPARATION_BOUND",
+            source_wake,
+            {
+                "intentId": "intent-old",
+                "threadId": "thread-old",
+                "worktreePath": "/tmp/worktree-old",
+                "snapshot": {
+                    "wakeDigest": source_wake,
+                    "prUrl": candidate["prUrl"],
+                    "headSha": candidate["headSha"],
+                    "preparedHeadSha": candidate["headSha"],
+                    "actionDigest": candidate["actionDigest"],
+                    "taskActionDigest": candidate["taskActionDigest"],
+                    "checkedAt": checked_at,
+                    "evidence": evidence,
+                },
+            },
+            checked_at,
+        )
+    newer = intent(intentId="intent-new", decisionDigest="decision-new")
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?,'DISPATCHED',?,?,?,?,?,?,?)""",
+            (
+                "intent-new",
+                key,
+                "decision-new",
+                newer["issuedAt"],
+                newer["expiresAt"],
+                "thread-new",
+                "github",
+                "/tmp/worktree-new",
+                json.dumps(newer, sort_keys=True),
+                iso_z(datetime.now(UTC) + timedelta(seconds=3)),
+            ),
+        )
+
+    # The cryptographic receipt is exercised by dedicated scope tests.  This
+    # regression isolates the identity lookup and intentionally stubs only its
+    # verifier so a newer intent cannot make the source wake stale.
+    monkeypatch.setattr(
+        "oss_pr_radar.ledger.verify_merge_resolution_scope_receipt", lambda *_, **__: True
+    )
+    result_digest = "e" * 64
+    replacement_wake = "f" * 64
+    authorized = store.authorize_pr_followup_resolution_scope(
+        key,
+        source_wake_digest=source_wake,
+        result_digest=result_digest,
+        receipt={
+            "sourceWakeDigest": source_wake,
+            "requestResultDigest": result_digest,
+            "authorizedWakeDigest": replacement_wake,
+            "preparedHeadSha": candidate["headSha"],
+            "authorizedResolutionFiles": conflict_files,
+        },
+    )
+    assert authorized["replacementWakeDigest"] == replacement_wake
+    with store.connect() as connection:
+        binding = connection.execute(
+            """SELECT intent_id,thread_id,worktree_path,wake_digest
+               FROM pr_followups WHERE opportunity_key=?""",
+            (key,),
+        ).fetchone()
+    assert tuple(binding) == (
+        "intent-old",
+        "thread-old",
+        "/tmp/worktree-old",
+        replacement_wake,
+    )
+
+
+def _base_drift_recovery_fixture(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store, head_sha="b" * 40)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET commit_sha=? WHERE request_id='request-intent-1'",
+            ("b" * 40,),
+        )
+        connection.execute(
+            "UPDATE publication_permits SET commit_sha=? WHERE permit_id='permit-intent-1'",
+            ("b" * 40,),
+        )
+        followup = connection.execute(
+            "SELECT * FROM pr_followups WHERE opportunity_key=?",
+            (key,),
+        ).fetchone()
+    _insert_pr_update_request(
+        store,
+        status="GRANTED",
+        commit_sha="c" * 40,
+        reason="EXISTING_PR_BASE_DRIFT",
+        request_payload={
+            "publicationKind": "PR_UPDATE",
+            "commitSha": "c" * 40,
+            "existingPrUrl": "https://github.com/a/b/pull/9",
+            "previousCommitSha": "b" * 40,
+            "intentId": "intent-1",
+            "threadId": "thread-1",
+            "worktreePath": "/tmp/worktree",
+        },
+    )
+    state = {
+        "version": "pr_followup_v3",
+        "generatedAt": followup["checked_at"],
+        "items": [
+            {
+                "url": followup["pr_url"],
+                "headSha": followup["head_sha"],
+                "actionDigest": followup["action_digest"],
+                "taskActionDigest": followup["task_action_digest"],
+                "taskFollowupRequired": True,
+                "taskActions": json.loads(followup["actions_json"]),
+                "evidence": json.loads(followup["evidence_json"]),
+                "checkedAt": followup["checked_at"],
+            }
+        ],
+    }
+    return store, key, state
+
+
+def _managed_replay_blocker_fixture(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store, head_sha="b" * 40)
+    with store.connect() as connection:
+        followup = connection.execute(
+            "SELECT * FROM pr_followups WHERE opportunity_key=?",
+            (key,),
+        ).fetchone()
+    checked_at = parse_time(followup["checked_at"])
+    source_created_at = iso_z(checked_at - timedelta(seconds=30))
+    replacement_created_at = iso_z(checked_at - timedelta(seconds=20))
+    rearm_after = iso_z(checked_at - timedelta(seconds=10))
+    from oss_pr_radar.repo_probe import (
+        PROBE_SCHEMA,
+        REPRODUCED_VALIDATED,
+        _signed_receipt,
+        thread_fingerprint,
+    )
+
+    receipt_payload = {
+        "schema": PROBE_SCHEMA,
+        "repo": "a/b",
+        "defaultBranch": "main",
+        "baseSha": "a" * 40,
+        "checkoutSha": "a" * 40,
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "taskId": "intent-1",
+        "threadFingerprint": thread_fingerprint("thread-1"),
+        "attemptId": "managed-replay-test",
+        "headSha": "c" * 40,
+        "commitSha": "c" * 40,
+        "resultDigest": "d" * 64,
+        "codePaths": ["runtime.py"],
+        "codePathBindings": {"runtime.py": "blob-binding"},
+        "checkoutSnapshotDigest": "snapshot-digest",
+        "probeLevel": REPRODUCED_VALIDATED,
+        "status": REPRODUCED_VALIDATED,
+        "codePathsVerified": True,
+        "reproductionVerified": True,
+        "validationVerified": True,
+        "commandStatuses": {"reproduction": {"exitCode": 0}},
+        "profileId": "managed-replay-test",
+        "profileVersion": 1,
+        "policyDigest": "managed-replay-policy",
+        "bindingPurpose": "implementation-result-v1",
+        "derivedFromReceiptDigest": "f" * 64,
+        "observedAt": iso_z(checked_at - timedelta(minutes=1)),
+        "expiresAt": iso_z(checked_at + timedelta(hours=1)),
+        "attemptJournal": {
+            "effectToken": "managed-replay-effect",
+            "externalEffectCount": 0,
+            "network": "denied",
+            "hostWrites": "denied",
+            "events": ["ATTEMPT_CLEANUP_FINISHED"],
+        },
+    }
+    receipt_payload["receiptDigest"] = sha256_json(receipt_payload)
+    probe_receipt = _signed_receipt(receipt_payload)
+    publication = {"title": "fix: replay", "body": "body"}
+    immutable = {
+        "opportunityKey": key,
+        "intentId": "intent-1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "commitSha": "c" * 40,
+        "branch": "fix/intent-1",
+        "worktreePath": "/tmp/worktree",
+        "evidencePath": "/tmp/evidence.json",
+        "publication": publication,
+        "resultDigest": "d" * 64,
+        "headSha": "c" * 40,
+        "selectedBaseSha": "a" * 40,
+        "codePaths": ["runtime.py"],
+        "quality": {},
+        "intent": {"autoSubmitAuthorized": True},
+        "publicationKind": "PR_UPDATE",
+        "existingPrUrl": "https://github.com/a/b/pull/9",
+        "previousCommitSha": "b" * 40,
+        "followupWakeDigest": "e" * 64,
+    }
+
+    def request(raw: str) -> tuple[str, dict]:
+        evidence_digest = sha256_text(raw)
+        request_id = sha256_text(
+            "|".join(
+                (
+                    immutable["issueUrl"],
+                    immutable["threadId"],
+                    immutable["commitSha"],
+                    immutable["branch"],
+                    immutable["worktreePath"],
+                    evidence_digest,
+                    json.dumps(publication, sort_keys=True, separators=(",", ":")),
+                )
+            )
+        )
+        import base64
+
+        return request_id, {
+            "requestId": request_id,
+            **immutable,
+            "evidenceDigest": evidence_digest,
+            "evidenceRawBase64": base64.b64encode(raw.encode()).decode(),
+            "probeReceipt": probe_receipt,
+        }
+
+    source_id, source = request("{}")
+    replacement_id, replacement = request('{"snapshot":2}')
+    with store.transaction() as connection:
+        for request_id, payload, created_at, reason in (
+            (
+                source_id,
+                source,
+                source_created_at,
+                "ACTIVE_OR_CONDITIONAL_CLAIM",
+            ),
+            (
+                replacement_id,
+                replacement,
+                replacement_created_at,
+                "EXISTING_PR_BASE_DRIFT",
+            ),
+        ):
+            connection.execute(
+                """INSERT INTO publication_requests
+                   (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                    evidence_digest,status,reason,request_json,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?,'BLOCKED',?,?,?,?)""",
+                (
+                    request_id,
+                    key,
+                    "thread-1",
+                    "c" * 40,
+                    "fix/intent-1",
+                    "/tmp/worktree",
+                    payload["evidenceDigest"],
+                    reason,
+                    json.dumps(payload, sort_keys=True, separators=(",", ":")),
+                    created_at,
+                    created_at,
+                ),
+            )
+            store._event(
+                connection,
+                key,
+                "PUBLICATION_REQUESTED",
+                request_id,
+                payload,
+                created_at,
+            )
+        store._event(
+            connection,
+            key,
+            "MANAGED_REPLAY_REPLACEMENT_CREATED",
+            source_id,
+            {
+                "policyVersion": "managed-replay-replacement-created-v1",
+                "sourceRequestId": source_id,
+                "replacementRequestId": replacement_id,
+                "immutableRequestDigest": sha256_json(immutable),
+                "replacementCreatedAt": replacement_created_at,
+                "recordedAt": replacement_created_at,
+            },
+            replacement_created_at,
+        )
+        rearm = {
+            "requestId": replacement_id,
+            "reason": "EXISTING_PR_BASE_DRIFT",
+            "rearmAfter": rearm_after,
+        }
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_REARM_REQUIRED",
+            replacement_id,
+            rearm,
+            rearm_after,
+        )
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_REARM_OBSERVATION_BARRIER",
+            replacement_id,
+            rearm,
+            rearm_after,
+        )
+    return store, key, source_id, replacement_id
+
+
+def _fresh_followup_state(state, *, after: str, required: bool):
+    refreshed = json.loads(json.dumps(state))
+    checked_at = iso_z(parse_time(after) + timedelta(minutes=1))
+    refreshed["generatedAt"] = checked_at
+    refreshed["items"][0]["checkedAt"] = checked_at
+    refreshed["items"][0]["actionDigest"] = f"action-{checked_at}"
+    refreshed["items"][0]["taskActionDigest"] = f"task-action-{checked_at}"
+    refreshed["items"][0]["taskFollowupRequired"] = required
+    return refreshed
+
+
+def test_base_drift_rearm_requires_post_block_observation(tmp_path):
+    store, key, state = _base_drift_recovery_fixture(tmp_path)
+
+    store.block_publication_request(
+        "request-update",
+        "EXISTING_PR_BASE_DRIFT",
+        evidence={
+            "existingPrUrl": "https://github.com/a/b/pull/9",
+            "expectedBaseSha": "d" * 40,
+            "observedBaseSha": "e" * 40,
+        },
+    )
+
+    with store.connect() as connection:
+        permit_status = connection.execute(
+            "SELECT status FROM publication_permits WHERE request_id='request-update'"
+        ).fetchone()["status"]
+        barrier = json.loads(
+            connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='PR_FOLLOWUP_REARM_OBSERVATION_BARRIER'
+                     AND dedupe_key='request-update'""",
+                (key,),
+            ).fetchone()["payload_json"]
+        )
+    assert permit_status == "EXPIRED"
+    assert barrier["sourceCheckedAt"] == state["items"][0]["checkedAt"]
+
+    store.import_pr_followups(state)
+    store.import_pr_followups(state)
+    assert store.pr_followup_candidates() == []
+    with store.connect() as connection:
+        assert dict(
+            connection.execute(
+                """SELECT followup_required,wake_digest FROM pr_followups
+                   WHERE opportunity_key=?""",
+                (key,),
+            ).fetchone()
+        ) == {"followup_required": 0, "wake_digest": None}
+
+    no_action = _fresh_followup_state(state, after=barrier["rearmAfter"], required=False)
+    store.import_pr_followups(no_action)
+    assert store.pr_followup_candidates() == []
+
+    actionable = _fresh_followup_state(
+        state,
+        after=no_action["items"][0]["checkedAt"],
+        required=True,
+    )
+    store.import_pr_followups(actionable)
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["key"] == key
+
+    store.import_pr_followups(no_action)
+    assert store.pr_followup_candidates()[0]["wakeDigest"] == candidate["wakeDigest"]
+
+    store.import_pr_followups(state)
+    assert store.pr_followup_candidates()[0]["wakeDigest"] == candidate["wakeDigest"]
+
+
+def test_publication_drift_rearm_stays_with_source_intent_after_rollover(tmp_path):
+    """A newer intent must not invalidate an older PR update rearm request."""
+
+    store, key, _state = _base_drift_recovery_fixture(tmp_path)
+    newer = intent(
+        intentId="intent-new",
+        key=key,
+        decisionDigest="decision-new",
+        issuedAt=iso_z(datetime.now(UTC) + timedelta(seconds=1)),
+        expiresAt=iso_z(datetime.now(UTC) + timedelta(hours=2)),
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?,'COMPLETED',?,?,?,?,?,?,?)""",
+            (
+                "intent-new",
+                key,
+                "decision-new",
+                newer["issuedAt"],
+                newer["expiresAt"],
+                "thread-new",
+                "github",
+                "/tmp/worktree-new",
+                json.dumps(newer, sort_keys=True),
+                iso_z(datetime.now(UTC) + timedelta(seconds=2)),
+            ),
+        )
+
+    # The request JSON still names intent-1.  Re-arm must validate that exact
+    # identity, even though intent-new is now the most recently updated row.
+    store.block_publication_request(
+        "request-update",
+        "EXISTING_PR_BASE_DRIFT",
+        evidence={
+            "existingPrUrl": "https://github.com/a/b/pull/9",
+            "expectedBaseSha": "d" * 40,
+            "observedBaseSha": "e" * 40,
+        },
+    )
+
+    with store.connect() as connection:
+        rearm = connection.execute(
+            """SELECT COUNT(*) AS count FROM events
+               WHERE opportunity_key=?
+                 AND event_type='PR_FOLLOWUP_REARM_REQUIRED'
+                 AND dedupe_key='request-update'""",
+            (key,),
+        ).fetchone()
+    assert rearm["count"] == 1
+
+
+def test_legacy_publication_drift_rearm_accepts_unique_thread_worktree_binding(
+    tmp_path,
+):
+    """A legacy request without intentId is safe only with one exact tuple."""
+
+    store, key, _state = _base_drift_recovery_fixture(tmp_path)
+    with store.connect() as connection:
+        request = connection.execute(
+            "SELECT request_json FROM publication_requests WHERE request_id='request-update'"
+        ).fetchone()
+        payload = json.loads(request["request_json"])
+        payload.pop("intentId", None)
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id='request-update'",
+            (json.dumps(payload, sort_keys=True),),
+        )
+        newer = intent(
+            intentId="intent-new",
+            key=key,
+            decisionDigest="decision-new",
+        )
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?,'COMPLETED',?,?,?,?,?,?,?)""",
+            (
+                "intent-new",
+                key,
+                "decision-new",
+                newer["issuedAt"],
+                newer["expiresAt"],
+                "thread-new",
+                "github",
+                "/tmp/worktree-new",
+                json.dumps(newer, sort_keys=True),
+                iso_z(datetime.now(UTC) + timedelta(seconds=2)),
+            ),
+        )
+
+    store.block_publication_request(
+        "request-update",
+        "EXISTING_PR_BASE_DRIFT",
+        evidence={
+            "existingPrUrl": "https://github.com/a/b/pull/9",
+            "expectedBaseSha": "d" * 40,
+            "observedBaseSha": "e" * 40,
+        },
+    )
+
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='PR_FOLLOWUP_REARM_REQUIRED'
+                     AND dedupe_key='request-update'""",
+                (key,),
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_legacy_publication_drift_rearm_rejects_ambiguous_thread_worktree_binding(
+    tmp_path,
+):
+    """Two intents sharing a legacy tuple must fail closed."""
+
+    store, key, _state = _base_drift_recovery_fixture(tmp_path)
+    with store.connect() as connection:
+        request = connection.execute(
+            "SELECT request_json FROM publication_requests WHERE request_id='request-update'"
+        ).fetchone()
+        payload = json.loads(request["request_json"])
+        payload.pop("intentId", None)
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id='request-update'",
+            (json.dumps(payload, sort_keys=True),),
+        )
+        newer = intent(
+            intentId="intent-duplicate",
+            key=key,
+            decisionDigest="decision-duplicate",
+        )
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?,'COMPLETED',?,?,?,?,?,?,?)""",
+            (
+                "intent-duplicate",
+                key,
+                "decision-duplicate",
+                newer["issuedAt"],
+                newer["expiresAt"],
+                "thread-1",
+                "github",
+                "/tmp/worktree",
+                json.dumps(newer, sort_keys=True),
+                iso_z(datetime.now(UTC) + timedelta(seconds=2)),
+            ),
+        )
+
+    store.block_publication_request(
+        "request-update",
+        "EXISTING_PR_BASE_DRIFT",
+        evidence={
+            "existingPrUrl": "https://github.com/a/b/pull/9",
+            "expectedBaseSha": "d" * 40,
+            "observedBaseSha": "e" * 40,
+        },
+    )
+
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='PR_FOLLOWUP_REARM_REQUIRED'
+                     AND dedupe_key='request-update'""",
+                (key,),
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_historical_base_drift_rearms_once_on_initialization(tmp_path):
+    store, key, state = _base_drift_recovery_fixture(tmp_path)
+    now = iso_z(datetime.now(UTC))
+    with store.transaction() as connection:
+        connection.execute(
+            """UPDATE publication_requests
+               SET status='BLOCKED',reason='EXISTING_PR_BASE_DRIFT',updated_at=?
+               WHERE request_id='request-update'""",
+            (now,),
+        )
+        connection.execute(
+            """UPDATE publication_permits SET status='EXPIRED',updated_at=?
+               WHERE request_id='request-update'""",
+            (now,),
+        )
+        store._event(
+            connection,
+            key,
+            "PUBLICATION_BLOCKED",
+            "request-update:EXISTING_PR_BASE_DRIFT",
+            {
+                "requestId": "request-update",
+                "reason": "EXISTING_PR_BASE_DRIFT",
+                "auditEvidence": {
+                    "existingPrUrl": "https://github.com/a/b/pull/9",
+                    "expectedBaseSha": "d" * 40,
+                    "observedBaseSha": "e" * 40,
+                },
+            },
+            now,
+        )
+        connection.execute(
+            "UPDATE opportunities SET stage='CI_GREEN' WHERE key=?",
+            (key,),
+        )
+
+    migrated = RadarLedger(store.path)
+    with migrated.connect() as connection:
+        followup = connection.execute(
+            """SELECT followup_required,wake_digest FROM pr_followups
+               WHERE opportunity_key=?""",
+            (key,),
+        ).fetchone()
+        events = connection.execute(
+            """SELECT event_type,payload_json FROM events
+               WHERE opportunity_key=? AND dedupe_key='request-update'
+                 AND event_type IN (
+                   'PR_FOLLOWUP_REARM_REQUIRED',
+                   'PR_FOLLOWUP_REARM_OBSERVATION_BARRIER'
+                 )""",
+            (key,),
+        ).fetchall()
+    assert followup["followup_required"] == 0
+    assert {row["event_type"] for row in events} == {
+        "PR_FOLLOWUP_REARM_REQUIRED",
+        "PR_FOLLOWUP_REARM_OBSERVATION_BARRIER",
+    }
+    barrier = next(
+        json.loads(row["payload_json"])
+        for row in events
+        if row["event_type"] == "PR_FOLLOWUP_REARM_OBSERVATION_BARRIER"
+    )
+
+    migrated.import_pr_followups(state)
+    migrated.import_pr_followups(state)
+    assert migrated.pr_followup_candidates() == []
+
+    actionable = _fresh_followup_state(state, after=barrier["rearmAfter"], required=True)
+    migrated.import_pr_followups(actionable)
+    wake_digest = migrated.pr_followup_candidates()[0]["wakeDigest"]
+
+    reopened = RadarLedger(store.path)
+    assert reopened.pr_followup_candidates()[0]["wakeDigest"] == wake_digest
+    with reopened.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='PR_FOLLOWUP_REARM_OBSERVATION_BARRIER'
+                     AND dedupe_key='request-update'""",
+                (key,),
+            ).fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.parametrize("request_status", ["PENDING", "GRANTED", "BLOCKED"])
+def test_pr_followup_candidates_wait_for_different_head_update(tmp_path, request_status):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    _make_pr_followup_candidate(store, head_sha="b" * 40)
+    _insert_pr_update_request(store, status=request_status, commit_sha="c" * 40)
+
+    assert store.pr_followup_candidates() == []
+
+
+@pytest.mark.parametrize("request_status", ["PENDING", "GRANTED", "BLOCKED"])
+def test_pr_followup_candidates_allow_same_head_update(tmp_path, request_status):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store, head_sha="b" * 40)
+    _insert_pr_update_request(store, status=request_status, commit_sha="b" * 40)
+
+    assert [candidate["key"] for candidate in store.pr_followup_candidates()] == [key]
+
+
+def test_pr_followup_candidates_allow_consumed_different_head_update(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store, head_sha="b" * 40)
+    _insert_pr_update_request(store, status="CONSUMED", commit_sha="c" * 40)
+
+    assert [candidate["key"] for candidate in store.pr_followup_candidates()] == [key]
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "EXISTING_PR_BASE_DRIFT",
+        "EXISTING_PR_HEAD_DRIFT",
+        "NON_FAST_FORWARD_PR_UPDATE",
+    ],
+)
+def test_pr_followup_candidates_allow_rearmed_drift_update(tmp_path, reason):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store, head_sha="b" * 40)
+    _insert_pr_update_request(
+        store,
+        status="BLOCKED",
+        commit_sha="c" * 40,
+        reason=reason,
+    )
+    rearm_after = datetime.now(UTC)
+    rearm_payload = {
+        "requestId": "request-update",
+        "reason": reason,
+        "rearmAfter": iso_z(rearm_after),
+    }
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_REARM_REQUIRED",
+            "request-update",
+            rearm_payload,
+            iso_z(rearm_after),
+        )
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_REARM_OBSERVATION_BARRIER",
+            "request-update",
+            rearm_payload,
+            iso_z(rearm_after),
+        )
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": iso_z(rearm_after + timedelta(minutes=1)),
+            "items": [
+                {
+                    "url": "https://github.com/a/b/pull/9",
+                    "headSha": "b" * 40,
+                    "actionDigest": "action-after-drift",
+                    "taskActionDigest": "task-action-after-drift",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["current branch check failed"],
+                    "evidence": {"actionableCheckNames": ["Ruff"]},
+                    "checkedAt": iso_z(rearm_after + timedelta(minutes=1)),
+                }
+            ],
+        }
+    )
+
+    assert [candidate["key"] for candidate in store.pr_followup_candidates()] == [key]
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        ("PENDING", "EXISTING_PR_BASE_DRIFT"),
+        ("GRANTED", "EXISTING_PR_BASE_DRIFT"),
+        ("BLOCKED", "SUBMIT_READY_EVIDENCE_INCOMPLETE"),
+    ],
+)
+def test_pr_followup_candidates_keep_nonrecoverable_update_blockers(tmp_path, status, reason):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store, head_sha="b" * 40)
+    _insert_pr_update_request(
+        store,
+        status=status,
+        commit_sha="c" * 40,
+        reason=reason,
+    )
+    rearm_after = iso_z(datetime.now(UTC) - timedelta(minutes=1))
+    rearm_payload = {
+        "requestId": "request-update",
+        "reason": reason,
+        "rearmAfter": rearm_after,
+    }
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_REARM_REQUIRED",
+            "request-update",
+            rearm_payload,
+            rearm_after,
+        )
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_REARM_OBSERVATION_BARRIER",
+            "request-update",
+            rearm_payload,
+            rearm_after,
+        )
+
+    assert store.pr_followup_candidates() == []
+
+
+def test_managed_replay_source_does_not_mask_rearmed_replacement(tmp_path):
+    store, key, source_id, _ = _managed_replay_blocker_fixture(tmp_path)
+
+    assert [candidate["key"] for candidate in store.pr_followup_candidates()] == [key]
+
+    with store.connect() as connection:
+        connection.execute(
+            """DELETE FROM events
+               WHERE opportunity_key=?
+                 AND event_type='MANAGED_REPLAY_REPLACEMENT_CREATED'
+                 AND dedupe_key=?""",
+            (key, source_id),
+        )
+    assert store.pr_followup_candidates() == []
+
+
+@pytest.mark.parametrize("status", ["PENDING", "GRANTED"])
+def test_managed_replay_lineage_never_waives_live_source_request(tmp_path, status):
+    store, _, source_id, _ = _managed_replay_blocker_fixture(tmp_path)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET status=? WHERE request_id=?",
+            (status, source_id),
+        )
+
+    assert store.pr_followup_candidates() == []
+
+
+def test_managed_replay_lineage_must_preserve_exact_request_identity(tmp_path):
+    store, _, _, replacement_id = _managed_replay_blocker_fixture(tmp_path)
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT request_json FROM publication_requests WHERE request_id=?",
+            (replacement_id,),
+        ).fetchone()
+        request = json.loads(row["request_json"])
+        request["previousCommitSha"] = "f" * 40
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id=?",
+            (json.dumps(request, sort_keys=True, separators=(",", ":")), replacement_id),
+        )
+
+    assert store.pr_followup_candidates() == []
+
+
+def test_managed_replay_lineage_requires_authenticated_replacement_receipt(tmp_path):
+    store, _, _, replacement_id = _managed_replay_blocker_fixture(tmp_path)
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT request_json FROM publication_requests WHERE request_id=?",
+            (replacement_id,),
+        ).fetchone()
+        request = json.loads(row["request_json"])
+        request["probeReceipt"]["signature"] = "forged"
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id=?",
+            (json.dumps(request, sort_keys=True, separators=(",", ":")), replacement_id),
+        )
+
+    assert store.pr_followup_candidates() == []
 
 
 def test_pr_followup_candidates_exclude_active_task_quarantine(tmp_path):
@@ -5358,7 +8891,92 @@ def _assert_no_pr_followup_reservation(store: RadarLedger, key: str) -> None:
     assert reserved == 0
 
 
-def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
+def _reserve_unresolved_pr_followup(store: RadarLedger) -> tuple[str, str]:
+    key = _make_pr_followup_candidate(store)
+    candidate = store.pr_followup_candidates()[0]
+    wake_digest = candidate["wakeDigest"]
+    store.reserve_pr_followup(
+        thread_id=candidate["threadId"],
+        wake_digest=wake_digest,
+        prepared_head_sha="d" * 40,
+    )
+    store.complete_pr_followup_reservation(thread_id=candidate["threadId"], wake_digest=wake_digest)
+    assert [item["wake_digest"] for item in store.unresolved_pr_followups()] == [wake_digest]
+    return key, wake_digest
+
+
+def test_unresolved_pr_followup_is_closed_by_same_wake_result(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key, wake_digest = _reserve_unresolved_pr_followup(store)
+
+    store.record_followup_result(
+        key,
+        wake_digest=wake_digest,
+        result_digest="result-digest",
+        stage="PR_OPEN",
+    )
+
+    assert store.unresolved_pr_followups() == []
+
+
+def test_unresolved_pr_followup_is_not_closed_by_different_wake_result(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key, wake_digest = _reserve_unresolved_pr_followup(store)
+
+    store.record_followup_result(
+        key,
+        wake_digest="f" * 64,
+        result_digest="result-digest",
+        stage="PR_OPEN",
+    )
+
+    assert [item["wake_digest"] for item in store.unresolved_pr_followups()] == [wake_digest]
+
+
+def test_unresolved_pr_followup_is_not_closed_by_older_same_wake_result(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store)
+    candidate = store.pr_followup_candidates()[0]
+    wake_digest = candidate["wakeDigest"]
+
+    store.record_followup_result(
+        key,
+        wake_digest=wake_digest,
+        result_digest="older-result-digest",
+        stage="PR_OPEN",
+    )
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_RESERVED",
+            wake_digest,
+            {"threadId": candidate["threadId"], "prUrl": candidate["prUrl"]},
+            iso_z(datetime.now(UTC)),
+        )
+
+    with store.connect() as connection:
+        event_ids = {
+            row["event_type"]: row["id"]
+            for row in connection.execute(
+                """SELECT id,event_type FROM events
+                   WHERE opportunity_key=? AND dedupe_key=?
+                     AND event_type IN (
+                       'PR_FOLLOWUP_RESULT_INGESTED',
+                       'PR_FOLLOWUP_RESERVED'
+                     )""",
+                (key, wake_digest),
+            )
+        }
+    assert event_ids["PR_FOLLOWUP_RESULT_INGESTED"] < event_ids["PR_FOLLOWUP_RESERVED"]
+    assert [item["wake_digest"] for item in store.unresolved_pr_followups()] == [wake_digest]
+
+
+@pytest.mark.parametrize(
+    "publication_drift_reason",
+    ["EXISTING_PR_BASE_DRIFT", "EXISTING_PR_HEAD_DRIFT"],
+)
+def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path, publication_drift_reason):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(
         intent(
@@ -5500,7 +9118,6 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     assert still_bound["headSha"] == "b" * 40
     assert still_bound["preparedHeadSha"] == "d" * 40
 
-    previous_wake = candidate["wakeDigest"]
     store.record_stage("a/b#1", "FIX_READY", evidence={field: True for field in QUALITY_FIELDS})
     worktree, base_sha, head_sha, branch, probe_receipt, result_digest, evidence_path = (
         legal_publication_probe(tmp_path)
@@ -5540,7 +9157,7 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
     )
     assert permit["status"] == "ACTIVE"
 
-    store.block_publication_request(update["request_id"], "EXISTING_PR_HEAD_DRIFT")
+    store.block_publication_request(update["request_id"], publication_drift_reason)
 
     with store.connect() as connection:
         expired = connection.execute(
@@ -5555,9 +9172,18 @@ def test_pr_followup_is_bound_to_existing_task_and_sent_once(tmp_path):
         == "PR_OPEN"
     )
     assert store.active_pr_followup("a/b#1") is None
-    store.import_pr_followups(state)
-    rearmed = store.pr_followup_candidates()[0]
-    assert rearmed["wakeDigest"] != previous_wake
+    assert store.pr_followup_candidates() == []
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key='a/b#1'
+                     AND event_type='PR_FOLLOWUP_REARM_OBSERVATION_BARRIER'
+                     AND dedupe_key=?""",
+                (update["request_id"],),
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_existing_publication_request_without_snapshot_upgrades_idempotently(tmp_path):
@@ -5597,6 +9223,396 @@ def test_existing_publication_request_without_snapshot_rejects_binding_drift(tmp
 
     stored = store.publication_request(legacy["request_id"])
     assert "evidenceRawBase64" not in stored["request"]
+
+
+@pytest.mark.parametrize("request_status", ["PENDING", "GRANTED"])
+def test_audit_no_go_atomically_revokes_private_publication_authorization(tmp_path, request_status):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = None
+    if request_status == "GRANTED":
+        permit = store.grant_publication_request(
+            request["request_id"],
+            issue_url=args["issue_url"],
+            commit_sha=args["commit_sha"],
+            branch=args["branch"],
+            evidence={"verified": True},
+        )
+
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="ACTIVE_OR_CONDITIONAL_CLAIM",
+        dedupe_key="fresh-live-no-go",
+    )
+
+    blocked = store.publication_request(request["request_id"])
+    assert blocked["status"] == "BLOCKED"
+    assert blocked["reason"] == "ACTIVE_OR_CONDITIONAL_CLAIM"
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage,terminal_reason FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()
+        intent_status = connection.execute(
+            "SELECT status FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()["status"]
+        revoked = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PUBLICATION_AUTHORIZATION_REVOKED'"""
+        ).fetchone()
+        permit_status = (
+            connection.execute(
+                "SELECT status FROM publication_permits WHERE permit_id=?",
+                (permit["permit_id"],),
+            ).fetchone()["status"]
+            if permit is not None
+            else None
+        )
+    assert dict(opportunity) == {
+        "stage": "AUDIT_NO_GO",
+        "terminal_reason": "ACTIVE_OR_CONDITIONAL_CLAIM",
+    }
+    assert intent_status == "REJECTED"
+    assert permit_status == ("BLOCKED" if permit is not None else None)
+    assert json.loads(revoked["payload_json"])["previousRequestStatus"] == request_status
+    assert store.publication_work_items() == []
+
+
+def test_audit_no_go_revocation_rolls_back_with_lifecycle_transaction(monkeypatch, tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    original_event = store._event
+
+    def interrupt_revoke(connection, key, event_type, dedupe_key, payload, created_at):
+        if event_type == "PUBLICATION_AUTHORIZATION_REVOKED":
+            raise RuntimeError("simulated transaction interruption")
+        original_event(connection, key, event_type, dedupe_key, payload, created_at)
+
+    monkeypatch.setattr(store, "_event", interrupt_revoke)
+
+    with pytest.raises(RuntimeError, match="simulated transaction interruption"):
+        store.record_stage(
+            "a/b#1",
+            "AUDIT_NO_GO",
+            reason="STRONG_EXISTING_PR",
+            dedupe_key="interrupted-live-no-go",
+        )
+
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+                "stage"
+            ]
+            == "FIX_READY"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_requests WHERE request_id=?",
+                (request["request_id"],),
+            ).fetchone()["status"]
+            == "GRANTED"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_permits WHERE permit_id=?",
+                (permit["permit_id"],),
+            ).fetchone()["status"]
+            == "ACTIVE"
+        )
+
+
+@pytest.mark.parametrize(
+    ("action", "mark_creation_attempt"),
+    [("push", False), ("create_pr", False), ("create_pr", True)],
+)
+def test_audit_no_go_defers_revocation_across_ambiguous_publication_effect(
+    tmp_path, action, mark_creation_attempt
+):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    effect = store.publication_effect(
+        permit_id=permit["permit_id"],
+        action=action,
+        request_digest=f"{action}-digest",
+    )
+    if mark_creation_attempt:
+        store.mark_pull_request_creation_attempt(
+            effect_id=effect["effect_id"],
+            permit_id=permit["permit_id"],
+        )
+
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        evidence={"live": True},
+        reason="ACTIVE_OR_CONDITIONAL_CLAIM",
+        dedupe_key=f"concurrent-no-go:{action}:{mark_creation_attempt}",
+    )
+
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage,terminal_reason FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()
+        request_status = connection.execute(
+            "SELECT status,reason FROM publication_requests WHERE request_id=?",
+            (request["request_id"],),
+        ).fetchone()
+        permit_status = connection.execute(
+            "SELECT status FROM publication_permits WHERE permit_id=?",
+            (permit["permit_id"],),
+        ).fetchone()["status"]
+        deferred = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PUBLICATION_AUDIT_NO_GO_DEFERRED'"""
+        ).fetchone()
+
+    assert dict(opportunity) == {"stage": "FIX_READY", "terminal_reason": None}
+    assert dict(request_status) == {"status": "GRANTED", "reason": None}
+    assert permit_status == "ACTIVE"
+    payload = json.loads(deferred["payload_json"])
+    assert payload["publicationBoundary"] == "IN_FLIGHT_OR_UNCERTAIN"
+    assert payload["effectId"] == effect["effect_id"]
+    assert payload["effectAction"] == action
+    assert payload["effectStatus"] == "ATTEMPTED"
+    assert payload["creationAttempted"] is mark_creation_attempt
+
+
+def test_concurrent_audit_no_go_cannot_orphan_successful_pull_request(tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    effect = store.publication_effect(
+        permit_id=permit["permit_id"],
+        action="create_pr",
+        request_digest="create-pr-race-digest",
+    )
+    store.mark_pull_request_creation_attempt(
+        effect_id=effect["effect_id"],
+        permit_id=permit["permit_id"],
+    )
+
+    # This is the exact race: the external call is now allowed to be in
+    # flight while a stale-task audit arrives in another controller process.
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="ISSUE_NOT_OPEN",
+        dedupe_key="no-go-during-pr-create",
+    )
+    store.succeed_pull_request_effect(
+        effect_id=effect["effect_id"],
+        permit_id=permit["permit_id"],
+        pr_url="https://github.com/a/b/pull/9",
+        result={"ok": True, "created": True, "prUrl": "https://github.com/a/b/pull/9"},
+    )
+
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+                "stage"
+            ]
+            == "PR_OPEN"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_requests WHERE request_id=?",
+                (request["request_id"],),
+            ).fetchone()["status"]
+            == "CONSUMED"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_permits WHERE permit_id=?",
+                (permit["permit_id"],),
+            ).fetchone()["status"]
+            == "CONSUMED"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_effects WHERE effect_id=?",
+                (effect["effect_id"],),
+            ).fetchone()["status"]
+            == "SUCCEEDED"
+        )
+
+
+def test_deferred_audit_no_go_applies_after_preflight_proves_no_external_effect(tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    effect = store.publication_effect(
+        permit_id=permit["permit_id"],
+        action="create_pr",
+        request_digest="preflight-race-digest",
+    )
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="ACTIVE_OR_CONDITIONAL_CLAIM",
+        dedupe_key="deferred-until-preflight",
+    )
+
+    store.resolve_publication_preflight(
+        effect["effect_id"],
+        disposition="BLOCK",
+        reason="ACTIVE_OR_CONDITIONAL_CLAIM",
+    )
+
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage,terminal_reason FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()
+        request_status = connection.execute(
+            "SELECT status FROM publication_requests WHERE request_id=?",
+            (request["request_id"],),
+        ).fetchone()["status"]
+        permit_status = connection.execute(
+            "SELECT status FROM publication_permits WHERE permit_id=?",
+            (permit["permit_id"],),
+        ).fetchone()["status"]
+        no_go = connection.execute(
+            """SELECT 1 FROM events WHERE opportunity_key='a/b#1'
+               AND event_type='AUDIT_NO_GO' AND dedupe_key='deferred-until-preflight'"""
+        ).fetchone()
+    assert dict(opportunity) == {
+        "stage": "AUDIT_NO_GO",
+        "terminal_reason": "ACTIVE_OR_CONDITIONAL_CLAIM",
+    }
+    assert request_status == "BLOCKED"
+    assert permit_status == "EXPIRED"
+    assert no_go is not None
+
+
+def test_deferred_audit_no_go_revokes_after_failed_push_is_definitive(tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    effect = store.publication_effect(
+        permit_id=permit["permit_id"],
+        action="push",
+        request_digest="failed-push-race-digest",
+    )
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="ISSUE_NOT_OPEN",
+        dedupe_key="deferred-until-push-failed",
+    )
+
+    store.complete_publication_effect(
+        effect["effect_id"],
+        status="FAILED",
+        result={"ok": False, "reason": "REMOTE_BRANCH_CONFLICT"},
+    )
+
+    assert store.publication_request(request["request_id"])["status"] == "BLOCKED"
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+                "stage"
+            ]
+            == "AUDIT_NO_GO"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_permits WHERE permit_id=?",
+                (permit["permit_id"],),
+            ).fetchone()["status"]
+            == "BLOCKED"
+        )
+
+
+def test_audit_no_go_never_regresses_consumed_publication_boundary(tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE publication_requests SET status='CONSUMED'
+               WHERE request_id=?""",
+            (request["request_id"],),
+        )
+        connection.execute(
+            """UPDATE publication_permits SET status='CONSUMED',pr_url=?
+               WHERE permit_id=?""",
+            ("https://github.com/a/b/pull/9", permit["permit_id"]),
+        )
+
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="ISSUE_NOT_OPEN",
+        dedupe_key="late-live-no-go",
+    )
+
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[
+                "stage"
+            ]
+            == "FIX_READY"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_requests WHERE request_id=?",
+                (request["request_id"],),
+            ).fetchone()["status"]
+            == "CONSUMED"
+        )
+        assert (
+            connection.execute(
+                "SELECT status FROM publication_permits WHERE permit_id=?",
+                (permit["permit_id"],),
+            ).fetchone()["status"]
+            == "CONSUMED"
+        )
+        preserved = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='POST_PUBLICATION_AUDIT_NO_GO'
+                 AND dedupe_key='late-live-no-go'"""
+        ).fetchone()
+    assert json.loads(preserved["payload_json"])["publicationBoundary"] == ("IRREVERSIBLE_RECEIPT")
 
 
 def test_post_push_confirmation_recovers_legacy_head_drift_failure(tmp_path):
@@ -5988,8 +10004,12 @@ def test_publication_feedback_is_reserved_retried_and_sent_once(tmp_path):
         worktree_path="/tmp/worktree",
     )
     pr_url = "https://github.com/a/b/pull/9"
-    store.record_stage("a/b#1", "PR_OPEN", evidence={"prUrl": pr_url}, dedupe_key=pr_url)
-
+    store.record_stage(
+        "a/b#1",
+        "PR_OPEN",
+        evidence={"prUrl": pr_url},
+        dedupe_key=pr_url,
+    )
     candidate = store.publication_feedback_candidates()[0]
     reserved = store.reserve_publication_feedback(
         thread_id=candidate["threadId"],
@@ -6019,6 +10039,126 @@ def test_publication_feedback_is_reserved_retried_and_sent_once(tmp_path):
     )
     assert store.publication_feedback_candidates() == []
     assert store.unresolved_publication_feedback() == []
+
+
+def test_publication_feedback_reservation_fails_closed_for_duplicate_pr_url_intents(tmp_path):
+    """A same-URL claim by another intent must win neither task's CAS."""
+
+    store = RadarLedger(tmp_path / "publication-feedback-duplicate-url.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    store.commit_dispatch(
+        "intent-1",
+        owner="controller",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/worktree-old",
+    )
+    pr_url = "https://github.com/a/b/pull/77"
+    store.record_stage(
+        "a/b#1",
+        "PR_OPEN",
+        evidence={"prUrl": pr_url},
+        dedupe_key=pr_url,
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path="/tmp/worktree-old",
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="thread-2",
+        worktree_path="/tmp/worktree-new",
+        status="COMPLETED",
+    )
+    store.record_stage(
+        "a/b#1",
+        "PR_OPEN",
+        evidence={"prUrl": pr_url},
+        dedupe_key="duplicate-pr-url",
+        intent_id="intent-2",
+        thread_id="thread-2",
+        worktree_path="/tmp/worktree-new",
+    )
+
+    with pytest.raises(LedgerError, match="identity is ambiguous"):
+        store.reserve_publication_feedback(
+            thread_id="thread-1",
+            intent_id="intent-1",
+            worktree_path="/tmp/worktree-old",
+            pr_url=pr_url,
+        )
+    with pytest.raises(LedgerError, match="identity is ambiguous"):
+        store.reserve_publication_feedback(
+            thread_id="thread-2",
+            intent_id="intent-2",
+            worktree_path="/tmp/worktree-new",
+            pr_url=pr_url,
+        )
+
+
+def test_controller_publication_notice_replays_until_visible_ack(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    pr_url = "https://github.com/a/b/pull/9"
+    store.record_stage(
+        "a/b#1",
+        "PR_OPEN",
+        evidence={"prUrl": pr_url},
+        dedupe_key=pr_url,
+    )
+    insert_succeeded_pr_creation(store, pr_url=pr_url, created=True)
+
+    candidate = store.controller_publication_notice_candidates()[0]
+    reserved = store.reserve_controller_publication_notice(pr_url=candidate["prUrl"])
+
+    assert store.controller_publication_notice_candidates() == []
+    assert store.unresolved_controller_publication_notices()[0]["prUrl"] == pr_url
+    store.commit_controller_publication_notice(
+        reservation_nonce=reserved["reservationNonce"],
+        pr_url=pr_url,
+    )
+    assert store.controller_publication_notice_candidates() == []
+    assert store.unresolved_controller_publication_notices() == []
+
+
+def test_controller_publication_notice_excludes_existing_pr_reconciliation(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.record_stage(
+        "a/b#1",
+        "PR_OPEN",
+        evidence={"prUrl": "https://github.com/a/b/pull/9"},
+    )
+    insert_succeeded_pr_creation(
+        store,
+        pr_url="https://github.com/a/b/pull/9",
+        created=False,
+    )
+
+    assert store.controller_publication_notice_candidates() == []
+
+
+def test_pull_request_creation_attempt_marker_is_durable(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    insert_publication_preflight(store)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id='request-1'",
+            (json.dumps({"publicationKind": "PR_CREATE"}),),
+        )
+        connection.execute(
+            "UPDATE publication_effects SET action='create_pr' WHERE effect_id='effect-1'"
+        )
+
+    store.mark_pull_request_creation_attempt(effect_id="effect-1", permit_id="permit-1")
+
+    with store.connect() as connection:
+        value = connection.execute(
+            "SELECT result_json FROM publication_effects WHERE effect_id='effect-1'"
+        ).fetchone()[0]
+    assert json.loads(value) == {"creationAttempted": True}
 
 
 def test_pr_followup_task_drift_rebinds_wake_and_invalidates_preparation(tmp_path):
@@ -6106,6 +10246,7 @@ def test_pr_followup_task_drift_rebinds_wake_and_invalidates_preparation(tmp_pat
     assert rebound["previousWakeDigest"] == old_wake
     assert rebound["replacementWakeDigest"] != old_wake
     assert store.active_pr_followup_preparation("a/b#1", thread_id="thread-1") is None
+    assert store.unresolved_pr_followups() == []
     assert store.pr_followup_candidates()[0]["wakeDigest"] == rebound["replacementWakeDigest"]
     repeated = store.rearm_pr_followup_after_task_drift(
         "a/b#1",
@@ -6312,6 +10453,176 @@ def test_active_task_quarantines_returns_every_payload_bound_gate(tmp_path):
     ]
 
 
+def test_exact_task_quarantine_member_clear_preserves_unrelated_active_gate(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    _record_batch_task_quarantines(store, now=now)
+    payload_digest = sha256_json({"error": "published task result authentication is invalid"})
+
+    store.clear_task_quarantine_member_exact(
+        "a/b#1",
+        reason="SHARED_CONTEXT_INVALID",
+        dedupe_key="invalid-1",
+        payload_digest=payload_digest,
+        evidence={"revalidated": True, "repair": "exact-member-test"},
+    )
+
+    assert store.active_task_quarantines("a/b#1") == [
+        {
+            "reason": "PR_FOLLOWUP_REBIND_REQUIRED",
+            "dedupeKey": "rebind-1",
+            "payload": {"requiresRebind": True},
+            "payloadDigest": sha256_json({"requiresRebind": True}),
+            "createdAt": now,
+        }
+    ]
+    with store.connect() as connection:
+        cleared = connection.execute(
+            """SELECT status,clear_payload_json FROM task_quarantines
+               WHERE opportunity_key='a/b#1' AND dedupe_key='invalid-1'"""
+        ).fetchone()
+    assert cleared["status"] == "CLEARED"
+    assert json.loads(cleared["clear_payload_json"]) == {
+        "repair": "exact-member-test",
+        "revalidated": True,
+    }
+
+
+def test_exact_task_quarantine_member_clear_rejects_payload_drift(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    _record_batch_task_quarantines(store, now=now)
+
+    with pytest.raises(LedgerError, match="member changed"):
+        store.clear_task_quarantine_member_exact(
+            "a/b#1",
+            reason="SHARED_CONTEXT_INVALID",
+            dedupe_key="invalid-1",
+            payload_digest="f" * 64,
+            evidence={"revalidated": True},
+        )
+
+    assert len(store.active_task_quarantines("a/b#1")) == 2
+
+
+def test_radar_event_backfill_replays_only_the_exact_cleared_gate(tmp_path):
+    from oss_pr_radar.task_quarantine import backfill_from_radar_events
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    now = iso_z(datetime.now(UTC))
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_FOLLOWUP_REBIND_REQUIRED",
+            "rebind-1",
+            {"slot": 1},
+            now,
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_FOLLOWUP_REBIND_REQUIRED",
+            "rebind-2",
+            {"slot": 2},
+            now,
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "LEGACY_RESULT_REQUIRES_MIGRATION",
+            "legacy-1",
+            {"legacy": True},
+            now,
+        )
+        store._event(
+            connection,
+            "a/b#1",
+            "TASK_QUARANTINE_CLEARED",
+            "clear-rebind-1",
+            {
+                "reason": "PR_FOLLOWUP_REBIND_REQUIRED",
+                "dedupeKey": "rebind-1",
+                "revalidated": True,
+            },
+            now,
+        )
+        connection.execute("DELETE FROM task_quarantines")
+    guard_root = tmp_path / "radar-action-guards"
+    guard_root.mkdir(mode=0o700)
+    with store.connect() as connection:
+        backfill_from_radar_events(
+            connection,
+            action_guard_root=guard_root,
+        )
+
+    assert {
+        (gate["reason"], gate["dedupeKey"]) for gate in store.active_task_quarantines("a/b#1")
+    } == {
+        ("PR_FOLLOWUP_REBIND_REQUIRED", "rebind-2"),
+        ("LEGACY_RESULT_REQUIRES_MIGRATION", "legacy-1"),
+    }
+
+
+def test_managed_event_backfill_replays_only_the_exact_cleared_gate(tmp_path):
+    from oss_pr_radar.managed_lifecycle import ManagedLedger
+    from oss_pr_radar.task_quarantine import backfill_from_managed_events
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    ManagedLedger(store.path, ensure_schema=True)
+    now = iso_z(datetime.now(UTC))
+    events = [
+        ("PR_FOLLOWUP_REBIND_REQUIRED", "rebind-1", {"slot": 1}),
+        ("PR_FOLLOWUP_REBIND_REQUIRED", "rebind-2", {"slot": 2}),
+        ("LEGACY_RESULT_REQUIRES_MIGRATION", "legacy-1", {"legacy": True}),
+        (
+            "TASK_QUARANTINE_CLEARED",
+            "clear-rebind-1",
+            {
+                "reason": "PR_FOLLOWUP_REBIND_REQUIRED",
+                "dedupeKey": "rebind-1",
+                "revalidated": True,
+            },
+        ),
+    ]
+    guard_root = tmp_path / "managed-action-guards"
+    guard_root.mkdir(mode=0o700)
+    with store.connect() as connection:
+        for event_type, idempotency_key, payload in events:
+            connection.execute(
+                """INSERT INTO managed_lifecycle_events
+                   (opportunity_key,event_type,state,idempotency_key,
+                    idempotency_fingerprint,source,provenance_json,observed_at,payload_json)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (
+                    "a/b#1",
+                    event_type,
+                    "READY",
+                    idempotency_key,
+                    sha256_text(idempotency_key),
+                    "test",
+                    "{}",
+                    now,
+                    json.dumps(payload, sort_keys=True),
+                ),
+            )
+        connection.execute("DELETE FROM task_quarantines")
+        backfill_from_managed_events(
+            connection,
+            action_guard_root=guard_root,
+        )
+
+    assert {
+        (gate["reason"], gate["dedupeKey"]) for gate in store.active_task_quarantines("a/b#1")
+    } == {
+        ("PR_FOLLOWUP_REBIND_REQUIRED", "rebind-2"),
+        ("LEGACY_RESULT_REQUIRES_MIGRATION", "legacy-1"),
+    }
+
+
 def test_exact_task_quarantine_batch_clear_keeps_blocked_publications_unchanged(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())
@@ -6490,3 +10801,3058 @@ def test_exact_task_quarantine_batch_clear_rolls_back_every_write(tmp_path, monk
             ).fetchone()[0]
             == 0
         )
+
+
+def _task_result_tombstone_ledger(tmp_path: Path) -> RadarLedger:
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "controller")
+    store.commit_dispatch(
+        "intent-1",
+        owner="controller",
+        thread_id="thread-1",
+        project_id="github",
+        worktree_path="/tmp/worktree",
+    )
+    return store
+
+
+def _record_tombstone_preparation(
+    store: RadarLedger,
+    *,
+    wake_digest: str,
+    prepared_head_sha: str,
+    thread_id: str = "thread-1",
+) -> dict[str, Any]:
+    snapshot = {
+        "prUrl": "https://github.com/a/b/pull/9",
+        "headSha": "9" * 40,
+        "preparedHeadSha": prepared_head_sha,
+        "actionDigest": "published-authority-action",
+        "taskActionDigest": "published-authority-task-action",
+        "wakeDigest": wake_digest,
+        "actions": ["review follow-up"],
+        "evidence": {"actionableCheckNames": ["test"]},
+        "checkedAt": iso_z(datetime.now(UTC)),
+    }
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_FOLLOWUP_PREPARATION_BOUND",
+            wake_digest,
+            {"threadId": thread_id, "snapshot": snapshot},
+            iso_z(datetime.now(UTC)),
+        )
+    return snapshot
+
+
+def _ledger_tombstone_receipt(*, snapshot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schemaVersion": "code-path-tombstone-v1",
+        "wakeDigest": snapshot["wakeDigest"],
+        "preparedHeadSha": snapshot["preparedHeadSha"],
+        "prUrl": snapshot["prUrl"],
+        "actionDigest": snapshot["actionDigest"],
+        "taskActionDigest": snapshot["taskActionDigest"],
+        "checkedAt": snapshot["checkedAt"],
+        "receiptDigest": sha256_json(snapshot),
+    }
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "followup_wake_digest",
+        "code_path_tombstone_receipt",
+        "continuation_head_sha",
+        "pr_followup_snapshot",
+    ],
+)
+def test_task_result_tombstone_binding_fields_are_all_or_none(tmp_path, missing_field):
+    store = _task_result_tombstone_ledger(tmp_path)
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="1" * 64,
+        prepared_head_sha="2" * 40,
+    )
+    binding = {
+        "followup_wake_digest": snapshot["wakeDigest"],
+        "code_path_tombstone_receipt": _ledger_tombstone_receipt(snapshot=snapshot),
+        "continuation_head_sha": "3" * 40,
+        "pr_followup_snapshot": snapshot,
+    }
+    binding.pop(missing_field)
+
+    with pytest.raises(ValueError, match="tombstone continuation"):
+        store.record_task_result_ingested(
+            "a/b#1",
+            digest="result-1",
+            stage="FIX_READY",
+            task_id="intent-1",
+            thread_id="thread-1",
+            **binding,
+        )
+
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='TASK_RESULT_INGESTED'"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.parametrize("mismatch", ["receipt", "snapshot"])
+def test_task_result_tombstone_binding_rejects_wake_mismatch(tmp_path, mismatch):
+    store = _task_result_tombstone_ledger(tmp_path)
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="1" * 64,
+        prepared_head_sha="3" * 40,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=snapshot)
+    if mismatch == "receipt":
+        receipt = dict(receipt) | {"wakeDigest": "2" * 64}
+    else:
+        snapshot = dict(snapshot) | {"wakeDigest": "2" * 64}
+
+    with pytest.raises(ValueError, match="tombstone continuation"):
+        store.record_task_result_ingested(
+            "a/b#1",
+            digest="result-1",
+            stage="FIX_READY",
+            task_id="intent-1",
+            thread_id="thread-1",
+            followup_wake_digest="1" * 64,
+            code_path_tombstone_receipt=receipt,
+            continuation_head_sha="5" * 40,
+            pr_followup_snapshot=snapshot,
+        )
+
+
+def test_task_context_ignores_tombstone_continuation_for_different_result_digest(tmp_path):
+    store = _task_result_tombstone_ledger(tmp_path)
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="1" * 64,
+        prepared_head_sha="3" * 40,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=snapshot)
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="result-1",
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+    mismatched_continuation = {
+        "taskId": "intent-1",
+        "threadId": "thread-1",
+        "stage": "FIX_READY",
+        "resultDigest": "result-2",
+        "followupWakeDigest": snapshot["wakeDigest"],
+        "codePathTombstoneReceipt": receipt,
+        "continuationHeadSha": "5" * 40,
+        "prFollowupSnapshot": snapshot,
+    }
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND",
+            sha256_json(mismatched_continuation),
+            mismatched_continuation,
+            iso_z(datetime.now(UTC)),
+        )
+
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert "codePathTombstoneReceipt" not in context
+    assert "codePathTombstoneContinuationHeadSha" not in context
+    assert context["prFollowup"] is None
+
+
+def test_existing_task_result_digest_can_be_upgraded_with_exact_tombstone_continuation(
+    tmp_path,
+):
+    store = _task_result_tombstone_ledger(tmp_path)
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="1" * 64,
+        prepared_head_sha="4" * 40,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=snapshot)
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="result-1",
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="result-1",
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=receipt,
+        continuation_head_sha="5" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert "codePathTombstoneReceipt" not in context
+    assert "edit_files" not in context["allowedActions"]
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='TASK_RESULT_INGESTED'"
+            ).fetchone()[0]
+            == 1
+        )
+        continuation = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events "
+                "WHERE event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'"
+            ).fetchone()[0]
+        )
+    assert continuation["continuationHeadSha"] == "5" * 40
+
+
+def test_task_context_accepts_latest_exact_tombstone_round_for_same_wake(tmp_path):
+    store = _task_result_tombstone_ledger(tmp_path)
+    wake_digest = "1" * 64
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest=wake_digest,
+        prepared_head_sha="4" * 40,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=snapshot)
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="result-1",
+        stage="VALIDATION_PENDING",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=wake_digest,
+        code_path_tombstone_receipt=receipt,
+        continuation_head_sha="5" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=wake_digest,
+        result_digest="result-1",
+        stage="VALIDATION_PENDING",
+    )
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="result-2",
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=wake_digest,
+        code_path_tombstone_receipt=receipt,
+        continuation_head_sha="6" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=wake_digest,
+        result_digest="result-2",
+        stage="FIX_READY",
+    )
+
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert "codePathTombstoneReceipt" not in context
+    with store.connect() as connection:
+        continuation = json.loads(
+            connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()[0]
+        )
+    assert continuation["resultDigest"] == "result-2"
+    assert continuation["continuationHeadSha"] == "6" * 40
+
+
+def test_task_context_tombstone_binding_is_thread_latest_and_yields_to_active_preparation(
+    tmp_path,
+):
+    store = _task_result_tombstone_ledger(tmp_path)
+    old_wake = "1" * 64
+    old_result = "result-1"
+    receipt_head = "4" * 40
+    old_snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest=old_wake,
+        prepared_head_sha=receipt_head,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=old_snapshot)
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=old_result,
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=old_wake,
+        code_path_tombstone_receipt=receipt,
+        continuation_head_sha="5" * 40,
+        pr_followup_snapshot=old_snapshot,
+    )
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=old_wake,
+        result_digest=old_result,
+        stage="FIX_READY",
+    )
+
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert "codePathTombstoneReceipt" not in context
+    assert "edit_files" not in context["allowedActions"]
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="other-thread-result",
+        stage="FIX_READY",
+        task_id="intent-2",
+        thread_id="thread-2",
+    )
+    same_thread_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert "codePathTombstoneReceipt" not in same_thread_context
+
+    active_wake = "6" * 64
+    active_head = "7" * 40
+    _record_tombstone_preparation(
+        store,
+        wake_digest=active_wake,
+        prepared_head_sha=active_head,
+    )
+    active_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert active_context["prFollowup"]["wakeDigest"] == active_wake
+    assert active_context["prFollowup"]["preparedHeadSha"] == active_head
+    assert "codePathTombstoneReceipt" not in active_context
+    assert "codePathTombstoneContinuationHeadSha" not in active_context
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="result-without-receipt",
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=active_wake,
+        result_digest="result-without-receipt",
+        stage="FIX_READY",
+    )
+    cleared_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert cleared_context["prFollowup"] is None
+    assert "codePathTombstoneReceipt" not in cleared_context
+    assert "codePathTombstoneContinuationHeadSha" not in cleared_context
+
+
+def _signed_recovered_tombstone_bundle(
+    tmp_path: Path,
+    *,
+    task_id: str,
+    thread_id: str,
+    worktree_path: str,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    from oss_pr_radar.repo_probe import (
+        attest_code_path_tombstones,
+        attest_task_reproduction_result,
+    )
+
+    checkout = tmp_path / f"signed-recovery-{task_id}"
+    checkout.mkdir()
+
+    def git(*args: str) -> str:
+        completed = subprocess.run(
+            ["git", *args], cwd=checkout, check=True, capture_output=True, text=True
+        )
+        return completed.stdout.strip()
+
+    git("init")
+    git("config", "user.name", "Test Contributor")
+    git("config", "user.email", "test@example.com")
+    (checkout / "deleted.py").write_text("deleted = True\n", encoding="utf-8")
+    (checkout / "present.py").write_text("present = True\n", encoding="utf-8")
+    git("add", "deleted.py", "present.py")
+    git("commit", "-m", "test: signed recovery base")
+    base_sha = git("rev-parse", "HEAD")
+    code_paths = ["deleted.py", "present.py"]
+    result_digest = sha256_json(
+        {
+            "taskId": task_id,
+            "threadId": thread_id,
+            "baseSha": base_sha,
+            "codePaths": code_paths,
+        }
+    )
+    reproduction_receipt = attest_task_reproduction_result(
+        checkout_path=checkout,
+        repo="a/b",
+        default_branch="main",
+        selected_base_sha=base_sha,
+        code_paths=code_paths,
+        issue_url="https://github.com/a/b/issues/1",
+        task_id=task_id,
+        thread_id=thread_id,
+        head_sha=base_sha,
+        commit_sha=base_sha,
+        result_digest=result_digest,
+        result={
+            "reproductionVerified": True,
+            "evidence": {"summary": "The regression is reproduced."},
+            "tests": [{"command": "python3 present.py", "exitCode": 0}],
+        },
+    )
+    snapshot = {
+        "prUrl": "https://github.com/a/b/pull/9",
+        "headSha": "8" * 40,
+        "preparedHeadSha": "9" * 40,
+        "actionDigest": "signed-recovery-action",
+        "taskActionDigest": "signed-recovery-task-action",
+        "wakeDigest": "7" * 64,
+        "actions": ["review follow-up"],
+        "evidence": {"actionableCheckNames": ["test"]},
+        "checkedAt": iso_z(datetime.now(UTC)),
+    }
+    tombstone_receipt = attest_code_path_tombstones(
+        source_receipt_digest=str(reproduction_receipt["receiptDigest"]),
+        base_sha=base_sha,
+        key="a/b#1",
+        issue_url="https://github.com/a/b/issues/1",
+        intent_id=task_id,
+        thread_id=thread_id,
+        worktree_path_fingerprint=sha256_text(str(Path(worktree_path).resolve())),
+        pr_url=snapshot["prUrl"],
+        wake_digest=snapshot["wakeDigest"],
+        action_digest=snapshot["actionDigest"],
+        task_action_digest=snapshot["taskActionDigest"],
+        checked_at=snapshot["checkedAt"],
+        prepared_head_sha=snapshot["preparedHeadSha"],
+        code_paths=code_paths,
+        present_paths=["present.py"],
+        tombstone_paths=["deleted.py"],
+    )
+    return reproduction_receipt, tombstone_receipt, snapshot
+
+
+def _recovered_tombstone_context(
+    *,
+    worktree_path: str,
+    reproduction_receipt: dict[str, Any],
+    tombstone_receipt: dict[str, Any],
+    snapshot: dict[str, Any],
+    context_digest: str,
+    **updates: Any,
+) -> dict[str, Any]:
+    prepared_head_sha = str(tombstone_receipt["preparedHeadSha"])
+    current_result_digest = sha256_json(
+        {
+            "contextDigest": context_digest,
+            "preparedHeadSha": prepared_head_sha,
+            "wakeDigest": snapshot["wakeDigest"],
+        }
+    )
+    value = published_task_context(
+        intentId="intent-1",
+        threadId="thread-1",
+        worktreePath=worktree_path,
+        selectedBaseSha=reproduction_receipt["baseSha"],
+        codePaths=list(reproduction_receipt["codePaths"]),
+        probeReceiptDigest=reproduction_receipt["receiptDigest"],
+        resultDigest=current_result_digest,
+        headSha=prepared_head_sha,
+        commitSha=prepared_head_sha,
+        reproductionReceipt=reproduction_receipt,
+        codePathTombstoneReceipt=tombstone_receipt,
+        prFollowup=snapshot,
+        contextDigest=context_digest,
+    )
+    value.update(updates)
+    return value
+
+
+def _resign_recovered_tombstone(
+    *,
+    reproduction_receipt: dict[str, Any],
+    snapshot: dict[str, Any],
+    worktree_path: str,
+    prepared_head_sha: str,
+    wake_digest: str,
+    checked_at: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    from oss_pr_radar.repo_probe import attest_code_path_tombstones
+
+    refreshed_snapshot = dict(snapshot) | {
+        "preparedHeadSha": prepared_head_sha,
+        "wakeDigest": wake_digest,
+        "actionDigest": f"refreshed-action-{wake_digest[:8]}",
+        "taskActionDigest": f"refreshed-task-action-{wake_digest[:8]}",
+        "checkedAt": checked_at,
+    }
+    refreshed_receipt = attest_code_path_tombstones(
+        source_receipt_digest=str(reproduction_receipt["receiptDigest"]),
+        base_sha=str(reproduction_receipt["baseSha"]),
+        key="a/b#1",
+        issue_url="https://github.com/a/b/issues/1",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path_fingerprint=sha256_text(str(Path(worktree_path).resolve())),
+        pr_url=str(refreshed_snapshot["prUrl"]),
+        wake_digest=str(refreshed_snapshot["wakeDigest"]),
+        action_digest=str(refreshed_snapshot["actionDigest"]),
+        task_action_digest=str(refreshed_snapshot["taskActionDigest"]),
+        checked_at=str(refreshed_snapshot["checkedAt"]),
+        prepared_head_sha=str(refreshed_snapshot["preparedHeadSha"]),
+        code_paths=list(reproduction_receipt["codePaths"]),
+        present_paths=["present.py"],
+        tombstone_paths=["deleted.py"],
+    )
+    return refreshed_receipt, refreshed_snapshot
+
+
+def _bind_managed_reproduction_receipt(
+    store: RadarLedger,
+    *,
+    worktree_path: str,
+    reproduction_receipt: dict[str, Any],
+) -> None:
+    from oss_pr_radar.managed_lifecycle import ManagedLedger
+
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    managed.upsert_opportunity(
+        opportunity_key="a/b#1",
+        owner="a",
+        repo="b",
+        issue_number=1,
+        issue_url="https://github.com/a/b/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test-context-authority",
+        provenance={"fixture": True},
+        metadata={
+            "selectedBaseSha": reproduction_receipt["baseSha"],
+            "codePaths": reproduction_receipt["codePaths"],
+        },
+    )
+    managed.bind_task(
+        task_id="intent-1",
+        opportunity_key="a/b#1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+        state="REPRODUCTION_REQUIRED",
+        provenance={
+            "selectedBaseSha": reproduction_receipt["baseSha"],
+            "codePaths": reproduction_receipt["codePaths"],
+            "headSha": reproduction_receipt["headSha"],
+            "commitSha": reproduction_receipt["commitSha"],
+            "resultDigest": reproduction_receipt["resultDigest"],
+        },
+    )
+    managed.transition_task_to_implementation(
+        task_id="intent-1",
+        receipt_digest=reproduction_receipt["receiptDigest"],
+        receipt=reproduction_receipt,
+    )
+
+
+def test_restore_existing_legacy_intent_atomically_adds_verified_recovery_receipt(tmp_path):
+    store = RadarLedger(tmp_path / "restore-existing.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    old_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="old-context",
+        autoSubmitAuthorized=False,
+        publicSubmissionAllowed=False,
+        resultDigest=reproduction_receipt["resultDigest"],
+        headSha=reproduction_receipt["headSha"],
+        commitSha=reproduction_receipt["commitSha"],
+    )
+    old_context.pop("reproductionReceipt")
+    old_context.pop("codePathTombstoneReceipt")
+    old_context.pop("prFollowup")
+    old_context.pop("resultDigest")
+    old_context.pop("headSha")
+    old_context.pop("commitSha")
+    store.restore_task_context(old_context)
+
+    upgraded_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="new-context",
+        autoSubmitAuthorized=True,
+        publicSubmissionAllowed=True,
+    )
+    restored = store.restore_task_context(upgraded_context)
+    store.restore_task_context(upgraded_context)
+
+    assert restored["intentRestored"] is False
+    with store.connect() as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+    assert payload["recoveredReproductionReceipt"] == reproduction_receipt
+    assert payload["probeReceiptDigest"] == reproduction_receipt["receiptDigest"]
+    assert payload["selectedBaseSha"] == reproduction_receipt["baseSha"]
+    assert payload["codePaths"] == reproduction_receipt["codePaths"]
+    assert payload["resultDigest"] == upgraded_context["resultDigest"]
+    assert payload["headSha"] == upgraded_context["headSha"]
+    assert payload["commitSha"] == upgraded_context["commitSha"]
+    assert payload["resultDigest"] != reproduction_receipt["resultDigest"]
+    assert payload["headSha"] != reproduction_receipt["headSha"]
+    assert payload["autoSubmitAuthorized"] is False
+    assert payload["publicSubmissionAllowed"] is False
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=reproduction_receipt["resultDigest"],
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=tombstone_receipt,
+        continuation_head_sha="6" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+    task = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert task["taskStage"] == "IMPLEMENTATION_READY"
+    assert "edit_files" in task["allowedActions"]
+    assert task["reproductionReceipt"] == reproduction_receipt
+
+
+@pytest.mark.parametrize(
+    ("field", "conflicting_value"),
+    [
+        ("codePaths", ["other.py"]),
+        ("selectedBaseSha", "e" * 40),
+        ("probeReceiptDigest", "f" * 64),
+    ],
+)
+def test_restore_existing_intent_rejects_conflicting_recovery_bundle_atomically(
+    tmp_path,
+    field,
+    conflicting_value,
+):
+    store = RadarLedger(tmp_path / "restore-conflict.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    old_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="old-conflicting-context",
+        **{field: conflicting_value},
+    )
+    old_context.pop("reproductionReceipt")
+    old_context.pop("codePathTombstoneReceipt")
+    old_context.pop("prFollowup")
+    store.restore_task_context(old_context)
+    with store.connect() as connection:
+        before_payload = connection.execute(
+            "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()[0]
+        before_events = connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+
+    with pytest.raises(LedgerError, match=rf"conflicts with intent {field}"):
+        store.restore_task_context(
+            _recovered_tombstone_context(
+                worktree_path=worktree_path,
+                reproduction_receipt=reproduction_receipt,
+                tombstone_receipt=tombstone_receipt,
+                snapshot=snapshot,
+                context_digest="new-conflicting-context",
+            )
+        )
+
+    with store.connect() as connection:
+        after_payload = connection.execute(
+            "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()[0]
+        after_events = connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    assert after_payload == before_payload
+    assert after_events == before_events
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"resultDigest": "not-a-result-digest"},
+        {"headSha": "e" * 40},
+        {"commitSha": "e" * 40},
+    ],
+)
+def test_restore_tombstone_context_rejects_unbound_current_result_tuple(tmp_path, updates):
+    store = RadarLedger(tmp_path / "restore-current-tuple.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="invalid-current-tuple",
+        **updates,
+    )
+
+    with pytest.raises(LedgerError, match="tombstone authority"):
+        store.restore_task_context(context)
+
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM intents").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    "intent_status",
+    [
+        "PENDING",
+        "LEASED",
+        "CREATING",
+        "REJECTED",
+        "SUPERSEDED",
+        "EXPIRED",
+        "SHADOW_OBSERVED",
+    ],
+)
+def test_inactive_intent_cannot_recover_tombstone_edit_authority(tmp_path, intent_status):
+    store = RadarLedger(tmp_path / f"inactive-{intent_status}.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path=worktree_path,
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest=f"inactive-{intent_status}",
+        )
+    )
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE intents SET status=? WHERE intent_id='intent-1'", (intent_status,)
+        )
+
+    task = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert task["intentStatus"] == intent_status
+    assert task["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in task["allowedActions"]
+    assert task["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in task
+    assert "codePathTombstoneContinuationHeadSha" not in task
+
+
+def test_managed_receipt_cannot_bypass_corrupt_tombstone_continuation(tmp_path):
+    from oss_pr_radar.managed_lifecycle import ManagedLedger
+
+    store = RadarLedger(tmp_path / "managed-corrupt-tombstone.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path=worktree_path,
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest="managed-signed-context",
+        )
+    )
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    managed.upsert_opportunity(
+        opportunity_key="a/b#1",
+        owner="a",
+        repo="b",
+        issue_number=1,
+        issue_url="https://github.com/a/b/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test-managed-corrupt-continuation",
+        provenance={"fixture": True},
+        metadata={
+            "selectedBaseSha": reproduction_receipt["baseSha"],
+            "codePaths": reproduction_receipt["codePaths"],
+        },
+    )
+    managed.bind_task(
+        task_id="intent-1",
+        opportunity_key="a/b#1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+        state="REPRODUCTION_REQUIRED",
+        provenance={
+            "selectedBaseSha": reproduction_receipt["baseSha"],
+            "codePaths": reproduction_receipt["codePaths"],
+            "headSha": reproduction_receipt["headSha"],
+            "commitSha": reproduction_receipt["commitSha"],
+            "resultDigest": reproduction_receipt["resultDigest"],
+        },
+    )
+    managed.transition_task_to_implementation(
+        task_id="intent-1",
+        receipt_digest=reproduction_receipt["receiptDigest"],
+        receipt=reproduction_receipt,
+    )
+    corrupt_receipt = dict(tombstone_receipt) | {"signature": "corrupt-signature"}
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="f" * 64,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=corrupt_receipt,
+        continuation_head_sha="6" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+
+    task = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert task["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in task["allowedActions"]
+    assert task["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in task
+    assert "codePathTombstoneContinuationHeadSha" not in task
+    assert "codePathTombstoneReceipt" not in task
+    assert "codePathTombstoneContinuationHeadSha" not in task
+
+
+def test_audit_no_go_cannot_recover_tombstone_edit_authority_for_completed_intent(tmp_path):
+    store = RadarLedger(tmp_path / "inactive-audit-no-go.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path=worktree_path,
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest="inactive-audit-no-go",
+        )
+    )
+    with store.transaction() as connection:
+        connection.execute("UPDATE intents SET status='COMPLETED' WHERE intent_id='intent-1'")
+        connection.execute("UPDATE opportunities SET stage='AUDIT_NO_GO' WHERE key='a/b#1'")
+
+    task = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert task["intentStatus"] == "COMPLETED"
+    assert task["stage"] == "AUDIT_NO_GO"
+    assert task["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in task["allowedActions"]
+    assert task["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in task
+
+
+def test_same_digest_continuation_exactly_binds_legacy_threadless_result(tmp_path):
+    store = _task_result_tombstone_ledger(tmp_path)
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="1" * 64,
+        prepared_head_sha="4" * 40,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=snapshot)
+    store.record_task_result_ingested("a/b#1", digest="legacy-result", stage="FIX_READY")
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="legacy-result",
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=receipt,
+        continuation_head_sha="5" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert "codePathTombstoneReceipt" not in context
+    with store.connect() as connection:
+        result_row = connection.execute(
+            """SELECT id FROM events WHERE event_type='TASK_RESULT_INGESTED'
+               AND dedupe_key='legacy-result'"""
+        ).fetchone()
+        continuation = json.loads(
+            connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'"""
+            ).fetchone()[0]
+        )
+    assert continuation["sourceResultEventId"] == result_row["id"]
+    assert continuation["taskId"] == "intent-1"
+    assert continuation["threadId"] == "thread-1"
+
+
+def test_legacy_threadless_result_rejects_nonexistent_intent_binding(tmp_path):
+    store = _task_result_tombstone_ledger(tmp_path)
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="1" * 64,
+        prepared_head_sha="4" * 40,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=snapshot)
+    store.record_task_result_ingested("a/b#1", digest="legacy-result", stage="FIX_READY")
+
+    with pytest.raises(ValueError, match="continuation identity"):
+        store.record_task_result_ingested(
+            "a/b#1",
+            digest="legacy-result",
+            stage="FIX_READY",
+            task_id="other-intent",
+            thread_id="thread-1",
+            followup_wake_digest=snapshot["wakeDigest"],
+            code_path_tombstone_receipt=receipt,
+            continuation_head_sha="5" * 40,
+            pr_followup_snapshot=snapshot,
+        )
+
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'"""
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_unbound_newer_result_does_not_clear_exact_threadless_result_binding(tmp_path):
+    store = _task_result_tombstone_ledger(tmp_path)
+    snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="1" * 64,
+        prepared_head_sha="4" * 40,
+    )
+    receipt = _ledger_tombstone_receipt(snapshot=snapshot)
+    store.record_task_result_ingested("a/b#1", digest="legacy-result", stage="FIX_READY")
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="legacy-result",
+        stage="FIX_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=receipt,
+        continuation_head_sha="5" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+    store.record_task_result_ingested("a/b#1", digest="unbound-newer", stage="FIX_READY")
+
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert "codePathTombstoneReceipt" not in context
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'"""
+            ).fetchone()[0]
+            == 1
+        )
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="wrong-intent-newer",
+        stage="FIX_READY",
+        task_id="other-intent",
+        thread_id="thread-1",
+    )
+    still_bound = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert "codePathTombstoneReceipt" not in still_bound
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="task-bound-newer",
+        stage="FIX_READY",
+        task_id="intent-1",
+    )
+    cleared = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert "codePathTombstoneReceipt" not in cleared
+
+
+def test_recovered_receipt_projection_rejects_corrupt_tombstone_signature(tmp_path):
+    store = RadarLedger(tmp_path / "corrupt-tombstone.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path=worktree_path,
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest="signed-context",
+        )
+    )
+    corrupt_receipt = dict(tombstone_receipt) | {"signature": "corrupt-signature"}
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=reproduction_receipt["resultDigest"],
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=corrupt_receipt,
+        continuation_head_sha="6" * 40,
+        pr_followup_snapshot=snapshot,
+    )
+
+    task = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert task["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in task["allowedActions"]
+    assert task["reproductionReceipt"] is None
+
+
+def test_active_new_preparation_cannot_reuse_old_recovered_tombstone_authority(tmp_path):
+    store = RadarLedger(tmp_path / "active-preparation.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path=worktree_path,
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest="signed-context",
+        )
+    )
+    active_snapshot = _record_tombstone_preparation(
+        store,
+        wake_digest="a" * 64,
+        prepared_head_sha="b" * 40,
+    )
+
+    task = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+    assert task["prFollowup"]["wakeDigest"] == active_snapshot["wakeDigest"]
+    assert task["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in task["allowedActions"]
+    assert task["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in task
+
+
+def test_native_existing_intent_can_recover_exact_signed_tombstone_authority(tmp_path):
+    store = _task_result_tombstone_ledger(tmp_path)
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path="/tmp/worktree",
+    )
+
+    restored = store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path="/tmp/worktree",
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest="native-existing-context",
+        )
+    )
+
+    assert restored["intentRestored"] is False
+    task = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert task["taskStage"] == "IMPLEMENTATION_READY"
+    assert "edit_files" in task["allowedActions"]
+    assert task["reproductionReceipt"] == reproduction_receipt
+    assert task["codePathTombstoneReceipt"] == tombstone_receipt
+
+
+@pytest.mark.parametrize("stage", ["VALIDATION_PENDING", "FIX_READY"])
+def test_empty_ledger_context_recovery_projects_tombstone_until_new_result(
+    tmp_path,
+    stage,
+):
+    store = RadarLedger(tmp_path / f"context-continuation-{stage}.sqlite3")
+    worktree_path = str(tmp_path / f"managed-worktree-{stage}")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path=worktree_path,
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest=f"{stage.lower()}-context",
+            stage=stage,
+        )
+    )
+
+    recovered = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert recovered["taskStage"] == "IMPLEMENTATION_READY"
+    assert "edit_files" in recovered["allowedActions"]
+    assert recovered["codePathTombstoneReceipt"] == tombstone_receipt
+    assert recovered["codePathTombstoneContinuationHeadSha"] == snapshot["preparedHeadSha"]
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND'"""
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='TASK_RESULT_INGESTED'"
+            ).fetchone()[0]
+            == 0
+        )
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="new-result-without-tombstone",
+        stage=stage,
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+    superseded = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert superseded["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in superseded["allowedActions"]
+    assert "codePathTombstoneReceipt" not in superseded
+
+
+def test_empty_ledger_recovery_preserves_historical_merge_scope_with_current_tombstone(
+    tmp_path,
+):
+    from oss_pr_radar.repo_probe import attest_merge_resolution_scope
+
+    worktree_path = str(tmp_path / "managed-worktree-merge-scope")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    historical_head = str(snapshot["headSha"])
+    current_head = str(tombstone_receipt["preparedHeadSha"])
+    merge_receipt = attest_merge_resolution_scope(
+        key="a/b#1",
+        issue_url="https://github.com/a/b/issues/1",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path_fingerprint=sha256_text(str(Path(worktree_path).resolve())),
+        pr_url=str(snapshot["prUrl"]),
+        source_wake_digest="a" * 64,
+        request_result_digest="b" * 64,
+        head_sha=historical_head,
+        prepared_head_sha=historical_head,
+        base_sha="6" * 40,
+        merge_conflict_files=["present.py"],
+        authorized_resolution_files=["present.py", "split/present.py"],
+    )
+    tombstone_receipt, snapshot = _resign_recovered_tombstone(
+        reproduction_receipt=reproduction_receipt,
+        snapshot=snapshot,
+        worktree_path=worktree_path,
+        prepared_head_sha=current_head,
+        wake_digest=str(merge_receipt["authorizedWakeDigest"]),
+        checked_at="2026-08-30T04:00:00Z",
+    )
+    snapshot["evidence"] = {
+        "mergeConflict": True,
+        "baseSha": "6" * 40,
+        "mergeConflictFiles": ["present.py"],
+        "authorizedResolutionFiles": ["present.py", "split/present.py"],
+        "mergeResolutionScopeReceipt": merge_receipt,
+    }
+    context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="recovered-merge-scope-context",
+    )
+    store = RadarLedger(tmp_path / "recovered-merge-scope.sqlite3")
+
+    store.restore_task_context(context)
+    recovered = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+
+    assert recovered["headSha"] == current_head
+    assert recovered["commitSha"] == current_head
+    assert recovered["prFollowup"]["preparedHeadSha"] == current_head
+    assert recovered["codePathTombstoneReceipt"]["preparedHeadSha"] == current_head
+    assert recovered["prFollowup"]["headSha"] == historical_head
+    assert (
+        recovered["prFollowup"]["evidence"]["mergeResolutionScopeReceipt"]["preparedHeadSha"]
+        == historical_head
+    )
+
+    mismatched_merge_receipt = attest_merge_resolution_scope(
+        key="a/b#1",
+        issue_url="https://github.com/a/b/issues/1",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path_fingerprint=sha256_text(str(Path(worktree_path).resolve())),
+        pr_url=str(snapshot["prUrl"]),
+        source_wake_digest="a" * 64,
+        request_result_digest="b" * 64,
+        head_sha=historical_head,
+        prepared_head_sha=current_head,
+        base_sha="6" * 40,
+        merge_conflict_files=["present.py"],
+        authorized_resolution_files=["present.py", "split/present.py"],
+    )
+    mismatched_snapshot = json.loads(json.dumps(snapshot))
+    mismatched_snapshot["evidence"]["mergeResolutionScopeReceipt"] = mismatched_merge_receipt
+    mismatched_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=mismatched_snapshot,
+        context_digest="mismatched-merge-scope-context",
+    )
+    mismatched_store = RadarLedger(tmp_path / "mismatched-merge-scope.sqlite3")
+    mismatched_store.restore_task_context(mismatched_context)
+    with pytest.raises(LedgerError, match="resolution scope receipt is invalid"):
+        mismatched_store.task_context(
+            issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+        )
+
+
+def test_newer_context_revokes_old_tombstone_authority_and_blocks_replay(tmp_path):
+    from oss_pr_radar.managed_lifecycle import ManagedLedger
+    from oss_pr_radar.repo_probe import attest_code_path_tombstones
+
+    store = RadarLedger(tmp_path / "context-authority-revocation.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    authorized_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="authorized-context-a",
+    )
+    store.restore_task_context(
+        authorized_context,
+        source_updated_at="2026-08-30T01:00:00Z",
+    )
+
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    managed.upsert_opportunity(
+        opportunity_key="a/b#1",
+        owner="a",
+        repo="b",
+        issue_number=1,
+        issue_url="https://github.com/a/b/issues/1",
+        state="SYSTEM_PROCESSING",
+        source="test-context-authority-revocation",
+        provenance={"fixture": True},
+        metadata={
+            "selectedBaseSha": reproduction_receipt["baseSha"],
+            "codePaths": reproduction_receipt["codePaths"],
+        },
+    )
+    managed.bind_task(
+        task_id="intent-1",
+        opportunity_key="a/b#1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+        state="REPRODUCTION_REQUIRED",
+        provenance={
+            "selectedBaseSha": reproduction_receipt["baseSha"],
+            "codePaths": reproduction_receipt["codePaths"],
+            "headSha": reproduction_receipt["headSha"],
+            "commitSha": reproduction_receipt["commitSha"],
+            "resultDigest": reproduction_receipt["resultDigest"],
+        },
+    )
+    managed.transition_task_to_implementation(
+        task_id="intent-1",
+        receipt_digest=reproduction_receipt["receiptDigest"],
+        receipt=reproduction_receipt,
+    )
+
+    revoked_context = dict(authorized_context) | {
+        "contextDigest": "revoked-context-b",
+        "taskStage": "REPRODUCTION_REQUIRED",
+        "probeLevel": "UNVERIFIED",
+    }
+    for field in (
+        "reproductionReceipt",
+        "codePathTombstoneReceipt",
+        "prFollowup",
+        "resultDigest",
+        "headSha",
+        "commitSha",
+    ):
+        revoked_context.pop(field, None)
+    store.restore_task_context(
+        revoked_context,
+        source_updated_at="2026-08-30T01:01:00Z",
+    )
+
+    revoked = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert revoked["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in revoked["allowedActions"]
+    assert revoked["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in revoked
+    assert "codePathTombstoneContinuationHeadSha" not in revoked
+    with store.connect() as connection:
+        revoked_payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+        before_replay = connection.execute(
+            "SELECT event_type,dedupe_key,payload_json FROM events ORDER BY id"
+        ).fetchall()
+        latest_marker = json.loads(
+            connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()[0]
+        )
+    assert "recoveredReproductionReceipt" not in revoked_payload
+    assert latest_marker["hasContinuation"] is False
+    assert latest_marker["revokedContinuationDedupeKey"]
+
+    replay = store.restore_task_context(
+        authorized_context,
+        source_updated_at="2026-08-30T01:02:00Z",
+    )
+    assert replay["supersededContextMirror"] is True
+    with store.connect() as connection:
+        after_replay = connection.execute(
+            "SELECT event_type,dedupe_key,payload_json FROM events ORDER BY id"
+        ).fetchall()
+        replayed_payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+    assert after_replay == before_replay
+    assert replayed_payload == revoked_payload
+    still_revoked = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert still_revoked["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in still_revoked["allowedActions"]
+
+    new_snapshot = dict(snapshot) | {
+        "preparedHeadSha": "c" * 40,
+        "wakeDigest": "d" * 64,
+        "actionDigest": "new-signed-recovery-action",
+        "taskActionDigest": "new-signed-recovery-task-action",
+        "checkedAt": "2026-08-30T01:03:00Z",
+    }
+    new_tombstone_receipt = attest_code_path_tombstones(
+        source_receipt_digest=str(reproduction_receipt["receiptDigest"]),
+        base_sha=str(reproduction_receipt["baseSha"]),
+        key="a/b#1",
+        issue_url="https://github.com/a/b/issues/1",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path_fingerprint=sha256_text(str(Path(worktree_path).resolve())),
+        pr_url=str(new_snapshot["prUrl"]),
+        wake_digest=str(new_snapshot["wakeDigest"]),
+        action_digest=str(new_snapshot["actionDigest"]),
+        task_action_digest=str(new_snapshot["taskActionDigest"]),
+        checked_at=str(new_snapshot["checkedAt"]),
+        prepared_head_sha=str(new_snapshot["preparedHeadSha"]),
+        code_paths=list(reproduction_receipt["codePaths"]),
+        present_paths=["present.py"],
+        tombstone_paths=["deleted.py"],
+    )
+    new_authorized_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=new_tombstone_receipt,
+        snapshot=new_snapshot,
+        context_digest="new-authorized-context-c",
+    )
+    restored = store.restore_task_context(
+        new_authorized_context,
+        source_updated_at="2026-08-30T01:04:00Z",
+    )
+    assert restored.get("supersededContextMirror") is not True
+    reauthorized = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert reauthorized["taskStage"] == "IMPLEMENTATION_READY"
+    assert "edit_files" in reauthorized["allowedActions"]
+    assert reauthorized["reproductionReceipt"] == reproduction_receipt
+    assert reauthorized["codePathTombstoneReceipt"] == new_tombstone_receipt
+    with store.connect() as connection:
+        active_marker = json.loads(
+            connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()[0]
+        )
+        active_continuation = connection.execute(
+            """SELECT dedupe_key FROM events
+               WHERE event_type='TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND'
+               ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+    assert active_marker["hasContinuation"] is True
+    assert active_marker["continuationDedupeKey"] == active_continuation["dedupe_key"]
+
+
+def test_equal_source_time_cannot_replace_context_authority(tmp_path):
+    store = RadarLedger(tmp_path / "equal-context-authority-time.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    authorized_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="equal-time-authority-a",
+    )
+    store.restore_task_context(
+        authorized_context,
+        source_updated_at="2026-08-30T02:00:00Z",
+    )
+    conflicting_context = dict(authorized_context) | {"contextDigest": "equal-time-authority-b"}
+
+    rejected = store.restore_task_context(
+        conflicting_context,
+        source_updated_at="2026-08-30T02:00:00Z",
+    )
+
+    assert rejected["supersededContextMirror"] is True
+    context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert context["taskStage"] == "IMPLEMENTATION_READY"
+    assert context["codePathTombstoneReceipt"] == tombstone_receipt
+
+
+def test_same_context_refresh_advances_replay_watermark(tmp_path):
+    store = RadarLedger(tmp_path / "context-authority-watermark.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    authorized_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="watermark-authority-a",
+    )
+    store.restore_task_context(
+        authorized_context,
+        source_updated_at="2026-08-30T03:00:00Z",
+    )
+    refreshed = store.restore_task_context(
+        authorized_context,
+        source_updated_at="2026-08-30T03:02:00Z",
+    )
+    assert refreshed["duplicateContextMirror"] is True
+    assert refreshed["authorityWatermarkAdvanced"] is True
+
+    unseen_stale_context = dict(authorized_context) | {"contextDigest": "unseen-stale-authority-d"}
+    rejected = store.restore_task_context(
+        unseen_stale_context,
+        source_updated_at="2026-08-30T03:01:00Z",
+    )
+
+    assert rejected["supersededContextMirror"] is True
+    current = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert current["taskStage"] == "IMPLEMENTATION_READY"
+    assert current["codePathTombstoneReceipt"] == tombstone_receipt
+    with store.connect() as connection:
+        latest_marker = json.loads(
+            connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+                   ORDER BY id DESC LIMIT 1"""
+            ).fetchone()[0]
+        )
+    assert latest_marker["authorityObservedAt"] == "2026-08-30T03:02:00Z"
+    assert latest_marker["authorityTransition"] is False
+
+
+@pytest.mark.parametrize("record_new_preparation", [False, True])
+def test_fresh_context_authority_cannot_resurrect_older_preparation(
+    tmp_path,
+    record_new_preparation,
+):
+    store = _task_result_tombstone_ledger(tmp_path)
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path="/tmp/worktree",
+    )
+    _record_tombstone_preparation(
+        store,
+        wake_digest=snapshot["wakeDigest"],
+        prepared_head_sha=snapshot["preparedHeadSha"],
+    )
+    authorized_context = _recovered_tombstone_context(
+        worktree_path="/tmp/worktree",
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="preparation-authority-a",
+    )
+    store.restore_task_context(
+        authorized_context,
+        source_updated_at="2026-08-30T04:00:00Z",
+    )
+    revoked_context = dict(authorized_context) | {
+        "contextDigest": "preparation-revocation-b",
+        "taskStage": "REPRODUCTION_REQUIRED",
+        "probeLevel": "UNVERIFIED",
+    }
+    for field in (
+        "reproductionReceipt",
+        "codePathTombstoneReceipt",
+        "prFollowup",
+        "resultDigest",
+        "headSha",
+        "commitSha",
+    ):
+        revoked_context.pop(field, None)
+    store.restore_task_context(
+        revoked_context,
+        source_updated_at="2026-08-30T04:01:00Z",
+    )
+    new_tombstone_receipt, new_snapshot = _resign_recovered_tombstone(
+        reproduction_receipt=reproduction_receipt,
+        snapshot=snapshot,
+        worktree_path="/tmp/worktree",
+        prepared_head_sha="c" * 40,
+        wake_digest="d" * 64,
+        checked_at="2026-08-30T04:02:00Z",
+    )
+    if record_new_preparation:
+        _record_tombstone_preparation(
+            store,
+            wake_digest=new_snapshot["wakeDigest"],
+            prepared_head_sha=new_snapshot["preparedHeadSha"],
+        )
+    fresh_context = _recovered_tombstone_context(
+        worktree_path="/tmp/worktree",
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=new_tombstone_receipt,
+        snapshot=new_snapshot,
+        context_digest="preparation-authority-c",
+    )
+    store.restore_task_context(
+        fresh_context,
+        source_updated_at="2026-08-30T04:03:00Z",
+    )
+
+    current = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert current["taskStage"] == "IMPLEMENTATION_READY"
+    assert "edit_files" in current["allowedActions"]
+    assert current["prFollowup"]["wakeDigest"] == new_snapshot["wakeDigest"]
+    assert current["codePathTombstoneReceipt"] == new_tombstone_receipt
+
+
+@pytest.mark.parametrize("old_result_has_continuation", [False, True])
+@pytest.mark.parametrize(
+    "revocation_offset_seconds",
+    [0, 10],
+    ids=["equal-time-fails-closed", "newer-revocation"],
+)
+def test_newer_context_revocation_beats_older_task_result_authority(
+    tmp_path,
+    old_result_has_continuation,
+    revocation_offset_seconds,
+):
+    store = RadarLedger(tmp_path / "context-result-authority.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    authorized_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="result-authority-a",
+    )
+    store.restore_task_context(authorized_context)
+    _bind_managed_reproduction_receipt(
+        store,
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+    )
+    old_result_digest = "a" * 64 if old_result_has_continuation else "b" * 64
+    old_result_args: dict[str, Any] = {}
+    if old_result_has_continuation:
+        old_result_args = {
+            "followup_wake_digest": snapshot["wakeDigest"],
+            "code_path_tombstone_receipt": tombstone_receipt,
+            "continuation_head_sha": snapshot["preparedHeadSha"],
+            "pr_followup_snapshot": snapshot,
+        }
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=old_result_digest,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        **old_result_args,
+    )
+    with store.connect() as connection:
+        old_result_created_at = parse_time(
+            connection.execute(
+                """SELECT created_at FROM events
+                   WHERE event_type='TASK_RESULT_INGESTED' AND dedupe_key=?""",
+                (old_result_digest,),
+            ).fetchone()[0]
+        )
+    revocation_time = iso_z(old_result_created_at + timedelta(seconds=revocation_offset_seconds))
+    revoked_context = dict(authorized_context) | {
+        "contextDigest": "result-revocation-b",
+        # These unsigned projection fields must not preserve authority after
+        # the signed receipt/continuation has disappeared.
+        "taskStage": "IMPLEMENTATION_READY",
+        "probeLevel": "REPRODUCED_VALIDATED",
+    }
+    for field in (
+        "reproductionReceipt",
+        "codePathTombstoneReceipt",
+        "prFollowup",
+        "resultDigest",
+        "headSha",
+        "commitSha",
+    ):
+        revoked_context.pop(field, None)
+    store.restore_task_context(
+        revoked_context,
+        source_updated_at=revocation_time,
+    )
+
+    revoked = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert revoked["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in revoked["allowedActions"]
+    assert revoked["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in revoked
+
+    fresh_result_digest = "c" * 64
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=fresh_result_digest,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=tombstone_receipt,
+        continuation_head_sha=snapshot["preparedHeadSha"],
+        pr_followup_snapshot=snapshot,
+    )
+    fresh_result_time = iso_z(parse_time(revocation_time) + timedelta(seconds=10))
+    with store.transaction() as connection:
+        connection.execute(
+            """UPDATE events SET created_at=?
+               WHERE event_type='TASK_RESULT_INGESTED' AND dedupe_key=?""",
+            (fresh_result_time, fresh_result_digest),
+        )
+        marker_row = connection.execute(
+            """SELECT id,payload_json FROM events
+               WHERE event_type='TASK_RESULT_AUTHORITY_BOUND'
+                 AND json_extract(payload_json,'$.resultDigest')=?""",
+            (fresh_result_digest,),
+        ).fetchone()
+        marker = json.loads(marker_row["payload_json"])
+        marker["authorityObservedAt"] = fresh_result_time
+        connection.execute(
+            """UPDATE events SET created_at=?,dedupe_key=?,payload_json=? WHERE id=?""",
+            (
+                fresh_result_time,
+                sha256_json(marker),
+                json.dumps(marker, sort_keys=True, separators=(",", ":")),
+                marker_row["id"],
+            ),
+        )
+
+    reauthorized = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert reauthorized["taskStage"] == "IMPLEMENTATION_READY"
+    assert "edit_files" in reauthorized["allowedActions"]
+    assert reauthorized["codePathTombstoneReceipt"] == tombstone_receipt
+
+
+@pytest.mark.parametrize("authority_history", ["revoked", "legacy-unmarked"])
+def test_fresh_signed_context_preserves_prior_result_revocation_watermark(
+    tmp_path,
+    authority_history,
+):
+    store = RadarLedger(tmp_path / f"fresh-context-{authority_history}.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    authorized_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="result-lineage-authority-a",
+    )
+    store.restore_task_context(authorized_context)
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="1" * 64,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=tombstone_receipt,
+        continuation_head_sha=snapshot["preparedHeadSha"],
+        pr_followup_snapshot=snapshot,
+    )
+    with store.connect() as connection:
+        result_created_at = parse_time(
+            connection.execute(
+                """SELECT created_at FROM events
+                   WHERE event_type='TASK_RESULT_INGESTED' AND dedupe_key=?""",
+                ("1" * 64,),
+            ).fetchone()[0]
+        )
+
+    if authority_history == "revoked":
+        revoked_context = dict(authorized_context) | {
+            "contextDigest": "result-lineage-revocation-b",
+            "taskStage": "REPRODUCTION_REQUIRED",
+            "probeLevel": "UNVERIFIED",
+        }
+        for field in (
+            "reproductionReceipt",
+            "codePathTombstoneReceipt",
+            "prFollowup",
+            "resultDigest",
+            "headSha",
+            "commitSha",
+        ):
+            revoked_context.pop(field, None)
+        store.restore_task_context(
+            revoked_context,
+            source_updated_at=iso_z(result_created_at + timedelta(seconds=10)),
+        )
+    else:
+        with store.transaction() as connection:
+            connection.execute(
+                """DELETE FROM events WHERE event_type IN (
+                     'TASK_CONTEXT_AUTHORITY_BOUND',
+                     'TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND',
+                     'TASK_RESULT_AUTHORITY_BOUND'
+                   )"""
+            )
+
+    new_tombstone_receipt, new_snapshot = _resign_recovered_tombstone(
+        reproduction_receipt=reproduction_receipt,
+        snapshot=snapshot,
+        worktree_path=worktree_path,
+        prepared_head_sha="2" * 40,
+        wake_digest="3" * 64,
+        checked_at=iso_z(result_created_at + timedelta(seconds=15)),
+    )
+    fresh_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=new_tombstone_receipt,
+        snapshot=new_snapshot,
+        context_digest="result-lineage-authority-c",
+    )
+    store.restore_task_context(
+        fresh_context,
+        source_updated_at=iso_z(result_created_at + timedelta(seconds=20)),
+    )
+
+    current = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert current["taskStage"] == "IMPLEMENTATION_READY"
+    assert "edit_files" in current["allowedActions"]
+    assert current["prFollowup"]["wakeDigest"] == new_snapshot["wakeDigest"]
+    assert current["codePathTombstoneReceipt"] == new_tombstone_receipt
+    assert current["codePathTombstoneContinuationHeadSha"] == new_snapshot["preparedHeadSha"]
+
+
+def test_legacy_unmarked_context_continuation_fails_closed_even_with_task_result(tmp_path):
+    store = RadarLedger(tmp_path / "legacy-unmarked-context-authority.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    legacy_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="legacy-unmarked-authority",
+    )
+    store.restore_task_context(legacy_context)
+    _bind_managed_reproduction_receipt(
+        store,
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+    )
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="e" * 64,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=tombstone_receipt,
+        continuation_head_sha=snapshot["preparedHeadSha"],
+        pr_followup_snapshot=snapshot,
+    )
+    with store.transaction() as connection:
+        connection.execute(
+            """DELETE FROM events WHERE event_type IN (
+                 'TASK_CONTEXT_AUTHORITY_BOUND',
+                 'TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND',
+                 'TASK_RESULT_AUTHORITY_BOUND'
+               )"""
+        )
+
+    current = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert current["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in current["allowedActions"]
+    assert current["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in current
+    with store.connect() as connection:
+        events_before_result_replay = connection.execute("SELECT COUNT(*) FROM events").fetchone()[
+            0
+        ]
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="e" * 64,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=tombstone_receipt,
+        continuation_head_sha=snapshot["preparedHeadSha"],
+        pr_followup_snapshot=snapshot,
+    )
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == (
+            events_before_result_replay
+        )
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='TASK_RESULT_AUTHORITY_BOUND'"""
+            ).fetchone()[0]
+            == 0
+        )
+        payload_before_replay = connection.execute(
+            "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()[0]
+        events_before_replay = connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+
+    replay = store.restore_task_context(
+        legacy_context,
+        source_updated_at=iso_z(datetime.now(UTC) + timedelta(hours=1)),
+    )
+
+    assert replay["supersededContextMirror"] is True
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+            == payload_before_replay
+        )
+        assert connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == (
+            events_before_replay
+        )
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='TASK_CONTEXT_AUTHORITY_BOUND'"""
+            ).fetchone()[0]
+            == 0
+        )
+    still_closed = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert still_closed["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in still_closed["allowedActions"]
+
+
+def test_existing_result_cannot_gain_tombstone_authority_by_replay(tmp_path):
+    store = RadarLedger(tmp_path / "result-continuation-replay.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    authorized_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="result-continuation-replay-a",
+    )
+    store.restore_task_context(authorized_context)
+    _bind_managed_reproduction_receipt(
+        store,
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+    )
+    result_digest = "f" * 64
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=result_digest,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+
+    result_only = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert result_only["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in result_only["allowedActions"]
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=result_digest,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=tombstone_receipt,
+        continuation_head_sha=snapshot["preparedHeadSha"],
+        pr_followup_snapshot=snapshot,
+    )
+
+    replayed = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert replayed["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in replayed["allowedActions"]
+    assert "codePathTombstoneReceipt" not in replayed
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE event_type='TASK_RESULT_AUTHORITY_BOUND'"""
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_late_context_recovery_cannot_override_existing_result_without_tombstone(tmp_path):
+    store = RadarLedger(tmp_path / "newer-context-continuation.sqlite3")
+    worktree_path = str(tmp_path / "managed-worktree")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=worktree_path,
+    )
+    legacy_context = _recovered_tombstone_context(
+        worktree_path=worktree_path,
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="legacy-context",
+        stage="VALIDATION_PENDING",
+    )
+    legacy_context.pop("reproductionReceipt")
+    legacy_context.pop("codePathTombstoneReceipt")
+    legacy_context.pop("prFollowup")
+    store.restore_task_context(legacy_context)
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="older-result-without-tombstone",
+        stage="VALIDATION_PENDING",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+
+    store.restore_task_context(
+        _recovered_tombstone_context(
+            worktree_path=worktree_path,
+            reproduction_receipt=reproduction_receipt,
+            tombstone_receipt=tombstone_receipt,
+            snapshot=snapshot,
+            context_digest="newer-context",
+            stage="VALIDATION_PENDING",
+        )
+    )
+
+    recovered = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )
+    assert recovered["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert "edit_files" not in recovered["allowedActions"]
+    assert recovered["reproductionReceipt"] is None
+    assert "codePathTombstoneReceipt" not in recovered
+    assert "codePathTombstoneContinuationHeadSha" not in recovered
+
+
+def test_validation_followup_rollover_is_bound_to_current_intent(tmp_path):
+    store = RadarLedger(tmp_path / "validation-binding-rollover.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="shared-thread",
+        project_id="project-1",
+        worktree_path="/tmp/validation-old",
+    )
+    store.record_stage("a/b#1", "VALIDATION_PENDING")
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="shared-thread",
+        worktree_path="/tmp/validation-old",
+        intent_id="intent-1",
+        result_digest="old-result",
+        missing=["relevant_tests_green"],
+    )
+    with store.connect() as connection:
+        connection.execute("UPDATE intents SET status='SUPERSEDED' WHERE intent_id='intent-1'")
+
+    store.enqueue(
+        intent(
+            intentId="intent-2",
+            decisionDigest="decision-2",
+            issueUpdatedAt=iso_z(datetime.now(UTC) + timedelta(minutes=1)),
+        )
+    )
+    store.claim("intent-2", "worker")
+    store.commit_dispatch(
+        "intent-2",
+        owner="worker",
+        thread_id="shared-thread",
+        project_id="project-1",
+        worktree_path="/tmp/validation-new",
+    )
+    store.record_stage(
+        "a/b#1",
+        "VALIDATION_PENDING",
+        intent_id="intent-2",
+        thread_id="shared-thread",
+        worktree_path="/tmp/validation-new",
+    )
+    store.record_validation_deferred(
+        "a/b#1",
+        thread_id="shared-thread",
+        worktree_path="/tmp/validation-new",
+        intent_id="intent-2",
+        result_digest="new-result",
+        missing=["independent_review_passed"],
+    )
+
+    candidates = store.validation_followup_candidates()
+    assert [(item["intentId"], item["worktreePath"]) for item in candidates] == [
+        ("intent-2", "/tmp/validation-new")
+    ]
+    with pytest.raises(LedgerError):
+        store.reserve_validation_followup(
+            thread_id="shared-thread",
+            result_digest="new-result",
+            intent_id="intent-1",
+            worktree_path="/tmp/validation-old",
+        )
+    reservation = store.reserve_validation_followup(
+        thread_id="shared-thread",
+        result_digest="new-result",
+        intent_id="intent-2",
+        worktree_path="/tmp/validation-new",
+    )
+    assert reservation["intentId"] == "intent-2"
+    store.commit_validation_followup(
+        thread_id="shared-thread",
+        result_digest="new-result",
+        reservation_digest=reservation["reservationDigest"],
+        intent_id="intent-2",
+        worktree_path="/tmp/validation-new",
+    )
+    with store.connect() as connection:
+        sent_payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT'"
+            ).fetchone()[0]
+        )
+    assert sent_payload["intentId"] == "intent-2"
+
+
+@pytest.mark.parametrize("legacy_preparation", [False, True])
+def test_task_context_preparation_never_crosses_shared_thread_intents(tmp_path, legacy_preparation):
+    """A preparation from an older generation must not wake the replacement task."""
+
+    store = RadarLedger(tmp_path / "context-preparation-rollover.sqlite3")
+    store.enqueue(intent(intentId="intent-old", decisionDigest="decision-old"))
+    store.claim("intent-old", "worker")
+    store.commit_dispatch(
+        "intent-old",
+        owner="worker",
+        thread_id="shared-thread",
+        project_id="project-1",
+        worktree_path="/tmp/context-preparation-old",
+    )
+    with store.connect() as connection:
+        connection.execute("UPDATE intents SET status='SUPERSEDED' WHERE intent_id='intent-old'")
+    store.enqueue(intent(intentId="intent-new", decisionDigest="decision-new"))
+    store.claim("intent-new", "worker")
+    store.commit_dispatch(
+        "intent-new",
+        owner="worker",
+        thread_id="shared-thread",
+        project_id="project-1",
+        worktree_path="/tmp/context-preparation-new",
+    )
+
+    wake_digest = "a" * 64
+    now = iso_z(datetime.now(UTC))
+    snapshot = {
+        "prUrl": "https://github.com/a/b/pull/9",
+        "headSha": "b" * 40,
+        "preparedHeadSha": "c" * 40,
+        "actionDigest": "old-action",
+        "taskActionDigest": "old-task-action",
+        "wakeDigest": wake_digest,
+        "actions": ["old preparation"],
+        "evidence": {},
+        "checkedAt": now,
+    }
+    payload = {"threadId": "shared-thread", "snapshot": snapshot}
+    if not legacy_preparation:
+        payload.update(
+            {
+                "intentId": "intent-old",
+                "worktreePath": "/tmp/context-preparation-old",
+            }
+        )
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "PR_FOLLOWUP_PREPARATION_BOUND",
+            wake_digest,
+            payload,
+            now,
+        )
+
+    current = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        intent_id="intent-new",
+        thread_id="shared-thread",
+        worktree_path="/tmp/context-preparation-new",
+    )
+
+    assert current is not None
+    assert current["intentId"] == "intent-new"
+    assert current["prFollowup"] is None
+
+
+def test_task_context_result_projection_ignores_late_legacy_result_from_old_intent(tmp_path):
+    """A late thread-only result cannot hide the current intent's tombstone round."""
+
+    store = RadarLedger(tmp_path / "context-result-rollover.sqlite3")
+    reproduction_receipt, tombstone_receipt, snapshot = _signed_recovered_tombstone_bundle(
+        tmp_path,
+        task_id="intent-new",
+        thread_id="shared-thread",
+        worktree_path="/tmp/context-result-new",
+    )
+    current_context = _recovered_tombstone_context(
+        worktree_path="/tmp/context-result-new",
+        reproduction_receipt=reproduction_receipt,
+        tombstone_receipt=tombstone_receipt,
+        snapshot=snapshot,
+        context_digest="context-result-current",
+    )
+    current_context.update({"intentId": "intent-new", "threadId": "shared-thread"})
+    store.restore_task_context(current_context)
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-old",
+        thread_id="shared-thread",
+        worktree_path="/tmp/context-result-old",
+        status="SUPERSEDED",
+    )
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="d" * 64,
+        stage="PR_OPEN",
+        task_id="intent-new",
+        thread_id="shared-thread",
+        followup_wake_digest=snapshot["wakeDigest"],
+        code_path_tombstone_receipt=tombstone_receipt,
+        continuation_head_sha=snapshot["preparedHeadSha"],
+        pr_followup_snapshot=snapshot,
+    )
+    # This is the shape emitted by the pre-identity release.  It has the same
+    # thread but no immutable task id, so it is ambiguous after rollover.
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "TASK_RESULT_INGESTED",
+            "e" * 64,
+            {
+                "stage": "PR_OPEN",
+                "resultDigest": "e" * 64,
+                "threadId": "shared-thread",
+            },
+            iso_z(datetime.now(UTC) + timedelta(seconds=1)),
+        )
+
+    current = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        intent_id="intent-new",
+        thread_id="shared-thread",
+        worktree_path="/tmp/context-result-new",
+    )
+
+    assert current is not None
+    assert current["taskStage"] == "IMPLEMENTATION_READY"
+    assert current["codePathTombstoneReceipt"] == tombstone_receipt
+
+
+def test_title_commit_cannot_cross_shared_thread_intents(tmp_path):
+    store = RadarLedger(tmp_path / "title-binding-rollover.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="shared-thread",
+        project_id="project-1",
+        worktree_path="/tmp/title-old",
+        title_time="09-01 10:00",
+    )
+    store.record_stage("a/b#1", "AUDIT_NO_GO", reason="OLD")
+    with store.connect() as connection:
+        connection.execute("UPDATE intents SET status='SUPERSEDED' WHERE intent_id='intent-1'")
+    store.enqueue(
+        intent(
+            intentId="intent-2",
+            decisionDigest="decision-2",
+            issueUpdatedAt=iso_z(datetime.now(UTC) + timedelta(minutes=1)),
+        )
+    )
+    store.claim("intent-2", "worker")
+    store.commit_dispatch(
+        "intent-2",
+        owner="worker",
+        thread_id="shared-thread",
+        project_id="project-1",
+        worktree_path="/tmp/title-new",
+        title_time="09-01 10:01",
+    )
+    store.record_stage(
+        "a/b#1",
+        "FIX_READY",
+        evidence={},
+        intent_id="intent-2",
+        thread_id="shared-thread",
+        worktree_path="/tmp/title-new",
+    )
+    candidates = store.title_candidates()
+    assert [(item["intentId"], item["worktreePath"]) for item in candidates] == [
+        ("intent-2", "/tmp/title-new")
+    ]
+    with pytest.raises(LedgerError):
+        store.commit_title(
+            thread_id="shared-thread",
+            state="FIX_READY",
+            nonce=candidates[0]["titleNonce"],
+            intent_id="intent-1",
+            worktree_path="/tmp/title-old",
+        )
+    store.commit_title(
+        thread_id="shared-thread",
+        state="FIX_READY",
+        nonce=candidates[0]["titleNonce"],
+        intent_id="intent-2",
+        worktree_path="/tmp/title-new",
+    )
+    with store.connect() as connection:
+        states = connection.execute(
+            "SELECT intent_id,title_synced_state FROM intents ORDER BY intent_id"
+        ).fetchall()
+    assert [(row["intent_id"], row["title_synced_state"]) for row in states] == [
+        ("intent-1", "GO"),
+        ("intent-2", "FIX_READY"),
+    ]
+
+
+def test_record_stage_requires_exact_identity_after_intent_rollover(tmp_path):
+    store = RadarLedger(tmp_path / "record-stage-binding.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="shared-thread",
+        project_id="project-1",
+        worktree_path="/tmp/stage-old",
+    )
+    store.record_stage("a/b#1", "AUDIT_PASS")
+    with store.connect() as connection:
+        connection.execute("UPDATE intents SET status='SUPERSEDED' WHERE intent_id='intent-1'")
+    store.enqueue(
+        intent(
+            intentId="intent-2",
+            decisionDigest="decision-2",
+            issueUpdatedAt=iso_z(datetime.now(UTC) + timedelta(minutes=1)),
+        )
+    )
+    store.claim("intent-2", "worker")
+    store.commit_dispatch(
+        "intent-2",
+        owner="worker",
+        thread_id="shared-thread",
+        project_id="project-1",
+        worktree_path="/tmp/stage-new",
+    )
+
+    with pytest.raises(LedgerError, match="identity is required"):
+        store.record_stage("a/b#1", "FIX_READY", evidence={})
+
+    store.record_stage(
+        "a/b#1",
+        "FIX_READY",
+        evidence={},
+        intent_id="intent-2",
+        thread_id="shared-thread",
+        worktree_path="/tmp/stage-new",
+    )
+    with store.connect() as connection:
+        statuses = connection.execute(
+            "SELECT intent_id,status FROM intents ORDER BY intent_id"
+        ).fetchall()
+    assert [(row["intent_id"], row["status"]) for row in statuses] == [
+        ("intent-1", "SUPERSEDED"),
+        ("intent-2", "COMPLETED"),
+    ]
+
+
+def test_restore_commit_requires_identity_when_thread_is_shared(tmp_path):
+    store = RadarLedger(tmp_path / "restore-binding-shared-thread.sqlite3")
+    for task_intent, key, repo, number, path in (
+        ("intent-1", "a/b#1", "a/b", 1, "/tmp/restore-one"),
+        ("intent-2", "c/d#2", "c/d", 2, "/tmp/restore-two"),
+    ):
+        store.enqueue(
+            intent(
+                intentId=task_intent,
+                key=key,
+                repo=repo,
+                issueNumber=number,
+                issueUrl=f"https://github.com/{repo}/issues/{number}",
+                decisionDigest=f"decision-{task_intent}",
+            )
+        )
+        store.claim(task_intent, "worker")
+        store.commit_dispatch(
+            task_intent,
+            owner="worker",
+            thread_id="shared-restore-thread",
+            project_id="project-1",
+            worktree_path=path,
+        )
+        store.record_stage(key, "PR_OPEN", evidence={"prUrl": f"https://example.test/{number}"})
+        with store.connect() as connection:
+            store._event(
+                connection,
+                key,
+                "THREAD_ARCHIVED",
+                f"archive-{task_intent}",
+                {
+                    "intentId": task_intent,
+                    "threadId": "shared-restore-thread",
+                    "worktreePath": path,
+                },
+                iso_z(datetime.now(UTC)),
+            )
+
+    bindings = store.restore_candidates()
+    assert {item["intentId"] for item in bindings} == {"intent-1", "intent-2"}
+    with pytest.raises(LedgerError):
+        store.commit_restore(
+            thread_id="shared-restore-thread",
+            nonce=bindings[0]["restoreNonce"],
+        )
+    target = next(item for item in bindings if item["intentId"] == "intent-1")
+    store.commit_restore(
+        thread_id="shared-restore-thread",
+        nonce=target["restoreNonce"],
+        intent_id=target["intentId"],
+        worktree_path=target["worktreePath"],
+    )
+    with store.connect() as connection:
+        payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='THREAD_RESTORED'"
+            ).fetchone()[0]
+        )
+    assert payload["intentId"] == "intent-1"
+
+
+def test_acknowledged_recovery_stays_bound_after_intent_rollover(tmp_path):
+    """A newer follow-up on the same issue/thread must not steal an old parked recovery."""
+
+    store = RadarLedger(tmp_path / "recovery-binding-rollover.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="shared-recovery-thread",
+        project_id="project-1",
+        worktree_path="/tmp/recovery-old",
+    )
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "IMPLEMENTATION_FOLLOWUP_SENT",
+            "old-result",
+            {
+                "intentId": "intent-1",
+                "threadId": "shared-recovery-thread",
+                "worktreePath": "/tmp/recovery-old",
+                "resultDigest": "old-result",
+                "attemptDigest": "old-result",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+    old_candidate = next(
+        item
+        for item in store.recovery_candidates(min_age_minutes=0)
+        if item["intentId"] == "intent-1"
+    )
+    store.reserve_recovery(thread_id="shared-recovery-thread", nonce=old_candidate["recoveryNonce"])
+    store.commit_recovery(thread_id="shared-recovery-thread", nonce=old_candidate["recoveryNonce"])
+    store.exhaust_recovery(thread_id="shared-recovery-thread", nonce=old_candidate["recoveryNonce"])
+    store.acknowledge_exhausted_recovery(
+        thread_id="shared-recovery-thread",
+        nonce=old_candidate["recoveryNonce"],
+        reason="OLD_OPERATOR_REVIEW",
+        intent_id="intent-1",
+        worktree_path="/tmp/recovery-old",
+    )
+    with store.connect() as connection:
+        connection.execute("UPDATE intents SET status='SUPERSEDED' WHERE intent_id='intent-1'")
+
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="shared-recovery-thread",
+        worktree_path="/tmp/recovery-new",
+        result_receipt_digest="new-receipt",
+    )
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "IMPLEMENTATION_FOLLOWUP_SENT",
+            "new-result",
+            {
+                "intentId": "intent-2",
+                "threadId": "shared-recovery-thread",
+                "worktreePath": "/tmp/recovery-new",
+                "resultDigest": "new-result",
+                "attemptDigest": "new-result",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+
+    parked = store.acknowledged_exhausted_recoveries()
+    assert [
+        (item["intentId"], item["threadId"], item["worktreePath"], item["followupDigest"])
+        for item in parked
+    ] == [("intent-1", "shared-recovery-thread", "/tmp/recovery-old", "old-result")]
+
+    with pytest.raises(LedgerError, match="parked exhausted recovery not found"):
+        store.rearm_acknowledged_recovery(
+            thread_id="shared-recovery-thread",
+            nonce=old_candidate["recoveryNonce"],
+            reason="WRONG_INTENT_ATTEMPT",
+            intent_id="intent-2",
+            worktree_path="/tmp/recovery-new",
+        )
+    with pytest.raises(LedgerError, match="no longer active"):
+        store.rearm_acknowledged_recovery(
+            thread_id="shared-recovery-thread",
+            nonce=old_candidate["recoveryNonce"],
+            reason="OLD_WORKTREE_RESTORED",
+            intent_id="intent-1",
+            worktree_path="/tmp/recovery-old",
+        )
+    # The historical parked recovery remains visible for an explicit operator
+    # migration; it must not report a successful rearm that cannot be queued.
+    assert [item["intentId"] for item in store.acknowledged_exhausted_recoveries()] == ["intent-1"]
+
+
+def test_rearm_idempotency_keeps_exact_intent_after_shared_thread_rollover(tmp_path):
+    """A repeated rearm must return the original parked intent, never a newer one."""
+
+    store = RadarLedger(tmp_path / "recovery-rearm-idempotency.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="shared-rearm-thread",
+        project_id="project-1",
+        worktree_path="/tmp/rearm-old",
+    )
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "IMPLEMENTATION_FOLLOWUP_SENT",
+            "rearm-old-result",
+            {
+                "intentId": "intent-1",
+                "threadId": "shared-rearm-thread",
+                "worktreePath": "/tmp/rearm-old",
+                "resultDigest": "rearm-old-result",
+                "attemptDigest": "rearm-old-result",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+    old_candidate = next(
+        item
+        for item in store.recovery_candidates(min_age_minutes=0)
+        if item["intentId"] == "intent-1"
+    )
+    store.reserve_recovery(thread_id="shared-rearm-thread", nonce=old_candidate["recoveryNonce"])
+    store.commit_recovery(thread_id="shared-rearm-thread", nonce=old_candidate["recoveryNonce"])
+    store.exhaust_recovery(thread_id="shared-rearm-thread", nonce=old_candidate["recoveryNonce"])
+    store.acknowledge_exhausted_recovery(
+        thread_id="shared-rearm-thread",
+        nonce=old_candidate["recoveryNonce"],
+        reason="OLD_OPERATOR_REVIEW",
+        intent_id="intent-1",
+        worktree_path="/tmp/rearm-old",
+    )
+    first = store.rearm_acknowledged_recovery(
+        thread_id="shared-rearm-thread",
+        nonce=old_candidate["recoveryNonce"],
+        reason="OLD_ENVIRONMENT_FIXED",
+        intent_id="intent-1",
+        worktree_path="/tmp/rearm-old",
+    )
+    assert first["intentId"] == "intent-1"
+
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="shared-rearm-thread",
+        worktree_path="/tmp/rearm-new",
+        result_receipt_digest="new-receipt",
+    )
+    repeated = store.rearm_acknowledged_recovery(
+        thread_id="shared-rearm-thread",
+        nonce=old_candidate["recoveryNonce"],
+        reason="OLD_ENVIRONMENT_FIXED",
+        intent_id="intent-1",
+        worktree_path="/tmp/rearm-old",
+    )
+    assert repeated["alreadyRearmed"] is True
+    assert (repeated["intentId"], repeated["worktreePath"]) == (
+        "intent-1",
+        "/tmp/rearm-old",
+    )
+
+
+@pytest.mark.parametrize("completion", ["direct", "effect"])
+def test_publication_completion_updates_only_request_intent(tmp_path, completion):
+    """A publication receipt must not complete a newer intent on the same key."""
+
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url=args["issue_url"],
+        commit_sha=args["commit_sha"],
+        branch=args["branch"],
+        evidence={"verified": True},
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="thread-new",
+        worktree_path="/tmp/publication-new",
+    )
+
+    pr_url = "https://github.com/a/b/pull/42"
+    if completion == "direct":
+        store.consume_publication_permit(permit["permit_id"], pr_url)
+    else:
+        effect = store.publication_effect(
+            permit_id=permit["permit_id"],
+            action="create_pr",
+            request_digest="publication-completion-binding",
+        )
+        store.succeed_pull_request_effect(
+            effect_id=effect["effect_id"],
+            permit_id=permit["permit_id"],
+            pr_url=pr_url,
+            result={"ok": True, "created": True, "prUrl": pr_url},
+        )
+
+    with store.connect() as connection:
+        statuses = connection.execute(
+            "SELECT intent_id,status FROM intents ORDER BY intent_id"
+        ).fetchall()
+        event = connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='PR_OPEN' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert [(row["intent_id"], row["status"]) for row in statuses] == [
+        ("intent-1", "COMPLETED"),
+        ("intent-2", "DISPATCHED"),
+    ]
+    payload = json.loads(event["payload_json"])
+    assert (payload["intentId"], payload["threadId"]) == ("intent-1", "thread-1")
+
+
+def test_record_stage_old_intent_cannot_overwrite_current_projection(tmp_path):
+    """A late lifecycle result from a replaced task is diagnostic only."""
+
+    store = RadarLedger(tmp_path / "stale-stage-projection.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="shared-stage-thread",
+        project_id="project-1",
+        worktree_path="/tmp/stage-old",
+    )
+    with store.connect() as connection:
+        connection.execute("UPDATE intents SET status='SUPERSEDED' WHERE intent_id='intent-1'")
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="shared-stage-thread",
+        worktree_path="/tmp/stage-new",
+    )
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE opportunities SET stage='DISPATCHED',terminal_reason=NULL WHERE key='a/b#1'"
+        )
+
+    store.record_stage(
+        "a/b#1",
+        "AUDIT_NO_GO",
+        reason="LATE_OLD_RESULT",
+        dedupe_key="late-old-stage",
+        intent_id="intent-1",
+        thread_id="shared-stage-thread",
+        worktree_path="/tmp/stage-old",
+    )
+
+    with store.connect() as connection:
+        opportunity = connection.execute(
+            "SELECT stage,terminal_reason FROM opportunities WHERE key='a/b#1'"
+        ).fetchone()
+        ignored = connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='STALE_STAGE_IGNORED'"
+        ).fetchone()
+    assert dict(opportunity) == {"stage": "DISPATCHED", "terminal_reason": None}
+    assert ignored is not None
+    assert json.loads(ignored["payload_json"])["currentIntentId"] == "intent-2"
+
+
+def test_preserved_stage_event_carries_bound_stage_evidence(tmp_path):
+    store = RadarLedger(tmp_path / "preserved-stage-evidence.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="stage-evidence-thread",
+        project_id="project-1",
+        worktree_path="/tmp/stage-evidence",
+    )
+    store.record_stage(
+        "a/b#1",
+        "PR_OPEN",
+        evidence={"prUrl": "https://example.test/pr/1"},
+        intent_id="intent-1",
+        thread_id="stage-evidence-thread",
+        worktree_path="/tmp/stage-evidence",
+    )
+    store.record_stage(
+        "a/b#1",
+        "VALIDATION_PENDING",
+        evidence={"missing": ["relevant_tests_green"]},
+        dedupe_key="stage-evidence-validation",
+        intent_id="intent-1",
+        thread_id="stage-evidence-thread",
+        worktree_path="/tmp/stage-evidence",
+    )
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT payload_json FROM events WHERE event_type='POST_PUBLICATION_STAGE_PRESERVED'"
+        ).fetchone()
+    payload = json.loads(row["payload_json"])
+    assert payload["intentId"] == "intent-1"
+    assert payload["evidence"]["intentId"] == "intent-1"
+    assert payload["evidence"]["worktreePath"] == "/tmp/stage-evidence"
+
+
+def test_reset_dispatch_requires_exact_binding_for_shared_thread(tmp_path):
+    store = RadarLedger(tmp_path / "retry-binding.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="shared-retry-thread",
+        project_id="project-1",
+        worktree_path="/tmp/retry-old",
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="shared-retry-thread",
+        worktree_path="/tmp/retry-new",
+    )
+    with pytest.raises(LedgerError, match="ambiguous"):
+        store.reset_dispatch_for_retry(
+            thread_id="shared-retry-thread", reason="INVALID_EXECUTION_ENVIRONMENT"
+        )
+
+    retried = store.reset_dispatch_for_retry(
+        thread_id="shared-retry-thread",
+        reason="INVALID_EXECUTION_ENVIRONMENT",
+        intent_id="intent-1",
+        worktree_path="/tmp/retry-old",
+    )
+    assert retried["intentId"] == "intent-1"
+    with store.connect() as connection:
+        statuses = connection.execute(
+            "SELECT intent_id,status FROM intents ORDER BY intent_id"
+        ).fetchall()
+    assert [(row["intent_id"], row["status"]) for row in statuses] == [
+        ("intent-1", "PENDING"),
+        ("intent-2", "DISPATCHED"),
+    ]
+
+
+def test_same_digest_legacy_result_cannot_be_reused_after_rollover(tmp_path):
+    store = RadarLedger(tmp_path / "same-digest-rollover.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="digest-old-thread",
+        project_id="project-1",
+        worktree_path="/tmp/digest-old",
+    )
+    store.record_task_result_ingested("a/b#1", digest="same-digest", stage="FIX_READY")
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="digest-new-thread",
+        worktree_path="/tmp/digest-new",
+    )
+    with pytest.raises(LedgerError, match="ambiguous"):
+        store.record_task_result_ingested(
+            "a/b#1",
+            digest="same-digest",
+            stage="FIX_READY",
+            task_id="intent-2",
+            thread_id="digest-new-thread",
+        )
+    assert not store.task_result_digest_seen(
+        "a/b#1",
+        "same-digest",
+        intent_id="intent-2",
+        thread_id="digest-new-thread",
+        worktree_path="/tmp/digest-new",
+    )
+
+
+def test_same_digest_legacy_backfill_cannot_be_reused_after_rollover(tmp_path):
+    store = RadarLedger(tmp_path / "same-backfill-rollover.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="backfill-old-thread",
+        project_id="project-1",
+        worktree_path="/tmp/backfill-old",
+    )
+    store.record_published_task_result_backfilled(
+        "a/b#1",
+        task_id="intent-1",
+        thread_id="backfill-old-thread",
+        digest="same-backfill",
+        stage="PR_OPEN",
+        pr_url="https://github.com/a/b/pull/1",
+        head_sha="a" * 40,
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="backfill-new-thread",
+        worktree_path="/tmp/backfill-new",
+    )
+    with pytest.raises(LedgerError, match="mismatch|ambiguous"):
+        store.record_published_task_result_backfilled(
+            "a/b#1",
+            task_id="intent-2",
+            thread_id="backfill-new-thread",
+            digest="same-backfill",
+            stage="PR_OPEN",
+            pr_url="https://github.com/a/b/pull/1",
+            head_sha="b" * 40,
+        )
+    assert not store.published_task_result_backfill_seen(
+        "a/b#1",
+        digest="same-backfill",
+        intent_id="intent-2",
+        thread_id="backfill-new-thread",
+        worktree_path="/tmp/backfill-new",
+    )
+
+
+def test_published_terminal_result_is_bound_to_selected_intent_after_rollover(tmp_path):
+    """A result from another intent must not retire this missing worktree."""
+
+    store = RadarLedger(tmp_path / "published-terminal-result-binding.sqlite3")
+    store.restore_task_context(published_task_context())
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-other",
+        thread_id="thread-other",
+        worktree_path="/tmp/other-worktree",
+        status="COMPLETED",
+    )
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="other-result",
+        stage="PR_OPEN",
+        task_id="intent-other",
+        thread_id="thread-other",
+    )
+
+    assert (
+        store.published_task_result_is_terminal(
+            "a/b#1",
+            thread_id="thread-recovered",
+            intent_id="recovered-intent",
+            worktree_path="/tmp/recovered-worktree",
+        )
+        is False
+    )
+
+
+def test_published_terminal_validation_marker_is_bound_to_selected_intent(tmp_path):
+    """A same-thread validation marker from another worktree is ignored."""
+
+    store = RadarLedger(tmp_path / "published-terminal-validation-binding.sqlite3")
+    store.restore_task_context(published_task_context())
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="current-result",
+        stage="PR_OPEN",
+        task_id="recovered-intent",
+        thread_id="thread-recovered",
+    )
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-other",
+        thread_id="thread-recovered",
+        worktree_path="/tmp/other-worktree",
+        status="COMPLETED",
+    )
+    _insert_validation_event(
+        store,
+        event_type="VALIDATION_FOLLOWUP_SENT",
+        dedupe_key="other-validation",
+        payload={
+            "intentId": "intent-other",
+            "threadId": "thread-recovered",
+            "worktreePath": "/tmp/other-worktree",
+            "resultDigest": "other-validation",
+        },
+    )
+
+    assert (
+        store.published_task_result_is_terminal(
+            "a/b#1",
+            thread_id="thread-recovered",
+            intent_id="recovered-intent",
+            worktree_path="/tmp/recovered-worktree",
+        )
+        is True
+    )
+
+
+def test_managed_replay_watermark_rejects_ambiguous_legacy_thread_result(tmp_path):
+    """A thread-only legacy result is unsafe after same-thread rollover."""
+
+    store, key, _source_id, _replacement_id = _managed_replay_blocker_fixture(tmp_path)
+    _insert_rollover_intent(
+        store,
+        key=key,
+        intent_id="intent-other",
+        thread_id="thread-1",
+        worktree_path="/tmp/other-worktree",
+        status="COMPLETED",
+    )
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            key,
+            "TASK_RESULT_INGESTED",
+            "ambiguous-legacy-result",
+            {
+                "stage": "FIX_READY",
+                "threadId": "thread-1",
+                "resultDigest": "ambiguous-legacy-result",
+            },
+            iso_z(datetime.now(UTC)),
+        )
+
+    with store.connect() as connection:
+        watermark = store._managed_replay_task_result_watermark(
+            connection,
+            key=key,
+            task_id="intent-1",
+            thread_id="thread-1",
+            worktree_path="/tmp/worktree",
+            request_updated_at="request-time",
+        )
+    assert watermark["resultEventId"] is None
+    assert watermark["latestRelatedEventId"] is None

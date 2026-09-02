@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -78,6 +79,7 @@ def specs(tmp_path: Path) -> list[dict[str, object]]:
         "com.oss-pr-radar.local-publication",
         "com.oss-pr-radar.local-publication-slow",
         "com.oss-pr-radar.queue-importer",
+        "com.oss-pr-radar.scheduler-watchdog",
     )
     return [
         {
@@ -126,12 +128,12 @@ def test_second_worker_failure_restores_everything(
     assert slow.read_bytes() == slow_before
     assert fast.stat().st_mode & 0o777 == 0o640
     assert slow.stat().st_mode & 0o777 == 0o604
-    assert not plist_path(home, str(worker_specs[2]["Label"])).exists()
+    assert all(not plist_path(home, str(spec["Label"])).exists() for spec in worker_specs[2:])
     assert fake.loaded == {fast_service}
     assert not list(launch_dir.glob(".*.tmp"))
 
 
-def test_success_installs_and_loads_all_three_workers(
+def test_success_installs_and_loads_all_required_workers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "home"
@@ -149,7 +151,7 @@ def test_success_installs_and_loads_all_three_workers(
     result = INSTALL.install_workers(worker_specs, home=home, domain=domain)
 
     assert result["ok"] is True
-    assert len(result["workers"]) == 3
+    assert len(result["workers"]) == 4
     assert fake.loaded == {f"{domain}/{spec['Label']}" for spec in worker_specs}
     for spec in worker_specs:
         path = plist_path(home, str(spec["Label"]))
@@ -172,7 +174,12 @@ def test_first_activation_promotes_auth_before_bootstrap_and_rolls_back(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str | None
 ) -> None:
     monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
+        "oss_pr_radar.local_publication.disk_snapshot",
+        lambda _root: {
+            "level": "ok",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.5,
+        },
     )
     runtime = tmp_path / "runtime"
     (runtime / "state").mkdir(parents=True)
@@ -297,6 +304,7 @@ def test_first_worker_failure_does_not_touch_later_loaded_workers(
         "print",
         "print",
         "print",
+        "print",
         "bootstrap",
         "bootout",
         "print",
@@ -312,29 +320,190 @@ def test_first_worker_failure_does_not_touch_later_loaded_workers(
     assert not list(launch_dir.glob(".*.tmp"))
 
 
-def test_uninstall_keeps_plist_when_bootout_leaves_service_loaded(
+@pytest.mark.parametrize("failure_index", [0, 1])
+def test_uninstall_bootout_failure_restores_all_three_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_index: int
+) -> None:
+    home = tmp_path / "home"
+    launch_dir = home / "Library" / "LaunchAgents"
+    launch_dir.mkdir(parents=True)
+    worker_specs = specs(tmp_path)
+    before: dict[Path, bytes] = {}
+    modes: dict[Path, int] = {}
+    for index, spec in enumerate(worker_specs):
+        path = plist_path(home, str(spec["Label"]))
+        before[path] = f"keep-{index}".encode()
+        modes[path] = 0o640 + index
+        path.write_bytes(before[path])
+        path.chmod(modes[path])
+
+    domain = "gui/4242"
+    services = [f"{domain}/{spec['Label']}" for spec in worker_specs]
+    fake = FakeLaunchctl(
+        domain,
+        set(services),
+        bootout_failures={services[failure_index]},
+    )
+    monkeypatch.setattr(INSTALL, "launchctl", fake)
+
+    with pytest.raises(RuntimeError, match="worker uninstall rolled back"):
+        INSTALL.uninstall_workers(worker_specs, home=home, domain=domain, runtime_root=tmp_path)
+
+    assert {path: path.read_bytes() for path in before} == before
+    assert {path: path.stat().st_mode & 0o777 for path in before} == modes
+    assert fake.loaded == set(services)
+    assert not list(launch_dir.glob(".*.tmp"))
+
+
+def test_uninstall_unlink_failure_restores_all_three_workers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "home"
     launch_dir = home / "Library" / "LaunchAgents"
     launch_dir.mkdir(parents=True)
     worker_specs = specs(tmp_path)
-    for spec in worker_specs:
-        plist_path(home, str(spec["Label"])).write_bytes(b"keep-or-remove")
+    before: dict[Path, bytes] = {}
+    modes: dict[Path, int] = {}
+    for index, spec in enumerate(worker_specs):
+        path = plist_path(home, str(spec["Label"]))
+        before[path] = plistlib.dumps({"worker": index}, fmt=plistlib.FMT_XML)
+        modes[path] = 0o640 + index
+        path.write_bytes(before[path])
+        path.chmod(modes[path])
 
     domain = "gui/4242"
-    services = [f"{domain}/{spec['Label']}" for spec in worker_specs]
-    fake = FakeLaunchctl(domain, set(services), bootout_failures={services[0]})
+    services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
+    fake = FakeLaunchctl(domain, services)
+    monkeypatch.setattr(INSTALL, "launchctl", fake)
+    failed_path = plist_path(home, str(worker_specs[1]["Label"]))
+    original_unlink = Path.unlink
+    failure_injected = False
+
+    def fail_second_unlink(path: Path, missing_ok: bool = False) -> None:
+        nonlocal failure_injected
+        if path == failed_path and not failure_injected:
+            failure_injected = True
+            raise OSError("injected unlink failure")
+        original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_second_unlink)
+
+    with pytest.raises(RuntimeError, match="worker uninstall rolled back"):
+        INSTALL.uninstall_workers(worker_specs, home=home, domain=domain, runtime_root=tmp_path)
+
+    assert failure_injected is True
+    assert {path: path.read_bytes() for path in before} == before
+    assert {path: path.stat().st_mode & 0o777 for path in before} == modes
+    assert fake.loaded == services
+    assert not list(launch_dir.glob(".*.tmp"))
+
+
+@pytest.mark.parametrize(
+    ("state_file", "state_value"),
+    [
+        ("slow-worker-backoff.json", {"inFlight": True, "operationId": "slow-1"}),
+        ("runtime-health.json", {"workers": {"slow": {"inFlight": True}}}),
+    ],
+)
+def test_uninstall_refuses_persisted_slow_inflight_before_any_worker_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state_file: str,
+    state_value: dict[str, object],
+) -> None:
+    home = tmp_path / "home"
+    worker_specs = specs(tmp_path)
+    _write_staged_plists(home, worker_specs)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / state_file).write_text(
+        json.dumps(state_value) + "\n",
+        encoding="utf-8",
+    )
+    domain = "gui/4242"
+    services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
+    fake = FakeLaunchctl(domain, services)
     monkeypatch.setattr(INSTALL, "launchctl", fake)
 
-    result = INSTALL.uninstall_workers(worker_specs, home=home, domain=domain)
+    with pytest.raises(RuntimeError, match="slow worker is in flight"):
+        INSTALL.uninstall_workers(worker_specs, home=home, domain=domain, runtime_root=tmp_path)
 
-    assert result["ok"] is False
-    assert plist_path(home, str(worker_specs[0]["Label"])).exists()
-    assert not plist_path(home, str(worker_specs[1]["Label"])).exists()
-    assert not plist_path(home, str(worker_specs[2]["Label"])).exists()
-    assert fake.loaded == {services[0]}
-    assert not list(launch_dir.glob(".*.tmp"))
+    assert fake.calls == []
+    assert fake.loaded == services
+    assert all(plist_path(home, str(spec["Label"])).exists() for spec in worker_specs)
+
+
+def test_uninstall_refuses_live_launchctl_slow_pid_before_any_worker_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    worker_specs = specs(tmp_path)
+    _write_staged_plists(home, worker_specs)
+    (tmp_path / "state").mkdir()
+    domain = "gui/4242"
+    services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
+    slow_service = f"{domain}/{worker_specs[1]['Label']}"
+    fake = FakeLaunchctl(
+        domain,
+        services,
+        print_outputs={slow_service: "state = running\npid = 4242\n"},
+    )
+    monkeypatch.setattr(INSTALL, "launchctl", fake)
+    monkeypatch.setattr(
+        INSTALL,
+        "pid_probe",
+        lambda pid: {"pid": pid, "alive": True, "versionMatched": True},
+    )
+
+    with pytest.raises(RuntimeError, match="slow worker process is alive"):
+        INSTALL.uninstall_workers(worker_specs, home=home, domain=domain, runtime_root=tmp_path)
+
+    assert fake.calls == [("print", slow_service)]
+    assert fake.loaded == services
+    assert all(plist_path(home, str(spec["Label"])).exists() for spec in worker_specs)
+
+
+def test_uninstall_refuses_busy_slow_worker_lock_before_any_worker_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    worker_specs = specs(tmp_path)
+    _write_staged_plists(home, worker_specs)
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    domain = "gui/4242"
+    services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
+    fake = FakeLaunchctl(domain, services)
+    monkeypatch.setattr(INSTALL, "launchctl", fake)
+
+    with INSTALL.exclusive_lock(state_dir / INSTALL.SLOW_WORK_LOCK):
+        with pytest.raises(RuntimeError, match="slow worker lock is busy"):
+            INSTALL.uninstall_workers(worker_specs, home=home, domain=domain, runtime_root=tmp_path)
+
+    assert fake.calls == []
+    assert fake.loaded == services
+    assert all(plist_path(home, str(spec["Label"])).exists() for spec in worker_specs)
+
+
+def test_uninstall_removes_all_workers_when_slow_worker_is_quiescent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    worker_specs = specs(tmp_path)
+    _write_staged_plists(home, worker_specs)
+    (tmp_path / "state").mkdir()
+    domain = "gui/4242"
+    services = {f"{domain}/{spec['Label']}" for spec in worker_specs}
+    fake = FakeLaunchctl(domain, services)
+    monkeypatch.setattr(INSTALL, "launchctl", fake)
+
+    result = INSTALL.uninstall_workers(
+        worker_specs, home=home, domain=domain, runtime_root=tmp_path
+    )
+
+    assert result["ok"] is True
+    assert fake.loaded == set()
+    assert all(not plist_path(home, str(spec["Label"])).exists() for spec in worker_specs)
 
 
 def test_uninstall_requires_runtime_binding_and_authorization_before_launchctl(
@@ -406,7 +575,7 @@ def test_worker_write_modes_require_authorization_before_any_launchctl_or_plist_
     assert not list((home / "Library" / "LaunchAgents").glob("*.plist"))
 
 
-def test_authorized_stage_uses_only_the_three_current_worker_specs(
+def test_authorized_stage_uses_only_the_current_required_worker_specs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[tuple[str, list[str]]] = []
@@ -462,6 +631,7 @@ def test_authorized_stage_uses_only_the_three_current_worker_specs(
                 "com.oss-pr-radar.local-publication",
                 "com.oss-pr-radar.local-publication-slow",
                 "com.oss-pr-radar.queue-importer",
+                "com.oss-pr-radar.scheduler-watchdog",
             ],
         )
     ]
@@ -506,7 +676,15 @@ def test_worker_status_is_read_only_and_requires_only_runtime_binding(
         "active_release_evidence",
         lambda _root: {"valid": True, "releaseId": "r1", "policyDigest": "p1"},
     )
-    monkeypatch.setattr(INSTALL, "disk_snapshot", lambda _root: {"level": "ok"})
+    monkeypatch.setattr(
+        INSTALL,
+        "disk_snapshot",
+        lambda _root: {
+            "level": "ok",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.5,
+        },
+    )
     monkeypatch.setattr(INSTALL, "pending_publication_effects", lambda _path: 0)
     monkeypatch.setattr(
         INSTALL,
@@ -552,6 +730,11 @@ def test_worker_status_uses_complete_runtime_state_without_cross_worker_false_al
                         "queueLastExitCode": 0,
                         "queueConsecutiveFailures": 0,
                     },
+                    "scheduler-watchdog": {
+                        "lastSuccessAt": now - 10,
+                        "lastExitCode": 0,
+                        "consecutiveFailures": 0,
+                    },
                 },
                 "deployment": {
                     "manifestVerified": True,
@@ -585,7 +768,15 @@ def test_worker_status_uses_complete_runtime_state_without_cross_worker_false_al
         "active_release_evidence",
         lambda _root: {"valid": True, "releaseId": "r1", "policyDigest": "p1"},
     )
-    monkeypatch.setattr(INSTALL, "disk_snapshot", lambda _root: {"level": "ok"})
+    monkeypatch.setattr(
+        INSTALL,
+        "disk_snapshot",
+        lambda _root: {
+            "level": "ok",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.5,
+        },
+    )
     monkeypatch.setattr(INSTALL, "pending_publication_effects", lambda _path: 0)
     monkeypatch.setattr(
         INSTALL,
@@ -602,7 +793,7 @@ def test_worker_status_uses_complete_runtime_state_without_cross_worker_false_al
         for spec in worker_specs
     ]
 
-    assert [status["ok"] for status in statuses] == [True, False, True]
+    assert [status["ok"] for status in statuses] == [True, False, True, True]
     assert statuses[0]["runtimeHealth"]["healthy"] is False
     assert statuses[0]["workerRuntimeHealth"]["healthy"] is True
     assert statuses[1]["workerRuntimeHealth"]["lastExitCode"] == 1
@@ -636,6 +827,11 @@ def test_worker_status_reports_disk_warning_without_failing_loaded_workers(
                         "queueLastExitCode": 0,
                         "queueConsecutiveFailures": 0,
                     },
+                    "scheduler-watchdog": {
+                        "lastSuccessAt": now - 10,
+                        "lastExitCode": 0,
+                        "consecutiveFailures": 0,
+                    },
                 },
                 "deployment": {
                     "manifestVerified": True,
@@ -663,7 +859,11 @@ def test_worker_status_reports_disk_warning_without_failing_loaded_workers(
     monkeypatch.setattr(
         INSTALL,
         "disk_snapshot",
-        lambda _root: {"level": "warning", "freeBytes": 50 * 1024 * 1024 * 1024},
+        lambda _root: {
+            "level": "warning",
+            "freeBytes": 50 * 1024 * 1024 * 1024,
+            "usedFraction": 0.93,
+        },
     )
     monkeypatch.setattr(INSTALL, "pending_publication_effects", lambda _path: 0)
     monkeypatch.setattr(
@@ -681,7 +881,7 @@ def test_worker_status_reports_disk_warning_without_failing_loaded_workers(
         for spec in worker_specs
     ]
 
-    assert [status["ok"] for status in statuses] == [True, True, True]
+    assert [status["ok"] for status in statuses] == [True, True, True, True]
     assert statuses[0]["runtimeHealth"]["healthy"] is True
     assert statuses[0]["runtimeHealth"]["issues"] == []
     assert statuses[0]["runtimeHealth"]["warnings"] == ["DISK_WARNING_THRESHOLD"]
@@ -698,6 +898,7 @@ def test_status_top_level_ok_aggregates_worker_health(
         str(worker_specs[0]["Label"]): True,
         str(worker_specs[1]["Label"]): False,
         str(worker_specs[2]["Label"]): True,
+        str(worker_specs[3]["Label"]): True,
     }
     monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
     monkeypatch.setattr(
@@ -710,10 +911,31 @@ def test_status_top_level_ok_aggregates_worker_health(
         },
     )
     monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: worker_specs)
+    gate_reads = 0
+    gate_health = {
+        "ok": False,
+        "blocked": True,
+        "reason": "DISK_STOP_THRESHOLD",
+        "active": True,
+        "gateActive": True,
+        "restartSafe": True,
+        "snapshot": {
+            "level": "warning",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.93,
+        },
+    }
+
+    def read_gate_once(*_args, **_kwargs):
+        nonlocal gate_reads
+        gate_reads += 1
+        return dict(gate_health)
+
+    monkeypatch.setattr(INSTALL, "read_disk_pressure_gate_health", read_gate_once)
     monkeypatch.setattr(
         INSTALL,
         "service_status",
-        lambda _service, _plist_path, expected: {
+        lambda _service, _plist_path, expected, **_kwargs: {
             "ok": worker_health[str(expected["Label"])],
             "installed": True,
         },
@@ -732,7 +954,9 @@ def test_status_top_level_ok_aggregates_worker_health(
     assert INSTALL.main() == 0
     result = json.loads(capsys.readouterr().out)
     assert result["ok"] is False
-    assert [worker["ok"] for worker in result["workers"]] == [True, False, True]
+    assert result["diskPressureGate"] == gate_health
+    assert gate_reads == 1
+    assert [worker["ok"] for worker in result["workers"]] == [True, False, True, True]
 
 
 def test_legacy_installer_is_only_a_compatibility_forwarder():
@@ -837,7 +1061,7 @@ def test_authorized_stage_replaces_complete_unloaded_previous_release(
     )
 
     def consume(*_args, worker_records, **_kwargs):
-        assert len(worker_records) == 3
+        assert len(worker_records) == 4
         assert all(
             plistlib.loads(plist_path(home, str(spec["Label"])).read_bytes()) == spec
             for spec in current
@@ -945,6 +1169,11 @@ def test_existing_receipt_never_allows_conflicting_worker_replacement(
     )
     monkeypatch.setattr(
         INSTALL,
+        "stage_workers",
+        lambda *_args, **_kwargs: pytest.fail("invalid receipt must fail before plist staging"),
+    )
+    monkeypatch.setattr(
+        INSTALL,
         "consume_worker_staging_authorization",
         lambda *_args, **_kwargs: pytest.fail("conflicting files must fail before receipt read"),
     )
@@ -952,8 +1181,103 @@ def test_existing_receipt_never_allows_conflicting_worker_replacement(
 
     assert INSTALL.main() == 1
     result = json.loads(capsys.readouterr().out)
-    assert "conflicting staged worker configuration" in result["error"]
+    assert "existing staged worker receipt cannot be validated" in result["error"]
     assert all(plist_path(home, label).read_bytes() == raw for label, raw in before.items())
+
+
+def test_expired_existing_receipt_rejects_before_touching_plists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An expired receipt must fail before a partial worker set is rewritten."""
+
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "installer-receipt-expiry-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "installer-current")
+    from oss_pr_radar.managed_security import sign_current
+    from oss_pr_radar.operational_auth import (
+        STAGED_WORKER_RECEIPT_CONTEXT,
+        STAGED_WORKER_RECEIPT_SCHEMA,
+    )
+
+    runtime = tmp_path / "runtime"
+    (runtime / "state").mkdir(parents=True)
+    home = tmp_path / "home"
+    current = specs(tmp_path)
+    previous = _previous_release_specs(tmp_path)
+    _write_staged_plists(home, previous[:2])
+    before = {
+        str(spec["Label"]): (
+            plist_path(home, str(spec["Label"])).read_bytes(),
+            plist_path(home, str(spec["Label"])).stat().st_mtime_ns,
+        )
+        for spec in previous[:2]
+    }
+    now = datetime.now(UTC)
+    receipt_unsigned = {
+        "schema": STAGED_WORKER_RECEIPT_SCHEMA,
+        "scope": "stage_worker_configs",
+        "state": "CONSUMED",
+        "stagingIssuedAt": (now - timedelta(minutes=4)).isoformat().replace("+00:00", "Z"),
+        "stagingExpiresAt": (now - timedelta(seconds=1)).isoformat().replace("+00:00", "Z"),
+        "stagedAt": (now - timedelta(minutes=3)).isoformat().replace("+00:00", "Z"),
+        "workers": [
+            {
+                "observedAt": (now - timedelta(minutes=3, seconds=30))
+                .isoformat()
+                .replace("+00:00", "Z")
+            }
+        ],
+    }
+    receipt_path = INSTALL.staged_worker_receipt_path(runtime)
+    receipt_path.write_text(
+        json.dumps(
+            {
+                **receipt_unsigned,
+                **sign_current(receipt_unsigned, context=STAGED_WORKER_RECEIPT_CONTEXT),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    receipt_path.chmod(0o600)
+    receipt_before = receipt_path.read_bytes()
+    domain = f"gui/{os.getuid()}"
+    monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(
+        INSTALL,
+        "active_release_evidence",
+        lambda _root: {
+            "valid": True,
+            "path": str(tmp_path / "release"),
+            "releaseId": "r2",
+        },
+    )
+    monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(INSTALL, "launchctl", FakeLaunchctl(domain, set()))
+    monkeypatch.setattr(
+        INSTALL,
+        "stage_workers",
+        lambda *_args, **_kwargs: pytest.fail(
+            "expired receipt must be rejected before plist writes"
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["installer", "--runtime-root", str(runtime), "--stage"],
+    )
+
+    assert INSTALL.main() == 1
+    result = json.loads(capsys.readouterr().out)
+    assert "expired" in result["error"]
+    assert {
+        str(spec["Label"]): (
+            plist_path(home, str(spec["Label"])).read_bytes(),
+            plist_path(home, str(spec["Label"])).stat().st_mtime_ns,
+        )
+        for spec in previous[:2]
+    } == before
+    assert not any(plist_path(home, str(spec["Label"])).exists() for spec in current[2:])
+    assert receipt_path.read_bytes() == receipt_before
 
 
 def test_authorized_previous_release_replacement_rolls_back_if_receipt_fails(
@@ -1009,7 +1333,7 @@ def test_stage_receipt_uses_fresh_launchctl_observation_not_hardcoded_state(
     monkeypatch.setattr(INSTALL, "launchctl", fake)
 
     records = INSTALL._staging_records(worker_specs, home=home, domain=domain)
-    assert len(records) == 3
+    assert len(records) == 4
     assert all(item["loaded"] is False and item["pid"] is None for item in records)
     assert all(item["observedAt"].endswith("Z") for item in records)
     assert all(call[0] == "print" for call in fake.calls)
@@ -1066,6 +1390,7 @@ def test_stage_transaction_lock_serializes_two_stagers(tmp_path: Path) -> None:
                 "com.oss-pr-radar.local-publication",
                 "com.oss-pr-radar.local-publication-slow",
                 "com.oss-pr-radar.queue-importer",
+                "com.oss-pr-radar.scheduler-watchdog",
             ),
             None,
         ),
@@ -1074,6 +1399,7 @@ def test_stage_transaction_lock_serializes_two_stagers(tmp_path: Path) -> None:
                 "com.oss-pr-radar.local-publication",
                 "com.oss-pr-radar.local-publication-slow",
                 "com.oss-pr-radar.queue-importer",
+                "com.oss-pr-radar.scheduler-watchdog",
             ),
             "com.oss-pr-radar.local-publication",
         ),
@@ -1186,6 +1512,53 @@ def test_ensure_requires_exact_loaded_launchd_command_and_workdir(
         assert fake.counts == {"bootstrap": 0, "kickstart": 0}
 
 
+def test_ensure_refuses_proxy_spec_drift_before_inspecting_or_mutating_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    old_specs = specs(tmp_path)
+    new_specs = []
+    for spec in old_specs:
+        changed = dict(spec)
+        changed["ProgramArguments"] = [
+            *spec["ProgramArguments"][:2],
+            "HTTPS_PROXY=http://127.0.0.1:7898",
+            *spec["ProgramArguments"][2:],
+        ]
+        new_specs.append(changed)
+    original_bytes = {}
+    for spec in old_specs:
+        path = plist_path(home, str(spec["Label"]))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(plistlib.dumps(spec, fmt=plistlib.FMT_XML))
+        path.chmod(0o600)
+        original_bytes[path] = path.read_bytes()
+    auth = {
+        "state": "ACTIVE",
+        "workerConfigDigest": INSTALL.worker_spec_digest(old_specs),
+    }
+    monkeypatch.setattr(
+        INSTALL, "require_operational_authorization", lambda *_args, **_kwargs: auth
+    )
+    monkeypatch.setattr(
+        INSTALL,
+        "_snapshot_workers",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("worker state must not be inspected after authorization drift")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="controlled restage required"):
+        INSTALL.ensure_workers(
+            new_specs,
+            home=home,
+            domain=f"gui/{os.getuid()}",
+            runtime_root=tmp_path / "runtime",
+        )
+
+    assert {path: path.read_bytes() for path in original_bytes} == original_bytes
+
+
 def test_two_complete_stage_transactions_have_one_receipt_and_one_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1232,6 +1605,21 @@ def test_two_complete_stage_transactions_have_one_receipt_and_one_write(
     monkeypatch.setattr(
         INSTALL, "require_worker_staging_authorization", lambda *_args, **_kwargs: None
     )
+    # This test isolates the transaction lock.  The mocked consumer writes a
+    # deliberately minimal receipt, so bypass the independent receipt-schema
+    # checks that are covered by the malformed/expired receipt tests above.
+    monkeypatch.setattr(
+        INSTALL,
+        "_read_staged_receipt",
+        lambda _root: {
+            "schema": "receipt",
+            "scope": "stage_worker_configs",
+            "state": "CONSUMED",
+            "workerSpecDigest": INSTALL.worker_spec_digest(worker_specs),
+        },
+    )
+    monkeypatch.setattr(INSTALL, "_validate_receipt_staging_window", lambda _receipt: None)
+    monkeypatch.setattr(INSTALL, "verify_staged_worker_receipt", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(INSTALL, "consume_worker_staging_authorization", consume)
     monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
     monkeypatch.setattr(sys, "argv", ["installer", "--runtime-root", str(runtime), "--stage"])
@@ -1250,7 +1638,7 @@ def test_two_complete_stage_transactions_have_one_receipt_and_one_write(
         thread.join(timeout=5)
 
     assert results == [0, 0]
-    assert len(write_calls) == 3
+    assert len(write_calls) == 4
     assert consume_calls == [1]
     assert receipt_path.exists()
     assert all(

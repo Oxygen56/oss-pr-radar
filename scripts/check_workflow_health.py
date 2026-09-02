@@ -19,10 +19,16 @@ sys.path.insert(0, str(ROOT / "src"))
 from oss_pr_radar.notifier import FeishuClient  # noqa: E402
 from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
 from oss_pr_radar.release_binding import bind_runtime, runtime_ledger_path  # noqa: E402
+from oss_pr_radar.scheduler_watchdog import (  # noqa: E402
+    eligible_slot,
+    full_chain_evidence,
+    proven_watchdog_run_ids,
+)
 from oss_pr_radar.util import parse_time, sha256_json  # noqa: E402
 
 _FULL_SCAN_EVENT = "workflow_dispatch"
 _NATURAL_EVENT = "schedule"
+_FULL_CHAIN_EVENTS = frozenset({_NATURAL_EVENT, _FULL_SCAN_EVENT})
 _NATURAL_REQUIRED_JOBS = (
     "watch",
     "pr-followup",
@@ -40,6 +46,56 @@ _MANUAL_REQUIRED_JOBS = _NATURAL_REQUIRED_JOBS
 _STATE_JOBS = {"build-state", "persist-pending", "persist-receipt"}
 _MANAGED_FOLLOWUP_MAX_AGE = timedelta(minutes=150)
 _UTC_MIN = datetime.min.replace(tzinfo=UTC)
+_ACTIVE_RUN_STATUSES = frozenset({"queued", "in_progress", "waiting", "requested", "pending"})
+
+
+def _run_id(value: dict) -> str | None:
+    raw = value.get("id")
+    if isinstance(raw, bool) or raw is None:
+        return None
+    encoded = str(raw)
+    return encoded if encoded.isdigit() and int(encoded) > 0 else None
+
+
+def _natural_full_chain_proven(
+    run: dict,
+    *,
+    proven_run_ids: set[str] | frozenset[str] | None = None,
+    allow_legacy_aggregate: bool = False,
+) -> bool:
+    """Return whether a schedule run has an explicit full-chain proof.
+
+    ``proven_run_ids`` is supplied by the live jobs observer.  Without it,
+    embedded evidence (used by fixtures and callers that already queried
+    jobs) is honored.  A run-list-only schedule is deliberately unproven.
+    The live ``main`` path passes a set,
+    including an empty set when no schedule run was proven, so old canaries
+    cannot leak into health or coverage.
+    """
+
+    if run.get("event") != "schedule":
+        return False
+    # A proof ID is only a terminal proof. Active runs are reported through
+    # the separate in-flight path and must never be promoted to completed
+    # coverage by a stale/hand-written ID set.
+    if run.get("status") not in (None, "completed") or run.get("conclusion") != "success":
+        return False
+    run_id = _run_id(run)
+    if proven_run_ids is not None:
+        return run_id is not None and run_id in {str(value) for value in proven_run_ids}
+    evidence = full_chain_evidence(run)
+    if evidence is True:
+        return True
+    # ``health()`` is also used by older local callers that only have the
+    # workflow-runs response. Keep that call shape compatible when no
+    # explicit proof set was requested. Production ``main`` always passes a
+    # set (including an empty set), so unqueried schedules remain fail-closed.
+    return (
+        allow_legacy_aggregate
+        and evidence is None
+        and run.get("status") in (None, "completed")
+        and run.get("conclusion") == "success"
+    )
 
 
 def github_json(path: str) -> object:
@@ -147,6 +203,7 @@ def _natural_chain_issues(conclusions: dict[str, str]) -> list[str]:
     ]
     if missing:
         issues.append("NATURAL_FULL_CHAIN_PROOF_MISSING")
+        issues.append("NATURAL_SCHEDULE_FULL_CHAIN_MISSING")
     failed = [
         name
         for name in (*_NATURAL_REQUIRED_JOBS, _FULL_CHAIN_PROOF_JOB)
@@ -210,85 +267,72 @@ def workflow_component_health(
     workflow_runs: list[dict],
     jobs_cache: dict[int, list[dict] | None] | None = None,
 ) -> dict:
-    """Assess the latest completed full chain below its aggregate conclusion.
+    """Assess the logically newest completed run below its aggregate conclusion.
 
-    A scheduled run is only evidence of a real scan when the Jobs API shows all
-    business jobs and the terminal ``full-chain-proof`` job succeeded.  This
-    deliberately rejects the historical schedule-canary-only runs.  Manual
-    dispatch remains a valid full scan and does not need the natural proof job.
+    ``created_at`` plus the run ID defines logical order; a later rerun update
+    must not make an older invocation look current.  The Jobs API is the source
+    of truth.  A natural run must contain every business job and the terminal
+    proof job, while a watchdog/manual dispatch must contain the full business
+    chain.  The newest non-cancelled run fails closed instead of falling back
+    to an older successful invocation.
     """
 
     completed = [
         item
         for item in workflow_runs
-        if item.get("event") in {_FULL_SCAN_EVENT, _NATURAL_EVENT}
+        if isinstance(item, dict)
+        and item.get("event") in _FULL_CHAIN_EVENTS
         and item.get("status") == "completed"
         and item.get("conclusion") != "cancelled"
-        and item.get("id")
-        and (item.get("updated_at") or item.get("created_at"))
+        and _run_id(item) is not None
+        and (item.get("created_at") or item.get("updated_at"))
     ]
-    ordered = _ordered_runs(completed, field="updated_at")
-    if not ordered:
+    latest = max(
+        completed,
+        key=lambda item: (_run_time(item), int(_run_id(item) or 0)),
+        default=None,
+    )
+    if latest is None:
         return {
             "assessed": False,
             "healthy": True,
             "issues": [],
             "scanSucceeded": None,
         }
-    for latest in ordered:
-        run_id = int(latest["id"])
-        base = {
-            "assessed": True,
-            "runId": run_id,
-            "runUrl": latest.get("html_url"),
-            "runEvent": latest.get("event"),
-            "runUpdatedAt": latest.get("updated_at") or latest.get("created_at"),
+
+    run_id = int(_run_id(latest) or 0)
+    base = {
+        "assessed": True,
+        "runId": run_id,
+        "runUrl": latest.get("html_url"),
+        "runEvent": latest.get("event"),
+        "runUpdatedAt": latest.get("updated_at") or latest.get("created_at"),
+    }
+    try:
+        jobs = _run_jobs(repo, run_id, jobs_cache)
+    except (RuntimeError, TypeError, ValueError) as exc:
+        return {
+            **base,
+            "healthy": False,
+            "issues": ["WORKFLOW_COMPONENT_STATUS_UNAVAILABLE"],
+            "scanSucceeded": None,
+            "error": f"{type(exc).__name__}:{str(exc)[:200]}",
         }
-        try:
-            jobs = _run_jobs(repo, run_id, jobs_cache)
-        except (RuntimeError, TypeError, ValueError) as exc:
-            return {
-                **base,
-                "healthy": False,
-                "issues": ["WORKFLOW_COMPONENT_STATUS_UNAVAILABLE"],
-                "scanSucceeded": None,
-                "error": f"{type(exc).__name__}:{str(exc)[:200]}",
-            }
-        if jobs is None:
-            return {
-                **base,
-                "healthy": False,
-                "issues": ["WORKFLOW_COMPONENT_STATUS_UNAVAILABLE"],
-                "scanSucceeded": None,
-            }
-        conclusions = _job_conclusions(jobs)
-        if latest.get("event") == _NATURAL_EVENT:
-            natural_issues = _natural_chain_issues(conclusions)
-            # A schedule-canary-only run is not a failed scan and must not hide
-            # an older manual scan; it is simply not usable as scan evidence.
-            if natural_issues:
-                if "NATURAL_FULL_CHAIN_PROOF_MISSING" in natural_issues and not any(
-                    name in conclusions for name in _NATURAL_REQUIRED_JOBS
-                ):
-                    continue
-                return {
-                    **base,
-                    "healthy": False,
-                    "issues": natural_issues,
-                    "scanSucceeded": conclusions.get("scan") == "success",
-                    "jobs": conclusions,
-                    "naturalFullChainProven": False,
-                }
-            return {
-                **base,
-                "healthy": True,
-                "issues": [],
-                "scanSucceeded": True,
-                "jobs": conclusions,
-                "naturalFullChainProven": True,
-            }
-        issues: list[str] = []
-        scan_succeeded = conclusions.get("scan") == "success"
+    if jobs is None:
+        return {
+            **base,
+            "healthy": False,
+            "issues": ["WORKFLOW_COMPONENT_STATUS_UNAVAILABLE"],
+            "scanSucceeded": None,
+        }
+
+    conclusions = _job_conclusions(jobs)
+    scan_succeeded = conclusions.get("scan") == "success"
+    if latest.get("event") == _NATURAL_EVENT:
+        issues = _natural_chain_issues(conclusions)
+        full_chain_proven = not issues
+    else:
+        issues = []
         if any(conclusions.get(name) != "success" for name in _MANUAL_REQUIRED_JOBS):
             if conclusions.get("watch") != "success":
                 issues.append("WATCH_DEGRADED")
@@ -300,20 +344,42 @@ def workflow_component_health(
                 issues.append("STATE_PERSISTENCE_DEGRADED")
             if conclusions.get("notify") != "success":
                 issues.append("NOTIFICATION_DEGRADED")
-        return {
-            **base,
-            "healthy": not issues,
-            "issues": issues,
-            "scanSucceeded": scan_succeeded,
-            "jobs": conclusions,
-            "naturalFullChainProven": False,
-        }
-    return {
-        "assessed": False,
-        "healthy": True,
-        "issues": [],
-        "scanSucceeded": None,
+        full_chain_proven = not issues
+
+    result = {
+        **base,
+        "healthy": not issues,
+        "issues": issues,
+        "scanSucceeded": scan_succeeded,
+        "jobs": conclusions,
+        "fullChainProven": full_chain_proven,
+        "naturalFullChainProven": bool(
+            latest.get("event") == _NATURAL_EVENT and full_chain_proven
+        ),
     }
+    if latest.get("event") == _NATURAL_EVENT:
+        result["naturalFullChainRunIds"] = [str(run_id)] if full_chain_proven else []
+    return result
+
+
+def collect_natural_full_chain_run_ids(
+    repo: str,
+    workflow_runs: list[dict],
+    jobs_cache: dict[int, list[dict] | None] | None = None,
+    *,
+    now: datetime | None = None,
+    window_hours: int = 12,
+) -> set[str]:
+    """Collect bounded Jobs-API proof IDs for natural full-chain runs."""
+
+    proven = proven_natural_schedule_run_ids(
+        repo,
+        workflow_runs,
+        jobs_cache,
+        now=now,
+        coverage_window_hours=window_hours,
+    )
+    return {str(value) for value in proven}
 
 
 def github_actions_external_blocker(repo: str, workflow_runs: list[dict]) -> dict | None:
@@ -382,67 +448,78 @@ def health(
     *,
     now: datetime | None = None,
     coverage_window_hours: int = 12,
-    natural_full_chain_run_ids: set[int] | None = None,
+    watchdog_run_ids: set[str] | frozenset[str] | None = None,
+    natural_full_chain_run_ids: set[str] | frozenset[str] | None = None,
 ) -> dict:
     current = (now or datetime.now(UTC)).astimezone(UTC)
-    # ``None`` is retained as a compatibility mode for callers that used this
-    # pure function before Jobs-API proof existed.  The production entrypoint
-    # always passes an explicit set (possibly empty), which is fail-closed.
-    proof_required = natural_full_chain_run_ids is not None
-    proven_ids = set(natural_full_chain_run_ids or ())
     scheduled = _ordered_runs(
         [
             item
             for item in workflow_runs
-            if isinstance(item, dict) and item.get("event") == "schedule"
+            if isinstance(item, dict) and item.get("event") == _NATURAL_EVENT
         ]
     )
     successful = [
         item
         for item in scheduled
-        if item.get("conclusion") == "success"
-        and (
-            not proof_required
-            or (str(item.get("id", "")).isdigit() and int(item["id"]) in proven_ids)
+        if item.get("status") in (None, "completed") and item.get("conclusion") == "success"
+    ]
+    proven_natural_ids = (
+        None
+        if natural_full_chain_run_ids is None
+        else {str(value) for value in natural_full_chain_run_ids}
+    )
+    full_chain_successful = [
+        item
+        for item in successful
+        if _natural_full_chain_proven(
+            item,
+            proven_run_ids=proven_natural_ids,
+            allow_legacy_aggregate=proven_natural_ids is None,
         )
     ]
-    issues: list[str] = []
+    canary_issues: list[str] = []
+    full_chain_issues: list[str] = []
     coverage_warnings: list[str] = []
     latest_schedule = scheduled[0] if scheduled else None
     latest_success = successful[0] if successful else None
-    if not latest_schedule:
-        issues.append("NO_NATURAL_SCHEDULE_RUN")
-    elif _run_time(latest_schedule) == _UTC_MIN or _run_time(latest_schedule) < current - timedelta(
-        hours=2, minutes=30
-    ):
-        issues.append("NATURAL_SCHEDULE_STALE")
-    latest_is_proven = bool(
-        latest_schedule
-        and latest_schedule.get("conclusion") == "success"
-        and (
-            not proof_required
-            or (
-                str(latest_schedule.get("id", "")).isdigit()
-                and int(latest_schedule["id"]) in proven_ids
+
+    if latest_schedule is None:
+        canary_issues.append("NO_NATURAL_SCHEDULE_RUN")
+    else:
+        latest_time = _run_time(latest_schedule)
+        if latest_time == _UTC_MIN or latest_time < current - timedelta(hours=2, minutes=30):
+            canary_issues.append("NATURAL_SCHEDULE_STALE")
+        if not (
+            latest_schedule.get("status") in (None, "completed")
+            and latest_schedule.get("conclusion") == "success"
+        ):
+            # Keep both names during the compatibility window: older
+            # controller consumers use NATURAL_SCHEDULE_RUN_FAILED while newer
+            # watchdog reports use the more explicit canary name.
+            canary_issues.extend(
+                ["NATURAL_SCHEDULE_RUN_FAILED", "LATEST_NATURAL_SCHEDULE_NOT_SUCCESSFUL"]
             )
-        )
-    )
-    if latest_schedule and latest_schedule.get("conclusion") == "success" and not latest_is_proven:
-        issues.append("NATURAL_SCHEDULE_FULL_CHAIN_UNPROVEN")
-    if not latest_success:
-        issues.append("NO_SUCCESSFUL_SCHEDULE_RUN")
-    elif latest_schedule and latest_schedule.get("conclusion") != "success":
-        issues.append("NATURAL_SCHEDULE_RUN_FAILED")
-    elif _run_time(latest_success, field="updated_at") == _UTC_MIN or _run_time(
-        latest_success, field="updated_at"
-    ) < current - timedelta(hours=4):
-        issues.append("SUCCESSFUL_SCHEDULE_STALE")
+        elif not _natural_full_chain_proven(
+            latest_schedule,
+            proven_run_ids=proven_natural_ids,
+            allow_legacy_aggregate=proven_natural_ids is None,
+        ):
+            full_chain_issues.extend(
+                ["NATURAL_SCHEDULE_FULL_CHAIN_UNPROVEN", "NATURAL_SCHEDULE_FULL_CHAIN_MISSING"]
+            )
+
+    if latest_success is None:
+        canary_issues.append("NO_SUCCESSFUL_SCHEDULE_RUN")
+    else:
+        success_time = _run_time(latest_success, field="updated_at")
+        if success_time == _UTC_MIN or success_time < current - timedelta(hours=4):
+            canary_issues.append("SUCCESSFUL_SCHEDULE_STALE")
     if sum(item.get("conclusion") == "failure" for item in scheduled[:3]) >= 2:
-        issues.append("REPEATED_SCHEDULE_FAILURE")
+        canary_issues.append("REPEATED_SCHEDULE_FAILURE")
 
     window_hours = max(6, min(int(coverage_window_hours), 24))
-    coverage_window = timedelta(hours=window_hours)
-    window_start = current - coverage_window
+    window_start = current - timedelta(hours=window_hours)
     run_times = [
         _run_time(item)
         for item in workflow_runs
@@ -451,11 +528,13 @@ def health(
     coverage_assessed = bool(run_times and min(run_times) <= window_start)
     successful_times = sorted(
         _run_time(item)
-        for item in successful
+        for item in full_chain_successful
         if _run_time(item) != _UTC_MIN and _run_time(item) >= window_start
     )
     expected_runs = window_hours
-    minimum_runs = max(3, window_hours // 2)
+    # Every expected hourly slot is required once the API returned a complete
+    # history window.  A partial history remains explicitly unassessed.
+    minimum_runs = expected_runs
     coverage_ratio = min(1.0, len(successful_times) / expected_runs)
     gap_points = [window_start, *successful_times, current]
     max_gap_minutes = max(
@@ -465,26 +544,52 @@ def health(
         ),
         default=None,
     )
-    if coverage_assessed and len(successful_times) < minimum_runs:
+    if coverage_assessed and len(successful_times) < expected_runs:
         coverage_warnings.append("NATURAL_SCHEDULE_COVERAGE_LOW")
     if coverage_assessed and max_gap_minutes is not None and max_gap_minutes > 150:
         coverage_warnings.append("NATURAL_SCHEDULE_GAP_EXCESSIVE")
+    coverage_healthy = None if not coverage_assessed else not coverage_warnings
+    canary_healthy = not canary_issues
+    issues = list(dict.fromkeys([*canary_issues, *full_chain_issues, *(
+        coverage_warnings if coverage_assessed else []
+    )]))
+
+    full_coverage = full_slot_coverage(
+        workflow_runs,
+        now=current,
+        coverage_window_hours=window_hours,
+        watchdog_run_ids=watchdog_run_ids,
+        natural_full_chain_run_ids=proven_natural_ids,
+    )
+    natural_healthy = canary_healthy and not full_chain_issues and coverage_healthy is not False
     return {
-        "healthy": not issues,
+        "healthy": natural_healthy,
         "issues": issues,
-        "healthScope": "github_actions_schedule",
-        "githubNaturalScheduleHealthy": not issues,
+        "healthScope": "github_actions_schedule_and_full_scan_slots",
+        "githubNaturalScheduleHealthy": natural_healthy,
         "githubNaturalScheduleIssues": issues,
         "githubNaturalScheduleWarnings": coverage_warnings,
-        # Compatibility fields for older controller prompts and reports.
-        "naturalScheduleHealthy": not issues,
+        "naturalScheduleCanaryHealthy": canary_healthy,
+        "naturalScheduleCanary": {
+            "healthy": canary_healthy,
+            "issues": canary_issues,
+            "latestRunFresh": latest_schedule is not None
+            and "NATURAL_SCHEDULE_STALE" not in canary_issues,
+            "latestSuccessfulRunFresh": latest_success is not None
+            and "SUCCESSFUL_SCHEDULE_STALE" not in canary_issues,
+            "latestRunUrl": latest_schedule.get("html_url") if latest_schedule else None,
+            "latestSuccessUrl": latest_success.get("html_url") if latest_success else None,
+            "sourceEvent": "schedule",
+        },
+        "naturalScheduleHealthy": natural_healthy,
         "naturalScheduleIssues": issues,
         "naturalScheduleWarnings": coverage_warnings,
         "latestScheduleUrl": latest_schedule.get("html_url") if latest_schedule else None,
         "latestSuccessUrl": latest_success.get("html_url") if latest_success else None,
-        "provenNaturalRunIds": sorted(proven_ids) if proof_required else None,
+        "provenNaturalRunIds": sorted(proven_natural_ids) if proven_natural_ids is not None else None,
         "naturalScheduleCoverage": {
             "assessed": coverage_assessed,
+            "healthy": coverage_healthy,
             "windowHours": window_hours,
             "successfulRuns": len(successful_times),
             "expectedRuns": expected_runs,
@@ -493,7 +598,143 @@ def health(
             "maxGapMinutes": max_gap_minutes,
             "warnings": coverage_warnings,
         },
+        "naturalScheduleFullChain": {
+            "latestRunProven": (
+                _natural_full_chain_proven(
+                    latest_schedule,
+                    proven_run_ids=proven_natural_ids,
+                    allow_legacy_aggregate=proven_natural_ids is None,
+                )
+                if latest_schedule
+                else False
+            ),
+            "provenRunIds": sorted(proven_natural_ids or []),
+            "issues": full_chain_issues,
+        },
+        "fullSlotCoverage": full_coverage,
         "checkedAt": current.isoformat().replace("+00:00", "Z"),
+    }
+
+
+def full_slot_coverage(
+    workflow_runs: list[dict],
+    *,
+    now: datetime | None = None,
+    coverage_window_hours: int = 12,
+    slot_minute: int = 17,
+    grace_minutes: int = 13,
+    watchdog_run_ids: set[str] | frozenset[str] | None = None,
+    natural_full_chain_run_ids: set[str] | frozenset[str] | None = None,
+) -> dict:
+    """Measure hourly scans with attributable full-chain evidence.
+
+    Native schedule runs count only when their terminal proof job was observed
+    (or an embedded proof marker is present).  A workflow-dispatch run counts
+    only when its exact ID is present in the durable watchdog claim state;
+    arbitrary/manual dispatch IDs are deliberately ignored.
+    """
+
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    window_hours = max(6, min(int(coverage_window_hours), 24))
+    latest_slot = eligible_slot(current, minute=slot_minute, grace_minutes=grace_minutes)
+    expected = [latest_slot - timedelta(hours=offset) for offset in reversed(range(window_hours))]
+    expected_set = set(expected)
+    proven_ids = None if watchdog_run_ids is None else {str(value) for value in watchdog_run_ids}
+    natural_ids = (
+        None
+        if natural_full_chain_run_ids is None
+        else {str(value) for value in natural_full_chain_run_ids}
+    )
+    run_times = [
+        _run_time(item)
+        for item in workflow_runs
+        if isinstance(item, dict) and _run_time(item) != _UTC_MIN
+    ]
+    # The oldest returned run only needs to reach the first slot's one-hour
+    # attribution interval. This stays false for short synthetic/API history.
+    assessed = bool(
+        (proven_ids is not None or natural_ids is not None)
+        and run_times
+        and min(run_times) < expected[0] + timedelta(hours=1)
+    )
+    by_slot: dict[datetime, list[dict]] = {slot: [] for slot in expected}
+    for item in workflow_runs:
+        event = item.get("event")
+        if event not in _FULL_CHAIN_EVENTS or not item.get("created_at"):
+            continue
+        item_id = str(item.get("id"))
+        if event == _FULL_SCAN_EVENT:
+            # A dispatch is valid only when the watchdog durably owns its
+            # exact run ID.  ``natural_ids`` never authorizes this branch.
+            if proven_ids is None or item_id not in proven_ids:
+                continue
+        else:
+            if natural_ids is not None:
+                if item_id not in natural_ids:
+                    continue
+            elif watchdog_run_ids is not None:
+                # The caller explicitly supplied watchdog evidence but no
+                # natural proof set: do not let a canary enter full coverage.
+                continue
+            elif not _natural_full_chain_proven(item):
+                continue
+        created = _run_time(item)
+        if created == _UTC_MIN:
+            continue
+        slot = eligible_slot(created, minute=slot_minute, grace_minutes=grace_minutes)
+        if slot in expected_set:
+            by_slot[slot].append(item)
+
+    covered: list[str] = []
+    active: list[str] = []
+    failed: list[str] = []
+    missing: list[str] = []
+    for slot in expected:
+        items = by_slot[slot]
+        encoded = slot.isoformat().replace("+00:00", "Z")
+        if any(
+            item.get("status") == "completed" and item.get("conclusion") == "success"
+            for item in items
+        ):
+            covered.append(encoded)
+        elif any(item.get("status") in _ACTIVE_RUN_STATUSES for item in items):
+            active.append(encoded)
+        elif items:
+            failed.append(encoded)
+        else:
+            missing.append(encoded)
+
+    ratio = len(covered) / len(expected) if expected else 0.0
+    coverage_healthy = None if not assessed else not active and not failed and not missing
+    issues: list[str] = []
+    if assessed and active:
+        issues.append("FULL_SLOT_RUN_ACTIVE")
+    if assessed and failed:
+        issues.append("FULL_SLOT_RUN_FAILED")
+    if assessed and missing:
+        issues.append("FULL_SLOT_COVERAGE_MISSING")
+    return {
+        "assessed": assessed,
+        "healthy": coverage_healthy,
+        "sourceEvent": (
+            "schedule+workflow_dispatch" if natural_ids is not None else _FULL_SCAN_EVENT
+        ),
+        "evidenceSource": (
+            "scheduler_watchdog_exact_run_id_and_natural_full_chain_proof"
+            if natural_ids is not None
+            else "scheduler_watchdog_exact_run_id"
+        ),
+        "evidenceAvailable": proven_ids is not None or natural_ids is not None,
+        "watchdogRunIds": sorted(proven_ids or []),
+        "naturalFullChainRunIds": sorted(natural_ids or []),
+        "windowHours": window_hours,
+        "expectedSlots": len(expected),
+        "coveredSlots": len(covered),
+        "activeSlots": active,
+        "failedSlots": failed,
+        "missingSlots": missing,
+        "coverageRatio": round(ratio, 3),
+        "issues": issues,
     }
 
 
@@ -625,22 +866,54 @@ def effective_scan_freshness(
     max_age: timedelta = timedelta(minutes=110),
     active_grace: timedelta = timedelta(minutes=50),
     component_health: dict | None = None,
+    natural_full_chain_run_ids: set[str] | frozenset[str] | None = None,
+    watchdog_run_ids: set[str] | frozenset[str] | None = None,
 ) -> dict:
-    """Assess manual scans or a Jobs-API-proven natural full-chain scan."""
+    """Assess fresh full-chain scans from either trigger.
+
+    Dispatch runs enter the completed/active set only when their exact ID is
+    in the durable watchdog claim set (when that set is supplied);
+    component health independently verifies their jobs.  Schedule runs enter
+    the completed-success set only with the terminal proof job (or embedded
+    evidence), while an active schedule is conservatively treated as in-flight
+    so the watchdog/health loop does not start a duplicate repair.
+    """
 
     current = (now or datetime.now(UTC)).astimezone(UTC)
+    proven_natural_ids = (
+        None
+        if natural_full_chain_run_ids is None
+        else {str(value) for value in natural_full_chain_run_ids}
+    )
+    proven_watchdog_ids = (
+        None if watchdog_run_ids is None else {str(value) for value in watchdog_run_ids}
+    )
     relevant = [
         item
         for item in workflow_runs
-        if isinstance(item, dict) and item.get("event") == _FULL_SCAN_EVENT
+        if (
+            item.get("event") == _FULL_SCAN_EVENT
+            and (proven_watchdog_ids is None or str(item.get("id")) in proven_watchdog_ids)
+        )
+        or (
+            item.get("event") == "schedule"
+            and _natural_full_chain_proven(item, proven_run_ids=proven_natural_ids)
+        )
     ]
     successful = [item for item in relevant if item.get("conclusion") == "success"]
     active = [
         item
-        for item in relevant
+        for item in workflow_runs
         if item.get("status") in {"queued", "in_progress", "waiting", "requested", "pending"}
         and item.get("created_at")
-        and _run_time(item) >= current - active_grace
+        and parse_time(item["created_at"]) >= current - active_grace
+        and (
+            (
+                item.get("event") == _FULL_SCAN_EVENT
+                and (proven_watchdog_ids is None or str(item.get("id")) in proven_watchdog_ids)
+            )
+            or item.get("event") == "schedule"
+        )
     ]
     latest_success = max(
         successful,
@@ -659,16 +932,29 @@ def effective_scan_freshness(
     )
     component_success_fresh = False
     component_url = None
-    component_is_proven = bool(
-        component_health
-        and component_health.get("assessed") is True
-        and component_health.get("scanSucceeded") is True
-        and (
-            component_health.get("runEvent") != _NATURAL_EVENT
-            or component_health.get("naturalFullChainProven") is True
-        )
+    component_run_id = (
+        str(component_health.get("runId"))
+        if component_health and component_health.get("runId")
+        else None
     )
-    if component_is_proven:
+    component_dispatch_proven = (
+        component_health is None
+        or component_health.get("runEvent") != _FULL_SCAN_EVENT
+        or proven_watchdog_ids is None
+        or component_run_id in proven_watchdog_ids
+    )
+    component_is_full_chain = (
+        component_health is None
+        or component_health.get("runEvent") != "schedule"
+        or component_health.get("fullChainProven") is True
+        or component_health.get("naturalFullChainProven") is True
+    )
+    if (
+        component_health
+        and component_health.get("scanSucceeded") is True
+        and component_is_full_chain
+        and component_dispatch_proven
+    ):
         component_updated_at = component_health.get("runUpdatedAt")
         if component_updated_at:
             try:
@@ -738,33 +1024,30 @@ def main() -> int:
     checked_at = datetime.now(UTC)
     workflow_runs = runs(args.repo)
     jobs_cache: dict[int, list[dict] | None] = {}
+    watchdog_run_ids = (
+        proven_watchdog_run_ids(args.runtime_root) if args.runtime_root is not None else None
+    )
     component_health = workflow_component_health(args.repo, workflow_runs, jobs_cache)
-    proven_natural_run_ids: set[int] = set()
-    # The component check already queried the selected run.  Only perform the
-    # wider historical proof scan for a real API-backed result; this keeps
-    # compatibility fixtures that stub component health deterministic.
-    if component_health.get("jobs") is not None:
-        proven_natural_run_ids = proven_natural_schedule_run_ids(
+    natural_full_chain_run_ids: set[str] = set()
+    if any(item.get("event") == "schedule" for item in workflow_runs):
+        # Always collect the bounded window, even when a newer manual fallback
+        # is the latest mixed run.  Otherwise the older natural full-chain
+        # successes would be silently omitted (or old canaries over-counted).
+        natural_full_chain_run_ids = collect_natural_full_chain_run_ids(
             args.repo,
             workflow_runs,
             jobs_cache,
             now=checked_at,
-            coverage_window_hours=args.coverage_window_hours,
+            window_hours=args.coverage_window_hours,
         )
-    if (
-        component_health.get("runEvent") == _NATURAL_EVENT
-        and component_health.get("naturalFullChainProven") is True
-        and str(component_health.get("runId", "")).isdigit()
-    ):
-        proven_natural_run_ids.add(int(component_health["runId"]))
     result = health(
         workflow_runs,
-        now=checked_at,
         coverage_window_hours=args.coverage_window_hours,
-        natural_full_chain_run_ids=proven_natural_run_ids,
+        watchdog_run_ids=watchdog_run_ids,
+        natural_full_chain_run_ids=natural_full_chain_run_ids,
     )
     result["componentHealth"] = component_health
-    result["provenNaturalRunIds"] = sorted(proven_natural_run_ids)
+    result["provenNaturalRunIds"] = sorted(natural_full_chain_run_ids)
     external_blocker = github_actions_external_blocker(args.repo, workflow_runs)
     result["githubActionsExternalBlocker"] = external_blocker
     managed_coverage = (
@@ -784,6 +1067,8 @@ def main() -> int:
         workflow_runs,
         max_age=timedelta(minutes=max(15, args.max_effective_age_minutes)),
         component_health=component_health,
+        natural_full_chain_run_ids=natural_full_chain_run_ids,
+        watchdog_run_ids=watchdog_run_ids,
     )
     result["effectiveScan"] = effective
     # Compatibility fields remain read-only. The scheduler watchdog is the sole
@@ -794,17 +1079,21 @@ def main() -> int:
     result["repairError"] = None
     result["repairSuppressedReason"] = "REPAIR_OWNED_BY_SCHEDULER_WATCHDOG"
     scan_health_issues = [] if effective["fresh"] else ["EFFECTIVE_SCAN_STALE"]
-    result["operationalHealthy"] = bool(
+    full_slot_coverage_health = result["fullSlotCoverage"]
+    result["currentOperationalHealthy"] = bool(
         effective["fresh"]
-        and result["githubNaturalScheduleHealthy"]
         and component_health.get("healthy") is True
         and managed_coverage.get("healthy") is True
         and external_blocker is None
     )
-    result["operationalIssues"] = list(
+    result["operationalHealthy"] = bool(
+        result["currentOperationalHealthy"]
+        and result["githubNaturalScheduleHealthy"] is True
+        and full_slot_coverage_health.get("healthy") is not False
+    )
+    result["currentOperationalIssues"] = list(
         dict.fromkeys(
             [
-                *result["issues"],
                 *scan_health_issues,
                 *(component_health.get("issues") or []),
                 *(managed_coverage.get("issues") or []),
@@ -812,9 +1101,18 @@ def main() -> int:
             ]
         )
     )
+    result["operationalIssues"] = list(
+        dict.fromkeys(
+            [
+                *result["currentOperationalIssues"],
+                *(full_slot_coverage_health.get("issues") or []),
+            ]
+        )
+    )
+    result["healthIssues"] = list(dict.fromkeys([*result["issues"], *result["operationalIssues"]]))
     if args.notify and (
-        not effective["fresh"]
-        or not result["githubNaturalScheduleHealthy"]
+        result["healthy"] is not True
+        or not effective["fresh"]
         or component_health.get("healthy") is not True
         or managed_coverage.get("healthy") is not True
         or external_blocker is not None
@@ -836,13 +1134,13 @@ def main() -> int:
                         "tag": "div",
                         "text": {
                             "tag": "lark_md",
-                            "content": "\n".join(result["operationalIssues"]),
+                            "content": "\n".join(result["healthIssues"]),
                         },
                     }
                 ],
             },
             idempotency_key=sha256_json(
-                {"issues": result["operationalIssues"], "hour": result["checkedAt"][:13]}
+                {"issues": result["healthIssues"], "hour": result["checkedAt"][:13]}
             ),
         )
     print(json.dumps(result, ensure_ascii=False))

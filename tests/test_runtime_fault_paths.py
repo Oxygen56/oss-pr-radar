@@ -106,7 +106,12 @@ def test_log_rotation_handles_exact_limit_and_keeps_bounded_history(tmp_path):
 
 def test_queue_importer_lock_prevents_duplicate_import(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
+        "oss_pr_radar.local_publication.disk_snapshot",
+        lambda _root: {
+            "level": "ok",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.5,
+        },
     )
     calls = []
     with exclusive_lock(tmp_path / "state" / "queue-import.lock"):

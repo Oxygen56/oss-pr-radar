@@ -5,10 +5,11 @@ heartbeat. The heartbeat is a controller, not an issue implementation task.
 
 The hourly controller heartbeat targets its durable controller thread
 `019f71c3-4f26-7030-b126-25f8cfbac4c4`. The daily 09:00 War Room heartbeat
-targets the separate durable audit thread
-`01a03bf2-e310-7f63-8db6-a9ec0a39f4aa`. A thread can own only one heartbeat,
-so these fixed targets must not be shared or swapped. Their schedules and
-release commands also remain independent.
+targets the separate, normally idle audit thread
+`01a047a5-88da-7113-8355-218215cd037a`. A thread can own only one heartbeat,
+so these fixed targets must not be shared with a long-running user
+conversation or swapped. Their schedules and release commands also remain
+independent.
 
 ## Fixed boundary
 
@@ -26,7 +27,8 @@ release commands also remain independent.
 ## One command
 
 From the fixed runtime root, run exactly; the script and package must come from
-the verified active release:
+the verified active release. Keep the interpreter token at the start of the
+command; do not execute the `.py` path by itself:
 
 ```text
 .venv/bin/python current-release/scripts/controller_cycle.py \
@@ -114,7 +116,8 @@ uses the same release-bound projection for both delivery channels:
 
 ```text
 .venv/bin/python current-release/scripts/daily_war_room_cycle.py \
-  --runtime-root /Users/oxygen/Documents/github/oss-pr-radar
+  --runtime-root /Users/oxygen/Documents/github/oss-pr-radar \
+  --send
 ```
 
 Adding `--send` is the only way to request Feishu delivery. Delivery state is

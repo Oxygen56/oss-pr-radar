@@ -12,12 +12,20 @@ from pathlib import Path
 from typing import Any
 
 from .release_binding import active_release, runtime_ledger_path
-from .runtime import REQUIRED_WORKERS, disk_snapshot, evaluate_health, pid_probe, read_json
+from .runtime import (
+    REQUIRED_WORKERS,
+    disk_snapshot,
+    evaluate_health,
+    pid_probe,
+    read_disk_pressure_gate_health,
+    read_json,
+)
 
 WORKER_LABELS = {
     "fast": "com.oss-pr-radar.local-publication",
     "slow": "com.oss-pr-radar.local-publication-slow",
     "queue-importer": "com.oss-pr-radar.queue-importer",
+    "scheduler-watchdog": "com.oss-pr-radar.scheduler-watchdog",
 }
 LEGACY_LABELS = (
     "com.oss-pr-radar.local-publication-agent",
@@ -241,6 +249,7 @@ def audit_snapshot(snapshot: dict[str, Any], *, now: float | None = None) -> dic
         expected_release=expected_release,
         expected_policy_digest=expected_policy_digest,
         disk=snapshot.get("disk"),
+        disk_pressure_gate=snapshot.get("diskPressureGate"),
         log_bytes=snapshot.get("logBytes"),
     )
     faults = list(health["issues"])
@@ -441,6 +450,8 @@ def collect_snapshot(
         publication_effect["processCrashed"] = bool(
             publication_effect.get("processCrashed") or journal.get("processCrashed")
         )
+    disk = disk_snapshot(root)
+    disk_pressure_gate = read_disk_pressure_gate_health(root, snapshot_fn=lambda _root: dict(disk))
     return {
         "state": state,
         "launchctl": launchctl_by_worker["fast"],
@@ -462,7 +473,8 @@ def collect_snapshot(
         "lastErrno": last_errno,
         "fetchHead": isolated_refs,
         "logEvidence": {"files": [str(path) for path in log_files], "bytes": log_bytes},
-        "disk": disk_snapshot(root),
+        "disk": disk,
+        "diskPressureGate": disk_pressure_gate,
         "logBytes": log_bytes,
     }
 

@@ -18,7 +18,8 @@ from typing import Any
 
 from .managed_security import sign_current, verify_current
 from .pr_projection import ledger_projection
-from .release_binding import active_release, runtime_root_digest
+from .release_binding import active_release, runtime_ledger_path, runtime_root_digest
+from .runtime import REQUIRED_WORKERS, disk_restart_safe, read_disk_pressure_gate_health
 from .stage6_rehearsal import source_generation, stable_sqlite_copy
 from .util import canonical_json, iso_z, sha256_json
 
@@ -59,11 +60,54 @@ class _WorkerStagingLock:
 
     def __enter__(self) -> "_WorkerStagingLock":
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        parent = self.path.parent.lstat()
+        if (
+            stat.S_ISLNK(parent.st_mode)
+            or not stat.S_ISDIR(parent.st_mode)
+            or parent.st_uid != os.getuid()
+        ):
+            raise RuntimeError("worker staging lock directory is unsafe")
         os.chmod(self.path.parent, 0o700)
-        self.handle = self.path.open("a+b")
-        os.chmod(self.path, 0o600)
-        fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
-        return self
+        flags = os.O_CREAT | os.O_RDWR
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = -1
+        handle: Any | None = None
+        try:
+            descriptor = os.open(self.path, flags, 0o600)
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or metadata.st_nlink != 1
+            ):
+                raise RuntimeError("worker staging lock file is unsafe")
+            os.fchmod(descriptor, 0o600)
+            handle = os.fdopen(descriptor, "r+b", closefd=True)
+            descriptor = -1
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            path_metadata = self.path.lstat()
+            locked_metadata = os.fstat(handle.fileno())
+            if (
+                stat.S_ISLNK(path_metadata.st_mode)
+                or not stat.S_ISREG(path_metadata.st_mode)
+                or path_metadata.st_uid != os.getuid()
+                or path_metadata.st_nlink != 1
+                or (path_metadata.st_dev, path_metadata.st_ino)
+                != (locked_metadata.st_dev, locked_metadata.st_ino)
+            ):
+                raise RuntimeError("worker staging lock path changed while locking")
+            self.handle = handle
+            return self
+        except Exception:
+            if handle is not None:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                finally:
+                    handle.close()
+            if descriptor >= 0:
+                os.close(descriptor)
+            raise
 
     def __exit__(self, _type: object, _value: object, _traceback: object) -> None:
         assert self.handle is not None
@@ -75,6 +119,53 @@ def worker_staging_transaction_lock(runtime_root: Path) -> _WorkerStagingLock:
     """Return the process-exclusive lock covering the complete stage transaction."""
 
     return _WorkerStagingLock(runtime_root)
+
+
+def authorization_records_bound_to_release(
+    runtime_root: Path, *, release_id: object, release_head: object, release_manifest_sha256: object
+) -> bool:
+    """Return whether every present authorization record names one release.
+
+    Deployment must be able to distinguish a valid same-release redeploy from a
+    pointer that was switched out of band while old credentials remained on
+    disk.  This deliberately checks only the immutable release binding shared
+    by all three records; the normal Stage 7 gates continue to verify
+    signatures, timestamps, ledger state, and worker evidence before use.
+    Any present record that is missing, malformed, unsafe, or bound to another
+    release is treated as unprovable so the caller can revoke the complete set.
+    """
+
+    expected = {
+        "releaseId": release_id,
+        "releaseHead": release_head,
+        "releaseManifestSha256": release_manifest_sha256,
+    }
+    if any(not isinstance(value, str) or not value for value in expected.values()):
+        return False
+    records = (
+        (authorization_path(runtime_root), OPERATIONAL_AUTH_SCHEMA),
+        (worker_staging_authorization_path(runtime_root), WORKER_STAGING_AUTH_SCHEMA),
+        (staged_worker_receipt_path(runtime_root), STAGED_WORKER_RECEIPT_SCHEMA),
+    )
+    for path, schema in records:
+        if not path.exists() and not path.is_symlink():
+            continue
+        try:
+            metadata = path.lstat()
+            if (
+                stat.S_ISLNK(metadata.st_mode)
+                or not stat.S_ISREG(metadata.st_mode)
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+            ):
+                return False
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeError):
+            return False
+        if not isinstance(value, dict) or value.get("schema") != schema:
+            return False
+        if any(value.get(key) != expected_value for key, expected_value in expected.items()):
+            return False
+    return True
 
 
 def _write_private(path: Path, value: dict[str, Any]) -> None:
@@ -546,6 +637,58 @@ def _read_staged_receipt(runtime_root: Path) -> dict[str, Any]:
     return value
 
 
+def _validate_receipt_staging_window(
+    value: dict[str, Any], *, now: datetime | None = None, require_current: bool = True
+) -> tuple[datetime, datetime, datetime]:
+    """Validate the staging authorization window carried by a receipt.
+
+    Worker observations have a longer freshness allowance than the staging
+    permit itself.  A receipt therefore cannot remain usable merely because
+    its observations are recent: it is valid only while the exact permit that
+    produced it is still within its five-minute window.  Reset/recovery code
+    can opt out of the live-window check so it can safely remove an expired
+    receipt; all business/activation paths keep the default fail-closed check.
+    """
+
+    try:
+        issued = datetime.fromisoformat(str(value["stagingIssuedAt"]).replace("Z", "+00:00"))
+        expires = datetime.fromisoformat(str(value["stagingExpiresAt"]).replace("Z", "+00:00"))
+        staged = datetime.fromisoformat(str(value["stagedAt"]).replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("staged worker receipt timestamps are invalid") from exc
+    if issued.tzinfo is None or expires.tzinfo is None or staged.tzinfo is None:
+        raise RuntimeError("staged worker receipt timestamps must include UTC offsets")
+    issued = issued.astimezone(UTC)
+    expires = expires.astimezone(UTC)
+    staged = staged.astimezone(UTC)
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        raise RuntimeError("staged worker receipt validation time must include a UTC offset")
+    current = current.astimezone(UTC)
+    if issued > current or staged > current or expires <= issued:
+        raise RuntimeError("staged worker receipt timestamps are invalid")
+    if staged < issued or staged >= expires or expires - issued > WORKER_STAGING_AUTH_TTL:
+        raise RuntimeError("staged worker receipt staging window is invalid")
+    records = value.get("workers")
+    if not isinstance(records, list) or not records:
+        raise RuntimeError("staged worker receipt worker observations are missing")
+    for item in records:
+        if not isinstance(item, dict):
+            raise RuntimeError("staged worker receipt worker observation is invalid")
+        try:
+            observed = datetime.fromisoformat(str(item["observedAt"]).replace("Z", "+00:00"))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("staged worker receipt worker timestamp is invalid") from exc
+        if observed.tzinfo is None:
+            raise RuntimeError("staged worker receipt worker timestamp has no UTC offset")
+        observed = observed.astimezone(UTC)
+        if observed < issued or observed > staged or observed >= expires:
+            raise RuntimeError("staged worker receipt worker observation is outside its permit")
+    if require_current and current >= expires:
+        raise RuntimeError("staged worker receipt staging authorization is expired")
+    return issued, expires, staged
+
+
 def _read_json_signed_staging(path: Path) -> dict[str, Any]:
     if path.is_symlink() or not path.is_file() or path.stat().st_mode & 0o777 != 0o600:
         raise RuntimeError("staging authorization is missing or unsafe")
@@ -564,6 +707,46 @@ def _read_json_signed_staging(path: Path) -> dict[str, Any]:
     ):
         raise RuntimeError("staging authorization authentication failed")
     return value
+
+
+def _validate_receipt_staging_binding(
+    receipt: dict[str, Any], staging: dict[str, Any], *, receipt_path: Path
+) -> None:
+    """Require a receipt and its consumed permit to be one exact transaction."""
+
+    for receipt_key, staging_key in (
+        ("stagingNonce", "nonce"),
+        ("stagingIssuedAt", "issuedAt"),
+        ("stagingExpiresAt", "expiresAt"),
+        ("managedCountsEvidencePath", "managedCountsEvidencePath"),
+        ("managedCountsEvidenceSha256", "managedCountsEvidenceSha256"),
+        ("workerSpecDigest", "workerSpecDigest"),
+        ("releaseId", "releaseId"),
+        ("releaseHead", "releaseHead"),
+        ("releaseManifestSha256", "releaseManifestSha256"),
+        ("ledgerTarget", "ledgerTarget"),
+        ("ledgerGeneration", "ledgerGeneration"),
+        ("ledgerSha256", "ledgerSha256"),
+        ("managedPrProjectionDigest", "managedPrProjectionDigest"),
+    ):
+        if receipt.get(receipt_key) != staging.get(staging_key):
+            raise RuntimeError("staged receipt does not bind the staging authorization")
+    receipt_digest = stable_evidence_digest(receipt_path)
+    if staging.get("state") == "ACTIVE":
+        # This is the crash-retry window after the receipt was committed but
+        # before the permit was rewritten as CONSUMED.
+        staging_digest = stable_evidence_digest(
+            receipt_path.with_name(WORKER_STAGING_AUTH_FILENAME)
+        )
+        if receipt.get("authorizationDigest") != staging_digest:
+            raise RuntimeError("staged receipt does not bind the active staging authorization")
+        return
+    if (
+        staging.get("state") != "CONSUMED"
+        or receipt.get("authorizationDigest") != staging.get("initialAuthorizationDigest")
+        or staging.get("receiptSha256") != receipt_digest
+    ):
+        raise RuntimeError("staged receipt consumed proof mismatch")
 
 
 def _receipt_matches_files(value: dict[str, Any], *, specs: list[dict[str, Any]]) -> bool:
@@ -606,16 +789,16 @@ def consume_worker_staging_authorization(
         receipt_path = staged_worker_receipt_path(runtime_root)
         if receipt_path.exists() or receipt_path.is_symlink():
             value = _read_staged_receipt(runtime_root)
+            _validate_receipt_staging_window(value)
             if value.get("workerSpecDigest") != worker_spec_digest(
                 specs
             ) or not _receipt_matches_files(value, specs=specs):
                 raise RuntimeError("existing staged receipt conflicts with current worker files")
             staging_path = worker_staging_authorization_path(runtime_root)
             staging = _read_json_signed_staging(staging_path)
+            _validate_receipt_staging_binding(value, staging, receipt_path=receipt_path)
             if staging.get("state") == "ACTIVE":
                 original_digest = stable_evidence_digest(staging_path)
-                if value.get("authorizationDigest") != original_digest:
-                    raise RuntimeError("staged receipt does not bind the active staging nonce")
                 consumed = {
                     key: item
                     for key, item in staging.items()
@@ -659,8 +842,13 @@ def consume_worker_staging_authorization(
             "stagedAt": iso_z(datetime.now(UTC)),
             "workers": records,
         }
+        _validate_receipt_staging_window(receipt_unsigned)
         signed = sign_current(receipt_unsigned, context=STAGED_WORKER_RECEIPT_CONTEXT)
         receipt = {**receipt_unsigned, **signed}
+        # Signing and plist hashing are bounded but the permit is short-lived;
+        # re-check at the receipt commit point rather than producing a receipt
+        # that was already expired when it became visible.
+        _validate_receipt_staging_window(receipt)
         _write_private(receipt_path, receipt)
         consumed_unsigned = {
             key: value
@@ -694,6 +882,7 @@ def verify_staged_worker_receipt(
 
     try:
         value = _read_staged_receipt(runtime_root)
+        _validate_receipt_staging_window(value)
         binding = active_release(runtime_root)[1]
         current = _current_ledger_identity(runtime_root)
         if any(
@@ -714,17 +903,11 @@ def verify_staged_worker_receipt(
             return False
         staging_path = worker_staging_authorization_path(runtime_root)
         staging = _read_json_signed_staging(staging_path)
-        for receipt_key, staging_key in (
-            ("stagingNonce", "nonce"),
-            ("stagingIssuedAt", "issuedAt"),
-            ("stagingExpiresAt", "expiresAt"),
-            ("managedCountsEvidencePath", "managedCountsEvidencePath"),
-            ("managedCountsEvidenceSha256", "managedCountsEvidenceSha256"),
-        ):
-            if value.get(receipt_key) != staging.get(staging_key):
-                return False
-        if value.get("authorizationDigest") != staging.get("initialAuthorizationDigest"):
+        if staging.get("state") != "CONSUMED":
             return False
+        _validate_receipt_staging_binding(
+            value, staging, receipt_path=staging_path.parent / STAGED_WORKER_RECEIPT_FILENAME
+        )
         if (
             stable_evidence_digest(Path(str(value["managedCountsEvidencePath"])))
             != value["managedCountsEvidenceSha256"]
@@ -775,6 +958,7 @@ def _preflight_requirements(preflight: dict[str, Any]) -> None:
         "actualAutomationEvidence": {"valid": True},
         "pendingPublicationEffectsValid": True,
         "diskStopThresholdOk": True,
+        "diskRestartSafe": True,
         "runtimeReleasePolicyIdentityMatch": True,
         "noRuntimeCodeDrift": True,
         "noSharedGitWrites": True,
@@ -789,8 +973,8 @@ def _preflight_requirements(preflight: dict[str, Any]) -> None:
         elif actual != expected:
             raise RuntimeError(f"operational authorization preflight failed: {key}")
     workers = preflight.get("workers")
-    if not isinstance(workers, list) or len(workers) != 3:
-        raise RuntimeError("operational authorization requires three staged workers")
+    if not isinstance(workers, list) or len(workers) != len(REQUIRED_WORKERS):
+        raise RuntimeError("operational authorization requires every staged worker")
     if any(
         item.get("actualConfigMatch") is not True
         or item.get("launchConfigMatch") is not True
@@ -823,6 +1007,11 @@ def _issue_operational_authorization_unlocked(
         raise RuntimeError("operational authorization requires an active managed ledger")
     receipt_path = staged_worker_receipt_path(runtime_root)
     receipt = _read_staged_receipt(runtime_root)
+    _validate_receipt_staging_window(receipt)
+    staging = _read_json_signed_staging(worker_staging_authorization_path(runtime_root))
+    if staging.get("state") != "CONSUMED":
+        raise RuntimeError("operational authorization requires a consumed staging authorization")
+    _validate_receipt_staging_binding(receipt, staging, receipt_path=receipt_path)
     if not _receipt_matches_files(
         receipt, specs=[{"Label": str(item.get("label"))} for item in receipt.get("workers", [])]
     ):
@@ -871,8 +1060,26 @@ def _issue_operational_authorization_unlocked(
     if not auth.get("keyId") or not auth.get("signature"):
         raise PermissionError("current signing key is unavailable")
     value = {**unsigned, **auth}
-    _revoke_worker_staging_authorization_unlocked(runtime_root)
-    _write_private(authorization_path(runtime_root), value)
+    # Re-read the signed staging transaction at the STAGED commit point.  This
+    # also catches a short permit expiring while evidence was hashed/signed.
+    receipt = _read_staged_receipt(runtime_root)
+    _validate_receipt_staging_window(receipt)
+    staging = _read_json_signed_staging(worker_staging_authorization_path(runtime_root))
+    if staging.get("state") != "CONSUMED":
+        raise RuntimeError("operational authorization requires a consumed staging authorization")
+    _validate_receipt_staging_binding(receipt, staging, receipt_path=receipt_path)
+    if stable_evidence_digest(receipt_path) != receipt_digest:
+        raise RuntimeError("staged worker receipt changed before authorization commit")
+    # Commit the full STAGED authorization before removing its consumed
+    # staging permit.  Reversing these operations can strand a valid receipt
+    # with neither permit nor full authorization if the final write fails.
+    _write_private_commit_point(authorization_path(runtime_root), value)
+    try:
+        _revoke_worker_staging_authorization_unlocked(runtime_root)
+    except Exception:
+        # The signed STAGED record is already visible and remains fail-closed
+        # until finalize.  A retry may clean the redundant consumed permit.
+        pass
     return value
 
 
@@ -899,7 +1106,7 @@ def issue_operational_authorization(
 
 
 def _verify_worker_plist_bindings(bindings: object) -> bool:
-    if not isinstance(bindings, list) or len(bindings) != 3:
+    if not isinstance(bindings, list) or len(bindings) != len(REQUIRED_WORKERS):
         return False
     labels: set[str] = set()
     for item in bindings:
@@ -1000,21 +1207,238 @@ def require_operational_authorization(
     )
 
 
-def finalize_operational_authorization(runtime_root: Path) -> dict[str, Any]:
+def _read_private_json_status(path: Path, *, schema: str) -> dict[str, Any]:
+    """Read one private auth record for diagnostics without changing state."""
+
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return {"present": False, "state": "MISSING"}
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+    ):
+        return {"present": True, "state": "INVALID", "reason": "unsafe_file"}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {"present": True, "state": "INVALID", "reason": "invalid_json"}
+    if not isinstance(value, dict) or value.get("schema") != schema:
+        return {"present": True, "state": "INVALID", "reason": "schema_mismatch"}
+    state = str(value.get("state") or "PRESENT")
+    return {
+        "present": True,
+        "state": state,
+        "releaseBound": bool(
+            value.get("releaseId")
+            and value.get("releaseHead")
+            and value.get("releaseManifestSha256")
+        ),
+        "issuedAt": value.get("issuedAt"),
+    }
+
+
+def _readonly_ledger_counts(runtime_root: Path) -> dict[str, int | str]:
+    """Return bounded pending counts from the ledger without constructing it.
+
+    ``RadarLedger`` performs schema initialization in its constructor.  The
+    status path is intentionally usable while authorization is absent, so it
+    opens the pointed ledger through SQLite's read-only URI instead.
+    """
+
+    try:
+        path = runtime_ledger_path(runtime_root)
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            return {"error": "ledger_not_regular"}
+        connection = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True, timeout=10)
+        try:
+            connection.execute("PRAGMA busy_timeout=10000")
+            connection.execute("PRAGMA query_only=ON")
+            tables = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+
+            def count(table: str, where: str = "") -> int:
+                if table not in tables:
+                    return 0
+                sql = f"SELECT COUNT(*) FROM {table}"
+                if where:
+                    sql += f" WHERE {where}"
+                return int(connection.execute(sql).fetchone()[0])
+
+            return {
+                "pendingIntents": count(
+                    "intents", "status IN ('PENDING','LEASED','CREATING','DISPATCHED')"
+                ),
+                "pendingPublicationRequests": count(
+                    "publication_requests", "status IN ('PENDING','GRANTED')"
+                ),
+                "activeLeases": count(
+                    "intents", "status IN ('LEASED','CREATING') AND lease_until IS NOT NULL"
+                ),
+                "unresolvedFollowups": count("pr_followups", "followup_required=1"),
+                "taskResultIngestions": count("events", "event_type='TASK_RESULT_INGESTED'"),
+            }
+        finally:
+            connection.close()
+    except (OSError, RuntimeError, sqlite3.Error, ValueError):
+        return {"error": "ledger_unavailable"}
+
+
+def read_operational_authorization_status(runtime_root: Path) -> dict[str, Any]:
+    """Expose a non-mutating recovery snapshot when business actions are gated.
+
+    This function deliberately never issues, consumes, revokes, claims, or
+    dispatches anything.  It exists so a missing authorization cannot hide
+    the pending work that will be processed after the normal signed gate is
+    repaired.
+    """
+
+    runtime_root = runtime_root.resolve()
+    auth = _read_private_json_status(
+        authorization_path(runtime_root), schema=OPERATIONAL_AUTH_SCHEMA
+    )
+    staging = _read_private_json_status(
+        worker_staging_authorization_path(runtime_root), schema=WORKER_STAGING_AUTH_SCHEMA
+    )
+    receipt = _read_private_json_status(
+        staged_worker_receipt_path(runtime_root), schema=STAGED_WORKER_RECEIPT_SCHEMA
+    )
+    authorization_state = str(auth.get("state") or "MISSING")
+    if authorization_state == "ACTIVE":
+        try:
+            verify_operational_authorization(runtime_root)
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+            auth = {
+                **auth,
+                "declaredState": "ACTIVE",
+                "state": "INVALID",
+                "reason": "verification_failed",
+            }
+            authorization_state = "INVALID"
+    release: dict[str, Any] = {"bound": False}
+    try:
+        _release, manifest = active_release(runtime_root)
+        release = {
+            "bound": True,
+            "releaseId": manifest.get("releaseId"),
+            "releaseHead": manifest.get("commit"),
+        }
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        release = {"bound": False, "reason": str(exc)[:160]}
+    blocked_reason = None
+    if authorization_state == "MISSING":
+        blocked_reason = "OPERATIONAL_AUTHORIZATION_MISSING"
+    elif authorization_state == "INVALID":
+        blocked_reason = "OPERATIONAL_AUTHORIZATION_INVALID"
+    elif authorization_state != "ACTIVE":
+        blocked_reason = "OPERATIONAL_AUTHORIZATION_NOT_ACTIVE"
+    return {
+        "ok": True,
+        "readOnly": True,
+        "authorization": auth,
+        "staging": staging,
+        "stagedReceipt": receipt,
+        "release": release,
+        "pending": _readonly_ledger_counts(runtime_root),
+        "pendingPreserved": True,
+        "blockedReason": blocked_reason,
+    }
+
+
+def finalize_operational_authorization(
+    runtime_root: Path, *, now: datetime | None = None
+) -> dict[str, Any]:
     """Promote staged full auth at one final, fail-closed commit point."""
 
     with _WorkerStagingLock(runtime_root):
+        receipt_path = staged_worker_receipt_path(runtime_root)
+        staging_path = worker_staging_authorization_path(runtime_root)
+        try:
+            already_active = verify_operational_authorization(runtime_root)
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+            already_active = None
+        if already_active is not None:
+            receipt = None
+            if receipt_path.exists() or receipt_path.is_symlink():
+                if stable_evidence_digest(receipt_path) != already_active.get(
+                    "stagedWorkerReceiptSha256"
+                ):
+                    raise RuntimeError("active authorization staged receipt has changed")
+                receipt = _read_staged_receipt(runtime_root)
+            if staging_path.exists() or staging_path.is_symlink():
+                staging = _read_json_signed_staging(staging_path)
+                if receipt is not None:
+                    _validate_receipt_staging_binding(receipt, staging, receipt_path=receipt_path)
+                elif (
+                    staging.get("state") != "CONSUMED"
+                    or staging.get("nonce") != already_active.get("stagingNonce")
+                    or staging.get("receiptSha256")
+                    != already_active.get("stagedWorkerReceiptSha256")
+                ):
+                    raise RuntimeError("active authorization staging cleanup binding is invalid")
+            for obsolete in (staging_path, receipt_path):
+                if not obsolete.exists() and not obsolete.is_symlink():
+                    continue
+                try:
+                    _remove_private_and_fsync(obsolete)
+                except Exception:
+                    pass
+            return already_active
+
         value = verify_operational_authorization(runtime_root, require_staged_receipt=True)
+        receipt = _read_staged_receipt(runtime_root)
+        if staging_path.exists() or staging_path.is_symlink():
+            staging = _read_json_signed_staging(staging_path)
+            if staging.get("state") != "CONSUMED":
+                raise RuntimeError("operational authorization has an active staging permit")
+            _validate_receipt_staging_binding(receipt, staging, receipt_path=receipt_path)
+        _validate_receipt_staging_window(receipt, now=now)
         unsigned = {key: item for key, item in value.items() if key not in {"keyId", "signature"}}
-        unsigned.update({"state": "ACTIVE", "activationCompletedAt": iso_z(datetime.now(UTC))})
+        activation_time = now or datetime.now(UTC)
+        unsigned.update({"state": "ACTIVE", "activationCompletedAt": iso_z(activation_time)})
         signed = sign_current(unsigned, context=OPERATIONAL_AUTH_CONTEXT)
         if not signed.get("keyId") or not signed.get("signature"):
             raise PermissionError("current signing key is unavailable")
-        # Remove the proof first.  Until the ACTIVE record is atomically
-        # visible, only an unusable STAGED authorization can remain.
-        _remove_private_and_fsync(staged_worker_receipt_path(runtime_root))
-        _write_private_commit_point(authorization_path(runtime_root), {**unsigned, **signed})
-        return {**unsigned, **signed}
+        # Re-observe the shared gate at the ACTIVE commit point.  A valid
+        # persisted episode may still be active because unloaded workers need
+        # this activation to run and durably clear it, but corrupt/unreadable
+        # gate state must fail closed.  Capacity is evaluated from the same
+        # live snapshot returned by that observation.
+        activation_health = read_disk_pressure_gate_health(runtime_root)
+        activation_disk = activation_health.get("snapshot")
+        if activation_health.get("reason") not in {None, "DISK_STOP_THRESHOLD"}:
+            raise RuntimeError("operational authorization activation disk check failed")
+        if not isinstance(activation_disk, dict) or not disk_restart_safe(activation_disk):
+            raise RuntimeError("operational authorization activation requires restart-safe disk")
+        # The live disk observation can cross the short staging expiry.  Read
+        # and authenticate the receipt again immediately before publishing
+        # ACTIVE, then re-check both its digest and time window.
+        receipt = _read_staged_receipt(runtime_root)
+        _validate_receipt_staging_window(receipt, now=now)
+        if stable_evidence_digest(receipt_path) != value.get("stagedWorkerReceiptSha256"):
+            raise RuntimeError("operational authorization staged receipt changed before activation")
+        # Publish ACTIVE first.  Once this commit point is visible it is safe
+        # to retry cleanup of the staging receipt; deleting the receipt first
+        # could strand a STAGED authorization with no way to activate it.
+        active_value = {**unsigned, **signed}
+        _write_private_commit_point(authorization_path(runtime_root), active_value)
+        for obsolete in (staging_path, receipt_path):
+            if not obsolete.exists() and not obsolete.is_symlink():
+                continue
+            try:
+                _remove_private_and_fsync(obsolete)
+            except Exception:
+                # The ACTIVE record is already durable.  A later status or
+                # activation pass can clean redundant staging evidence.
+                pass
+        return active_value
 
 
 def _reset_timestamp(value: object, *, field: str) -> datetime:
@@ -1163,7 +1587,7 @@ def reset_expired_worker_staging(
         expected_spec_digest = worker_spec_digest(specs)
         runner = launchctl_runner or launchctl_print
         unloaded_markers = ("could not find", "service not found", "no such process")
-        for worker in ("fast", "slow", "queue-importer"):
+        for worker in WORKER_LABELS:
             label = WORKER_LABELS[worker]
             output = runner(label)
             if not isinstance(output, str) or not any(
@@ -1296,6 +1720,7 @@ def reset_expired_worker_staging(
 
         if receipt_path.exists() or receipt_path.is_symlink():
             receipt = _read_staged_receipt(runtime_root)
+            _validate_receipt_staging_window(receipt, now=current_time, require_current=False)
             if (
                 receipt.get("runtimeRootDigest") != runtime_root_digest(runtime_root)
                 or receipt.get("releaseId") != binding.get("releaseId")

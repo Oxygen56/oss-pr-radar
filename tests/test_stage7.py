@@ -4,8 +4,10 @@ import hashlib
 import json
 import plistlib
 import shutil
+import stat
 import subprocess
 import sys
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -23,6 +25,7 @@ from oss_pr_radar.automation_snapshot import (
     canonical_prompt,
 )
 from oss_pr_radar.daily_war_room import run_daily_cycle
+from oss_pr_radar.ledger import RadarLedger
 from oss_pr_radar.local_publication import slow_advance_once, worker_specs
 from oss_pr_radar.managed_lifecycle import ManagedLedger
 from oss_pr_radar.managed_security import sign_current
@@ -34,14 +37,19 @@ from oss_pr_radar.operational_auth import (
     reset_expired_worker_staging,
     staged_worker_receipt_path,
     verify_operational_authorization,
+    verify_staged_worker_receipt,
     worker_spec_digest,
 )
+from oss_pr_radar.outbound_pause import OUTBOUND_PAUSE_FILENAME, OUTBOUND_PAUSE_SCHEMA
 from oss_pr_radar.pr_projection import projection_summary
 from oss_pr_radar.release_binding import runtime_root_digest
+from oss_pr_radar.runtime_audit import WORKER_LABELS
 from oss_pr_radar.stage6_verification import build_verification_manifest
 from oss_pr_radar.stage7_acceptance import (
     _activated_worker_execution_ok,
+    _event_lane_health,
     _managed_counts_append_only,
+    _publication_pause_snapshot,
     build_managed_counts_evidence,
     check,
     issue_operational_authorization,
@@ -77,6 +85,36 @@ def _runtime(tmp_path: Path) -> Path:
     (runtime / "current-release").symlink_to(release)
     (runtime / "state").mkdir()
     return runtime
+
+
+def _write_active_publication_pause(runtime: Path) -> Path:
+    """Create the release-bound idle pause required by production Stage 7."""
+
+    release = (runtime / "current-release").resolve()
+    now = iso_z(utc_now())
+    path = runtime / "state" / OUTBOUND_PAUSE_FILENAME
+    path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": OUTBOUND_PAUSE_SCHEMA,
+                "paused": True,
+                "pauseState": "ACTIVE",
+                "reason": "STAGE7_TEST",
+                "createdAt": now,
+                "expiresAt": iso_z(utc_now() + timedelta(hours=1)),
+                "releaseId": "stage7-test",
+                "releasePath": str(release),
+                "workflowWasActive": False,
+                "workflowStateAfterPause": "disabled_manually",
+                "workflowIdleConfirmedAt": now,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+    return path
 
 
 def _verification(head: str) -> dict:
@@ -214,6 +252,32 @@ def test_final_ledger_append_only_guard_preserves_exact_pr_invariants():
     )
 
 
+def test_stage7_publication_pause_is_release_bound_and_requires_idle(tmp_path):
+    runtime = _runtime(tmp_path)
+    missing = _publication_pause_snapshot(runtime)
+    assert missing["present"] is False
+    assert missing["valid"] is False
+
+    path = _write_active_publication_pause(runtime)
+    active = _publication_pause_snapshot(runtime)
+    assert active["valid"] is True
+    assert active["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["pauseState"] = "PAUSING"
+    path.write_text(json.dumps(value) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+    intermediate = _publication_pause_snapshot(runtime)
+    assert intermediate["valid"] is False
+
+    value["pauseState"] = "ACTIVE"
+    value["releaseId"] = "old-release"
+    path.write_text(json.dumps(value) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+    rebound = _publication_pause_snapshot(runtime)
+    assert rebound["valid"] is False
+
+
 def test_stage7_acceptance_accepts_running_worker_without_last_exit_code():
     running = {
         "pid": 123,
@@ -248,6 +312,128 @@ def test_stage7_acceptance_accepts_running_worker_without_last_exit_code():
         )
         is True
     )
+
+
+def test_event_lane_health_is_skipped_outside_strict_final(tmp_path):
+    def must_not_run(_command):
+        raise AssertionError("non-final event lane audit must not run")
+
+    runtime = _runtime(tmp_path)
+    result = check(
+        runtime,
+        home=tmp_path / "home",
+        strict=False,
+        event_lane_health_runner=must_not_run,
+    )
+
+    assert result["eventLaneHealth"]["required"] is False
+    assert result["eventLaneHealth"]["skipped"] is True
+    assert result["eventLaneHealth"]["healthy"] is True
+
+    preflight = check(
+        runtime,
+        home=tmp_path / "home",
+        strict=True,
+        require_workers_loaded=False,
+        event_lane_health_runner=must_not_run,
+    )
+    assert preflight["eventLaneHealth"]["required"] is False
+    assert preflight["eventLaneHealth"]["skipped"] is True
+
+
+def test_event_lane_health_final_audit_fails_closed(tmp_path):
+    healthy = {
+        "schemaVersion": "oss-pr-radar.event-lane-health.v2",
+        "checkedAt": iso_z(utc_now()),
+        "healthy": True,
+        "operationalAuthorizationValid": True,
+        "lanes": {namespace: {"healthy": True} for namespace in ("agentscope", "nanobot")},
+    }
+
+    cases = [
+        subprocess.CompletedProcess([], 2, json.dumps(healthy), ""),
+        subprocess.CompletedProcess(
+            [],
+            0,
+            json.dumps({**healthy, "schemaVersion": "wrong"}),
+            "",
+        ),
+        subprocess.CompletedProcess([], 0, "not-json", ""),
+        *[
+            subprocess.CompletedProcess([], 0, json.dumps(value), "")
+            for value in ([], None, 1, "x")
+        ],
+        subprocess.CompletedProcess(
+            [],
+            0,
+            json.dumps({**healthy, "lanes": {"agentscope": {"healthy": True}}}),
+            "",
+        ),
+    ]
+    for completed in cases:
+        commands = []
+
+        def run(command, completed=completed, commands=commands):
+            commands.append(command)
+            return subprocess.CompletedProcess(
+                command,
+                completed.returncode,
+                completed.stdout,
+                completed.stderr,
+            )
+
+        result = _event_lane_health(
+            tmp_path / "runtime",
+            code_root=tmp_path / "release",
+            home=tmp_path / "home",
+            runner=run,
+        )
+        assert result["required"] is True
+        assert result["healthy"] is False
+        assert commands and "--repair" not in commands[0]
+
+    def timeout(command):
+        raise subprocess.TimeoutExpired(command, timeout=90)
+
+    timed_out = _event_lane_health(
+        tmp_path / "runtime",
+        code_root=tmp_path / "release",
+        home=tmp_path / "home",
+        runner=timeout,
+    )
+    assert timed_out["healthy"] is False
+
+    passed_commands = []
+
+    def pass_audit(command):
+        passed_commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            json.dumps(healthy),
+            "",
+        )
+
+    runtime = tmp_path / "runtime"
+    code_root = tmp_path / "release"
+    home = tmp_path / "home"
+    passed = _event_lane_health(
+        runtime,
+        code_root=code_root,
+        home=home,
+        runner=pass_audit,
+    )
+    assert passed["healthy"] is True
+    assert passed_commands == [
+        [
+            sys.executable,
+            str(code_root / "scripts" / "event_lane_health.py"),
+            "--root",
+            str(runtime),
+            "--home",
+            str(home),
+        ]
+    ]
 
 
 def _source(path: Path, value: str) -> None:
@@ -312,10 +498,7 @@ def _bootstrap(runtime: Path, legacy: Path, tmp_path: Path) -> None:
         "observedAt": now,
         "expiresAt": expires,
         "allStopped": True,
-        "workers": {
-            worker: {"loaded": False, "pidAlive": False}
-            for worker in ("fast", "slow", "queue-importer")
-        },
+        "workers": {worker: {"loaded": False, "pidAlive": False} for worker in WORKER_LABELS},
         "legacy": {
             label: {"loaded": False}
             for label in (
@@ -394,6 +577,58 @@ def _signed_staging_fixture(tmp_path: Path) -> tuple[Path, Path, list[dict[str, 
         specs_value,
         operational_auth_module.worker_staging_authorization_path(runtime),
     )
+
+
+def test_authorization_status_is_read_only_without_authorization(tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    ledger_path = runtime / "state" / "radar_ledger.sqlite3"
+    RadarLedger(ledger_path).enqueue(
+        {
+            "intentId": "intent-pending",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "issueUpdatedAt": iso_z(utc_now()),
+            "policyDigest": "policy",
+            "title": "Pending task",
+            "mode": "canary",
+            "score": 1,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(utc_now()),
+            "expiresAt": iso_z(utc_now() + timedelta(hours=1)),
+        }
+    )
+
+    def snapshot() -> dict[str, tuple[str, object]]:
+        values: dict[str, tuple[str, object]] = {}
+        for path in runtime.rglob("*"):
+            relative = str(path.relative_to(runtime))
+            # SQLite may refresh its WAL shared-memory sidecar while opening
+            # a database read-only; the durable ledger and auth files must
+            # remain byte-for-byte unchanged.
+            if relative.endswith(("-shm", "-wal")):
+                continue
+            if path.is_symlink():
+                values[relative] = ("symlink", str(path.readlink()))
+            elif path.is_file():
+                values[relative] = ("file", path.read_bytes())
+            else:
+                values[relative] = ("directory", "")
+        return values
+
+    before = snapshot()
+    result = operational_auth_module.read_operational_authorization_status(runtime)
+    after = snapshot()
+
+    assert result["ok"] is True
+    assert result["readOnly"] is True
+    assert result["authorization"] == {"present": False, "state": "MISSING"}
+    assert result["blockedReason"] == "OPERATIONAL_AUTHORIZATION_MISSING"
+    assert result["pending"]["pendingIntents"] == 1
+    assert result["release"]["bound"] is True
+    assert before == after
 
 
 @pytest.mark.parametrize(
@@ -491,6 +726,179 @@ def _consume_signed_staging_fixture(
         specs=specs,
         worker_records=records,
     )
+
+
+def test_expired_receipt_rejected_even_when_worker_observations_are_fresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The staging permit, not a recent worker observation, controls validity."""
+
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "receipt-expiry-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime, home, specs, token_path = _signed_staging_fixture(tmp_path)
+    receipt = _consume_signed_staging_fixture(runtime, home, specs)
+    receipt_path = staged_worker_receipt_path(runtime)
+    expired_issued = utc_now() - timedelta(minutes=4)
+    expired_staged = utc_now() - timedelta(minutes=3)
+    expired_at = utc_now() - timedelta(seconds=1)
+    expired = dict(receipt)
+    expired.update(
+        {
+            "stagingIssuedAt": iso_z(expired_issued),
+            "stagingExpiresAt": iso_z(expired_at),
+            "stagedAt": iso_z(expired_staged),
+            "workers": [
+                {
+                    **item,
+                    "observedAt": iso_z(expired_staged - timedelta(seconds=1)),
+                }
+                for item in receipt["workers"]
+            ],
+        }
+    )
+    observation_cutoff = utc_now() - timedelta(minutes=10)
+    assert all(
+        datetime.fromisoformat(str(item["observedAt"]).replace("Z", "+00:00")) >= observation_cutoff
+        for item in expired["workers"]
+    )
+    unsigned = {key: value for key, value in expired.items() if key not in {"keyId", "signature"}}
+    receipt_path.write_text(
+        json.dumps(
+            {
+                **unsigned,
+                **sign_current(
+                    unsigned, context=operational_auth_module.STAGED_WORKER_RECEIPT_CONTEXT
+                ),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    receipt_path.chmod(0o600)
+    # Keep the consumed staging record's timestamps aligned with the receipt;
+    # the expiry check must be the reason for rejection, not a binding mismatch.
+    token = json.loads(token_path.read_text(encoding="utf-8"))
+    token.update({"issuedAt": iso_z(expired_issued), "expiresAt": iso_z(expired_at)})
+    token_unsigned = {
+        key: value for key, value in token.items() if key not in {"keyId", "signature"}
+    }
+    token_path.write_text(
+        json.dumps(
+            {
+                **token_unsigned,
+                **sign_current(
+                    token_unsigned, context=operational_auth_module.WORKER_STAGING_AUTH_CONTEXT
+                ),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    token_path.chmod(0o600)
+
+    reports = [
+        {
+            "label": str(spec["Label"]),
+            "loaded": False,
+            "actualConfigMatch": True,
+        }
+        for spec in specs
+    ]
+    assert (
+        verify_staged_worker_receipt(
+            runtime,
+            specs=specs,
+            worker_reports=reports,
+            home=home,
+        )
+        is False
+    )
+
+    # Exercise the same rejection at the operational-authorization entrypoint
+    # without duplicating the large strict-preflight fixture.
+    monkeypatch.setattr(operational_auth_module, "_preflight_requirements", lambda _value: None)
+    with pytest.raises(RuntimeError, match="staging authorization is expired"):
+        operational_auth_module._issue_operational_authorization_unlocked(
+            runtime,
+            preflight={},
+            managed_counts_evidence=Path(
+                str(json.loads(token_path.read_text())["managedCountsEvidencePath"])
+            ),
+            automation_snapshot=tmp_path / "automation.json",
+        )
+
+
+def test_expired_receipt_cannot_be_finalized_into_active_authorization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "receipt-finalize-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime, home, specs, token_path = _signed_staging_fixture(tmp_path)
+    receipt = _consume_signed_staging_fixture(runtime, home, specs)
+    ledger = operational_auth_module._current_ledger_identity(runtime)
+    monkeypatch.setattr(operational_auth_module, "_preflight_requirements", lambda _value: None)
+    auth = operational_auth_module._issue_operational_authorization_unlocked(
+        runtime,
+        preflight={"ledger": ledger, "workerSpecDigest": worker_spec_digest(specs)},
+        managed_counts_evidence=Path(str(receipt["managedCountsEvidencePath"])),
+        automation_snapshot=tmp_path / "unused-automation.json",
+        managed_counts_evidence_sha256=str(receipt["managedCountsEvidenceSha256"]),
+        automation_snapshot_sha256="a" * 64,
+    )
+    assert auth["state"] == "STAGED"
+    assert not token_path.exists()
+    auth_path = authorization_path(runtime)
+    receipt_path = staged_worker_receipt_path(runtime)
+    auth_before = auth_path.read_bytes()
+    receipt_before = receipt_path.read_bytes()
+    expires = datetime.fromisoformat(str(receipt["stagingExpiresAt"]).replace("Z", "+00:00"))
+
+    with pytest.raises(RuntimeError, match="staging authorization is expired"):
+        finalize_operational_authorization(runtime, now=expires + timedelta(seconds=1))
+
+    assert auth_path.read_bytes() == auth_before
+    assert receipt_path.read_bytes() == receipt_before
+    assert json.loads(auth_path.read_text(encoding="utf-8"))["state"] == "STAGED"
+
+
+@pytest.mark.parametrize("field", ["receiptSha256", "initialAuthorizationDigest"])
+def test_consumed_receipt_retry_rejects_cross_transaction_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "receipt-binding-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime, home, specs, token_path = _signed_staging_fixture(tmp_path)
+    _consume_signed_staging_fixture(runtime, home, specs)
+    receipt_path = staged_worker_receipt_path(runtime)
+    token = json.loads(token_path.read_text(encoding="utf-8"))
+    token[field] = "f" * 64
+    unsigned = {key: value for key, value in token.items() if key not in {"keyId", "signature"}}
+    token_path.write_text(
+        json.dumps(
+            {
+                **unsigned,
+                **sign_current(
+                    unsigned,
+                    context=operational_auth_module.WORKER_STAGING_AUTH_CONTEXT,
+                ),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    token_path.chmod(0o600)
+    token_before = token_path.read_bytes()
+    receipt_before = receipt_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="consumed proof mismatch"):
+        consume_worker_staging_authorization(
+            runtime,
+            specs=specs,
+            worker_records=[],
+        )
+
+    assert token_path.read_bytes() == token_before
+    assert receipt_path.read_bytes() == receipt_before
 
 
 def test_expired_worker_staging_reset_preserves_bound_plists_and_allows_reissue(
@@ -764,6 +1172,167 @@ def test_stage7_prepare_activate_and_rollback_only_moves_pointer(tmp_path, monke
     assert status(runtime)["pointer"]["target"] == str(first_target.relative_to(runtime / "state"))
 
 
+def test_stage7_activate_holds_staging_lock_through_pointer_switch(tmp_path, monkeypatch):
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "stage7-lock-activate-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime = _runtime(tmp_path)
+    source = tmp_path / "source.sqlite3"
+    _source(source, "lock-activate")
+    _bootstrap(runtime, source, tmp_path)
+    prepared = prepare(runtime, source, quiesce_token="writer-stopped")
+    state = runtime / "state"
+    pointer = state / "current-ledger"
+    pointer_before = pointer.resolve()
+    revoke_entered = threading.Event()
+    allow_revoke = threading.Event()
+    pointer_entered = threading.Event()
+    allow_pointer = threading.Event()
+    contender_started = threading.Event()
+    contender_acquired = threading.Event()
+    outcome: list[object] = []
+    original_revoke = cutover_module.revoke_operational_authorization
+    original_fsync = cutover_module._fsync_directory
+
+    def revoke(root: Path, *, _lock_held: bool = False) -> None:
+        assert _lock_held is True
+        revoke_entered.set()
+        if not allow_revoke.wait(timeout=2):
+            raise RuntimeError("test revoke barrier timed out")
+        original_revoke(root, _lock_held=_lock_held)
+
+    def fsync(path: Path) -> None:
+        if path.resolve() == state.resolve() and pointer.resolve() != pointer_before:
+            pointer_entered.set()
+            if not allow_pointer.wait(timeout=2):
+                raise RuntimeError("test pointer barrier timed out")
+        original_fsync(path)
+
+    monkeypatch.setattr(cutover_module, "revoke_operational_authorization", revoke)
+    monkeypatch.setattr(cutover_module, "_fsync_directory", fsync)
+
+    def run_activate() -> None:
+        try:
+            outcome.append(activate(runtime, Path(prepared["manifestPath"])))
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            outcome.append(exc)
+
+    activation_thread = threading.Thread(target=run_activate)
+    activation_thread.start()
+    contender_thread: threading.Thread | None = None
+    try:
+        assert revoke_entered.wait(timeout=2)
+
+        def contend() -> None:
+            contender_started.set()
+            with cutover_module.worker_staging_transaction_lock(runtime):
+                contender_acquired.set()
+
+        contender_thread = threading.Thread(target=contend)
+        contender_thread.start()
+        assert contender_started.wait(timeout=2)
+        assert not contender_acquired.wait(timeout=0.1)
+
+        allow_revoke.set()
+        assert pointer_entered.wait(timeout=2)
+        # The contender must remain blocked while the new ledger pointer is
+        # being committed, proving revoke and pointer switch share one lock.
+        assert not contender_acquired.wait(timeout=0.1)
+        allow_pointer.set()
+    finally:
+        allow_revoke.set()
+        allow_pointer.set()
+        activation_thread.join(timeout=3)
+        if contender_thread is not None:
+            contender_thread.join(timeout=3)
+    assert not activation_thread.is_alive()
+    assert contender_thread is not None and not contender_thread.is_alive()
+    assert outcome and isinstance(outcome[0], dict)
+    assert outcome[0]["phase"] == "ACTIVATED"
+    assert contender_acquired.is_set()
+
+
+def test_stage7_rollback_holds_staging_lock_through_nonce_and_pointer_switch(tmp_path, monkeypatch):
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "stage7-lock-rollback-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime = _runtime(tmp_path)
+    source = tmp_path / "source.sqlite3"
+    _source(source, "lock-rollback-before")
+    _bootstrap(runtime, source, tmp_path)
+    first = prepare(runtime, source, quiesce_token="writer-stopped")
+    activate(runtime, Path(first["manifestPath"]))
+    _source(source, "lock-rollback-after")
+    second = prepare(runtime, source, quiesce_token="writer-stopped")
+    activate(runtime, Path(second["manifestPath"]))
+
+    state = runtime / "state"
+    pointer = state / "current-ledger"
+    pointer_before = pointer.resolve()
+    revoke_entered = threading.Event()
+    allow_revoke = threading.Event()
+    pointer_entered = threading.Event()
+    allow_pointer = threading.Event()
+    contender_started = threading.Event()
+    contender_acquired = threading.Event()
+    outcome: list[object] = []
+    original_revoke = cutover_module.revoke_operational_authorization
+    original_fsync = cutover_module._fsync_directory
+
+    def revoke(root: Path, *, _lock_held: bool = False) -> None:
+        assert _lock_held is True
+        revoke_entered.set()
+        if not allow_revoke.wait(timeout=2):
+            raise RuntimeError("test revoke barrier timed out")
+        original_revoke(root, _lock_held=_lock_held)
+
+    def fsync(path: Path) -> None:
+        if path.resolve() == state.resolve() and pointer.resolve() != pointer_before:
+            pointer_entered.set()
+            if not allow_pointer.wait(timeout=2):
+                raise RuntimeError("test pointer barrier timed out")
+        original_fsync(path)
+
+    monkeypatch.setattr(cutover_module, "revoke_operational_authorization", revoke)
+    monkeypatch.setattr(cutover_module, "_fsync_directory", fsync)
+
+    def run_rollback() -> None:
+        try:
+            outcome.append(rollback(runtime, Path(second["manifestPath"])))
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            outcome.append(exc)
+
+    rollback_thread = threading.Thread(target=run_rollback)
+    rollback_thread.start()
+    contender_thread: threading.Thread | None = None
+    try:
+        assert revoke_entered.wait(timeout=2)
+
+        def contend() -> None:
+            contender_started.set()
+            with cutover_module.worker_staging_transaction_lock(runtime):
+                contender_acquired.set()
+
+        contender_thread = threading.Thread(target=contend)
+        contender_thread.start()
+        assert contender_started.wait(timeout=2)
+        assert not contender_acquired.wait(timeout=0.1)
+
+        allow_revoke.set()
+        assert pointer_entered.wait(timeout=2)
+        assert not contender_acquired.wait(timeout=0.1)
+        allow_pointer.set()
+    finally:
+        allow_revoke.set()
+        allow_pointer.set()
+        rollback_thread.join(timeout=3)
+        if contender_thread is not None:
+            contender_thread.join(timeout=3)
+    assert not rollback_thread.is_alive()
+    assert contender_thread is not None and not contender_thread.is_alive()
+    assert outcome and isinstance(outcome[0], dict)
+    assert outcome[0]["phase"] == "ROLLED_BACK"
+    assert contender_acquired.is_set()
+
+
 def test_stage7_bootstrap_rollback_consumes_nonce_once(tmp_path, monkeypatch):
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "stage7-bootstrap-key" * 4)
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
@@ -992,6 +1561,57 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
 ):
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "stage7-strict-key" * 4)
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    import oss_pr_radar.stage7_acceptance as acceptance_module
+
+    real_event_lane_health = acceptance_module._event_lane_health
+
+    def healthy_event_lane_runner(command):
+        assert "--repair" not in command
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            json.dumps(
+                {
+                    "schemaVersion": "oss-pr-radar.event-lane-health.v2",
+                    "checkedAt": iso_z(utc_now()),
+                    "healthy": True,
+                    "operationalAuthorizationValid": True,
+                    "lanes": {
+                        namespace: {
+                            "healthy": True,
+                            "bindingOk": True,
+                            "launchHealthy": True,
+                            "databaseHealthy": True,
+                            "pollHealthy": True,
+                            "releaseId": f"{namespace}-release",
+                        }
+                        for namespace in ("agentscope", "nanobot")
+                    },
+                }
+            ),
+            "",
+        )
+
+    def fixture_event_lane_health(runtime_root, *, code_root, home, runner=None):
+        return real_event_lane_health(
+            runtime_root,
+            code_root=code_root,
+            home=home,
+            runner=runner or healthy_event_lane_runner,
+        )
+
+    monkeypatch.setattr(acceptance_module, "_event_lane_health", fixture_event_lane_health)
+    # This test exercises release/worker evidence, not host capacity.  Keep
+    # the shared disk gate deterministic even when the CI host is near its
+    # hard threshold while the temporary fixture is being built.
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot",
+        lambda _root: {
+            "level": "ok",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.5,
+        },
+    )
     runtime = _runtime(tmp_path)
     source = tmp_path / "source.sqlite3"
     _source(source, "strict")
@@ -999,6 +1619,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     prepared = prepare(runtime, source, quiesce_token="writer-stopped")
     activate(runtime, Path(prepared["manifestPath"]))
     deploy_local_runtime.activate_release(runtime, "stage7-test")
+    _write_active_publication_pause(runtime)
     home = tmp_path / "home"
     contracts = build_contracts(runtime, home=home)
     launch_dir = home / "Library" / "LaunchAgents"
@@ -1009,6 +1630,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
         "fast": {"lastSuccessAt": now, "lastExitCode": 0},
         "slow": {"lastSuccessAt": now, "lastExitCode": 0},
         "queue-importer": {"queueImportSuccessAt": now, "queueLastExitCode": 0},
+        "scheduler-watchdog": {"lastSuccessAt": now, "lastExitCode": 0},
     }
     health_path.write_text(json.dumps(state), encoding="utf-8")
     retry_at = utc_now().timestamp() + 300
@@ -1101,9 +1723,30 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     def launchctl(label: str) -> str:
         return outputs.get(label, "Could not find service")
 
+    disk_value = {
+        "level": "warning",
+        "freeBytes": 64 * 1024**3,
+        "usedFraction": 0.93,
+    }
     monkeypatch.setattr(
         "oss_pr_radar.stage7_acceptance.disk_snapshot",
-        lambda _root: {"level": "ok", "freeBytes": 64 * 1024**3},
+        lambda _root: dict(disk_value),
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.runtime_audit.disk_snapshot",
+        lambda _root: dict(disk_value),
+    )
+    monkeypatch.setattr(
+        operational_auth_module,
+        "read_disk_pressure_gate_health",
+        lambda _root: {
+            "ok": True,
+            "blocked": False,
+            "reason": None,
+            "active": False,
+            "snapshot": dict(disk_value),
+            "restartSafe": disk_value["usedFraction"] <= 0.94,
+        },
     )
     counts_path = tmp_path / "managed-counts.json"
     automation_path = tmp_path / "automation-snapshot.json"
@@ -1139,7 +1782,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     assert automation["generator"] == "stage7-automation-toml-v3"
     assert automation["dailyWarRoom"]["kind"] == "heartbeat"
     assert automation["heartbeat"]["targetThreadId"] == "019f71c3-4f26-7030-b126-25f8cfbac4c4"
-    assert automation["dailyWarRoom"]["targetThreadId"] == ("01a03bf2-e310-7f63-8db6-a9ec0a39f4aa")
+    assert automation["dailyWarRoom"]["targetThreadId"] == ("01a047a5-88da-7113-8355-218215cd037a")
     assert automation["dailyWarRoom"]["targetThreadId"] != automation["heartbeat"]["targetThreadId"]
     assert {
         "model",
@@ -1193,7 +1836,8 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
         == hashlib.sha256(receipt_path.read_bytes()).hexdigest()
     )
     assert receipt_path.stat().st_mtime_ns == receipt_stat.st_mtime_ns
-    preflight = check(
+    disk_value["usedFraction"] = 0.945
+    insufficient_margin = check(
         runtime,
         home=home,
         launchctl_runner=lambda _label: "Could not find service",
@@ -1201,9 +1845,52 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
         automation_snapshot={**automation_unsigned, **auth},
         require_workers_loaded=False,
     )
+    assert insufficient_margin["ok"] is False
+    assert insufficient_margin["diskStopThresholdOk"] is True
+    assert insufficient_margin["diskRestartSafe"] is False
+
+    disk_value["usedFraction"] = 0.93
+    real_collect_snapshot = acceptance_module.collect_snapshot
+    active_gate_health = {
+        "ok": False,
+        "blocked": True,
+        "reason": "DISK_STOP_THRESHOLD",
+        "active": True,
+        "gateActive": True,
+        "restartSafe": True,
+        "snapshot": dict(disk_value),
+    }
+
+    def collect_with_active_gate(*args, **kwargs):
+        return {
+            **real_collect_snapshot(*args, **kwargs),
+            "diskPressureGate": dict(active_gate_health),
+        }
+
+    with monkeypatch.context() as context:
+        context.setattr(acceptance_module, "collect_snapshot", collect_with_active_gate)
+        context.setattr(
+            acceptance_module,
+            "read_disk_pressure_gate_health",
+            lambda _root, **_kwargs: dict(active_gate_health),
+        )
+        preflight = check(
+            runtime,
+            home=home,
+            launchctl_runner=lambda _label: "Could not find service",
+            managed_counts_evidence=counts,
+            automation_snapshot={**automation_unsigned, **auth},
+            require_workers_loaded=False,
+        )
     assert preflight["ok"] is True
+    assert preflight["diskRestartSafe"] is True
+    assert preflight["diskPressureGateClear"] is False
     assert preflight["stagedWorkerReceiptValid"] is True
     assert preflight["runtimeReleasePolicyIdentityMatch"] is True
+    with pytest.raises(RuntimeError, match="diskRestartSafe"):
+        operational_auth_module._preflight_requirements(
+            preflight | {"ok": True, "diskRestartSafe": False}
+        )
     issue_operational_authorization(
         runtime,
         managed_counts_evidence=counts_path,
@@ -1213,16 +1900,55 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     )
     assert staged_worker_receipt_path(runtime).exists()
     receipt_before_finalize = staged_worker_receipt_path(runtime).read_bytes()
+    authorization_before_finalize = authorization_path(runtime).read_bytes()
+    with monkeypatch.context() as context:
+        context.setattr(
+            operational_auth_module,
+            "read_disk_pressure_gate_health",
+            lambda _root: {
+                "ok": False,
+                "blocked": True,
+                "reason": "DISK_PRESSURE_GATE_UNAVAILABLE",
+                "active": None,
+                "snapshot": None,
+                "restartSafe": None,
+            },
+        )
+        with pytest.raises(RuntimeError, match="activation disk check failed"):
+            finalize_operational_authorization(runtime)
+    assert staged_worker_receipt_path(runtime).read_bytes() == receipt_before_finalize
+    assert json.loads(authorization_path(runtime).read_text())["state"] == "STAGED"
+    disk_value["usedFraction"] = 0.945
+    with pytest.raises(RuntimeError, match="restart-safe disk"):
+        finalize_operational_authorization(runtime)
+    assert staged_worker_receipt_path(runtime).read_bytes() == receipt_before_finalize
+    assert json.loads(authorization_path(runtime).read_text())["state"] == "STAGED"
+    disk_value["usedFraction"] = 0.93
     with monkeypatch.context() as context:
         context.setattr(
             operational_auth_module,
             "_remove_private_and_fsync",
             lambda _path: (_ for _ in ()).throw(OSError("receipt fsync failure")),
         )
-        with pytest.raises(OSError, match="receipt fsync failure"):
-            finalize_operational_authorization(runtime)
+        activated = finalize_operational_authorization(runtime)
+    assert activated["state"] == "ACTIVE"
     assert staged_worker_receipt_path(runtime).read_bytes() == receipt_before_finalize
-    assert json.loads(authorization_path(runtime).read_text())["state"] == "STAGED"
+    assert json.loads(authorization_path(runtime).read_text())["state"] == "ACTIVE"
+    # A retry must finish cleanup after an ACTIVE commit even though the
+    # prior attempt reported no error, and later retries must remain
+    # idempotent after both staging records are already gone.
+    activated_retry = finalize_operational_authorization(runtime)
+    assert activated_retry["state"] == "ACTIVE"
+    assert not staged_worker_receipt_path(runtime).exists()
+    assert not operational_auth_module.worker_staging_authorization_path(runtime).exists()
+    assert finalize_operational_authorization(runtime)["state"] == "ACTIVE"
+    # Rewind to the original STAGED record so the commit-point failure below
+    # exercises the pre-activation path without changing the rest of this
+    # strict acceptance scenario.
+    authorization_path(runtime).write_bytes(authorization_before_finalize)
+    authorization_path(runtime).chmod(0o600)
+    staged_worker_receipt_path(runtime).write_bytes(receipt_before_finalize)
+    staged_worker_receipt_path(runtime).chmod(0o600)
     with monkeypatch.context() as context:
         context.setattr(
             operational_auth_module,
@@ -1231,10 +1957,8 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
         )
         with pytest.raises(OSError, match="active write failure"):
             finalize_operational_authorization(runtime)
-    assert not staged_worker_receipt_path(runtime).exists()
+    assert staged_worker_receipt_path(runtime).read_bytes() == receipt_before_finalize
     assert json.loads(authorization_path(runtime).read_text())["state"] == "STAGED"
-    staged_worker_receipt_path(runtime).write_bytes(receipt_before_finalize)
-    staged_worker_receipt_path(runtime).chmod(0o600)
 
     def assert_staged_receipt_drift_rejected() -> None:
         assert (
@@ -1277,8 +2001,38 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     with pytest.raises(RuntimeError, match="worker binding"):
         verify_operational_authorization(runtime, require_staged_receipt=True)
     activation_plist.write_bytes(activation_bytes)
-    finalize_operational_authorization(runtime)
+    with monkeypatch.context() as context:
+        context.setattr(
+            operational_auth_module,
+            "read_disk_pressure_gate_health",
+            lambda _root: {
+                "ok": False,
+                "blocked": True,
+                "reason": "DISK_STOP_THRESHOLD",
+                "active": True,
+                "snapshot": dict(disk_value),
+                "restartSafe": True,
+            },
+        )
+        finalize_operational_authorization(runtime)
     assert not staged_worker_receipt_path(runtime).exists()
+    with monkeypatch.context() as context:
+        context.setattr(acceptance_module, "collect_snapshot", collect_with_active_gate)
+        context.setattr(
+            acceptance_module,
+            "read_disk_pressure_gate_health",
+            lambda _root, **_kwargs: dict(active_gate_health),
+        )
+        blocked_final = check(
+            runtime,
+            home=home,
+            launchctl_runner=launchctl,
+            managed_counts_evidence=counts_path,
+            automation_snapshot=automation_path,
+        )
+    assert blocked_final["ok"] is False
+    assert blocked_final["diskPressureGateClear"] is False
+    assert "disk_pressure_gate_active_or_unavailable" in blocked_final["retry"]["reasons"]
     result = check(
         runtime,
         home=home,
@@ -1289,6 +2043,157 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     assert result["ok"] is True
     assert result["operationalAuthorizationValid"] is True
     assert result["operationalAuthorizationEvidenceMatch"] is True
+
+    health_before_event_audit = health_path.read_bytes()
+
+    def event_health_then_deployment_drift(command):
+        changed = json.loads(health_path.read_text(encoding="utf-8"))
+        changed["deployment"]["releaseVersion"] = "changed-during-event-audit"
+        health_path.write_text(json.dumps(changed), encoding="utf-8")
+        return healthy_event_lane_runner(command)
+
+    drifted_during_event_audit = check(
+        runtime,
+        home=home,
+        launchctl_runner=launchctl,
+        managed_counts_evidence=counts_path,
+        automation_snapshot=automation_path,
+        event_lane_health_runner=event_health_then_deployment_drift,
+    )
+    assert drifted_during_event_audit["ok"] is False
+    assert drifted_during_event_audit["runtimeReleasePolicyIdentityMatch"] is False
+    health_path.write_bytes(health_before_event_audit)
+
+    def missing_event_lane(command):
+        return subprocess.CompletedProcess(
+            command,
+            2,
+            json.dumps(
+                {
+                    "schemaVersion": "oss-pr-radar.event-lane-health.v2",
+                    "checkedAt": now,
+                    "healthy": False,
+                    "operationalAuthorizationValid": True,
+                    "lanes": {"agentscope": {"healthy": True}},
+                }
+            ),
+            "",
+        )
+
+    incomplete_event_topology = check(
+        runtime,
+        home=home,
+        launchctl_runner=launchctl,
+        managed_counts_evidence=counts_path,
+        automation_snapshot=automation_path,
+        event_lane_health_runner=missing_event_lane,
+    )
+    assert incomplete_event_topology["ok"] is False
+    assert "event_lane_unhealthy_or_unavailable" in incomplete_event_topology["retry"]["reasons"]
+
+    healthy_event_payload = {
+        "schemaVersion": "oss-pr-radar.event-lane-health.v2",
+        "checkedAt": now,
+        "healthy": True,
+        "operationalAuthorizationValid": True,
+        "lanes": {
+            namespace: {
+                "healthy": True,
+                "bindingOk": True,
+                "launchHealthy": True,
+                "databaseHealthy": True,
+                "pollHealthy": True,
+                "releaseId": f"{namespace}-release",
+            }
+            for namespace in ("agentscope", "nanobot")
+        },
+    }
+
+    def event_health(exit_code=0, **changes):
+        payload = {**healthy_event_payload, **changes}
+
+        def run(command):
+            return subprocess.CompletedProcess(
+                command,
+                exit_code,
+                json.dumps(payload),
+                "",
+            )
+
+        return run
+
+    event_unhealthy = check(
+        runtime,
+        home=home,
+        launchctl_runner=launchctl,
+        managed_counts_evidence=counts_path,
+        automation_snapshot=automation_path,
+        event_lane_health_runner=event_health(2, healthy=False),
+    )
+    assert event_unhealthy["ok"] is False
+    assert event_unhealthy["eventLaneHealth"]["required"] is True
+    assert event_unhealthy["eventLaneHealth"]["healthy"] is False
+    assert "event_lane_unhealthy_or_unavailable" in event_unhealthy["retry"]["reasons"]
+
+    event_healthy = check(
+        runtime,
+        home=home,
+        launchctl_runner=launchctl,
+        managed_counts_evidence=counts_path,
+        automation_snapshot=automation_path,
+        event_lane_health_runner=event_health(),
+    )
+    assert event_healthy["ok"] is True
+    assert event_healthy["eventLaneHealth"]["healthy"] is True
+
+    # The gate observation from collect_snapshot is not authoritative at the
+    # final acceptance point.  Activate a durable episode only when the later
+    # live disk sample runs; strict final acceptance must see that new state.
+    from oss_pr_radar.runtime import disk_pressure_gate
+
+    stop_disk = {
+        "level": "stop",
+        "freeBytes": disk_value["freeBytes"],
+        "usedFraction": 0.96,
+    }
+    activated = False
+
+    def activate_gate_then_return_safe(_root: Path) -> dict[str, object]:
+        nonlocal activated
+        if not activated:
+            activated = True
+            decision = disk_pressure_gate(
+                runtime,
+                worker="test",
+                snapshot_fn=lambda _path: dict(stop_disk),
+                now=1_000.0,
+            )
+            assert decision["gateActive"] is True
+        return dict(disk_value)
+
+    with monkeypatch.context() as context:
+        context.setattr(acceptance_module, "disk_snapshot", activate_gate_then_return_safe)
+        changed_during_check = check(
+            runtime,
+            home=home,
+            launchctl_runner=launchctl,
+            managed_counts_evidence=counts_path,
+            automation_snapshot=automation_path,
+        )
+    assert changed_during_check["ok"] is False
+    assert changed_during_check["diskRestartSafe"] is True
+    assert changed_during_check["diskPressureGateClear"] is False
+    assert changed_during_check["diskPressureGate"]["active"] is True
+    assert "disk_pressure_gate_active_or_unavailable" in changed_during_check["retry"]["reasons"]
+    cleared = disk_pressure_gate(
+        runtime,
+        worker="test",
+        snapshot_fn=lambda _path: dict(disk_value),
+        now=2_000.0,
+        force_recheck=True,
+    )
+    assert cleared["allowed"] is True
+    assert cleared["recovered"] is True
 
     # Worker health/lifecycle bookkeeping may append after activation, but
     # the Stage 6 PR projection and all PR state counts remain immutable.
@@ -1333,7 +2238,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     daily_toml.write_text(daily_text, encoding="utf-8")
     daily_toml.write_text(
         daily_text.replace(
-            'target_thread_id = "01a03bf2-e310-7f63-8db6-a9ec0a39f4aa"',
+            'target_thread_id = "01a047a5-88da-7113-8355-218215cd037a"',
             'target_thread_id = "wrong-thread"',
         ),
         encoding="utf-8",
@@ -1344,7 +2249,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     heartbeat_toml.write_text(
         heartbeat_text.replace(
             'target_thread_id = "019f71c3-4f26-7030-b126-25f8cfbac4c4"',
-            'target_thread_id = "01a03bf2-e310-7f63-8db6-a9ec0a39f4aa"',
+            'target_thread_id = "01a047a5-88da-7113-8355-218215cd037a"',
         ),
         encoding="utf-8",
     )
@@ -1353,7 +2258,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     heartbeat_toml.write_text(heartbeat_text, encoding="utf-8")
     daily_toml.write_text(
         daily_text.replace(
-            'target_thread_id = "01a03bf2-e310-7f63-8db6-a9ec0a39f4aa"',
+            'target_thread_id = "01a047a5-88da-7113-8355-218215cd037a"',
             'target_thread_id = "019f71c3-4f26-7030-b126-25f8cfbac4c4"',
         ),
         encoding="utf-8",
@@ -1388,16 +2293,16 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     )
     stale_unsigned = {**automation_unsigned, "observedAt": iso_z(utc_now() - timedelta(minutes=11))}
     stale_auth = sign_current(stale_unsigned, context="stage7-automation-snapshot-v1")
-    assert (
-        check(
-            runtime,
-            home=home,
-            launchctl_runner=launchctl,
-            managed_counts_evidence=counts,
-            automation_snapshot={**stale_unsigned, **stale_auth},
-        )["ok"]
-        is False
+    stale_result = check(
+        runtime,
+        home=home,
+        launchctl_runner=launchctl,
+        managed_counts_evidence=counts,
+        automation_snapshot={**stale_unsigned, **stale_auth},
     )
+    assert stale_result["ok"] is False
+    assert stale_result["retry"]["required"] is True
+    assert "automation_snapshot_stale" in stale_result["retry"]["reasons"]
     outputs["com.oss-pr-radar.local-publication"] = outputs[
         "com.oss-pr-radar.local-publication"
     ].replace("working directory = ", "working directory = /poisoned-runtime/")
@@ -1520,7 +2425,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
                 "queueImportSuccessAt": timestamp,
                 "lastExitCode": exit_code,
             }
-            for worker in ("fast", "slow", "queue-importer")
+            for worker in WORKER_LABELS
         }
         (runtime / "state" / "runtime-health.json").write_text(json.dumps(state), encoding="utf-8")
 
@@ -1628,6 +2533,13 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     assert "snapshotManagedPrStates" not in contracts["stage6"]
     assert contracts["stage7"]["automationActivation"]["requires"] == ["stageWorkerConfigs"]
     assert contracts["stage7"]["strictFinalAcceptance"]["requires"] == ["activateWorkers"]
+    freeze = contracts["stage7"]["publicationFreeze"]
+    assert freeze["requiredState"] == "ACTIVE"
+    assert freeze["workflowIdleRequired"] is True
+    assert freeze["releaseBound"] is True
+    assert freeze["onDrift"] == "rerun_stage6_and_stage7_evidence"
+    assert "managedCountsEvidence" in freeze["scope"]
+    assert "strictFinalAcceptance" in freeze["scope"]
     plan = contracts["cutoverPlan"]
     assert [item["id"] for item in plan] == order
     assert len({item["contractRef"] for item in plan}) == len(plan)
@@ -1660,7 +2572,7 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     assert contracts["heartbeat"]["kind"] == "heartbeat"
     assert contracts["dailyWarRoom"]["kind"] == "heartbeat"
     assert contracts["heartbeat"]["targetThreadId"] == ("019f71c3-4f26-7030-b126-25f8cfbac4c4")
-    assert contracts["dailyWarRoom"]["targetThreadId"] == ("01a03bf2-e310-7f63-8db6-a9ec0a39f4aa")
+    assert contracts["dailyWarRoom"]["targetThreadId"] == ("01a047a5-88da-7113-8355-218215cd037a")
     assert contracts["dailyWarRoom"]["targetThreadId"] != contracts["heartbeat"]["targetThreadId"]
     assert contracts["dailyWarRoom"]["rrule"] == ("FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0")
     assert {
@@ -1683,11 +2595,14 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     )
     assert heartbeat_prompt.count("desktopHandoff.prompt") == 1
     assert "运行正常；当前没有需要你处理的事情。" in heartbeat_prompt
+    assert "newPullRequest.prUrl" in heartbeat_prompt
+    assert "新 PR 已创建：<newPullRequest.prUrl>" in heartbeat_prompt
     assert "已开始或继续处理；你无需操作。" in heartbeat_prompt
     assert "never show JSON, paths, logs, prompts, or internal fields" in heartbeat_prompt
     assert "even when command exit is nonzero or final JSON ok=false" in heartbeat_prompt
     assert "execute the identical release-command once more" in heartbeat_prompt
     assert "safely joins the already-running controller" in heartbeat_prompt
+    assert "including its first interpreter token" in heartbeat_prompt
     assert heartbeat_prompt.index("if it contains desktopHandoff") < heartbeat_prompt.index(
         "if the command fails or final JSON ok=false"
     )
@@ -1697,6 +2612,7 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     )
     assert "检查已完成；当前没有需要你处理的事情。" in daily_prompt
     assert "--send" in daily_prompt
+    assert "including its first interpreter token" in daily_prompt
     assert daily_prompt.index("if the command fails or final JSON ok=false") < daily_prompt.index(
         "only when it succeeds"
     )
@@ -1707,6 +2623,92 @@ def test_stage7_acceptance_and_contracts_bind_to_one_release(tmp_path):
     (runtime / "scripts").mkdir()
     (runtime / "scripts" / "local_dispatch_bridge.py").write_text("poison\n", encoding="utf-8")
     assert check(runtime, home=tmp_path / "home", strict=False)["ok"] is True
+
+
+def test_stage7_reuses_one_proxy_snapshot_for_contract_and_digest(tmp_path, monkeypatch):
+    import oss_pr_radar.local_publication as local_publication_module
+
+    monkeypatch.setattr(local_publication_module.sys, "platform", "darwin")
+    calls: list[int] = []
+
+    def changing_system_proxy():
+        port = 7897 if not calls else 7898
+        calls.append(port)
+        return {
+            "http": f"http://127.0.0.1:{port}",
+            "https": f"http://127.0.0.1:{port}",
+        }
+
+    monkeypatch.setattr(
+        local_publication_module.urllib.request,
+        "getproxies_macosx_sysconf",
+        changing_system_proxy,
+        raising=False,
+    )
+    runtime = _runtime(tmp_path)
+
+    acceptance = check(runtime, home=tmp_path / "home", strict=False)
+
+    assert calls == [7897]
+    assert acceptance["ok"] is True
+    assert acceptance["automationContractsMatch"] is True
+    digest_specs = []
+    for report in acceptance["workers"]:
+        assert "HTTP_PROXY=http://127.0.0.1:7897" in report["expectedCommand"]
+        assert "HTTPS_PROXY=http://127.0.0.1:7897" in report["expectedCommand"]
+        assert not any(":7898" in argument for argument in report["expectedCommand"])
+        digest_specs.append(
+            {
+                "Label": report["label"],
+                "ProgramArguments": report["expectedCommand"],
+                "WorkingDirectory": report["expectedWorkdir"],
+            }
+        )
+    assert acceptance["workerSpecDigest"] == worker_spec_digest(digest_specs)
+
+
+def test_stage7_final_event_audit_precedes_worker_proxy_snapshot(tmp_path, monkeypatch):
+    import oss_pr_radar.stage7_acceptance as acceptance_module
+
+    order: list[str] = []
+
+    def event_health(*_args, **_kwargs):
+        order.append("event-audit")
+        return {"required": True, "healthy": True}
+
+    def stop_at_specs(*_args, **_kwargs):
+        order.append("worker-proxy-snapshot")
+        raise RuntimeError("stop after ordering observation")
+
+    monkeypatch.setattr(acceptance_module, "_event_lane_health", event_health)
+    monkeypatch.setattr(acceptance_module, "worker_specs", stop_at_specs)
+
+    with pytest.raises(RuntimeError, match="stop after ordering observation"):
+        check(_runtime(tmp_path), home=tmp_path / "home")
+
+    assert order == ["event-audit", "worker-proxy-snapshot"]
+
+
+def test_automation_commands_follow_current_release_pointer(tmp_path):
+    runtime = _runtime(tmp_path)
+    contracts = build_contracts(runtime)
+    stable = str(runtime.resolve() / "current-release")
+    active = str((runtime / "current-release").resolve())
+
+    heartbeat = contracts["heartbeat"]
+    daily = contracts["dailyWarRoom"]
+    assert heartbeat["releaseCommand"][1] == f"{stable}/scripts/controller_cycle.py"
+    assert heartbeat["releaseCommand"][-1] == stable
+    assert daily["releaseCommand"][1] == f"{stable}/scripts/daily_war_room_cycle.py"
+    assert active not in heartbeat["releaseCommand"][1]
+    assert active not in daily["releaseCommand"][1]
+    for spec in (heartbeat, daily):
+        assert spec["releaseBinding"] == {
+            "kind": "active-release-pointer",
+            "path": stable,
+            "releaseId": contracts["release"]["releaseId"],
+            "manifestSha256": contracts["release"]["manifestSha256"],
+        }
 
 
 def test_stage7_prepare_cli_rejects_live_states(tmp_path):
@@ -1755,8 +2757,32 @@ def test_deployed_action_clis_have_no_auth_bypass_option(script_name):
     assert "--allow-unreleased-code" not in help_text
 
 
+@pytest.mark.parametrize("script_name", ["controller_cycle.py", "daily_war_room_cycle.py"])
+def test_automation_entrypoints_are_directly_executable(script_name):
+    """A heartbeat must survive a runner that invokes the shebang path verbatim."""
+
+    script = Path(__file__).parents[1] / "scripts" / script_name
+    assert stat.S_IMODE(script.stat().st_mode) & 0o111 == 0o111
+
+
 def test_daily_cycle_does_not_resend_unchanged_actionable_item(tmp_path, monkeypatch):
     monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "daily-stage7-key" * 4)
+    healthy_gate = {
+        "ok": True,
+        "blocked": False,
+        "reason": None,
+        "active": False,
+        "snapshot": {
+            "level": "warning",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.93,
+        },
+        "restartSafe": True,
+    }
+    monkeypatch.setattr(
+        "oss_pr_radar.daily_war_room.read_disk_pressure_gate_health",
+        lambda _root: dict(healthy_gate),
+    )
     ledger_path = tmp_path / "runtime" / "state" / "radar_ledger.sqlite3"
     ledger_path.parent.mkdir(parents=True)
     ledger = ManagedLedger(ledger_path, ensure_schema=True)
@@ -1785,6 +2811,30 @@ def test_daily_cycle_does_not_resend_unchanged_actionable_item(tmp_path, monkeyp
     first = run_daily_cycle(runtime)
     assert first["ok"] is True
     assert first["newActionableCount"] == 1
+    monkeypatch.setattr(
+        "oss_pr_radar.daily_war_room.read_disk_pressure_gate_health",
+        lambda _root: {
+            **healthy_gate,
+            "ok": False,
+            "blocked": True,
+            "reason": "DISK_STOP_THRESHOLD",
+            "active": True,
+        },
+    )
+    blocked = run_daily_cycle(
+        runtime,
+        send=True,
+        sender=lambda _event: (_ for _ in ()).throw(
+            AssertionError("blocked daily cycle must not call the sender")
+        ),
+    )
+    assert blocked["ok"] is False
+    assert blocked["sent"] == 0
+    assert blocked["failed"] == 0
+    monkeypatch.setattr(
+        "oss_pr_radar.daily_war_room.read_disk_pressure_gate_health",
+        lambda _root: dict(healthy_gate),
+    )
     sent = run_daily_cycle(runtime, send=True, sender=lambda _event: "message-1")
     assert sent["ok"] is True
     assert sent["sent"] == 1
@@ -1831,3 +2881,68 @@ def test_daily_cycle_does_not_resend_unchanged_actionable_item(tmp_path, monkeyp
     failed = run_daily_cycle(runtime, send=True, sender=failing_sender)
     assert failed["ok"] is False
     assert failed["failed"] == 1
+
+
+def test_daily_cycle_rechecks_disk_gate_before_each_external_message(tmp_path, monkeypatch):
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "daily-per-message-key" * 4)
+    ledger_path = tmp_path / "runtime" / "state" / "radar_ledger.sqlite3"
+    ledger_path.parent.mkdir(parents=True)
+    ledger = ManagedLedger(ledger_path, ensure_schema=True)
+    for number in (1, 2):
+        key = f"owner/repo#{number}"
+        ledger.upsert_opportunity(
+            opportunity_key=key,
+            owner="owner",
+            repo="repo",
+            issue_number=number,
+            issue_url=f"https://github.com/owner/repo/issues/{number}",
+            state="DECISION_REQUIRED",
+            source="test",
+            provenance={"title": key},
+            metadata={"title": key, "preTaskGate": {"allowed": True}},
+        )
+        ledger.bind_task(
+            task_id=f"task-{number}",
+            opportunity_key=key,
+            thread_id=f"thread-{number}",
+            worktree_path=None,
+        )
+        ledger.authorize_task_creation(
+            task_id=f"task-{number}",
+            opportunity_key=key,
+            repo="owner/repo",
+            issue_url=f"https://github.com/owner/repo/issues/{number}",
+            intent_id=f"task-{number}",
+        )
+    healthy = {
+        "ok": True,
+        "blocked": False,
+        "reason": None,
+        "active": False,
+        "restartSafe": True,
+    }
+    active = {
+        **healthy,
+        "ok": False,
+        "blocked": True,
+        "reason": "DISK_STOP_THRESHOLD",
+        "active": True,
+    }
+    observations = iter([healthy, healthy, active])
+    monkeypatch.setattr(
+        "oss_pr_radar.daily_war_room.read_disk_pressure_gate_health",
+        lambda _root: dict(next(observations)),
+    )
+    sent_events: list[str] = []
+
+    result = run_daily_cycle(
+        ledger_path.parents[1],
+        send=True,
+        sender=lambda event: sent_events.append(str(event["eventId"])) or "message-1",
+    )
+
+    assert result["ok"] is False
+    assert result["sent"] == 1
+    assert result["failed"] == 0
+    assert len(sent_events) == 1
+    assert result["diskPressureGate"]["active"] is True

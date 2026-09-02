@@ -19,17 +19,48 @@ from oss_pr_radar.controller import (
     run_locked_controller_cycle,
     write_controller_report,
 )
+from oss_pr_radar.ledger import RadarLedger
 from oss_pr_radar.managed_lifecycle import ManagedLedger, migrate_schema
 
 pytestmark = pytest.mark.usefixtures("current_signing_key")
 DEV_CODE_ROOT = Path(__file__).parents[1]
 
 
+def healthy_disk_pressure_gate() -> dict:
+    return {
+        "ok": True,
+        "blocked": False,
+        "reason": None,
+        "active": False,
+        "gateActive": False,
+        "statePresent": False,
+        "episode": None,
+        "snapshot": {
+            "level": "warning",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.93,
+        },
+        "restartSafe": True,
+    }
+
+
+@pytest.fixture(autouse=True)
+def deterministic_controller_disk_pressure(monkeypatch):
+    monkeypatch.setattr(
+        "oss_pr_radar.controller.read_disk_pressure_gate_health",
+        lambda _root: healthy_disk_pressure_gate(),
+    )
+
+
 def healthy_response(stage: str) -> dict:
     if stage in {"workflowHealth", "finalWorkflowHealth"}:
         return {
+            "currentOperationalHealthy": True,
             "operationalHealthy": True,
             "githubNaturalScheduleHealthy": True,
+            "naturalScheduleCanaryHealthy": True,
+            "naturalScheduleCoverage": {"healthy": True, "coverageRatio": 0.917},
+            "fullSlotCoverage": {"healthy": True, "coverageRatio": 1.0},
             "effectiveScan": {"recentActive": False},
         }
     if stage == "drain":
@@ -79,6 +110,37 @@ def test_controller_cycle_runs_one_ordered_sync_and_drain(tmp_path):
     assert calls.index("resultIngestion") < calls.index("independentReview")
     assert calls.index("restoreReconcile") < calls.index("drain")
     assert result["summary"]["drainAction"] == "issue_task_dispatched"
+    assert result["summary"]["naturalScheduleCanaryHealthy"] is True
+    assert result["summary"]["naturalScheduleCoverageHealthy"] is True
+    assert result["summary"]["naturalScheduleCoverageRatio"] == 0.917
+    assert result["summary"]["fullSlotCoverageHealthy"] is True
+    assert result["summary"]["fullSlotCoverageRatio"] == 1.0
+
+
+def test_controller_reconciles_event_lanes_before_final_health(tmp_path):
+    calls: list[tuple[str, list[str]]] = []
+
+    def runner(_root, stage, argv, _allowed, _timeout):
+        calls.append((stage, list(argv)))
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+        project_id="github",
+    )
+
+    assert result["ok"] is True
+    ensure_index = next(i for i, (stage, _argv) in enumerate(calls) if stage == "eventLaneEnsure")
+    final_index = next(
+        i for i, (stage, _argv) in enumerate(calls) if stage == "finalEventLaneHealth"
+    )
+    ensure_argv = calls[ensure_index][1]
+    assert ensure_argv[-1] == "--repair"
+    assert ensure_index < final_index
 
 
 def test_controller_does_not_restore_redacted_snapshot_over_live_task_binding(tmp_path):
@@ -162,6 +224,61 @@ def test_controller_stops_immediately_when_disk_guard_is_active(tmp_path):
     assert compact["finalBlockers"] == result["finalBlockers"]
 
 
+@pytest.mark.parametrize(
+    ("gate", "queue"),
+    [
+        (
+            {
+                "ok": False,
+                "blocked": True,
+                "reason": "DISK_STOP_THRESHOLD",
+                "active": True,
+                "gateActive": True,
+                "restartSafe": True,
+            },
+            "disk_stop",
+        ),
+        (
+            {
+                "ok": False,
+                "blocked": True,
+                "reason": "DISK_PRESSURE_GATE_UNAVAILABLE",
+                "active": None,
+                "gateActive": None,
+                "restartSafe": None,
+            },
+            "gate_unavailable",
+        ),
+    ],
+)
+def test_controller_disk_gate_preflight_stops_before_business_stages(
+    tmp_path, monkeypatch, gate, queue
+):
+    monkeypatch.setattr(
+        "oss_pr_radar.controller.read_disk_pressure_gate_health", lambda _root: dict(gate)
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.controller._managed_runtime_has_local_state",
+        lambda _path: (_ for _ in ()).throw(
+            AssertionError("disk gate must stop before managed state inspection")
+        ),
+    )
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("disk gate must stop before a controller business stage")
+        ),
+        notify=False,
+    )
+
+    assert result["ok"] is False
+    assert result["finalBlockers"] == [{"stage": "diskPressureGate", "queue": queue, "count": 1}]
+    assert result["stages"]["diskPressureGate"] == gate
+
+
 def test_controller_finishes_terminal_publication_lifecycle_in_same_cycle(tmp_path):
     calls: list[str] = []
 
@@ -223,6 +340,59 @@ def test_controller_skips_post_publication_cleanup_without_terminal_block(tmp_pa
     assert "terminalFeedbackAfterPublication" not in calls
     assert "titleReconcileAfterPublication" not in calls
     assert "cleanupReconcileAfterPublication" not in calls
+
+
+def test_controller_uses_final_context_revalidation_result_after_earlier_recovery(tmp_path):
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        if stage == "contextSyncBeforeCleanup":
+            return {
+                "ok": True,
+                "revalidationErrors": [{"key": "owner/repo#1", "error": "temporary"}],
+            }
+        if stage == "contextSync":
+            return {"ok": True, "revalidationErrors": []}
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+
+    assert result["ok"] is True
+    assert result["summary"]["liveAuditRevalidationErrorCount"] == 0
+    assert not any(item["queue"] == "revalidationErrors" for item in result["finalBlockers"])
+
+
+def test_controller_blocks_on_final_context_revalidation_errors(tmp_path):
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        if stage == "contextSync":
+            return {
+                "ok": True,
+                "revalidationErrors": [
+                    {"key": "owner/repo#1", "error": "rate limited"},
+                    {"key": "owner/repo#2", "error": "unavailable"},
+                ],
+            }
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+
+    assert result["ok"] is False
+    assert result["summary"]["liveAuditRevalidationErrorCount"] == 2
+    assert {
+        "stage": "contextSync",
+        "queue": "revalidationErrors",
+        "count": 2,
+    } in result["finalBlockers"]
     assert result["stages"]["terminalFeedbackAfterPublication"]["skipped"] is True
     assert result["stages"]["titleReconcileAfterPublication"]["skipped"] is True
     assert result["stages"]["cleanupReconcileAfterPublication"]["skipped"] is True
@@ -299,6 +469,7 @@ def test_controller_cycle_skips_sync_while_remote_scan_is_active(tmp_path):
         calls.append(stage)
         if stage == "workflowHealth":
             return {
+                "currentOperationalHealthy": True,
                 "operationalHealthy": True,
                 "githubNaturalScheduleHealthy": True,
                 "effectiveScan": {"recentActive": True},
@@ -312,6 +483,40 @@ def test_controller_cycle_skips_sync_while_remote_scan_is_active(tmp_path):
     assert result["ok"] is True
     assert "queueSync" not in calls
     assert result["stages"]["queueSync"]["reason"] == "remote_scan_active"
+
+
+def test_historical_slot_gap_is_reported_without_stopping_current_queue_sync(tmp_path):
+    calls: list[str] = []
+
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        calls.append(stage)
+        if stage in {"workflowHealth", "finalWorkflowHealth"}:
+            return {
+                "currentOperationalHealthy": True,
+                "operationalHealthy": False,
+                "githubNaturalScheduleHealthy": False,
+                "naturalScheduleCanaryHealthy": True,
+                "naturalScheduleCoverage": {"healthy": False, "coverageRatio": 0.083},
+                "fullSlotCoverage": {"healthy": False, "coverageRatio": 0.75},
+                "effectiveScan": {"recentActive": False},
+            }
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+
+    assert "queueSync" in calls
+    assert result["ok"] is False
+    assert result["summary"]["currentOperationalHealthy"] is True
+    assert result["summary"]["operationalHealthy"] is False
+    assert result["summary"]["naturalScheduleCanaryHealthy"] is True
+    assert result["summary"]["naturalScheduleCoverageHealthy"] is False
+    assert result["summary"]["fullSlotCoverageHealthy"] is False
 
 
 def test_controller_never_promotes_malformed_health_values(tmp_path):
@@ -441,6 +646,241 @@ def test_controller_cycle_lock_suppresses_overlap(tmp_path):
 
     assert result["busy"] is True
     assert result["summary"]["action"] == "controller_already_running"
+
+
+def test_controller_missing_authorization_reports_pending_without_running_stages(tmp_path):
+    from test_stage7 import _runtime
+
+    runtime = _runtime(tmp_path)
+    RadarLedger(runtime / "state" / "radar_ledger.sqlite3").enqueue(
+        {
+            "intentId": "intent-pending",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "issueUpdatedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "policyDigest": "policy",
+            "title": "Pending task",
+            "mode": "canary",
+            "score": 1,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "expiresAt": (datetime.now(UTC) + timedelta(hours=1))
+            .isoformat()
+            .replace("+00:00", "Z"),
+        }
+    )
+    calls: list[str] = []
+
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        calls.append(stage)
+        return healthy_response(stage)
+
+    result = run_locked_controller_cycle(
+        runtime,
+        runner=runner,
+        notify=False,
+        report_on_complete=True,
+    )
+
+    assert result["ok"] is False
+    assert result["blocked"] == "operational authorization required"
+    assert result["recoveryStatus"]["ok"] is True
+    assert result["recoveryStatus"]["readOnly"] is True
+    assert result["recoveryStatus"]["blockedReason"] == "OPERATIONAL_AUTHORIZATION_MISSING"
+    assert result["recoveryStatus"]["pending"]["pendingIntents"] == 1
+    assert calls == []
+
+
+def test_controller_rejects_stale_fixed_release_before_reusing_marker(tmp_path):
+    """A historical release path cannot replay a recent result after cutover."""
+
+    from test_stage7 import _runtime
+
+    runtime = _runtime(tmp_path)
+    stale_release = runtime / "releases" / "old-release"
+    stale_release.mkdir()
+    stale_digest = _controller_command_digest(
+        code_root=stale_release,
+        allow_unreleased_code=False,
+        notify=False,
+        project_id="github",
+    )
+    old_run_id = "stale-release-run"
+    checked_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    report_path = write_controller_report(
+        runtime,
+        {
+            "ok": True,
+            "checkedAt": checked_at,
+            "controllerRunId": old_run_id,
+            "summary": {"action": "old-release"},
+        },
+    )
+    (runtime / "state" / "controller-cycle.lock").write_text(
+        json.dumps(
+            {
+                "schema": CONTROLLER_LOCK_MARKER_SCHEMA,
+                "state": "COMPLETED",
+                "runId": old_run_id,
+                "commandDigest": stale_digest,
+                "startedAt": checked_at,
+                "completedAt": checked_at,
+                "reportCheckedAt": checked_at,
+                "reportSha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_locked_controller_cycle(
+        runtime,
+        code_root=stale_release,
+        notify=False,
+        wait_existing=True,
+        report_on_complete=True,
+        runner=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("stale release must fail before running a cycle")
+        ),
+    )
+
+    assert result["ok"] is False
+    assert result["blocked"] == "release binding required"
+    assert "active immutable release" in result["error"]
+    assert result["controllerRunId"] != old_run_id
+
+
+def _write_recent_completed_controller_result(
+    root: Path, *, result: dict, command_digest: str
+) -> None:
+    now = datetime.now(UTC)
+    started_at = (now - timedelta(seconds=2)).isoformat().replace("+00:00", "Z")
+    checked_at = (now - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    completed_at = now.isoformat().replace("+00:00", "Z")
+    result["checkedAt"] = checked_at
+    report_path = write_controller_report(root, result)
+    lock_path = root / "state" / "controller-cycle.lock"
+    lock_path.parent.mkdir(exist_ok=True)
+    lock_path.write_text(
+        json.dumps(
+            {
+                "schema": CONTROLLER_LOCK_MARKER_SCHEMA,
+                "state": "COMPLETED",
+                "runId": result["controllerRunId"],
+                "commandDigest": command_digest,
+                "startedAt": started_at,
+                "completedAt": completed_at,
+                "reportCheckedAt": checked_at,
+                "reportSha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_recent_success_is_not_reused_after_disk_gate_becomes_active(tmp_path, monkeypatch):
+    command_digest = _controller_command_digest(
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        notify=False,
+        project_id="github",
+    )
+    old_run_id = "recent-success"
+    _write_recent_completed_controller_result(
+        tmp_path,
+        command_digest=command_digest,
+        result={
+            "ok": True,
+            "controllerRunId": old_run_id,
+            "stages": {"diskPressureGate": healthy_disk_pressure_gate()},
+            "summary": {},
+            "failures": [],
+            "finalBlockers": [],
+        },
+    )
+    active = {
+        "ok": False,
+        "blocked": True,
+        "reason": "DISK_STOP_THRESHOLD",
+        "active": True,
+        "gateActive": True,
+        "restartSafe": True,
+    }
+    monkeypatch.setattr(
+        "oss_pr_radar.controller.read_disk_pressure_gate_health", lambda _root: dict(active)
+    )
+
+    result = run_locked_controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        notify=False,
+        project_id="github",
+        wait_existing=True,
+        report_on_complete=True,
+        runner=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("active gate must stop before business stages")
+        ),
+    )
+
+    assert result["controllerRunId"] != old_run_id
+    assert result["finalBlockers"] == [
+        {"stage": "diskPressureGate", "queue": "disk_stop", "count": 1}
+    ]
+
+
+def test_recent_disk_blocker_is_not_reused_after_gate_clears(tmp_path, monkeypatch):
+    command_digest = _controller_command_digest(
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        notify=False,
+        project_id="github",
+    )
+    old_run_id = "recent-disk-blocker"
+    active = {
+        "ok": False,
+        "blocked": True,
+        "reason": "DISK_STOP_THRESHOLD",
+        "active": True,
+        "gateActive": True,
+        "restartSafe": True,
+    }
+    _write_recent_completed_controller_result(
+        tmp_path,
+        command_digest=command_digest,
+        result={
+            "ok": False,
+            "controllerRunId": old_run_id,
+            "stages": {"diskPressureGate": active},
+            "summary": {},
+            "failures": [],
+            "finalBlockers": [{"stage": "diskPressureGate", "queue": "disk_stop", "count": 1}],
+        },
+    )
+    monkeypatch.setattr(
+        "oss_pr_radar.controller.read_disk_pressure_gate_health",
+        lambda _root: healthy_disk_pressure_gate(),
+    )
+    calls: list[str] = []
+
+    result = run_locked_controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        notify=False,
+        project_id="github",
+        wait_existing=True,
+        report_on_complete=True,
+        runner=lambda _root, stage, _argv, _allowed, _timeout: (
+            calls.append(stage) or healthy_response(stage)
+        ),
+    )
+
+    assert result["controllerRunId"] != old_run_id
+    assert result["ok"] is True
+    assert calls
 
 
 def test_controller_cycle_can_join_existing_run_after_tool_context_loss(tmp_path):
@@ -800,6 +1240,51 @@ def test_controller_output_is_compact_and_full_evidence_stays_in_report(tmp_path
     assert len(str(compact)) < 1000
 
 
+def test_compact_controller_result_includes_worker_freshness_state():
+    result = {
+        "ok": False,
+        "checkedAt": "2026-08-29T00:00:00Z",
+        "summary": {"drainAction": "none", "localAgentHealthy": True},
+        "failures": [],
+        "finalBlockers": ["LOCAL_AGENT_UNHEALTHY"],
+        "stages": {
+            "finalLocalAgentStatus": {
+                "ok": False,
+                "workers": [
+                    {
+                        "label": "com.oss-pr-radar.local-publication-slow",
+                        "ok": False,
+                        "process": {"alive": False},
+                        "workerRuntimeHealth": {
+                            "healthy": False,
+                            "inFlight": True,
+                            "workerPidAlive": False,
+                            "lastSuccessAt": "2026-08-28T20:06:15Z",
+                            "lastExitCode": 0,
+                        },
+                    }
+                ],
+            }
+        },
+    }
+
+    compact = compact_controller_result(result)
+
+    assert compact["summary"]["localAgentHealthy"] is False
+    assert compact["summary"]["localWorkerStates"] == [
+        {
+            "label": "com.oss-pr-radar.local-publication-slow",
+            "ok": False,
+            "runtimeHealthy": False,
+            "inFlight": True,
+            "workerPidAlive": False,
+            "processAlive": False,
+            "lastSuccessAt": "2026-08-28T20:06:15Z",
+            "lastExitCode": 0,
+        }
+    ]
+
+
 def test_pending_title_update_and_quarantine_are_not_controller_blockers():
     from oss_pr_radar.controller import _final_blockers
 
@@ -816,6 +1301,65 @@ def test_pending_title_update_and_quarantine_are_not_controller_blockers():
     )
 
     assert blockers == []
+
+
+def test_controller_keeps_unresolved_pr_delivery_as_a_business_blocker():
+    from oss_pr_radar.controller import _final_blockers
+
+    blockers = _final_blockers(
+        {
+            "finalPrFollowups": {
+                "ok": True,
+                "blocked": [],
+                "unresolved": [{"key": "a/b#1", "commitReady": False}],
+                "restoreRequired": [],
+            }
+        }
+    )
+
+    assert blockers == [{"stage": "finalPrFollowups", "queue": "unresolved", "count": 1}]
+
+
+def test_controller_does_not_refail_for_a_durably_recorded_task_blocker():
+    from oss_pr_radar.controller import _final_blockers
+
+    blockers = _final_blockers(
+        {
+            "resultIngestion": {
+                "ok": True,
+                "errors": [],
+                "workBlocked": [
+                    {"key": "a/b#1", "alreadyRecorded": True},
+                    {"key": "a/b#2", "alreadyRecorded": False},
+                ],
+            }
+        }
+    )
+
+    assert blockers == [{"stage": "resultIngestion", "queue": "workBlocked", "count": 1}]
+
+
+def test_controller_summary_separates_total_and_new_task_blockers(tmp_path):
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        if stage == "resultIngestion":
+            return {
+                "ok": True,
+                "errors": [],
+                "workBlocked": [{"key": "a/b#1", "alreadyRecorded": True}],
+            }
+        return healthy_response(stage)
+
+    result = controller_cycle(
+        tmp_path,
+        code_root=DEV_CODE_ROOT,
+        allow_unreleased_code=True,
+        runner=runner,
+        notify=False,
+    )
+
+    assert result["ok"] is True
+    assert result["summary"]["workBlockedCount"] == 1
+    assert result["summary"]["newWorkBlockedCount"] == 0
 
 
 def test_controller_blockers_include_execution_failures_and_exhausted_recovery():
@@ -898,6 +1442,51 @@ def test_compact_controller_result_exposes_one_desktop_handoff():
 
     assert compact["desktopHandoff"] == handoff
     assert "startupBlocker" not in compact
+
+
+def test_compact_controller_result_exposes_one_new_pull_request_notice():
+    result = {
+        "ok": True,
+        "checkedAt": "2026-08-31T00:00:00Z",
+        "summary": {"drainAction": "none"},
+        "failures": [],
+        "finalBlockers": [],
+        "stages": {
+            "controllerPublicationNotice": {
+                "ok": True,
+                "notice": {
+                    "key": "a/b#1",
+                    "prUrl": "https://github.com/a/b/pull/9",
+                    "publishedAt": "2026-08-31T00:00:00Z",
+                },
+            }
+        },
+    }
+
+    compact = compact_controller_result(result)
+
+    assert compact["newPullRequest"] == {
+        "key": "a/b#1",
+        "prUrl": "https://github.com/a/b/pull/9",
+        "publishedAt": "2026-08-31T00:00:00Z",
+    }
+
+
+def test_pending_pull_request_notice_is_not_safe_for_completed_result_reuse():
+    from oss_pr_radar.controller import _controller_result_has_pending_publication_notice
+
+    assert _controller_result_has_pending_publication_notice(
+        {
+            "stages": {
+                "controllerPublicationNotice": {
+                    "notice": {"prUrl": "https://github.com/a/b/pull/9"}
+                }
+            }
+        }
+    )
+    assert not _controller_result_has_pending_publication_notice(
+        {"stages": {"controllerPublicationNotice": {"notice": None}}}
+    )
 
 
 def test_compact_controller_result_exposes_safe_release_binding_mismatch():

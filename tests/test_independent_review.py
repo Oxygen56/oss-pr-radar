@@ -1,6 +1,7 @@
 import fcntl
 import json
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ import pytest
 
 import oss_pr_radar.independent_review as module
 from oss_pr_radar.metrics import QUALITY_FIELDS
+from oss_pr_radar.repo_probe import attest_merge_resolution_scope
 
 
 def git(repo: Path, *args: str) -> str:
@@ -142,6 +144,185 @@ def test_review_receipt_survives_controller_result_receipt_rebinding(tmp_path, m
     }
 
     assert module.controller_review_passed(control, value) is True
+
+
+def test_source_digest_preserves_historical_code_path_order_and_binds_scope():
+    reported = ["runtime.py", "runtime/new.py"]
+    authorized = ["runtime.py"]
+    pre_bind = {
+        "schemaVersion": "radar-task-result-v1",
+        "key": "owner/repo#1",
+        "handoffMode": "controller_merge_complete",
+        "commitSha": "a" * 40,
+        "changedFiles": reported,
+        "codePaths": reported,
+        "quality": {field: field != "independent_review_passed" for field in QUALITY_FIELDS},
+    }
+    scope = {
+        "schemaVersion": "controller-code-path-scope-v1",
+        "authority": "managed-reproduction-receipt",
+        "authorized": authorized,
+        "reported": reported,
+        "added": ["runtime/new.py"],
+        "omitted": [],
+        "sourceReceiptDigest": "b" * 64,
+    }
+    post_bind = pre_bind | {
+        "codePaths": authorized,
+        "controllerCodePathScope": scope,
+    }
+    reordered = pre_bind | {"codePaths": list(reversed(reported))}
+    expected = module._source_digest(pre_bind)
+    assert module._source_digest(reordered) != expected
+    assert module._source_digest(post_bind) != expected
+
+    self_reported_scope = post_bind | {
+        "controllerCodePathScope": scope | {"sourceReceiptDigest": "f" * 64}
+    }
+    assert module._source_digest(self_reported_scope) != expected
+
+
+def _prepared_review_receipt_migration(tmp_path, monkeypatch):
+    control, worktree, result_path, candidate, base, _head = prepared_task(tmp_path)
+    (worktree / "alpha.py").write_text("VALUE = 1\n", encoding="utf-8")
+    git(worktree, "add", "alpha.py")
+    git(worktree, "commit", "--amend", "--no-edit")
+    head = git(worktree, "rev-parse", "HEAD")
+
+    source = json.loads(result_path.read_text(encoding="utf-8"))
+    source["commitSha"] = head
+    source["changedFiles"] = ["alpha.py", "service.py"]
+    source["codePaths"] = ["service.py", "alpha.py"]
+    source["contextDigest"] = "migration-context"
+    result_path.write_text(json.dumps(source), encoding="utf-8")
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        json.dumps(
+            {
+                "key": candidate["key"],
+                "issueUrl": candidate["issueUrl"],
+                "threadId": candidate["threadId"],
+                "worktreePath": candidate["worktreePath"],
+                "contextDigest": "migration-context",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+    outcome = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: {
+            "verdict": "PASS",
+            "summary": "The exact committed diff has no blocking finding.",
+            "findings": [],
+            "evidence": ["alpha.py and service.py are the complete committed diff."],
+        },
+    )
+    assert outcome["updated"][0]["commitSha"] == head
+    source = json.loads(result_path.read_text(encoding="utf-8"))
+    source_review = module.controller_review_result(control, source)
+    assert source_review is not None
+
+    target = dict(source)
+    target.update(
+        {
+            "headSha": head,
+            "selectedBaseSha": base,
+            "taskId": "intent-1",
+            "codePaths": ["service.py"],
+            "controllerCodePathScope": {
+                "schemaVersion": "controller-code-path-scope-v1",
+                "authority": "managed-reproduction-receipt",
+                "authorized": ["service.py"],
+                "reported": ["alpha.py", "service.py"],
+                "added": ["alpha.py"],
+                "omitted": [],
+                "sourceReceiptDigest": "b" * 64,
+            },
+        }
+    )
+    return control, worktree, source, target, source_review, base, head
+
+
+def test_migrate_controller_review_receipt_preserves_old_unsorted_source(tmp_path, monkeypatch):
+    control, _worktree, source, target, source_review, _base, head = (
+        _prepared_review_receipt_migration(tmp_path, monkeypatch)
+    )
+    sorted_source = source | {"codePaths": sorted(source["codePaths"])}
+    assert module._source_digest(source) != module._source_digest(sorted_source)
+
+    migrated = module.migrate_controller_review_receipt(control, source, target)
+    target_digest = module._source_digest(target)
+
+    assert migrated["verdict"] == "PASS"
+    assert migrated["commitSha"] == head
+    assert migrated["sourceDigest"] == target_digest
+    assert migrated | {"sourceDigest": source_review["sourceDigest"]} == source_review
+    assert module.controller_review_result(control, source) == source_review
+    assert module.controller_review_result(control, target) == migrated
+    source_path = module._receipt_path(
+        control,
+        key=str(source["key"]),
+        commit_sha=head,
+        source_digest=module._source_digest(source),
+    )
+    target_path = module._receipt_path(
+        control,
+        key=str(target["key"]),
+        commit_sha=head,
+        source_digest=target_digest,
+    )
+    assert (
+        json.loads(target_path.read_text(encoding="utf-8"))["contextReviewBindingDigest"]
+        == json.loads(source_path.read_text(encoding="utf-8"))["contextReviewBindingDigest"]
+    )
+    assert module.migrate_controller_review_receipt(control, source, target) == migrated
+
+
+def test_migrate_bound_review_receipt_rejects_context_change(tmp_path, monkeypatch):
+    control, _worktree, source, target, _review, _base, _head = _prepared_review_receipt_migration(
+        tmp_path, monkeypatch
+    )
+    target["contextDigest"] = "replacement-context"
+
+    with pytest.raises(RuntimeError, match="receipt migration context mismatch"):
+        module.migrate_controller_review_receipt(control, source, target)
+
+
+def test_migrate_controller_review_receipt_rejects_existing_invalid_target(tmp_path, monkeypatch):
+    control, _worktree, source, target, _source_review, _base, head = (
+        _prepared_review_receipt_migration(tmp_path, monkeypatch)
+    )
+    target_digest = module._source_digest(target)
+    target_path = module._receipt_path(
+        control,
+        key=str(target["key"]),
+        commit_sha=head,
+        source_digest=target_digest,
+    )
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text('{"invalid":true}\n', encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="canonical independent review receipt conflicts"):
+        module.migrate_controller_review_receipt(control, source, target)
+
+    assert json.loads(target_path.read_text(encoding="utf-8")) == {"invalid": True}
+
+
+def test_migrate_controller_review_receipt_rejects_changed_review_scope(tmp_path, monkeypatch):
+    control, _worktree, source, target, _source_review, base, _head = (
+        _prepared_review_receipt_migration(tmp_path, monkeypatch)
+    )
+    target["previousCommitSha"] = base
+    target["controllerCommitChangedFiles"] = ["alpha.py", "service.py"]
+
+    with pytest.raises(RuntimeError, match="receipt migration scope mismatch"):
+        module.migrate_controller_review_receipt(control, source, target)
 
 
 def test_review_once_does_not_repeat_unchanged_hold(tmp_path, monkeypatch):
@@ -481,6 +662,15 @@ def test_migrate_legacy_failures_and_cursor_accumulates_once_under_durable_lock(
     assert after_durable_attempt["attempts"] == 5
     assert after_durable_attempt["legacyAttemptsImported"] == 4
 
+    # Make the later legacy record newer than the durable record regardless of
+    # the wall clock date on which the test runs.  The migration contract is
+    # timestamp based; a fixed historical timestamp eventually becomes older
+    # than the record just written above and makes this test flaky over time.
+    durable_failed_at = datetime.fromisoformat(
+        after_durable_attempt["failedAt"].replace("Z", "+00:00")
+    )
+    rollback_failed_at = (durable_failed_at + timedelta(microseconds=1)).astimezone(UTC)
+
     third = module.migrate_legacy_review_state(runtime_root)
 
     assert third["failuresMigrated"] == 0
@@ -495,7 +685,7 @@ def test_migrate_legacy_failures_and_cursor_accumulates_once_under_durable_lock(
     rollback_value = json.loads(rollback_failure.read_text(encoding="utf-8"))
     rollback_value |= {
         "attempts": 2,
-        "failedAt": "2026-08-29T00:00:00Z",
+        "failedAt": rollback_failed_at.isoformat().replace("+00:00", "Z"),
         "error": "RuntimeError:rollback failure",
     }
     rollback_failure.write_text(json.dumps(rollback_value), encoding="utf-8")
@@ -664,6 +854,365 @@ def test_active_task_rejects_review_result_from_wrong_context(tmp_path, monkeypa
             "error": "RuntimeError:independent review task result context digest mismatch",
         }
     ]
+
+
+def test_exact_review_receipt_survives_live_audit_only_context_refresh(tmp_path, monkeypatch):
+    control, worktree, result_path, candidate, _base, _head = prepared_task(tmp_path)
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["contextDigest"] = "original-context"
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    context_path = worktree / ".oss-pr-radar" / "task-context.json"
+    context = {
+        "key": candidate["key"],
+        "issueUrl": candidate["issueUrl"],
+        "threadId": candidate["threadId"],
+        "worktreePath": candidate["worktreePath"],
+        "contextDigest": "original-context",
+        "liveAudit": {"capturedAt": "2026-09-02T01:00:00Z", "evidence": {"digest": "old"}},
+    }
+    context_path.write_text(json.dumps(context), encoding="utf-8")
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+    first = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: {
+            "verdict": "PASS",
+            "summary": "The exact committed diff has no blocking finding.",
+            "findings": [],
+            "evidence": ["The implementation and regression remain narrowly scoped."],
+        },
+    )
+    assert first["updated"][0]["verdict"] == "PASS"
+
+    # Production already has receipts written before context bindings were
+    # added.  Exercise that migration shape rather than only the new format.
+    receipt_path = next((control / "state" / "independent_reviews").glob("*.json"))
+    legacy_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    legacy_receipt.pop("contextReviewBindingDigest")
+    receipt_path.write_text(json.dumps(legacy_receipt), encoding="utf-8")
+
+    context["contextDigest"] = "refreshed-context"
+    context["liveAudit"] = {
+        "capturedAt": "2026-09-02T02:00:00Z",
+        "evidence": {"digest": "current"},
+    }
+    context_path.write_text(json.dumps(context), encoding="utf-8")
+    second = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("an exact durable review must be reused")
+        ),
+    )
+
+    assert second["ok"] is True
+    assert second["updated"] == []
+    assert second["errors"] == []
+    assert second["skipped"] == [{"key": "owner/repo#1", "reason": "REVIEW_PASS_ALREADY_APPLIED"}]
+    upgraded = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert len(upgraded["contextReviewBindingDigest"]) == 64
+    assert set(upgraded["contextReviewBindingDigest"]) <= set("0123456789abcdef")
+    assert module.controller_review_result(control, value, review_context=context) is not None
+    drifted = dict(context) | {
+        "targetBase": {
+            "branch": "main",
+            "sha": "f" * 40,
+            "source": "repository_default",
+            "defaultBranch": "main",
+        }
+    }
+    assert module.controller_review_result(control, value, review_context=drifted) is None
+
+
+def test_new_review_receipt_survives_lifecycle_projection_changes(tmp_path, monkeypatch):
+    control, worktree, result_path, candidate, _base, _head = prepared_task(tmp_path)
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["contextDigest"] = "original-context"
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    context_path = worktree / ".oss-pr-radar" / "task-context.json"
+    context = {
+        "key": candidate["key"],
+        "issueUrl": candidate["issueUrl"],
+        "threadId": candidate["threadId"],
+        "worktreePath": candidate["worktreePath"],
+        "contextDigest": "original-context",
+        "stage": "FIX_READY",
+        "titleTime": "09-02 10:00",
+        "resultDigest": "a" * 64,
+        "liveAudit": {"evidence": {"digest": "old"}},
+    }
+    context_path.write_text(json.dumps(context), encoding="utf-8")
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+    module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: {
+            "verdict": "PASS",
+            "summary": "The exact committed diff has no blocking finding.",
+            "findings": [],
+            "evidence": ["The committed diff is unchanged."],
+        },
+    )
+    context.update(
+        {
+            "contextDigest": "refreshed-context",
+            "stage": "VALIDATION_PENDING",
+            "titleTime": "09-02 11:00",
+            "resultDigest": "b" * 64,
+            "publicationReceipt": {"status": "PENDING"},
+            "liveAudit": {"evidence": {"digest": "new"}},
+        }
+    )
+    context_path.write_text(json.dumps(context), encoding="utf-8")
+
+    repeated = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: (_ for _ in ()).throw(AssertionError("must reuse")),
+    )
+
+    assert repeated["skipped"] == [{"key": "owner/repo#1", "reason": "REVIEW_PASS_ALREADY_APPLIED"}]
+
+
+def test_review_receipt_does_not_survive_identity_or_followup_change(tmp_path, monkeypatch):
+    control, worktree, result_path, candidate, _base, _head = prepared_task(tmp_path)
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update({"contextDigest": "original-context", "followupDigest": "original-wake"})
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    context_path = worktree / ".oss-pr-radar" / "task-context.json"
+    original_context = {
+        "key": candidate["key"],
+        "issueUrl": candidate["issueUrl"],
+        "threadId": candidate["threadId"],
+        "worktreePath": candidate["worktreePath"],
+        "contextDigest": "original-context",
+        "prFollowup": {"wakeDigest": "original-wake"},
+    }
+    context_path.write_text(json.dumps(original_context), encoding="utf-8")
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+    first = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: {
+            "verdict": "PASS",
+            "summary": "The exact committed diff has no blocking finding.",
+            "findings": [],
+            "evidence": ["The reviewed identity and follow-up are exact."],
+        },
+    )
+    assert first["updated"][0]["verdict"] == "PASS"
+
+    changed_followup = dict(original_context)
+    changed_followup["contextDigest"] = "followup-refresh"
+    changed_followup["prFollowup"] = {"wakeDigest": "replacement-wake"}
+    context_path.write_text(json.dumps(changed_followup), encoding="utf-8")
+    followup_outcome = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: (_ for _ in ()).throw(AssertionError("must not review")),
+    )
+    assert followup_outcome["updated"] == []
+    assert followup_outcome["skipped"] == []
+    assert followup_outcome["errors"] == []
+
+    changed_identity = dict(changed_followup)
+    changed_identity["threadId"] = "replacement-thread"
+    context_path.write_text(json.dumps(changed_identity), encoding="utf-8")
+    identity_outcome = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: (_ for _ in ()).throw(AssertionError("must not review")),
+    )
+    assert identity_outcome["updated"] == []
+    assert identity_outcome["skipped"] == []
+    assert identity_outcome["errors"] == [
+        {
+            "key": "owner/repo#1",
+            "error": "RuntimeError:independent review task context mismatch: threadId",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("result_receipt", "context_receipt", "recovered_receipt"),
+    [
+        (
+            {"bindingPurpose": "implementation-result-v1", "receiptDigest": "a" * 64},
+            {"bindingPurpose": "task-context-v1", "receiptDigest": "b" * 64},
+            None,
+        ),
+        (
+            {"bindingPurpose": "implementation-result-v1", "receiptDigest": "c" * 64},
+            {"bindingPurpose": "task-context-v1", "receiptDigest": "d" * 64},
+            {"bindingPurpose": "recovered-context-v1", "receiptDigest": "e" * 64},
+        ),
+        (
+            {"bindingPurpose": "validation-result-v1", "receiptDigest": "f" * 64},
+            {"bindingPurpose": "refreshed-context-v1", "receiptDigest": "1" * 64},
+            {"bindingPurpose": "original-context-v1", "receiptDigest": "2" * 64},
+        ),
+    ],
+)
+def test_legacy_context_compatibility_allows_derived_reproduction_receipts(
+    result_receipt, context_receipt, recovered_receipt
+):
+    candidate = {
+        "key": "owner/repo#1",
+        "issueUrl": "https://github.com/owner/repo/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(Path("/tmp/review-worktree").resolve()),
+        "intent": {},
+    }
+    if recovered_receipt is not None:
+        candidate["intent"]["recoveredReproductionReceipt"] = recovered_receipt
+    value = {
+        "key": candidate["key"],
+        "issueUrl": candidate["issueUrl"],
+        "threadId": candidate["threadId"],
+        "worktreePath": candidate["worktreePath"],
+        "reproductionReceipt": result_receipt,
+    }
+    context = {
+        "key": candidate["key"],
+        "issueUrl": candidate["issueUrl"],
+        "threadId": candidate["threadId"],
+        "worktreePath": candidate["worktreePath"],
+        "reproductionReceipt": context_receipt,
+    }
+
+    assert module._legacy_review_context_compatible(
+        candidate,
+        value,
+        context,
+        {"baseRevision": "a" * 40},
+    )
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ["targetBase", "intentId", "track", "algorithmEvidence", "prFollowup", "tombstone"],
+)
+def test_legacy_review_receipt_rejects_non_live_context_drift(tmp_path, monkeypatch, drift):
+    control, worktree, result_path, candidate, base, _head = prepared_task(tmp_path)
+    wake_digest = "a" * 64
+    target_base = {
+        "branch": "main",
+        "sha": base,
+        "source": "repository_default",
+        "defaultBranch": "main",
+    }
+    algorithm_evidence = {"qualified": True, "score": 9, "mechanism_count": 2}
+    tombstone = {"receiptDigest": "b" * 64, "tombstonePaths": ["removed.py"]}
+    candidate.update(
+        {
+            "intentId": "intent-1",
+            "intent": {
+                "intentId": "intent-1",
+                "track": "agent_ai_infra",
+                "algorithmEvidence": algorithm_evidence,
+                "targetBase": target_base,
+                "codePathTombstoneReceipt": tombstone,
+            },
+        }
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": "original-context",
+            "taskId": "intent-1",
+            "track": "agent_ai_infra",
+            "algorithmEvidence": algorithm_evidence,
+            "targetBase": target_base,
+            "followupDigest": wake_digest,
+            "prUrl": "https://github.com/owner/repo/pull/7",
+            "codePathTombstoneReceipt": tombstone,
+        }
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    context_path = worktree / ".oss-pr-radar" / "task-context.json"
+    context = {
+        "key": candidate["key"],
+        "issueUrl": candidate["issueUrl"],
+        "intentId": "intent-1",
+        "threadId": candidate["threadId"],
+        "worktreePath": candidate["worktreePath"],
+        "track": "agent_ai_infra",
+        "algorithmEvidence": algorithm_evidence,
+        "targetBase": target_base,
+        "prFollowup": {
+            "wakeDigest": wake_digest,
+            "prUrl": "https://github.com/owner/repo/pull/7",
+        },
+        "codePathTombstoneReceipt": tombstone,
+        "contextDigest": "original-context",
+        "liveAudit": {"capturedAt": "2026-09-02T01:00:00Z", "evidence": {"digest": "old"}},
+    }
+    context_path.write_text(json.dumps(context), encoding="utf-8")
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+    first = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: {
+            "verdict": "PASS",
+            "summary": "The exact committed diff has no blocking finding.",
+            "findings": [],
+            "evidence": ["The reviewed authority and committed diff are exact."],
+        },
+    )
+    assert first["updated"][0]["verdict"] == "PASS"
+    receipt_path = next((control / "state" / "independent_reviews").glob("*.json"))
+    legacy_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    legacy_receipt.pop("contextReviewBindingDigest")
+    receipt_path.write_text(json.dumps(legacy_receipt), encoding="utf-8")
+
+    context["contextDigest"] = "changed-context"
+    if drift == "targetBase":
+        context["targetBase"] = {**target_base, "sha": "f" * 40}
+    elif drift == "intentId":
+        context["intentId"] = "replacement-intent"
+    elif drift == "track":
+        context["track"] = "llm_algorithm"
+    elif drift == "algorithmEvidence":
+        context["algorithmEvidence"] = {**algorithm_evidence, "score": 7}
+    elif drift == "prFollowup":
+        context["prFollowup"] = {**context["prFollowup"], "wakeDigest": "c" * 64}
+    else:
+        context["codePathTombstoneReceipt"] = {
+            **tombstone,
+            "receiptDigest": "d" * 64,
+        }
+    context_path.write_text(json.dumps(context), encoding="utf-8")
+
+    second = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("a changed task authority must not reuse the old review")
+        ),
+    )
+
+    assert second["updated"] == []
+    assert second["skipped"] == []
 
 
 def test_review_discards_changed_result_and_rotates_to_next_candidate(tmp_path, monkeypatch):
@@ -1082,6 +1631,199 @@ def test_review_supports_controller_merge_resolution(tmp_path, monkeypatch):
     )
 
     assert module.controller_review_passed(control, forged) is False
+
+
+def test_review_binds_conflict_and_authorized_resolution_scopes_separately(
+    tmp_path, current_signing_key, monkeypatch
+):
+    control, worktree, result_path, candidate, _base, previous_head = prepared_task(tmp_path)
+    git(worktree, "switch", "main")
+    (worktree / "service.py").write_text("def value():\n    return 4\n", encoding="utf-8")
+    (worktree / "service").mkdir()
+    (worktree / "service" / "new.py").write_text("VALUE = 4\n", encoding="utf-8")
+    git(worktree, "add", "service.py", "service/new.py")
+    git(worktree, "commit", "-m", "refactor: split service implementation")
+    merge_base = git(worktree, "rev-parse", "HEAD")
+    git(worktree, "switch", "fix/1")
+    completed = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", "main"],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 1
+    (worktree / "service.py").write_text("def value():\n    return 5\n", encoding="utf-8")
+    (worktree / "service" / "new.py").write_text("VALUE = 5\n", encoding="utf-8")
+    git(worktree, "add", "service.py", "service/new.py")
+    git(worktree, "commit", "-m", "merge: resolve split service")
+    head = git(worktree, "rev-parse", "HEAD")
+    source_wake = "a" * 64
+    receipt = attest_merge_resolution_scope(
+        key="owner/repo#1",
+        issue_url="https://github.com/owner/repo/issues/1",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path_fingerprint=module.hashlib.sha256(
+            str(worktree.resolve()).encode("utf-8")
+        ).hexdigest(),
+        pr_url="https://github.com/owner/repo/pull/7",
+        source_wake_digest=source_wake,
+        request_result_digest="b" * 64,
+        head_sha=previous_head,
+        prepared_head_sha=previous_head,
+        base_sha=merge_base,
+        merge_conflict_files=["service.py"],
+        authorized_resolution_files=["service.py", "service/new.py"],
+    )
+    context = {
+        "key": "owner/repo#1",
+        "issueUrl": "https://github.com/owner/repo/issues/1",
+        "intentId": "intent-1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "prFollowup": {
+            "prUrl": "https://github.com/owner/repo/pull/7",
+            "headSha": previous_head,
+            "preparedHeadSha": previous_head,
+            "wakeDigest": receipt["authorizedWakeDigest"],
+            "evidence": {
+                "mergeConflict": True,
+                "baseSha": merge_base,
+                "mergeConflictFiles": ["service.py"],
+                "authorizedResolutionFiles": ["service.py", "service/new.py"],
+                "mergeResolutionScopeReceipt": receipt,
+            },
+        },
+    }
+    projected_context = json.loads(json.dumps(context))
+    projected_context["prFollowup"]["preparedHeadSha"] = head
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        json.dumps(projected_context), encoding="utf-8"
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "commitSha": head,
+            "headSha": head,
+            "handoffMode": "controller_merge_complete",
+            "taskId": "intent-1",
+            "followupDigest": receipt["authorizedWakeDigest"],
+            "prUrl": "https://github.com/owner/repo/pull/7",
+            "previousCommitSha": previous_head,
+            "mergeBaseSha": merge_base,
+            "controllerCommitChangedFiles": ["service.py", "service/new.py"],
+            "mergeResolutionFiles": ["service.py", "service/new.py"],
+        }
+    )
+
+    assert module._bound_merge_resolution_scope(worktree, value) == [
+        "service.py",
+        "service/new.py",
+    ]
+    mismatched_receipt = attest_merge_resolution_scope(
+        key="owner/repo#1",
+        issue_url="https://github.com/owner/repo/issues/1",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path_fingerprint=module.hashlib.sha256(
+            str(worktree.resolve()).encode("utf-8")
+        ).hexdigest(),
+        pr_url="https://github.com/owner/repo/pull/7",
+        source_wake_digest=source_wake,
+        request_result_digest="b" * 64,
+        head_sha=previous_head,
+        prepared_head_sha=head,
+        base_sha=merge_base,
+        merge_conflict_files=["service.py"],
+        authorized_resolution_files=["service.py", "service/new.py"],
+    )
+    mismatched_context = json.loads(json.dumps(projected_context))
+    mismatched_context["prFollowup"]["evidence"]["mergeResolutionScopeReceipt"] = mismatched_receipt
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        json.dumps(mismatched_context), encoding="utf-8"
+    )
+    with pytest.raises(RuntimeError, match="scope receipt is invalid"):
+        module._bound_merge_resolution_scope(worktree, value)
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        json.dumps(projected_context), encoding="utf-8"
+    )
+    forged = value | {
+        "controllerCommitChangedFiles": ["service.py"],
+        "mergeResolutionFiles": ["service.py"],
+    }
+    with pytest.raises(RuntimeError, match="signed resolution snapshot"):
+        module._bound_merge_resolution_scope(worktree, forged)
+
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    class FakeLedger:
+        def task_result_candidates(self):
+            return [candidate]
+
+    monkeypatch.setattr(module, "RadarLedger", lambda _path: FakeLedger())
+    reviewed = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        reviewer=lambda *_args: {
+            "verdict": "PASS",
+            "summary": "The signed merge resolution is correct and narrowly scoped.",
+            "findings": [],
+            "evidence": ["Both authorized resolution files match the reviewed merge tree."],
+        },
+    )
+    assert reviewed["updated"][0]["commitSha"] == head
+    assert module.controller_review_passed(control, value) is True
+
+    drifted_context = json.loads(json.dumps(context))
+    drifted_context["prFollowup"]["wakeDigest"] = "f" * 64
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        json.dumps(drifted_context),
+        encoding="utf-8",
+    )
+    assert module.controller_review_passed(control, value) is False
+    assert (
+        module.controller_review_passed(
+            control,
+            value,
+            review_context=context,
+        )
+        is True
+    )
+    forged_context = json.loads(json.dumps(context))
+    forged_context["prFollowup"]["evidence"]["authorizedResolutionFiles"] = ["service.py"]
+    assert (
+        module.controller_review_passed(
+            control,
+            value,
+            review_context=forged_context,
+        )
+        is False
+    )
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        json.dumps(context),
+        encoding="utf-8",
+    )
+
+    git(worktree, "switch", "--detach", previous_head)
+    forged_merge = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", merge_base],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert forged_merge.returncode == 1
+    (worktree / "service.py").write_text("def value():\n    return 5\n", encoding="utf-8")
+    (worktree / "service" / "new.py").write_text("VALUE = 5\n", encoding="utf-8")
+    (worktree / ".gitignore").write_text("forged-output/\n", encoding="utf-8")
+    git(worktree, "add", "service.py", "service/new.py", ".gitignore")
+    git(worktree, "commit", "-m", "merge: smuggle unrelated tree change")
+    forged_head = git(worktree, "rev-parse", "HEAD")
+    forged_tree = value | {"commitSha": forged_head}
+
+    with pytest.raises(RuntimeError, match="outside signed resolution scope"):
+        module._bound_merge_resolution_scope(worktree, forged_tree)
 
 
 def test_pass_with_blocking_finding_is_normalized_to_fail():

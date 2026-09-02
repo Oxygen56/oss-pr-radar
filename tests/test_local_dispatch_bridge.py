@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import fcntl
+import gc
 import hashlib
 import importlib.util
 import json
@@ -19,6 +20,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -35,7 +37,7 @@ from oss_pr_radar.dispatch import (
 from oss_pr_radar.independent_review import REVIEW_SCHEMA, _receipt_path, _source_digest
 from oss_pr_radar.ledger import LedgerError, RadarLedger
 from oss_pr_radar.local_publication import slow_advance_once
-from oss_pr_radar.managed_lifecycle import ManagedLedger
+from oss_pr_radar.managed_lifecycle import ManagedLedger, import_open_pr_observations
 from oss_pr_radar.metrics import QUALITY_FIELDS
 from oss_pr_radar.policy import SCANNER_DECISION_REVISION, decision_contract_digest
 from oss_pr_radar.util import iso_z, parse_time, sha256_json, sha256_text
@@ -199,6 +201,74 @@ def test_resolve_repo_code_paths_keeps_unique_suffixes_only():
         ref="base-sha",
         code_paths=["providers/openai/client.py", "client.py"],
     ) == ["src/providers/openai/client.py"]
+
+
+def test_resolve_repo_code_paths_recovers_real_multi_scrobbler_legacy_anchors():
+    class Client:
+        def repository_tree(self, repo, ref):
+            assert repo == "FoxxMD/multi-scrobbler"
+            assert ref == "232c802b44abda301f0f61840200e66054717b4b"
+            return [
+                {
+                    "type": "blob",
+                    "path": "src/backend/common/vendor/atproto/AbstractATProtoApiClient.ts",
+                },
+                {
+                    "type": "blob",
+                    "path": "src/backend/common/vendor/teal/TealApiClient.ts",
+                },
+                {"type": "blob", "path": "src/backend/scrobblers/TealfmScrobbler.ts"},
+                {
+                    "type": "blob",
+                    "path": "src/backend/scrobblers/AbstractScrobbleClient.ts",
+                },
+                {
+                    "type": "blob",
+                    "path": "src/backend/scrobblers/AbstractHistoricalScrobbleClient.ts",
+                },
+                {
+                    "type": "blob",
+                    "path": "node_modules/drizzle-orm/node-sqlite/session.js",
+                },
+            ]
+
+    assert MODULE._resolve_repo_code_paths(
+        Client(),
+        repo="FoxxMD/multi-scrobbler",
+        ref="232c802b44abda301f0f61840200e66054717b4b",
+        code_paths=[
+            "https://github.com/FoxxMD/multi-scrobbler/blob/232c802b44abda301f0f61840200e66054717b4b/src/backend/common/vendor/atproto/AbstractATProtoApiClient.ts",
+            "CWD/src/backend/common/vendor/atproto/AbstractATProtoApiClient.ts",
+            "CWD/src/backend/common/vendor/teal/TealApiClient.ts",
+            "CWD/src/backend/scrobblers/TealfmScrobbler.ts",
+            "CWD/src/backend/scrobblers/AbstractScrobbleClient.ts",
+            "CWD/src/backend/scrobblers/AbstractHistoricalScrobbleClient.ts",
+            "CWD/node_modules/drizzle-orm/node-sqlite/session.js",
+            "CWD/node_modules/drizzle-orm/sqlite-core/query-builders/insert.js",
+        ],
+    ) == [
+        "src/backend/common/vendor/atproto/AbstractATProtoApiClient.ts",
+        "src/backend/common/vendor/teal/TealApiClient.ts",
+        "src/backend/scrobblers/AbstractHistoricalScrobbleClient.ts",
+        "src/backend/scrobblers/AbstractScrobbleClient.ts",
+        "src/backend/scrobblers/TealfmScrobbler.ts",
+    ]
+
+
+def test_resolve_repo_code_paths_does_not_bypass_tree_lookup_failure():
+    class Client:
+        def repository_tree(self, _repo, _ref):
+            raise RuntimeError("tree unavailable")
+
+    assert (
+        MODULE._resolve_repo_code_paths(
+            Client(),
+            repo="owner/repo",
+            ref="base-sha",
+            code_paths=["CWD/src/runtime.py"],
+        )
+        == []
+    )
 
 
 def _superseded_scanner_revision() -> str:
@@ -558,6 +628,7 @@ def _finalize_controller_commit_for_test(
     context: dict,
     value: dict,
     result_path: Path | None = None,
+    managed_ledger: ManagedLedger | None = None,
     write_if_unchanged: bool = True,
 ):
     worktree = Path(candidate["worktreePath"]).resolve()
@@ -585,6 +656,7 @@ def _finalize_controller_commit_for_test(
             context=context,
             value=value,
             result_access=result_access,
+            managed_ledger=managed_ledger,
             write_if_unchanged=write_if_unchanged,
         )
     if result_path is not None and result_path.resolve() != private_result.resolve():
@@ -639,6 +711,163 @@ def test_orphan_reconcile_commits_unique_matches_and_abandons_proven_misses(monk
     assert result["ok"] is True
     assert result["reconciled"][0]["threadId"] == "thread-1"
     assert result["abandoned"][0]["intentId"] == "intent-2"
+
+
+def test_orphan_commit_binds_before_optional_title_update(monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    worktree = tmp_path / "worktree"
+    source.mkdir()
+    worktree.mkdir()
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, title TEXT, archived INTEGER, cwd TEXT)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            ("thread-1", "automatic title", 0, str(worktree)),
+        )
+    candidate = {
+        "intentId": "intent-1",
+        "threadId": "thread-1",
+        "key": "a/b#1",
+        "repo": "a/b",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "cwd": str(worktree),
+        "worktreePath": str(worktree),
+        "workspaceMode": "codex_worktree",
+        "desiredTitle": "[有价值·处理中] a/b#1",
+        "titleTime": "08-30 06:40",
+        "leaseStartedAt": "2026-08-29T22:39:47Z",
+        "orphanNonce": "orphan-nonce",
+    }
+    calls = []
+
+    class Store:
+        def commit_orphan_dispatch(self, *_args, **_kwargs):
+            calls.append("binding")
+
+        def invalidate_title_sync(self, **_kwargs):
+            calls.append("title-deferred")
+            return True
+
+    store = Store()
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(
+        MODULE,
+        "orphan_list",
+        lambda _args: {"ok": True, "candidates": [candidate], "blocked": [], "unmatched": []},
+    )
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "command", lambda *_args, **_kwargs: "https://github.com/a/b")
+    monkeypatch.setattr(MODULE, "_worktree_belongs_to_source", lambda *_args: True)
+    monkeypatch.setattr(
+        MODULE,
+        "write_task_context",
+        lambda *_args, **_kwargs: calls.append("context") or tmp_path / "task-context.json",
+    )
+
+    def fail_title(*_args, **_kwargs):
+        raise RuntimeError("title update unavailable")
+
+    monkeypatch.setattr(MODULE, "_ensure_desktop_thread_title", fail_title)
+
+    result = MODULE.orphan_commit(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            intent_id="intent-1",
+            thread_id="thread-1",
+            project_id="github",
+            source_repo=str(source),
+            desired_title=candidate["desiredTitle"],
+            orphan_nonce="orphan-nonce",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["reconciled"] is True
+    assert result["titleDeferred"] is True
+    assert "title update unavailable" in result["titleError"]
+    assert calls == ["binding", "context", "title-deferred"]
+
+
+def test_desktop_thread_request_isolates_malformed_response_id(monkeypatch, tmp_path):
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "sys.stdin.readline()\n"
+        "sys.stdin.readline()\n"
+        'print(\'{"id": [], "result": {}}\', flush=True)\n',
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: str(fake_codex))
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+
+    result = MODULE._apply_desktop_thread_requests(
+        [{"threadId": "thread-1", "desiredTitle": "task"}],
+        method="thread/name/set",
+        parameter_builder=lambda item: {
+            "threadId": item["threadId"],
+            "name": item["desiredTitle"],
+        },
+        operation_label="title_update",
+        timeout_seconds=2,
+    )
+
+    assert result["thread-1"].startswith("TypeError:")
+    assert "list" in result["thread-1"]
+    assert result[MODULE.DESKTOP_BATCH_ERROR_KEY] == result["thread-1"]
+
+
+def test_desktop_thread_request_marks_missing_codex_as_batch_failure(monkeypatch):
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: None)
+
+    result = MODULE._apply_desktop_thread_requests(
+        [{"threadId": "thread-1", "desiredTitle": "task"}],
+        method="thread/name/set",
+        parameter_builder=lambda item: {
+            "threadId": item["threadId"],
+            "name": item["desiredTitle"],
+        },
+        operation_label="title_update",
+    )
+
+    assert result == {
+        "thread-1": "codex_executable_missing",
+        MODULE.DESKTOP_BATCH_ERROR_KEY: "codex_executable_missing",
+    }
+
+
+def test_desktop_thread_request_marks_protocol_error_as_batch_failure(monkeypatch, tmp_path):
+    fake_codex = tmp_path / "codex"
+    fake_codex.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "sys.stdin.readline()\n"
+        "sys.stdin.readline()\n"
+        'print(\'{"id": 0, "result": {}}\', flush=True)\n'
+        'print(\'{"id": 1, "error": {"code": -32601, "message": "missing"}}\', flush=True)\n',
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: str(fake_codex))
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+
+    result = MODULE._apply_desktop_thread_requests(
+        [{"threadId": "thread-1", "desiredTitle": "task"}],
+        method="thread/name/set",
+        parameter_builder=lambda item: {
+            "threadId": item["threadId"],
+            "name": item["desiredTitle"],
+        },
+        operation_label="title_update",
+        timeout_seconds=2,
+    )
+
+    assert result == {
+        "thread-1": "app_server_title_update_failed",
+        MODULE.DESKTOP_BATCH_ERROR_KEY: "app_server_title_update_protocol_error",
+    }
 
 
 def test_duplicate_task_reconcile_archives_only_exact_renamed_duplicates(monkeypatch):
@@ -1137,6 +1366,61 @@ def test_event_drain_holds_new_issue_when_pr_snapshot_needs_refresh(monkeypatch,
     ]
 
 
+@pytest.mark.parametrize("path_error", ["CODE_PATH_MISSING", "CODE_PATH_SYMLINK"])
+def test_event_drain_isolates_pr_followup_path_error_and_dispatches_next_candidate(
+    monkeypatch, tmp_path, path_error
+):
+    bad = {"key": "a/b#1", "threadId": "thread-bad", "wakeDigest": "wake-bad"}
+    healthy = {
+        "key": "a/b#2",
+        "threadId": "thread-healthy",
+        "wakeDigest": "wake-healthy",
+    }
+    reserve_calls = []
+    delivered = []
+    monkeypatch.setattr(
+        MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_list",
+        lambda _args: {
+            "ok": True,
+            "candidates": [bad, healthy],
+            "restoreRequired": [],
+            "unresolved": [],
+        },
+    )
+
+    def reserve(args):
+        reserve_calls.append(args.thread_id)
+        if args.thread_id == bad["threadId"]:
+            raise RuntimeError(path_error)
+        return {"ok": True, "deferred": False}
+
+    def deliver(args):
+        delivered.append(args.thread_id)
+        return {"ok": True, "threadId": args.thread_id}
+
+    monkeypatch.setattr(MODULE, "pr_followup_reserve", reserve)
+    monkeypatch.setattr(MODULE, "pr_followup_deliver", deliver)
+
+    result = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            project_id="github-project",
+            owner="event-drain",
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["action"] == "pr_followup_dispatched"
+    assert result["key"] == healthy["key"]
+    assert result["threadId"] == healthy["threadId"]
+    assert reserve_calls == [bad["threadId"], healthy["threadId"]]
+    assert delivered == [healthy["threadId"]]
+
+
 def test_event_drain_restores_an_archived_pr_task_before_followup(monkeypatch, tmp_path):
     restored = []
 
@@ -1380,6 +1664,317 @@ def run_git(path: Path, *args: str) -> str:
         text=True,
     )
     return completed.stdout.strip()
+
+
+def _radar_state_fetch_fixture(monkeypatch, tmp_path):
+    repository = tmp_path / "radar"
+    remote = tmp_path / "radar-state.git"
+    state = tmp_path / "runtime" / "state"
+    repository.mkdir()
+    state.mkdir(parents=True, mode=0o700)
+    run_git(repository, "init")
+    run_git(repository, "config", "user.name", "Radar Test")
+    run_git(repository, "config", "user.email", "radar@example.com")
+    run_git(repository, "branch", "-M", "radar-state")
+    run_git(remote.parent, "init", "--bare", str(remote))
+    run_git(repository, "remote", "add", "origin", str(remote))
+
+    outbox = _codex_decision_outbox()
+    outbox_raw = json.dumps(outbox, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    manifest = {
+        "version": "radar_state_v2",
+        "files": {
+            "war_room_codex_outbox.json": {
+                "sha256": hashlib.sha256(outbox_raw).hexdigest(),
+            }
+        },
+    }
+
+    def commit_state(generation: int):
+        queue = _signed_dispatch_queue(
+            intent_id=f"intent-{generation}",
+            key=f"owner/repo#{generation}",
+            queue_overrides={"generation": generation},
+        )
+        (repository / "dispatch_queue.json").write_text(
+            json.dumps(queue, sort_keys=True), encoding="utf-8"
+        )
+        (repository / "state_manifest.json").write_text(
+            json.dumps(manifest, sort_keys=True), encoding="utf-8"
+        )
+        (repository / "war_room_codex_outbox.json").write_bytes(outbox_raw)
+        run_git(repository, "add", ".")
+        run_git(repository, "commit", "-m", f"state: generation {generation}")
+        return queue
+
+    commit_state(1)
+    run_git(repository, "push", "origin", "radar-state")
+    ref = "refs/radar/import/radar-state"
+    run_git(
+        repository,
+        "fetch",
+        "--no-write-fetch-head",
+        "origin",
+        f"+radar-state:{ref}",
+    )
+    previous = run_git(repository, "rev-parse", ref)
+    expected_queue = commit_state(2)
+    current = run_git(repository, "rev-parse", "HEAD")
+    run_git(repository, "push", "origin", "radar-state")
+    assert previous != current
+
+    monkeypatch.setattr(MODULE, "ROOT", repository)
+    monkeypatch.setattr(MODULE, "STATE", state)
+    return repository, ref, current, expected_queue, outbox
+
+
+def _observe_concurrent_radar_state_fetches(monkeypatch):
+    original_run = MODULE.subprocess.run
+    guard = threading.Lock()
+    observed = {"active": 0, "maximum": 0, "count": 0}
+
+    def run(args, *positional, **kwargs):
+        is_radar_fetch = list(args[:2]) == ["git", "fetch"] and any(
+            "refs/radar/import/radar-state" in str(item) for item in args
+        )
+        if not is_radar_fetch:
+            return original_run(args, *positional, **kwargs)
+        with guard:
+            observed["active"] += 1
+            observed["count"] += 1
+            observed["maximum"] = max(observed["maximum"], observed["active"])
+        try:
+            # Widen the real Git fetch overlap window. The blocking runtime
+            # lock must keep the second caller out of this region entirely.
+            time.sleep(0.1)
+            return original_run(args, *positional, **kwargs)
+        finally:
+            with guard:
+                observed["active"] -= 1
+
+    monkeypatch.setattr(MODULE.subprocess, "run", run)
+    return observed
+
+
+def _run_concurrent_fetches(first, second):
+    barrier = threading.Barrier(2)
+
+    def run(fetch):
+        barrier.wait(timeout=3)
+        return fetch()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_result = executor.submit(run, first)
+        second_result = executor.submit(run, second)
+        return first_result.result(timeout=10), second_result.result(timeout=10)
+
+
+def _radar_fetch_process(
+    *,
+    repository: Path,
+    state: Path,
+    start: Path,
+    operation: str,
+    ledger: Path,
+    probe: Path,
+) -> subprocess.Popen:
+    source_root = Path(__file__).parents[1]
+    script = f"""
+import importlib.util
+import json
+import sys
+import time
+from pathlib import Path
+from types import SimpleNamespace
+
+script = Path({str(SCRIPT)!r})
+spec = importlib.util.spec_from_file_location("radar_fetch_process", script)
+module = importlib.util.module_from_spec(spec)
+assert spec and spec.loader
+spec.loader.exec_module(module)
+module.ROOT = Path({str(repository)!r})
+module.STATE = Path({str(state)!r})
+start = Path({str(start)!r})
+deadline = time.monotonic() + 10
+while not start.exists():
+    if time.monotonic() >= deadline:
+        raise RuntimeError("concurrent fetch start signal timed out")
+    time.sleep(0.01)
+operation = {operation!r}
+ledger = Path({str(ledger)!r})
+if operation == "sync":
+    module.recover_shared_task_contexts = lambda _store: {{
+        "verified": 0,
+        "restored": [],
+        "resultReceiptsRestored": 0,
+        "unavailable": [],
+        "quarantined": [],
+        "errors": [],
+    }}
+    module.fetch_cloud_pr_followup = lambda: {{"version": "not-published"}}
+    result = module.sync_queue(ledger)
+elif operation == "queue-import":
+    result = module.import_signed_queue(ledger)
+elif operation == "codex-outbox":
+    module._dispatch_codex_decisions_locked = (
+        lambda _args, outbox: {{"ok": True, "outbox": outbox}}
+    )
+    result = module._dispatch_codex_decisions_unlocked(
+        SimpleNamespace(ledger=ledger, project_id="github")
+    )
+else:
+    raise RuntimeError(f"unsupported test operation: {{operation}}")
+print(json.dumps(result, sort_keys=True))
+"""
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = os.pathsep.join(
+        filter(
+            None,
+            [
+                str(source_root / "src"),
+                environment.get("PYTHONPATH", ""),
+            ],
+        )
+    )
+    environment["RADAR_FETCH_PROBE_DIR"] = str(probe)
+    return subprocess.Popen(
+        [sys.executable, "-c", script],
+        cwd=source_root,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def _install_delayed_upload_pack(repository: Path, tmp_path: Path) -> Path:
+    probe = tmp_path / "fetch-probe"
+    probe.mkdir()
+    git_exec_path = run_git(repository, "--exec-path")
+    upload_pack = Path(git_exec_path) / "git-upload-pack"
+    wrapper = tmp_path / "delayed-upload-pack.py"
+    wrapper.write_text(
+        f"""#!{sys.executable}
+import fcntl
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+probe = Path(os.environ["RADAR_FETCH_PROBE_DIR"])
+guard_path = probe / "guard"
+active_path = probe / "active"
+with guard_path.open("a+") as guard:
+    fcntl.flock(guard.fileno(), fcntl.LOCK_EX)
+    active = int(active_path.read_text() or "0") if active_path.exists() else 0
+    if active:
+        (probe / "overlap").write_text("fetches overlapped")
+    active_path.write_text(str(active + 1))
+    fcntl.flock(guard.fileno(), fcntl.LOCK_UN)
+try:
+    completed = subprocess.run([{str(upload_pack)!r}, *sys.argv[1:]], check=False)
+    time.sleep(0.25)
+finally:
+    with guard_path.open("a+") as guard:
+        fcntl.flock(guard.fileno(), fcntl.LOCK_EX)
+        active = int(active_path.read_text())
+        active_path.write_text(str(active - 1))
+        fcntl.flock(guard.fileno(), fcntl.LOCK_UN)
+raise SystemExit(completed.returncode)
+""",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o700)
+    run_git(repository, "config", "remote.origin.uploadpack", str(wrapper))
+    return probe
+
+
+def _run_concurrent_fetch_processes(
+    monkeypatch, tmp_path: Path, first_operation: str
+) -> tuple[dict, dict, Path, str, str]:
+    repository, ref, current, _queue, _outbox = _radar_state_fetch_fixture(monkeypatch, tmp_path)
+    state = MODULE.STATE
+    probe = _install_delayed_upload_pack(repository, tmp_path)
+    start = tmp_path / "start-fetches"
+    first = _radar_fetch_process(
+        repository=repository,
+        state=state,
+        start=start,
+        operation=first_operation,
+        ledger=tmp_path / "first.sqlite3",
+        probe=probe,
+    )
+    second = _radar_fetch_process(
+        repository=repository,
+        state=state,
+        start=start,
+        operation="queue-import",
+        ledger=tmp_path / "second.sqlite3",
+        probe=probe,
+    )
+    start.touch()
+    first_stdout, first_stderr = first.communicate(timeout=20)
+    second_stdout, second_stderr = second.communicate(timeout=20)
+    assert first.returncode == 0, first_stderr
+    assert second.returncode == 0, second_stderr
+    return (
+        json.loads(first_stdout),
+        json.loads(second_stdout),
+        probe,
+        run_git(repository, "rev-parse", ref),
+        current,
+    )
+
+
+def test_radar_state_fetch_lock_serializes_sync_and_queue_importer(monkeypatch, tmp_path):
+    repository, ref, current, expected_queue, _outbox = _radar_state_fetch_fixture(
+        monkeypatch, tmp_path
+    )
+    observed = _observe_concurrent_radar_state_fetches(monkeypatch)
+
+    # sync_queue and import_signed_queue both enter through fetch_cloud_queue.
+    sync_queue, imported_queue = _run_concurrent_fetches(
+        MODULE.fetch_cloud_queue,
+        MODULE.fetch_cloud_queue,
+    )
+
+    assert sync_queue == expected_queue
+    assert imported_queue == expected_queue
+    assert observed == {"active": 0, "maximum": 1, "count": 2}
+    assert run_git(repository, "rev-parse", ref) == current
+
+
+def test_radar_state_fetch_lock_serializes_codex_outbox_and_queue_importer(monkeypatch, tmp_path):
+    repository, ref, current, expected_queue, expected_outbox = _radar_state_fetch_fixture(
+        monkeypatch, tmp_path
+    )
+    observed = _observe_concurrent_radar_state_fetches(monkeypatch)
+
+    outbox, imported_queue = _run_concurrent_fetches(
+        MODULE.fetch_cloud_codex_outbox,
+        MODULE.fetch_cloud_queue,
+    )
+
+    assert outbox == expected_outbox
+    assert imported_queue == expected_queue
+    assert observed == {"active": 0, "maximum": 1, "count": 2}
+    assert run_git(repository, "rev-parse", ref) == current
+
+
+@pytest.mark.parametrize("first_operation", ["sync", "codex-outbox"])
+def test_radar_state_fetch_lock_serializes_independent_bridge_processes(
+    monkeypatch, tmp_path, first_operation
+):
+    first, importer, probe, actual_ref, expected_ref = _run_concurrent_fetch_processes(
+        monkeypatch, tmp_path, first_operation
+    )
+
+    assert first["ok"] is True
+    assert importer["ok"] is True
+    assert not (probe / "overlap").exists()
+    assert (probe / "active").read_text() == "0"
+    assert actual_ref == expected_ref
 
 
 def registered_store(tmp_path: Path, worktree: Path | None = None) -> tuple[RadarLedger, Path]:
@@ -1773,6 +2368,173 @@ def test_title_reconcile_applies_and_receipts_desktop_title(monkeypatch, tmp_pat
         "ok": True,
         "titles": [],
     }
+
+
+def test_title_reconcile_uses_codex_display_name_when_legacy_title_is_stale(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "PR_OPEN", evidence={})
+    pending = store.title_candidates()[0]
+    desired_title = MODULE.lifecycle_title(
+        pending["titleState"], pending["titleTime"], pending["key"], pending["title"]
+    )
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, title TEXT, name TEXT, archived INTEGER)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            ("thread-1", "<codex_delegation>...", desired_title, 0),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(
+        MODULE,
+        "_set_desktop_thread_titles",
+        lambda _candidates: {"thread-1": None},
+    )
+
+    result = MODULE.title_reconcile(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True
+    assert result["deferred"] == []
+    assert [item["threadId"] for item in result["renamed"]] == ["thread-1"]
+    assert MODULE.title_list(SimpleNamespace(ledger=store.path)) == {
+        "ok": True,
+        "titles": [],
+    }
+
+
+def test_ensure_desktop_title_accepts_codex_display_name(monkeypatch, tmp_path):
+    desired_title = "[有价值·处理中] 08-30 10:00 a/b#1 Runtime bug"
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, title TEXT, name TEXT, archived INTEGER)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            ("thread-1", "legacy automatic title", desired_title, 0),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(
+        MODULE,
+        "_set_desktop_thread_titles",
+        lambda _candidates: (_ for _ in ()).throw(AssertionError("unexpected title rewrite")),
+    )
+
+    MODULE._ensure_desktop_thread_title("thread-1", desired_title)
+
+
+def test_title_reconcile_defers_desktop_failure_and_retries(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "PR_OPEN", evidence={})
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, title TEXT, archived INTEGER)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?)",
+            ("thread-1", "<codex_delegation>...", 0),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(
+        MODULE,
+        "_set_desktop_thread_titles",
+        lambda _candidates: {"thread-1": "app_server_title_update_failed"},
+    )
+
+    deferred = MODULE.title_reconcile(SimpleNamespace(ledger=store.path))
+
+    assert deferred == {
+        "ok": True,
+        "renamed": [],
+        "deferred": [
+            {
+                "key": "a/b#1",
+                "threadId": "thread-1",
+                "error": "app_server_title_update_failed",
+            }
+        ],
+        "errors": [],
+    }
+    assert [item["threadId"] for item in store.title_candidates()] == ["thread-1"]
+
+    def apply_titles(candidates):
+        with sqlite3.connect(thread_db) as connection:
+            connection.execute(
+                "UPDATE threads SET title=? WHERE id=?",
+                (candidates[0]["desiredTitle"], candidates[0]["threadId"]),
+            )
+        return {"thread-1": None}
+
+    monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", apply_titles)
+    retried = MODULE.title_reconcile(SimpleNamespace(ledger=store.path))
+
+    assert retried["ok"] is True
+    assert retried["deferred"] == []
+    assert [item["threadId"] for item in retried["renamed"]] == ["thread-1"]
+    assert store.title_candidates() == []
+
+
+def test_title_reconcile_keeps_ledger_authorization_failure_fatal(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "PR_OPEN", evidence={})
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, title TEXT, archived INTEGER)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?)",
+            ("thread-1", "<codex_delegation>...", 0),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", lambda _candidates: {})
+    monkeypatch.setattr(
+        MODULE,
+        "title_commit",
+        lambda _args: (_ for _ in ()).throw(MODULE.LedgerError("title authorization is stale")),
+    )
+
+    result = MODULE.title_reconcile(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is False
+    assert result["deferred"] == []
+    assert result["errors"] == [
+        {
+            "key": "a/b#1",
+            "threadId": "thread-1",
+            "error": "LedgerError:title authorization is stale",
+        }
+    ]
+
+
+def test_title_reconcile_keeps_batch_infrastructure_failure_fatal(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "PR_OPEN", evidence={})
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, title TEXT, archived INTEGER)")
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?)",
+            ("thread-1", "<codex_delegation>...", 0),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(
+        MODULE,
+        "_set_desktop_thread_titles",
+        lambda _candidates: {
+            "thread-1": "app_server_initialization_timeout",
+            MODULE.DESKTOP_BATCH_ERROR_KEY: "app_server_initialization_timeout",
+        },
+    )
+
+    result = MODULE.title_reconcile(SimpleNamespace(ledger=store.path))
+
+    assert result == {
+        "ok": False,
+        "renamed": [],
+        "deferred": [],
+        "errors": [{"error": "app_server_initialization_timeout"}],
+    }
+    assert [item["threadId"] for item in store.title_candidates()] == ["thread-1"]
 
 
 def test_title_list_ignores_archived_desktop_tasks(monkeypatch, tmp_path):
@@ -2814,6 +3576,150 @@ def test_claim_intent_rejects_low_information_wrong_repo_requalification(monkeyp
         )
 
 
+def test_claim_intent_holds_bound_creation_without_reauditing(monkeypatch, tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-creating",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+            "autoSubmitAuthorized": True,
+            "publicSubmissionAllowed": True,
+            "selectedBaseSha": "a" * 40,
+        }
+    )
+    store.claim("intent-creating", "controller")
+    creation = store.reserve_creation("intent-creating", owner="controller")
+    store.bind_creation_client(
+        "intent-creating",
+        owner="controller",
+        creation_token=creation["creationToken"],
+        client_thread_id="client-thread-1",
+    )
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE,
+        "_audit_intent",
+        lambda _intent: pytest.fail("a bound creation must not be audited again"),
+    )
+
+    result = MODULE.claim_intent(
+        SimpleNamespace(
+            ledger=store.path,
+            intent_id="intent-creating",
+            owner="slow-worker",
+            lease_minutes=15,
+            prepare=True,
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "authorized": False,
+        "held": True,
+        "claimed": False,
+        "reason": "task_creation_reconciliation_pending",
+        "clientThreadId": "client-thread-1",
+    }
+    pending = store.pending()
+    assert pending[0]["ledgerStatus"] == "CREATING"
+    assert pending[0]["clientThreadId"] == "client-thread-1"
+
+    monkeypatch.setattr(
+        MODULE, "restore_reconcile", lambda _args: {"ok": True, "restored": [], "errors": []}
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "pr_followup_list",
+        lambda _args: {"candidates": [], "restoreRequired": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_list",
+        lambda _args: {"candidates": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "recovery_list",
+        lambda _args: {"recoverable": [], "unresolved": []},
+    )
+
+    drained = MODULE.drain_once(
+        SimpleNamespace(
+            ledger=store.path,
+            runtime_root=tmp_path,
+            project_id="github-project",
+            owner="slow-worker",
+        )
+    )
+
+    assert drained["ok"] is True
+    assert drained["action"] == "none"
+    assert drained["held"] == [{"key": "a/b#1", "reason": "task_creation_reconciliation_pending"}]
+
+
+def test_claim_intent_holds_active_lease_without_reauditing(monkeypatch, tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    now = datetime.now(UTC)
+    store.enqueue(
+        {
+            "intentId": "intent-leased",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "title": "Runtime bug",
+            "mode": "canary",
+            "score": 9,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+            "autoSubmitAuthorized": True,
+            "publicSubmissionAllowed": True,
+            "selectedBaseSha": "a" * 40,
+        }
+    )
+    store.claim("intent-leased", "hourly-controller", lease_minutes=30)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE,
+        "_audit_intent",
+        lambda _intent: pytest.fail("an active lease must not be audited by another worker"),
+    )
+
+    result = MODULE.claim_intent(
+        SimpleNamespace(
+            ledger=store.path,
+            intent_id="intent-leased",
+            owner="slow-worker",
+            lease_minutes=15,
+            prepare=True,
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "authorized": False,
+        "held": True,
+        "claimed": False,
+        "reason": "dispatch_lease_active",
+    }
+    pending = store.pending()
+    assert pending[0]["ledgerStatus"] == "LEASED"
+    assert pending[0]["leaseStale"] is False
+
+
 def test_terminal_feedback_treats_transient_github_failure_as_deferred(monkeypatch, tmp_path):
     store, _worktree = registered_store(tmp_path)
     store.record_stage("a/b#1", "AUDIT_NO_GO", reason="ALREADY_FIXED")
@@ -3047,6 +3953,12 @@ def test_local_refresh_projects_newer_live_snapshot_into_managed_and_legacy_tabl
     monkeypatch, tmp_path
 ):
     store, _worktree, head_sha, pr_url = _published_followup_store(tmp_path)
+    # Follow-up observations may update only an explicitly admitted managed PR.
+    import_open_pr_observations(
+        store.path,
+        [{"url": pr_url, "headSha": head_sha, "state": "OPEN"}],
+        source="test-explicit-admission",
+    )
     publication_time = datetime.now(UTC)
     cloud_time = iso_z(publication_time - timedelta(hours=1))
     live_time = iso_z(publication_time + timedelta(minutes=1))
@@ -3306,6 +4218,244 @@ def test_managed_workspace_context_is_mirrored_for_github_project_bootstrap(monk
     assert local["worktreePath"] == str(worktree.resolve())
 
 
+def test_managed_private_context_wins_over_a_foreign_shared_singleton(monkeypatch, tmp_path):
+    """A singleton bootstrap from another intent must not hide a private task."""
+
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    private_raw = context_path.read_bytes()
+    private_context = json.loads(private_raw)
+    foreign = dict(private_context)
+    foreign.update(
+        {
+            "intentId": "intent-foreign",
+            "threadId": "thread-foreign",
+            "worktreePath": str(tmp_path / "foreign-worktree"),
+        }
+    )
+    foreign["contextDigest"] = MODULE._task_context_digest(foreign, None)
+    shared_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    MODULE._atomic_json(shared_path, foreign)
+    foreign_raw = shared_path.read_bytes()
+
+    recovered = RadarLedger(tmp_path / "recovered.sqlite3")
+    result = MODULE.recover_shared_task_contexts(recovered)
+
+    assert result["errors"] == []
+    assert result["privateErrors"] == []
+    assert result["verified"] == 1
+    assert result["restored"][0]["key"] == "a/b#1"
+    assert (
+        recovered.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "intentId"
+        ]
+        == "intent-1"
+    )
+    assert result["collisions"][0]["reason"] == "SHARED_CONTEXT_PRIVATE_COLLISION"
+    assert shared_path.read_bytes() == foreign_raw
+    assert context_path.read_bytes() == private_raw
+
+
+def test_authenticated_private_context_wins_over_a_stale_same_binding_singleton(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    shared_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    stale_shared_raw = shared_path.read_bytes()
+
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    assert context_path.read_bytes() != stale_shared_raw
+    assert shared_path.read_bytes() == stale_shared_raw
+
+    result = MODULE.recover_shared_task_contexts(store)
+
+    assert result["errors"] == []
+    assert result["verified"] == 1
+    assert result["restored"][0]["stage"] == "FIX_READY"
+    assert result["collisions"][0]["reason"] == "SHARED_CONTEXT_SPLIT_MIRROR"
+    assert shared_path.read_bytes() == stale_shared_raw
+
+
+def test_historical_private_context_does_not_supersede_a_newer_pending_intent(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    MODULE.shared_context_path("https://github.com/a/b/issues/1").unlink()
+    newer_at = iso_z(datetime.now(UTC) + timedelta(minutes=5))
+    with store.connect() as connection:
+        old = connection.execute("SELECT * FROM intents WHERE intent_id='intent-1'").fetchone()
+        values = dict(old)
+        values.update(
+            {
+                "intent_id": "intent-2",
+                "intent_digest": "newer-intent",
+                "status": "PENDING",
+                "thread_id": "thread-2",
+                "worktree_path": str(tmp_path / "newer-worktree"),
+                "updated_at": newer_at,
+            }
+        )
+        columns = tuple(values)
+        connection.execute(
+            f"INSERT INTO intents ({','.join(columns)}) VALUES "
+            f"({','.join('?' for _column in columns)})",
+            tuple(values[column] for column in columns),
+        )
+        connection.execute(
+            "UPDATE opportunities SET stage='QUALIFIED',updated_at=? WHERE key='a/b#1'",
+            (newer_at,),
+        )
+
+    result = MODULE.recover_shared_task_contexts(store)
+
+    assert result["errors"] == []
+    assert result["verified"] == 0
+    assert any(
+        item["reason"] == "PRIVATE_CONTEXT_SUPERSEDED_BY_ACTIVE_INTENT"
+        for item in result["collisions"]
+    )
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT status FROM intents WHERE intent_id='intent-2'").fetchone()[
+                0
+            ]
+            == "PENDING"
+        )
+        assert (
+            connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[0]
+            == "QUALIFIED"
+        )
+
+
+def test_malformed_private_context_blocks_shared_fallback(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context_path.write_text("{not-json", encoding="utf-8")
+
+    result = MODULE.recover_shared_task_contexts(store)
+
+    assert result["verified"] == 0
+    assert result["privateErrors"]
+    assert result["errors"][0]["source"] == "private"
+
+
+def test_write_task_context_does_not_rewrite_identical_mirrors(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    shared_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    local_mtime = context_path.stat().st_mtime_ns
+    shared_mtime = shared_path.stat().st_mtime_ns
+    local_raw = context_path.read_bytes()
+    shared_raw = shared_path.read_bytes()
+
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+
+    assert context_path.read_bytes() == local_raw
+    assert shared_path.read_bytes() == shared_raw
+    assert context_path.stat().st_mtime_ns == local_mtime
+    assert shared_path.stat().st_mtime_ns == shared_mtime
+
+
+def test_write_task_context_preserves_a_foreign_shared_singleton(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    foreign = dict(context)
+    foreign.update(
+        {
+            "intentId": "intent-foreign",
+            "threadId": "thread-foreign",
+            "worktreePath": str(tmp_path / "foreign-worktree"),
+        }
+    )
+    foreign["contextDigest"] = MODULE._task_context_digest(foreign, None)
+    shared_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    MODULE._atomic_json(shared_path, foreign)
+    foreign_raw = shared_path.read_bytes()
+
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+
+    assert shared_path.read_bytes() == foreign_raw
+    assert MODULE.write_task_context.last_collision["reason"] == (
+        "SHARED_CONTEXT_SINGLETON_CONFLICT"
+    )
+
+
 def test_shared_context_recovery_rebuilds_a_lost_local_ledger(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
@@ -3362,6 +4512,54 @@ def test_shared_context_recovery_verifies_an_existing_dispatched_task(monkeypatc
             "resultReceiptRestored": False,
         }
     ]
+
+
+def test_superseded_shared_context_cannot_backfill_its_old_result(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    store, _worktree, _local_path, _shared_path = _context_digest_fixture(
+        tmp_path / "fixture",
+        stage="PR_OPEN",
+    )
+    backfill_attempted = False
+    quarantine_clear_attempted = False
+
+    def superseded_restore(_context, *, source_updated_at=None):
+        assert source_updated_at is not None
+        return {
+            "key": "a/b#1",
+            "stage": "PR_OPEN",
+            "intentRestored": False,
+            "publicationRestored": False,
+            "supersededContextMirror": True,
+        }
+
+    def stale_result_backfill(*_args, **_kwargs):
+        nonlocal backfill_attempted
+        backfill_attempted = True
+        return {"key": "a/b#1", "digest": "stale-result", "stage": "PR_OPEN"}
+
+    def stale_quarantine_clear(*_args, **_kwargs):
+        nonlocal quarantine_clear_attempted
+        quarantine_clear_attempted = True
+
+    monkeypatch.setattr(store, "restore_task_context", superseded_restore)
+    monkeypatch.setattr(MODULE, "_recoverable_published_result", stale_result_backfill)
+    monkeypatch.setattr(
+        MODULE,
+        "_clear_exact_published_validation_auth_quarantines",
+        stale_quarantine_clear,
+    )
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["errors"] == []
+    assert recovered["verified"] == 1
+    assert recovered["resultReceiptsRestored"] == 0
+    assert recovered["restored"][0]["supersededContextMirror"] is True
+    assert recovered["restored"][0]["resultReceiptRestored"] is False
+    assert backfill_attempted is False
+    assert quarantine_clear_attempted is False
 
 
 def _context_digest_fixture(tmp_path, *, stage="DISPATCHED"):
@@ -5333,7 +6531,12 @@ def test_worktree_membership_uses_common_repository_for_linked_source(tmp_path):
     assert MODULE._worktree_belongs_to_source(source, linked) is True
 
 
-def test_commit_receipt_binds_github_project_thread_to_managed_worktree(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "title_update_outcome", ["success", "reported_failure", "timeout", "malformed_response"]
+)
+def test_commit_receipt_binds_before_optional_title_update(
+    monkeypatch, tmp_path, title_update_outcome
+):
     project_root = tmp_path / "github"
     source = tmp_path / "source"
     source.mkdir()
@@ -5412,12 +6615,18 @@ def test_commit_receipt_binds_github_project_thread_to_managed_worktree(monkeypa
 
     def apply_titles(candidates):
         assert candidates[0]["desiredTitle"] == title
-        with sqlite3.connect(thread_db) as connection:
-            connection.execute(
-                "UPDATE threads SET title=? WHERE id=?",
-                (candidates[0]["desiredTitle"], candidates[0]["threadId"]),
-            )
-        return {"thread-1": None}
+        if title_update_outcome == "success":
+            with sqlite3.connect(thread_db) as connection:
+                connection.execute(
+                    "UPDATE threads SET title=? WHERE id=?",
+                    (candidates[0]["desiredTitle"], candidates[0]["threadId"]),
+                )
+            return {"thread-1": None}
+        if title_update_outcome == "timeout":
+            raise subprocess.TimeoutExpired(["codex", "app-server"], 5)
+        if title_update_outcome == "malformed_response":
+            raise TypeError("unhashable type: 'list'")
+        return {"thread-1": "title update unavailable"}
 
     monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", apply_titles)
 
@@ -5443,6 +6652,41 @@ def test_commit_receipt_binds_github_project_thread_to_managed_worktree(monkeypa
     assert context is not None
     assert context["worktreePath"] == str(worktree)
     assert MODULE.shared_context_path("https://github.com/a/b/issues/1").exists()
+    with store.connect() as connection:
+        binding = connection.execute(
+            "SELECT status,title_synced_state FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()
+    assert binding["status"] == "DISPATCHED"
+    if title_update_outcome == "success":
+        assert result.get("titleDeferred") is None
+        assert binding["title_synced_state"] == "GO"
+    else:
+        assert result["titleDeferred"] is True
+        expected_error = {
+            "timeout": "TimeoutExpired",
+            "malformed_response": "TypeError",
+        }.get(title_update_outcome, "title update unavailable")
+        assert expected_error in result["titleError"]
+        assert binding["title_synced_state"] is None
+        assert [item["threadId"] for item in store.title_candidates()] == ["thread-1"]
+
+        def retry_titles(candidates):
+            with sqlite3.connect(thread_db) as connection:
+                connection.execute(
+                    "UPDATE threads SET title=? WHERE id=?",
+                    (candidates[0]["desiredTitle"], candidates[0]["threadId"]),
+                )
+            return {"thread-1": None}
+
+        monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", retry_titles)
+        retried = MODULE.title_reconcile(SimpleNamespace(ledger=store.path))
+        assert retried["ok"] is True
+        assert [item["threadId"] for item in retried["renamed"]] == ["thread-1"]
+        with store.connect() as connection:
+            synced = connection.execute(
+                "SELECT title_synced_state FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()
+        assert synced["title_synced_state"] == "GO"
 
 
 def test_private_task_dispatch_is_not_limited_by_publication_canary(monkeypatch, tmp_path):
@@ -7223,6 +8467,51 @@ def test_pr_followup_reserve_failure_is_retryable_without_stuck_gate(
     }
 
 
+@pytest.mark.parametrize("path_error", ["CODE_PATH_MISSING", "CODE_PATH_SYMLINK"])
+def test_pr_followup_list_does_not_treat_path_error_repair_as_unresolved_delivery(
+    monkeypatch, tmp_path, path_error
+):
+    store, _worktree, head_sha, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    with sqlite3.connect(MODULE.THREAD_DB) as connection:
+        connection.execute(
+            "INSERT INTO threads (id,archived,updated_at,rollout_path) VALUES (?,?,?,?)",
+            (
+                candidate["threadId"],
+                0,
+                int((datetime.now(UTC) - timedelta(hours=2)).timestamp()),
+                None,
+            ),
+        )
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": head_sha},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "write_task_context",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(path_error)),
+    )
+
+    with pytest.raises(RuntimeError, match=path_error):
+        MODULE.pr_followup_reserve(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id=candidate["threadId"],
+                wake_digest=candidate["wakeDigest"],
+            )
+        )
+
+    assert store.active_task_quarantine(candidate["key"]) is not None
+    result = MODULE.pr_followup_list(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True
+    assert result["blocked"] == []
+    assert result["unresolved"] == []
+    assert [item["key"] for item in result["reprepareRequired"]] == [candidate["key"]]
+
+
 def test_pr_followup_reserve_serializes_concurrent_retries(monkeypatch, tmp_path):
     store, _worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
@@ -7378,6 +8667,7 @@ def test_pr_followup_never_abandons_an_unreceipted_delivery(monkeypatch, tmp_pat
     probe = MODULE.pr_followup_list(args)
     unresolved = probe["unresolved"][0]
 
+    assert probe["ok"] is True
     assert unresolved["abandonable"] is False
     assert unresolved["commitReady"] is False
     assert "abandonNonce" not in unresolved
@@ -8367,6 +9657,18 @@ def test_app_server_terminal_turn_ignores_in_progress_or_unrelated_turns():
     )
 
 
+@pytest.mark.parametrize("frame", ["unexpected", 7, None])
+def test_app_server_terminal_turn_ignores_non_object_frames(frame):
+    assert (
+        MODULE._app_server_terminal_turn(
+            frame,
+            thread_id="thread-1",
+            turn_id="turn-1",
+        )
+        is None
+    )
+
+
 def test_app_server_watchdog_consumes_buffered_terminal_before_select():
     class FakeStdin:
         @staticmethod
@@ -8410,6 +9712,26 @@ def test_app_server_watchdog_consumes_buffered_terminal_before_select():
     )
 
     assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
+
+
+@pytest.mark.parametrize("frame", [b'"unexpected"\n', b"7\n", b"null\n"])
+def test_app_server_watchdog_fails_closed_on_non_object_json_frame(frame):
+    class FakeProcess:
+        stdin = object()
+        stdout = object()
+
+        @staticmethod
+        def poll():
+            return 0
+
+    with pytest.raises(RuntimeError, match="malformed non-object frame"):
+        MODULE._wait_for_app_server_terminal_turn(
+            FakeProcess(),
+            object(),
+            frame,
+            thread_id="thread-1",
+            turn_id="turn-1",
+        )
 
 
 def test_validation_progress_marker_tracks_check_outcomes_not_wording():
@@ -8643,6 +9965,101 @@ def test_app_server_watchdog_uses_bounded_live_probe_when_rollout_lacks_abort(mo
     assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
     assert live_calls == [{"thread-1"}]
     assert json.loads(process.stdin.writes[0])["method"] == "thread/read"
+
+
+def test_app_server_watchdog_uses_live_probe_when_owner_reports_stale_nonterminal(monkeypatch):
+    class FakeStdin:
+        def __init__(self):
+            self.writes: list[bytes] = []
+
+        def write(self, value: bytes) -> None:
+            self.writes.append(value)
+
+        def flush(self) -> None:
+            return None
+
+    class FakeStdout:
+        @staticmethod
+        def fileno() -> int:
+            return 123
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = FakeStdin()
+            self.stdout = FakeStdout()
+
+        @staticmethod
+        def poll():
+            return None
+
+    class AlwaysReadySelector:
+        @staticmethod
+        def select(_timeout):
+            return [(object(), None)]
+
+    class StepClock:
+        def __init__(self):
+            self.value = -0.25
+
+        def __call__(self):
+            self.value += 0.25
+            return self.value
+
+    process = FakeProcess()
+    live_calls: list[set[str]] = []
+    owner_nonterminal_reads: list[int] = []
+    monkeypatch.setattr(MODULE, "monotonic", StepClock())
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_STALE_SECONDS", 15.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_EXTERNAL_PROBE_SECONDS", 0.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_WATCHDOG_LIVE_PROBE_SECONDS", 1.0)
+    monkeypatch.setattr(MODULE, "APP_SERVER_TASK_TURN_MAX_SECONDS", 10.0)
+    monkeypatch.setattr(MODULE, "persisted_thread_turn_state", lambda _thread_id: None)
+
+    def responsive_nonterminal_read(_fd, _size):
+        request_id = json.loads(process.stdin.writes[-1])["id"]
+        owner_nonterminal_reads.append(request_id)
+        return (
+            json.dumps(
+                {
+                    "id": request_id,
+                    "result": {
+                        "thread": {
+                            "id": "thread-1",
+                            "turns": [{"id": "turn-1", "status": "inProgress"}],
+                        }
+                    },
+                }
+            )
+            + "\n"
+        ).encode()
+
+    def live_probe(thread_ids):
+        assert owner_nonterminal_reads
+        live_calls.append(thread_ids)
+        return {
+            "thread-1": {
+                "turnId": "turn-1",
+                "status": "interrupted",
+                "code": "turn_interrupted",
+                "message": "interrupted",
+            }
+        }
+
+    monkeypatch.setattr(MODULE.os, "read", responsive_nonterminal_read)
+    monkeypatch.setattr(MODULE, "live_thread_turn_states", live_probe)
+
+    result = MODULE._wait_for_app_server_terminal_turn(
+        process,
+        AlwaysReadySelector(),
+        b"",
+        thread_id="thread-1",
+        turn_id="turn-1",
+    )
+
+    assert result == {"turnId": "turn-1", "status": "interrupted", "error": None}
+    assert live_calls == [{"thread-1"}]
+    assert owner_nonterminal_reads
 
 
 def test_app_server_watchdog_times_out_without_opening_second_app_server(monkeypatch):
@@ -9051,7 +10468,11 @@ def test_task_turn_delivery_reconciles_a_materialized_turn_without_resending(mon
     )
 
     assert result["reconciled"] is True
-    assert store.committed == {"thread_id": "thread-1", "wake_digest": "a" * 64}
+    assert store.committed == {
+        "thread_id": "thread-1",
+        "wake_digest": "a" * 64,
+        "worktree_path": str(worktree),
+    }
 
 
 def test_task_turn_delivery_never_restarts_a_live_worker(monkeypatch, tmp_path):
@@ -9121,6 +10542,103 @@ def test_task_turn_delivery_never_restarts_a_live_worker(monkeypatch, tmp_path):
 
     assert result["pending"] is True
     assert result["workerPid"] == os.getpid()
+
+
+def test_concurrent_task_turn_deliveries_spawn_only_one_worker(monkeypatch, tmp_path):
+    state = tmp_path / "state"
+    candidate = {
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "reservedAt": "2026-08-31T00:00:00Z",
+    }
+    authorizations = []
+
+    class Store:
+        path = tmp_path / "ledger.sqlite3"
+
+        def active_task_quarantine(self, _key):
+            return None
+
+        def authorize_task_turn_delivery(self, **kwargs):
+            authorizations.append(kwargs)
+            return kwargs
+
+    initial_checks = threading.Barrier(2)
+
+    def active_worker(_thread_id):
+        initial_checks.wait(timeout=2)
+        return None
+
+    def active_workers(_thread_id):
+        launches = list((state / "task_turn_receipts").glob("*.launch.json"))
+        if not launches:
+            return []
+        launch = json.loads(launches[0].read_text(encoding="utf-8"))
+        return [{"pid": launch["pid"], "deliveryKind": launch["deliveryKind"]}]
+
+    class FakeWorker:
+        pid = 4242
+
+    popen_calls = []
+
+    def fake_popen(*args, **kwargs):
+        popen_calls.append((args, kwargs))
+        return FakeWorker()
+
+    clock = threading.local()
+
+    def fast_monotonic():
+        clock.value = getattr(clock, "value", 0) + 61
+        return clock.value
+
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "ROOT", tmp_path)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "_task_turn_reservation", lambda *_args, **_kwargs: candidate)
+    monkeypatch.setattr(MODULE, "_validated_task_turn_thread", lambda _candidate: (tmp_path, None))
+    monkeypatch.setattr(MODULE, "_task_turn_prompt", lambda *_args: "continue")
+    monkeypatch.setattr(MODULE, "thread_prompt_materialized_after", lambda *_args: (True, False))
+    monkeypatch.setattr(MODULE, "active_task_turn_worker", active_worker)
+    monkeypatch.setattr(MODULE, "active_task_turn_workers", active_workers)
+    monkeypatch.setattr(MODULE.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(MODULE, "monotonic", fast_monotonic)
+
+    results = []
+    errors = []
+
+    def deliver():
+        try:
+            results.append(
+                MODULE.task_turn_deliver(
+                    SimpleNamespace(
+                        ledger=Store.path,
+                        delivery_kind="pr-followup",
+                        delivery_token="a" * 64,
+                        thread_id="thread-1",
+                    )
+                )
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append((exc, "".join(__import__("traceback").format_exception(exc))))
+
+    calls = [threading.Thread(target=deliver) for _ in range(2)]
+    for call in calls:
+        call.start()
+    for call in calls:
+        call.join(timeout=3)
+
+    if errors:
+        pytest.fail("\n".join(trace for _exc, trace in errors), pytrace=False)
+    assert all(not call.is_alive() for call in calls)
+    assert len(popen_calls) == 1
+    assert len(authorizations) == 1
+    assert len(results) == 2
+    assert {result.get("reason") for result in results} == {None, "TASK_TURN_WORKER_ACTIVE"}
+    launch = json.loads(
+        next((state / "task_turn_receipts").glob("*.launch.json")).read_text(encoding="utf-8")
+    )
+    assert launch["pid"] == FakeWorker.pid
 
 
 def test_task_turn_delivery_rechecks_quarantine_before_starting_worker(monkeypatch, tmp_path):
@@ -9806,8 +11324,13 @@ def test_cleanup_reconcile_archives_reconciled_no_go_task(monkeypatch, tmp_path)
     )
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
-        connection.execute("CREATE TABLE threads (id TEXT, archived INTEGER, title TEXT)")
-        connection.execute("INSERT INTO threads VALUES (?,?,?)", ("thread-1", 0, desired_title))
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, archived INTEGER, title TEXT, name TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            ("thread-1", 0, "legacy automatic title", desired_title),
+        )
     monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
 
     def archive(candidates):
@@ -10045,6 +11568,128 @@ def test_controller_ingests_workspace_no_go_without_child_ledger_access(tmp_path
     assert task is not None
     assert task["stage"] == "AUDIT_NO_GO"
     assert task["autoSubmitAuthorized"] is False
+
+
+def test_ingestion_defers_result_until_active_task_turn_is_terminal(tmp_path):
+    store, worktree = registered_store(tmp_path)
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    result_path = Path(context["resultPath"])
+    # An active turn may leave the previous result file in place (or a
+    # partially written replacement).  The guard must defer before parsing it.
+    result_path.write_text("{not-yet-a-result", encoding="utf-8")
+
+    rollout = tmp_path / "rollout.jsonl"
+    started_at = iso_z(datetime.now(UTC))
+    rollout.write_text(
+        json.dumps(
+            {
+                "timestamp": started_at,
+                "type": "turn_context",
+                "payload": {"turn_id": "turn-active"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with sqlite3.connect(MODULE.THREAD_DB) as connection:
+        connection.execute(
+            "INSERT INTO threads (id,title,archived,updated_at,rollout_path,"
+            "first_user_message,cwd,git_origin_url) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-1",
+                "task",
+                0,
+                int(datetime.now(UTC).timestamp()),
+                str(rollout),
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(worktree),
+                None,
+            ),
+        )
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True, first
+    assert first["ingested"] == []
+    assert first["errors"] == []
+    assert first["activeTurnDeferred"] == [
+        {
+            "key": "a/b#1",
+            "threadId": "thread-1",
+            "reason": "ACTIVE_TASK_TURN",
+            "source": "rollout",
+            "turnId": "turn-active",
+            "startedAt": started_at,
+        }
+    ]
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "DISPATCHED"
+    )
+
+    with rollout.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "timestamp": iso_z(datetime.now(UTC)),
+                    "type": "event_msg",
+                    "payload": {"type": "task_complete", "turn_id": "turn-active"},
+                }
+            )
+            + "\n"
+        )
+    result_path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "radar-task-result-v1",
+                "contextDigest": context["contextDigest"],
+                "key": "a/b#1",
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "threadId": "thread-1",
+                "worktreePath": str(worktree.resolve()),
+                "stage": "AUDIT_NO_GO",
+                "reason": "STRONG_EXISTING_PR",
+                "evidence": {"existingPr": "https://github.com/a/b/pull/2"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    second = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert second["ok"] is True, second
+    assert second["ingested"] == [
+        {"key": "a/b#1", "stage": "AUDIT_NO_GO", "reason": "STRONG_EXISTING_PR"}
+    ]
+    assert "activeTurnDeferred" not in second
+
+
+def test_latest_active_thread_turn_ignores_stale_unclosed_marker(tmp_path):
+    rollout = tmp_path / "rollout.jsonl"
+    stale_started_at = iso_z(
+        datetime.now(UTC) - timedelta(seconds=MODULE.APP_SERVER_TASK_TURN_MAX_SECONDS + 60)
+    )
+    rollout.write_text(
+        json.dumps(
+            {
+                "timestamp": stale_started_at,
+                "type": "turn_context",
+                "payload": {"turn_id": "turn-stale"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert MODULE._latest_active_thread_turn(str(rollout)) is None
 
 
 def test_ingestion_ignores_stale_result_after_published_context_moves_on(tmp_path):
@@ -10386,6 +12031,173 @@ def _published_followup_store(
     return store, worktree, head_sha, pr_url
 
 
+def test_late_pr_followup_result_unblocks_pending_new_issue_claim(monkeypatch, tmp_path):
+    store, _worktree, head_sha, _pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    wake_digest = str(candidate["wakeDigest"])
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=wake_digest,
+        prepared_head_sha=head_sha,
+    )
+    store.complete_pr_followup_reservation(
+        thread_id="thread-1",
+        wake_digest=wake_digest,
+    )
+
+    now = datetime.now(UTC)
+    assert store.enqueue(
+        {
+            "intentId": "intent-new",
+            "key": "a/b#2",
+            "repo": "a/b",
+            "issueNumber": 2,
+            "issueUrl": "https://github.com/a/b/issues/2",
+            "title": "New runtime bug",
+            "mode": "canary",
+            "category": "NEW_CLEAN_CANDIDATE",
+            "scanGate": "ALLOW_TO_WORK",
+            "autoSpawn": True,
+            "score": 9,
+            "snapshotId": "snapshot-new",
+            "decisionDigest": "decision-new",
+            "issuedAt": iso_z(now),
+            "expiresAt": iso_z(now + timedelta(hours=1)),
+        }
+    )
+
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?)",
+            ("thread-1", int((now - timedelta(hours=2)).timestamp()), 0, None),
+        )
+
+    state = tmp_path / "state"
+    receipt_root = state / "task_turn_receipts"
+    receipt_root.mkdir(parents=True)
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="pr-followup",
+        thread_id="thread-1",
+        delivery_token=wake_digest,
+    )
+    (receipt_root / f"{receipt_key}.json").write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "turnStarted": False,
+                "turnId": None,
+                "error": (
+                    "RuntimeError:DESKTOP_ACTIVE_WRITER:"
+                    "thread thread-1 already has an active writer"
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(
+        MODULE,
+        "validation_followup_list",
+        lambda _args: {"candidates": [], "controllerReviewPending": [], "unresolved": []},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "recovery_list",
+        lambda _args: {"recoverable": [], "unresolved": []},
+    )
+    monkeypatch.setenv("RADAR_MAX_ACTIVE_TASKS", "5")
+    priority_args = SimpleNamespace(ledger=store.path, runtime_root=tmp_path / "runtime")
+    claim_args = SimpleNamespace(
+        ledger=store.path,
+        runtime_root=tmp_path / "runtime",
+        intent_id="intent-new",
+        owner="controller",
+        lease_minutes=15,
+        prepare=False,
+    )
+
+    unresolved = MODULE.pr_followup_list(priority_args)["unresolved"]
+    assert unresolved[0]["wake_digest"] == wake_digest
+    assert unresolved[0]["retryReason"] == "DESKTOP_ACTIVE_WRITER"
+    assert MODULE._higher_priority_existing_work(
+        priority_args,
+        intent_key="a/b#2",
+    ) == [{"kind": "pr_followup", "key": "a/b#1"}]
+    monkeypatch.setattr(
+        MODULE,
+        "_audit_intent",
+        lambda _intent: pytest.fail("the unresolved existing PR must defer the new audit"),
+    )
+    blocked = MODULE.claim_intent(claim_args)
+    assert blocked["reason"] == "higher_priority_existing_work"
+    assert blocked["priorityWork"] == [{"kind": "pr_followup", "key": "a/b#1"}]
+    with store.connect() as connection:
+        pending = connection.execute(
+            "SELECT status FROM intents WHERE intent_id='intent-new'"
+        ).fetchone()
+    assert pending["status"] == "PENDING"
+
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=wake_digest,
+        result_digest="late-result",
+        stage="PR_OPEN",
+    )
+
+    priority_after_result = MODULE._higher_priority_existing_work(
+        priority_args,
+        intent_key="a/b#2",
+    )
+    assert {"kind": "pr_followup", "key": "a/b#1"} not in priority_after_result
+
+    evidence = SimpleNamespace(
+        digest="live-evidence-new",
+        probe_level="UNVERIFIED",
+        repo_probe_receipt={},
+        as_dict=lambda: {
+            "digest": "live-evidence-new",
+            "complete": True,
+            "repo": "a/b",
+            "issue": {"state": "open", "labels": []},
+        },
+    )
+    verdict = AuthorizationDecision(
+        status="ALLOW",
+        reason_code="LIVE_EVIDENCE_PASSED",
+        checks={"evidence": "PASS"},
+        evidence_digest=evidence.digest,
+    )
+    monkeypatch.setattr(MODULE, "_audit_intent", lambda _intent: (evidence, verdict))
+    monkeypatch.setattr(
+        MODULE,
+        "resolve_target_base",
+        lambda _client, _repo, _issue: {
+            "branch": "main",
+            "sha": "a" * 40,
+            "source": "repository_default",
+            "defaultBranch": "main",
+        },
+    )
+
+    result = MODULE.claim_intent(claim_args)
+
+    assert result["authorized"] is True
+    assert result["claimed"] is True
+    assert result["intentId"] == "intent-new"
+    with store.connect() as connection:
+        claimed = connection.execute(
+            "SELECT status,lease_owner FROM intents WHERE intent_id='intent-new'"
+        ).fetchone()
+    assert dict(claimed) == {"status": "LEASED", "lease_owner": "controller"}
+
+
 def test_ingestion_accepts_current_ci_green_continuation_result(tmp_path):
     store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
     store.record_stage("a/b#1", "CI_GREEN", evidence={"checks": "green"})
@@ -10572,6 +12384,24 @@ def test_pr_followup_reserve_refreshes_context_and_routes_to_shared_context(monk
     context = json.loads(Path(result["contextPath"]).read_text(encoding="utf-8"))
     assert context["prFollowup"]["wakeDigest"] == candidate["wakeDigest"]
     assert context["prFollowup"]["preparedHeadSha"] == "b" * 40
+    assert context["prFollowup"]["resultContract"] == {
+        "schemaVersion": "pr-followup-result-contract-v3",
+        "requiredWakeDigestField": "followupDigest",
+        "allowedStages": ["FIX_READY", "PR_OPEN"],
+        "noLocalActionStage": "PR_OPEN",
+        "noLocalActionRequiredFields": [
+            "headSha",
+            "commitSha",
+            "prUrl",
+            "evidence.headSha",
+        ],
+        "noLocalActionHeadBindingField": "prFollowup.preparedHeadSha",
+        "noLocalActionPrBindingField": "publicationReceipt.prUrl",
+        "mergeConflictHandoffMode": "controller_merge_required",
+        "conflictScopeInsufficientReason": "CONFLICT_SCOPE_INSUFFICIENT",
+        "requiredResolutionFilesField": "evidence.requiredResolutionFiles",
+        "authorizedResolutionFilesField": "prFollowup.evidence.authorizedResolutionFiles",
+    }
     assert context["publicationReceipt"]["prUrl"] == pr_url
     refreshed = json.loads(
         MODULE.write_task_context(
@@ -11040,29 +12870,357 @@ def test_context_sync_keeps_missing_worktree_when_live_revalidation_fails(monkey
     ]
 
 
-def test_context_sync_isolates_recovered_task_with_missing_category(tmp_path):
+def test_missing_worktree_live_revalidation_is_task_locked_and_ttl_bounded(monkeypatch, tmp_path):
     store, worktree = registered_store(tmp_path)
-    with store.transaction() as connection:
-        row = connection.execute(
-            "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
-        ).fetchone()
-        payload = json.loads(row["payload_json"])
-        payload.pop("category", None)
-        payload["recoveredFromTaskContext"] = True
+    shutil.rmtree(worktree)
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    calls = 0
+
+    def refresh_once(_intent):
+        nonlocal calls
+        calls += 1
+        return _live_audit_result("HOLD", "EVIDENCE_INCOMPLETE")
+
+    monkeypatch.setattr(MODULE, "_audit_intent", refresh_once)
+
+    first = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    second = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert calls == 1
+    assert first["refreshed"] == [
+        {
+            "key": "a/b#1",
+            "evidenceDigest": "refreshed-evidence",
+            "status": "HOLD",
+            "reason": "EVIDENCE_INCOMPLETE",
+        }
+    ]
+    assert second["refreshed"] == []
+    assert first["unavailable"][0]["reason"] == "TASK_WORKTREE_UNAVAILABLE"
+    assert second["unavailable"][0]["reason"] == "TASK_WORKTREE_UNAVAILABLE"
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert context["missingWorktreeRevalidation"] is True
+
+
+def test_missing_worktree_live_revalidation_defers_when_task_lock_is_busy(monkeypatch, tmp_path):
+    store, worktree = registered_store(tmp_path)
+    shutil.rmtree(worktree)
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+
+    def unexpected_refresh(_intent):
+        raise AssertionError("a lock loser must not duplicate missing-worktree GitHub queries")
+
+    monkeypatch.setattr(MODULE, "_audit_intent", unexpected_refresh)
+    lock_path = MODULE._task_live_audit_refresh_lock_path(store.path, "a/b#1")
+    with MODULE.exclusive_lock(lock_path, blocking=False):
+        synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["refreshed"] == []
+    assert synced["revalidationErrors"] == []
+    assert synced["revalidationDeferred"] == [
+        {"key": "a/b#1", "reason": "LIVE_AUDIT_REFRESH_LOCK_BUSY"}
+    ]
+    assert synced["unavailable"][0]["reason"] == "TASK_WORKTREE_UNAVAILABLE"
+
+
+def _age_task_live_audit(store: RadarLedger) -> None:
+    stale = iso_z(datetime.now(UTC) - timedelta(hours=2))
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT id,payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type IN ('AUDIT_PASS','AUDIT_SNAPSHOT')"""
+        ).fetchall()
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            if isinstance(payload.get("liveAudit"), dict):
+                payload["liveAudit"]["capturedAt"] = stale
+            connection.execute(
+                "UPDATE events SET created_at=?,payload_json=? WHERE id=?",
+                (stale, json.dumps(payload, sort_keys=True), row["id"]),
+            )
+
+
+def _live_audit_result(status: str, reason: str, digest: str = "refreshed-evidence"):
+    evidence = SimpleNamespace(
+        digest=digest,
+        probe_level="REPRODUCED_VALIDATED",
+        as_dict=lambda: {
+            "digest": digest,
+            "issue": {"state": "open", "title": "Current issue title"},
+        },
+    )
+    verdict = SimpleNamespace(
+        status=status,
+        reason_code=reason,
+        as_dict=lambda: {"status": status, "reason_code": reason},
+    )
+    return evidence, verdict
+
+
+def test_context_sync_stale_fix_ready_live_block_terminalizes_task(monkeypatch, tmp_path):
+    store, worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    _age_task_live_audit(store)
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    monkeypatch.setattr(
+        MODULE,
+        "_refresh_active_task_live_audit",
+        lambda _intent, _context: _live_audit_result("BLOCK", "ACTIVE_OR_CONDITIONAL_CLAIM"),
+    )
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["revalidationErrors"] == []
+    assert synced["noGo"] == [
+        {
+            "key": "a/b#1",
+            "reason": "ACTIVE_OR_CONDITIONAL_CLAIM",
+            "source": "active_live_revalidation",
+        }
+    ]
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert context["stage"] == "AUDIT_NO_GO"
+    assert context["liveAudit"]["evidence"]["digest"] == "refreshed-evidence"
+    written = json.loads(
+        (worktree / MODULE.TASK_PRIVATE_DIR / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert written["stage"] == "AUDIT_NO_GO"
+    assert written["liveAudit"]["evidence"]["digest"] == "refreshed-evidence"
+
+
+def test_context_sync_stale_live_hold_updates_snapshot_without_terminalizing(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "VALIDATION_PENDING", evidence={})
+    _age_task_live_audit(store)
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    monkeypatch.setattr(
+        MODULE,
+        "_refresh_active_task_live_audit",
+        lambda _intent, _context: _live_audit_result("HOLD", "EVIDENCE_INCOMPLETE"),
+    )
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["noGo"] == []
+    assert synced["refreshed"] == [
+        {
+            "key": "a/b#1",
+            "evidenceDigest": "refreshed-evidence",
+            "status": "HOLD",
+            "reason": "EVIDENCE_INCOMPLETE",
+        }
+    ]
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert context["stage"] == "VALIDATION_PENDING"
+    assert context["liveAudit"]["evidence"]["digest"] == "refreshed-evidence"
+
+
+def test_context_sync_missing_live_hold_is_recoverable_not_terminal(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    with store.connect() as connection:
         connection.execute(
-            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
-            (json.dumps(payload),),
+            """DELETE FROM events WHERE opportunity_key='a/b#1'
+               AND event_type IN ('AUDIT_PASS','AUDIT_SNAPSHOT')"""
         )
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+    monkeypatch.setattr(
+        MODULE,
+        "_audit_intent",
+        lambda _intent: _live_audit_result("HOLD", "REPRODUCTION_REQUIRED_NOT_VISIBLE"),
+    )
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["noGo"] == []
+    assert synced["refreshed"][0]["status"] == "HOLD"
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert context["stage"] == "DISPATCHED"
+    assert context["liveAudit"]["evidence"]["digest"] == "refreshed-evidence"
+
+
+def test_context_sync_does_not_refresh_unrelated_published_history(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "PR_OPEN", evidence={})
+    _age_task_live_audit(store)
+
+    def unexpected_refresh(_intent, _context):
+        raise AssertionError("published history must not spend live-audit API calls")
+
+    monkeypatch.setattr(MODULE, "_refresh_active_task_live_audit", unexpected_refresh)
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["refreshed"] == []
+    assert synced["revalidationErrors"] == []
+
+
+def test_context_sync_defers_stale_refresh_while_task_turn_is_active(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    _age_task_live_audit(store)
+    monkeypatch.setattr(
+        MODULE,
+        "_active_task_turn_for_result",
+        lambda _candidate: {"source": "worker_receipt", "turnId": "turn-1"},
+    )
+
+    def unexpected_refresh(_intent, _context):
+        raise AssertionError("active task context must not be replaced")
+
+    monkeypatch.setattr(MODULE, "_refresh_active_task_live_audit", unexpected_refresh)
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["refreshed"] == []
+    assert synced["revalidationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "ACTIVE_TASK_TURN",
+            "activeTurn": {"source": "worker_receipt", "turnId": "turn-1"},
+        }
+    ]
+
+
+def test_context_sync_defers_stale_refresh_when_another_process_holds_task_lock(
+    monkeypatch, tmp_path
+):
+    store, _worktree = registered_store(tmp_path)
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    _age_task_live_audit(store)
+    monkeypatch.setattr(MODULE, "_active_task_turn_for_result", lambda _candidate: None)
+
+    def unexpected_refresh(_intent, _context):
+        raise AssertionError("a lock loser must not duplicate GitHub evidence collection")
+
+    monkeypatch.setattr(MODULE, "_refresh_active_task_live_audit", unexpected_refresh)
+    lock_path = MODULE._task_live_audit_refresh_lock_path(store.path, "a/b#1")
+    with MODULE.exclusive_lock(lock_path, blocking=False):
+        synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["refreshed"] == []
+    assert synced["revalidationErrors"] == []
+    assert synced["revalidationDeferred"] == [
+        {"key": "a/b#1", "reason": "LIVE_AUDIT_REFRESH_LOCK_BUSY"}
+    ]
+
+
+def test_task_live_audit_refresh_due_is_stage_and_ttl_bounded():
+    now = datetime(2026, 9, 2, 8, 0, tzinfo=UTC)
+    fresh = {
+        "stage": "FIX_READY",
+        "liveAuditRecordedAt": iso_z(now - timedelta(minutes=59)),
+        "liveAudit": {"evidence": {}},
+    }
+    stale = fresh | {"liveAuditRecordedAt": iso_z(now - timedelta(minutes=60))}
+    published = stale | {"stage": "PR_OPEN"}
+
+    assert MODULE._task_live_audit_refresh_due(fresh, now=now) is False
+    assert MODULE._task_live_audit_refresh_due(stale, now=now) is True
+    assert MODULE._task_live_audit_refresh_due(published, now=now) is False
+
+
+def test_context_sync_terminalizes_recovered_task_with_missing_category_on_live_block(
+    monkeypatch, tmp_path
+):
+    source, worktree = registered_store(tmp_path / "source")
+    source.record_stage("a/b#1", "FIX_READY", evidence={})
+    context_path = MODULE.write_task_context(
+        source,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    context.pop("category", None)
+    store = RadarLedger(tmp_path / "recovered.sqlite3")
+    restored = store.restore_task_context(context)
+    assert restored["intentRestored"] is True
+    recovered_intent = store.task_context_candidates()[0]["intent"]
+    assert recovered_intent["recoveredFromTaskContext"] is True
+    assert recovered_intent.get("defaultBranch") is None
+    assert recovered_intent.get("preTaskEvidence") is None
+
+    evidence, _unused = _live_audit_result("BLOCK", "STRONG_EXISTING_PR")
+    monkeypatch.setattr(MODULE, "collect_evidence", lambda *_args, **_kwargs: evidence)
+
+    def authorize_recovered(candidate, observed):
+        assert observed is evidence
+        assert candidate["category"] == "WAIT_MAINTAINER"
+        assert candidate["gate_decision"] is None
+        assert candidate["auto_spawn"] is False
+        return AuthorizationDecision("BLOCK", "STRONG_EXISTING_PR", {}, evidence.digest)
+
+    monkeypatch.setattr(MODULE, "authorize", authorize_recovered)
     shutil.rmtree(worktree)
 
-    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
 
     assert synced["ok"] is True
     assert synced["errors"] == []
-    assert synced["unavailable"][0]["reason"] == "TASK_WORKTREE_UNAVAILABLE"
-    assert synced["revalidationErrors"] == [
-        {"key": "a/b#1", "error": "ValueError:intent category is missing"}
+    assert synced["unavailable"] == []
+    assert synced["revalidationErrors"] == []
+    assert synced["noGo"] == [
+        {
+            "key": "a/b#1",
+            "reason": "STRONG_EXISTING_PR",
+            "source": "missing_worktree_revalidation",
+        }
     ]
+    context = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert context["stage"] == "AUDIT_NO_GO"
+
+
+def test_recovered_missing_category_metadata_block_does_not_terminalize(monkeypatch, tmp_path):
+    source, worktree = registered_store(tmp_path / "source")
+    source.record_stage("a/b#1", "FIX_READY", evidence={})
+    context_path = MODULE.write_task_context(
+        source,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    context.pop("category", None)
+    store = RadarLedger(tmp_path / "recovered.sqlite3")
+    store.restore_task_context(context)
+    evidence, _unused = _live_audit_result("BLOCK", "ALGORITHM_EVIDENCE_MISSING")
+    monkeypatch.setattr(MODULE, "collect_evidence", lambda *_args, **_kwargs: evidence)
+    monkeypatch.setattr(
+        MODULE,
+        "authorize",
+        lambda *_args: AuthorizationDecision(
+            "BLOCK", "ALGORITHM_EVIDENCE_MISSING", {}, evidence.digest
+        ),
+    )
+    shutil.rmtree(worktree)
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["noGo"] == []
+    assert synced["unavailable"][0]["reason"] == "TASK_WORKTREE_UNAVAILABLE"
+    current = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert current["stage"] == "FIX_READY"
+
+
+def test_candidate_still_rejects_non_recovered_intent_without_category():
+    with pytest.raises(ValueError, match="intent category is missing"):
+        MODULE._candidate(
+            {
+                "repo": "a/b",
+                "issueNumber": 1,
+                "issueUrl": "https://github.com/a/b/issues/1",
+                "title": "Runtime bug",
+            }
+        )
 
 
 def test_ingest_skips_consumed_result_after_followup_context_refresh(tmp_path):
@@ -11350,7 +13508,7 @@ def test_prepare_pr_followup_refreshes_fast_forwarded_base_before_integration(
     assert run_git(worktree, "status", "--porcelain") == ""
 
 
-def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path):
+def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(monkeypatch, tmp_path):
     store, worktree, previous_head, pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]
     store.reserve_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
@@ -11472,6 +13630,741 @@ def test_controller_ingests_followup_fix_as_update_to_exact_existing_pr(tmp_path
         "a/b#1", MODULE._task_result_digest(value, result_path.read_bytes())
     )
 
+    request_row = store.publication_work_items()[0]
+    request_id = request_row["request_id"]
+    request = request_row["request"]
+    old_followup_wake = request["followupWakeDigest"]
+    stale_intent_result_digest = "f" * 64
+    request["intent"] = dict(request["intent"], resultDigest=stale_intent_result_digest)
+    desired_head = request["commitSha"]
+    with store.connect() as connection:
+        intent_payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+            ).fetchone()[0]
+        )
+        intent_payload["resultDigest"] = stale_intent_result_digest
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
+            (json.dumps(intent_payload, sort_keys=True),),
+        )
+        managed_result = connection.execute(
+            "SELECT result_key FROM managed_results WHERE result_digest=?",
+            (request["resultDigest"],),
+        ).fetchone()
+        historical_validation = dict(request["quality"]) | {
+            "reproductionReceiptAuthenticated": True
+        }
+        connection.execute(
+            "UPDATE managed_results SET validation_json=? WHERE result_key=?",
+            (json.dumps(historical_validation, sort_keys=True), managed_result["result_key"]),
+        )
+        connection.execute(
+            "UPDATE publication_requests SET status='BLOCKED',reason='ACTIVE_OR_CONDITIONAL_CLAIM',"
+            "request_json=? "
+            "WHERE request_id=?",
+            (json.dumps(request, sort_keys=True), request_id),
+        )
+
+    later = iso_z(datetime.now(UTC) + timedelta(minutes=1))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": later,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": previous_head,
+                    "actionDigest": "later-erroneous-action",
+                    "taskActionDigest": "later-erroneous-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["错误重派的旧头跟进"],
+                    "evidence": {
+                        "actionableCheckNames": ["Ruff"],
+                        "baseRefName": "main",
+                        "baseSha": previous_head,
+                    },
+                    "checkedAt": later,
+                }
+            ],
+        }
+    )
+    later_followup_wake = store.task_context(
+        issue_url="https://github.com/a/b/issues/1", thread_id="thread-1"
+    )["prFollowup"]["wakeDigest"]
+    assert later_followup_wake != old_followup_wake
+
+    run_git(worktree, "switch", "main")
+    run_git(worktree, "branch", "-f", request["branch"], previous_head)
+    run_git(worktree, "switch", request["branch"])
+    result_path.write_text('{"stage":"PR_OPEN"}\n', encoding="utf-8")
+    external = tmp_path / "unbound-result.json"
+    external.write_text(json.dumps(value), encoding="utf-8")
+    missing_snapshot = dict(request)
+    missing_snapshot.pop("evidenceRawBase64")
+    missing_snapshot["evidencePath"] = str(external)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id=?",
+            (json.dumps(missing_snapshot, sort_keys=True), request_id),
+        )
+
+    with pytest.raises(RuntimeError, match="requires embedded publication evidence"):
+        MODULE.replay_managed_result(SimpleNamespace(ledger=store.path, request_id=request_id))
+    assert run_git(worktree, "rev-parse", "HEAD") == previous_head
+    assert (
+        ManagedLedger(store.path).read_result(managed_result["result_key"])["validationValid"]
+        is False
+    )
+
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET request_json=? WHERE request_id=?",
+            (json.dumps(request, sort_keys=True), request_id),
+        )
+    monkeypatch.setattr(
+        MODULE,
+        "broker_publication_request",
+        lambda *_args, **_kwargs: pytest.fail("managed replay must not publish"),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_executor",
+        lambda *_args, **_kwargs: pytest.fail("managed replay must not call the executor"),
+    )
+    from oss_pr_radar import ledger as ledger_module
+    from oss_pr_radar import repo_probe
+
+    replay_now = datetime.now(UTC) + timedelta(hours=2)
+
+    class ReplayDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return replay_now if tz is not None else replay_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(repo_probe, "datetime", ReplayDateTime)
+    monkeypatch.setattr(ledger_module, "datetime", ReplayDateTime)
+    historical_receipt = request["probeReceipt"]
+    assert repo_probe.verify_probe_receipt(
+        historical_receipt,
+        repo="a/b",
+        base_sha=request["selectedBaseSha"],
+        code_paths=request["codePaths"],
+        issue_url=request["issueUrl"],
+        task_id=request["intentId"],
+        thread_id=request["threadId"],
+        head_sha=request["headSha"],
+        commit_sha=request["commitSha"],
+        result_digest=request["resultDigest"],
+        enforce_freshness=False,
+    )
+    assert not repo_probe.verify_probe_receipt(
+        historical_receipt,
+        repo="a/b",
+        base_sha=request["selectedBaseSha"],
+        code_paths=request["codePaths"],
+        issue_url=request["issueUrl"],
+        task_id=request["intentId"],
+        thread_id=request["threadId"],
+        head_sha=request["headSha"],
+        commit_sha=request["commitSha"],
+        result_digest=request["resultDigest"],
+    )
+    with store.connect() as connection:
+        original_created_at = connection.execute(
+            "SELECT created_at FROM publication_requests WHERE request_id=?", (request_id,)
+        ).fetchone()["created_at"]
+        connection.execute(
+            "UPDATE publication_requests SET created_at=? WHERE request_id=?",
+            (
+                iso_z(parse_time(historical_receipt["expiresAt"]) + timedelta(seconds=1)),
+                request_id,
+            ),
+        )
+    with pytest.raises(RuntimeError, match="within its receipt lifetime"):
+        MODULE.replay_managed_result(SimpleNamespace(ledger=store.path, request_id=request_id))
+    assert run_git(worktree, "rev-parse", "HEAD") == previous_head
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET created_at=? WHERE request_id=?",
+            (original_created_at, request_id),
+        )
+
+    replayed = MODULE.replay_managed_result(
+        SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+    )
+
+    assert replayed == {
+        "ok": True,
+        "requestId": request_id,
+        "resultKey": managed_result["result_key"],
+        "validationUpgraded": True,
+        "advanced": True,
+        "worktreeFastForwarded": True,
+        "resultSnapshotRestored": True,
+        "replacementRequestId": replayed["replacementRequestId"],
+        "replacementStatus": "PENDING",
+        "publicationTriggered": False,
+    }
+    assert run_git(worktree, "rev-parse", "HEAD") == desired_head
+    refreshed_raw = result_path.read_bytes()
+    refreshed_value = json.loads(refreshed_raw)
+    assert refreshed_raw != base64.b64decode(request["evidenceRawBase64"])
+    assert refreshed_value["resultDigest"] == request["resultDigest"]
+    assert refreshed_value["reproductionReceipt"] != historical_receipt
+    assert (
+        refreshed_value["reproductionReceipt"]["derivedFromReceiptDigest"]
+        == (historical_receipt["receiptDigest"])
+    )
+    assert repo_probe.verify_probe_receipt(
+        refreshed_value["reproductionReceipt"],
+        repo="a/b",
+        base_sha=request["selectedBaseSha"],
+        code_paths=request["codePaths"],
+        issue_url=request["issueUrl"],
+        task_id=request["intentId"],
+        thread_id=request["threadId"],
+        head_sha=request["headSha"],
+        commit_sha=request["commitSha"],
+        result_digest=request["resultDigest"],
+    )
+    assert (
+        ManagedLedger(store.path).read_result(managed_result["result_key"])["validationValid"]
+        is True
+    )
+    persisted_request = store.publication_request(request_id)
+    assert persisted_request["status"] == "BLOCKED"
+    assert persisted_request["reason"] == "ACTIVE_OR_CONDITIONAL_CLAIM"
+    replacement = store.publication_request(replayed["replacementRequestId"])
+    assert replacement["status"] == "PENDING"
+    allowed_refreshes = {
+        "requestId",
+        "evidenceDigest",
+        "evidenceRawBase64",
+        "probeReceipt",
+    }
+    assert {
+        key: value for key, value in replacement["request"].items() if key not in allowed_refreshes
+    } == {key: value for key, value in request.items() if key not in allowed_refreshes}
+    assert replacement["request"]["followupWakeDigest"] == old_followup_wake
+    assert replacement["request"]["followupWakeDigest"] != later_followup_wake
+    assert replacement["request"]["intent"]["resultDigest"] == stale_intent_result_digest
+    assert replacement["request"]["resultDigest"] == request["resultDigest"]
+    with store.connect() as connection:
+        created_rows = connection.execute(
+            """SELECT * FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='MANAGED_REPLAY_REPLACEMENT_CREATED'
+                 AND dedupe_key=?""",
+            (request_id,),
+        ).fetchall()
+        replacement_created_at = connection.execute(
+            "SELECT created_at FROM publication_requests WHERE request_id=?",
+            (replayed["replacementRequestId"],),
+        ).fetchone()["created_at"]
+    assert len(created_rows) == 1
+    created_lineage = json.loads(created_rows[0]["payload_json"])
+    assert created_lineage == {
+        "policyVersion": "managed-replay-replacement-created-v1",
+        "sourceRequestId": request_id,
+        "replacementRequestId": replayed["replacementRequestId"],
+        "immutableRequestDigest": sha256_json(
+            {
+                key: value
+                for key, value in replacement["request"].items()
+                if key not in {"requestId", "evidenceDigest", "evidenceRawBase64", "probeReceipt"}
+            }
+        ),
+        "replacementCreatedAt": replacement_created_at,
+        "recordedAt": replacement_created_at,
+    }
+    assert created_rows[0]["created_at"] == replacement_created_at
+
+    replacement_snapshot = replacement["request"]
+    with store.connect() as connection:
+        request_count_before_retry = connection.execute(
+            "SELECT COUNT(*) FROM publication_requests"
+        ).fetchone()[0]
+        connection.execute(
+            "UPDATE publication_requests SET status='BLOCKED',"
+            "reason='CONTROLLER_INDEPENDENT_REVIEW_REQUIRED' WHERE request_id=?",
+            (replayed["replacementRequestId"],),
+        )
+    replayed_again = MODULE.replay_managed_result(
+        SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+    )
+    assert replayed_again["replacementRequestId"] == replayed["replacementRequestId"]
+    assert replayed_again["replacementStatus"] == "PENDING"
+    assert replayed_again["validationUpgraded"] is False
+    assert replayed_again["worktreeFastForwarded"] is False
+    retried_replacement = store.publication_request(replayed["replacementRequestId"])
+    assert retried_replacement["status"] == "PENDING"
+    assert retried_replacement["reason"] is None
+    assert retried_replacement["request"] == replacement_snapshot
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0]
+            == request_count_before_retry
+        )
+        update_requests = connection.execute(
+            "SELECT request_id FROM publication_requests "
+            "WHERE opportunity_key='a/b#1' AND commit_sha=?",
+            (desired_head,),
+        ).fetchall()
+        created_count = connection.execute(
+            """SELECT COUNT(*) FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='MANAGED_REPLAY_REPLACEMENT_CREATED'
+                 AND dedupe_key=?""",
+            (request_id,),
+        ).fetchone()[0]
+    assert {row["request_id"] for row in update_requests} == {
+        request_id,
+        replayed["replacementRequestId"],
+    }
+    assert created_count == 1
+
+
+def test_managed_replay_restores_tombstone_continuation_for_context_recovery(monkeypatch, tmp_path):
+    (
+        store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        followup_context,
+        published_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    pr_url = str(followup_context["prFollowup"]["prUrl"])
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET commit_sha=? "
+            "WHERE request_id='published-authority-request'",
+            (published_head,),
+        )
+        connection.execute(
+            "UPDATE publication_permits SET commit_sha=? "
+            "WHERE permit_id='published-authority-permit'",
+            (published_head,),
+        )
+        connection.execute(
+            "UPDATE pr_followups SET head_sha=? WHERE opportunity_key='a/b#1'",
+            (published_head,),
+        )
+    managed.upsert_pr(
+        pr_key="a/b#9",
+        owner="a",
+        repo="b",
+        number=9,
+        head_sha=published_head,
+        pr_url=pr_url,
+        state="OPEN",
+        auto_created=True,
+        source_kind="MANAGED_PUBLICATION_RECEIPT",
+        source="test-managed-replay-published-head",
+    )
+
+    runtime = worktree / "runtime.py"
+    runtime.write_text(runtime.read_text(encoding="utf-8") + "# replayed fix\n", encoding="utf-8")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=followup_context,
+        changed_files=["runtime.py"],
+    )
+    value["prUrl"] = pr_url
+    monkeypatch.setattr(
+        MODULE,
+        "controller_review_result",
+        lambda *_args, **_kwargs: {
+            "schemaVersion": REVIEW_SCHEMA,
+            "verdict": "PASS",
+            "summary": "The exact replay result passed controller review.",
+        },
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ingested["ok"] is True, ingested
+    request_id = ingested["publicationRequests"][0]["requestId"]
+    request_row = store.publication_request(request_id)
+    request = request_row["request"]
+    desired_head = str(request["commitSha"])
+    assert request["previousCommitSha"] == published_head
+    assert desired_head != published_head
+
+    stale_value = dict(json.loads(result_path.read_text(encoding="utf-8")))
+    stale_value["commitSha"] = published_head
+    stale_value["headSha"] = published_head
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="e" * 64,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        **MODULE._task_result_tombstone_continuation_kwargs(
+            followup_context,
+            stale_value,
+        ),
+    )
+    stale_context = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert stale_context["codePathTombstoneContinuationHeadSha"] == published_head
+
+    store.block_publication_request(request_id, "ACTIVE_OR_CONDITIONAL_CLAIM")
+    run_git(worktree, "switch", "--detach", published_head)
+    run_git(worktree, "branch", "-f", request["branch"], published_head)
+    run_git(worktree, "switch", request["branch"])
+    monkeypatch.setattr(
+        MODULE,
+        "broker_publication_request",
+        lambda *_args, **_kwargs: pytest.fail("managed replay must not publish"),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_executor",
+        lambda *_args, **_kwargs: pytest.fail("managed replay must not call the executor"),
+    )
+
+    with store.connect() as connection:
+        request_count_before_interruption = connection.execute(
+            "SELECT COUNT(*) FROM publication_requests"
+        ).fetchone()[0]
+        permit_count_before_interruption = connection.execute(
+            "SELECT COUNT(*) FROM publication_permits"
+        ).fetchone()[0]
+    real_publication_request = MODULE._request_publication_from_task_result
+    monkeypatch.setattr(
+        MODULE,
+        "_request_publication_from_task_result",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("simulated replacement interruption")
+        ),
+    )
+    with pytest.raises(RuntimeError, match="simulated replacement interruption"):
+        MODULE.replay_managed_result(
+            SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+        )
+    assert run_git(worktree, "rev-parse", "HEAD") == desired_head
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0]
+            == request_count_before_interruption
+        )
+        assert (
+            connection.execute("SELECT COUNT(*) FROM publication_permits").fetchone()[0]
+            == permit_count_before_interruption
+        )
+        replay_markers = connection.execute(
+            """SELECT event_type FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type IN (
+                   'TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND',
+                   'TASK_RESULT_AUTHORITY_BOUND'
+                 )
+                 AND json_extract(payload_json,'$.sourcePublicationRequestId')=?
+               ORDER BY event_type""",
+            (request_id,),
+        ).fetchall()
+    assert [row["event_type"] for row in replay_markers] == [
+        "TASK_RESULT_AUTHORITY_BOUND",
+        "TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND",
+    ]
+    monkeypatch.setattr(
+        MODULE,
+        "_request_publication_from_task_result",
+        real_publication_request,
+    )
+
+    replayed = MODULE.replay_managed_result(
+        SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+    )
+
+    assert replayed["replacementStatus"] == "PENDING"
+    assert run_git(worktree, "rev-parse", "HEAD") == desired_head
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    assert synced["ok"] is True, synced["errors"]
+    refreshed = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert refreshed["headSha"] == desired_head
+    assert refreshed["commitSha"] == desired_head
+    assert refreshed["codePathTombstoneReceipt"]["preparedHeadSha"] == desired_head
+    assert (
+        refreshed["codePathTombstoneReceipt"]["tombstonePaths"]
+        == (followup_context["codePathTombstoneReceipt"]["tombstonePaths"])
+    )
+    projected = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert projected["codePathTombstoneContinuationHeadSha"] == desired_head
+    with store.connect() as connection:
+        target_requests = connection.execute(
+            "SELECT request_id FROM publication_requests "
+            "WHERE opportunity_key='a/b#1' AND commit_sha=?",
+            (desired_head,),
+        ).fetchall()
+    assert {row["request_id"] for row in target_requests} == {
+        request_id,
+        replayed["replacementRequestId"],
+    }
+
+    with store.connect() as connection:
+        counts_before_retry = tuple(
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE opportunity_key='a/b#1' AND event_type=?",
+                (event_type,),
+            ).fetchone()[0]
+            for event_type in (
+                "TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND",
+                "TASK_RESULT_AUTHORITY_BOUND",
+            )
+        ) + (
+            connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM publication_permits").fetchone()[0],
+        )
+    replacement_before_refresh = store.publication_request(replayed["replacementRequestId"])
+    replacement_receipt = replacement_before_refresh["request"]["probeReceipt"]
+    previous_evidence_digest = replacement_before_refresh["evidence_digest"]
+    store.block_publication_request(
+        replayed["replacementRequestId"],
+        "BLOCKED_REPRODUCTION_REQUIRED",
+    )
+    from oss_pr_radar import ledger as ledger_module
+    from oss_pr_radar import repo_probe
+
+    replay_now = parse_time(replacement_receipt["expiresAt"]) + timedelta(minutes=1)
+
+    class ReplayDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return replay_now if tz is not None else replay_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(repo_probe, "datetime", ReplayDateTime)
+    monkeypatch.setattr(ledger_module, "datetime", ReplayDateTime)
+    original_refresh = RadarLedger.refresh_managed_replay_replacement
+
+    def refresh_with_forged_bound(self, **kwargs):
+        forged = dict(kwargs["expected_replacement"])
+        forged["snapshotBoundAt"] = "2099-01-01T00:00:00Z"
+        return original_refresh(self, **(kwargs | {"expected_replacement": forged}))
+
+    monkeypatch.setattr(
+        RadarLedger,
+        "refresh_managed_replay_replacement",
+        refresh_with_forged_bound,
+    )
+    with pytest.raises(LedgerError, match="snapshot binding changed"):
+        MODULE.replay_managed_result(
+            SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+        )
+    forged_refresh = store.publication_request(replayed["replacementRequestId"])
+    assert forged_refresh["status"] == "BLOCKED"
+    assert forged_refresh["evidence_digest"] == previous_evidence_digest
+    monkeypatch.setattr(
+        RadarLedger,
+        "refresh_managed_replay_replacement",
+        original_refresh,
+    )
+
+    original_event = RadarLedger._event
+    monkeypatch.setattr(RadarLedger, "_event", lambda *_args, **_kwargs: None)
+    with pytest.raises(LedgerError, match="refresh did not persist"):
+        MODULE.replay_managed_result(
+            SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+        )
+    failed_refresh = store.publication_request(replayed["replacementRequestId"])
+    assert failed_refresh["status"] == "BLOCKED"
+    assert failed_refresh["reason"] == "BLOCKED_REPRODUCTION_REQUIRED"
+    assert failed_refresh["evidence_digest"] == previous_evidence_digest
+    monkeypatch.setattr(RadarLedger, "_event", original_event)
+
+    replayed_again = MODULE.replay_managed_result(
+        SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+    )
+    assert replayed_again["replacementRequestId"] == replayed["replacementRequestId"]
+    assert replayed_again["replacementStatus"] == "PENDING"
+    replacement_after_refresh = store.publication_request(replayed["replacementRequestId"])
+    assert replacement_after_refresh["request"]["requestId"] == replayed["replacementRequestId"]
+    assert replacement_after_refresh["status"] == "PENDING"
+    assert replacement_after_refresh["reason"] is None
+    assert replacement_after_refresh["evidence_digest"] != previous_evidence_digest
+    with store.connect() as connection:
+        counts_after_retry = tuple(
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE opportunity_key='a/b#1' AND event_type=?",
+                (event_type,),
+            ).fetchone()[0]
+            for event_type in (
+                "TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND",
+                "TASK_RESULT_AUTHORITY_BOUND",
+            )
+        ) + (
+            connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM publication_permits").fetchone()[0],
+        )
+        refresh_rows = connection.execute(
+            """SELECT * FROM events
+               WHERE event_type='MANAGED_REPLAY_REPLACEMENT_REFRESHED'
+                 AND json_extract(payload_json,'$.sourceRequestId')=?
+                 AND json_extract(payload_json,'$.replacementRequestId')=?""",
+            (request_id, replayed["replacementRequestId"]),
+        ).fetchall()
+    assert counts_after_retry == counts_before_retry
+    assert len(refresh_rows) == 1
+    refresh_lineage = json.loads(refresh_rows[0]["payload_json"])
+    assert refresh_lineage["previousEvidenceDigest"] == previous_evidence_digest
+    assert refresh_lineage["newEvidenceDigest"] == replacement_after_refresh["evidence_digest"]
+    assert refresh_lineage["previousReceiptDigest"] == sha256_json(replacement_receipt)
+    assert refresh_lineage["newReceiptDigest"] == sha256_json(
+        replacement_after_refresh["request"]["probeReceipt"]
+    )
+    assert refresh_lineage["refreshedAt"] == refresh_rows[0]["created_at"]
+
+    second_previous_digest = replacement_after_refresh["evidence_digest"]
+    second_previous_receipt = replacement_after_refresh["request"]["probeReceipt"]
+    projection_value = dict(value)
+    projection_value["commitSha"] = desired_head
+    projection_value["headSha"] = desired_head
+    projection_value["codePathTombstoneReceipt"] = refreshed["codePathTombstoneReceipt"]
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=request["resultDigest"],
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        **MODULE._task_result_tombstone_continuation_kwargs(
+            refreshed,
+            projection_value,
+        ),
+    )
+    with store.connect() as connection:
+        projection_continuation = connection.execute(
+            """SELECT * FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+                 AND json_extract(payload_json,'$.sourceResultEventId')=(
+                   SELECT id FROM events
+                   WHERE opportunity_key='a/b#1'
+                     AND event_type='TASK_RESULT_INGESTED'
+                     AND dedupe_key=?
+                 )
+                 AND json_type(payload_json,'$.sourcePublicationRequestId') IS NULL
+               ORDER BY id DESC LIMIT 1""",
+            (request["resultDigest"],),
+        ).fetchone()
+        assert projection_continuation is not None
+        assert (
+            connection.execute(
+                """SELECT 1 FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='TASK_RESULT_AUTHORITY_BOUND'
+                 AND json_extract(payload_json,'$.continuationDedupeKey')=?""",
+                (projection_continuation["dedupe_key"],),
+            ).fetchone()
+            is None
+        )
+    replay_now = parse_time(second_previous_receipt["expiresAt"]) + timedelta(minutes=1)
+    store.block_publication_request(
+        replayed["replacementRequestId"],
+        "BLOCKED_REPRODUCTION_REQUIRED",
+    )
+
+    replayed_after_second_expiry = MODULE.replay_managed_result(
+        SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+    )
+
+    assert replayed_after_second_expiry["replacementRequestId"] == replayed["replacementRequestId"]
+    assert replayed_after_second_expiry["replacementStatus"] == "PENDING"
+    replacement_after_second_refresh = store.publication_request(replayed["replacementRequestId"])
+    assert replacement_after_second_refresh["status"] == "PENDING"
+    assert replacement_after_second_refresh["reason"] is None
+    assert replacement_after_second_refresh["evidence_digest"] != second_previous_digest
+    with store.connect() as connection:
+        second_refresh_rows = connection.execute(
+            """SELECT * FROM events
+               WHERE event_type='MANAGED_REPLAY_REPLACEMENT_REFRESHED'
+                 AND json_extract(payload_json,'$.sourceRequestId')=?
+                 AND json_extract(payload_json,'$.replacementRequestId')=?
+               ORDER BY id""",
+            (request_id, replayed["replacementRequestId"]),
+        ).fetchall()
+    assert len(second_refresh_rows) == 2
+    second_refresh_lineage = json.loads(second_refresh_rows[-1]["payload_json"])
+    assert second_refresh_lineage["previousEvidenceDigest"] == second_previous_digest
+    assert second_refresh_lineage["previousProbeReceipt"] == second_previous_receipt
+    assert (
+        second_refresh_lineage["newEvidenceDigest"]
+        == replacement_after_second_refresh["evidence_digest"]
+    )
+
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET updated_at='2000-01-01T00:00:00Z' WHERE request_id=?",
+            (replayed["replacementRequestId"],),
+        )
+    with pytest.raises(LedgerError, match="lineage is invalid"):
+        store.managed_replay_replacement(source_request_id=request_id)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET updated_at=? WHERE request_id=?",
+            (
+                replacement_after_second_refresh["updated_at"],
+                replayed["replacementRequestId"],
+            ),
+        )
+
+    with store.connect() as connection:
+        counts_before_idempotent_replay = (
+            connection.execute("SELECT COUNT(*) FROM events").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM publication_permits").fetchone()[0],
+        )
+    replayed_idempotently = MODULE.replay_managed_result(
+        SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+    )
+    assert replayed_idempotently["replacementRequestId"] == replayed["replacementRequestId"]
+    assert replayed_idempotently["replacementStatus"] == "PENDING"
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM events").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0],
+            connection.execute("SELECT COUNT(*) FROM publication_permits").fetchone()[0],
+        ) == counts_before_idempotent_replay
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="f" * 64,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        **MODULE._task_result_tombstone_continuation_kwargs(
+            followup_context,
+            stale_value,
+        ),
+    )
+    with store.connect() as connection:
+        event_count_before_stale_retry = connection.execute(
+            "SELECT COUNT(*) FROM events"
+        ).fetchone()[0]
+        request_count_before_stale_retry = connection.execute(
+            "SELECT COUNT(*) FROM publication_requests"
+        ).fetchone()[0]
+    with pytest.raises(RuntimeError, match="continuation authority is stale"):
+        MODULE.replay_managed_result(
+            SimpleNamespace(ledger=store.path, request_id=request_id, runtime_root=tmp_path)
+        )
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == (
+            event_count_before_stale_retry
+        )
+        assert (
+            connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[0]
+            == request_count_before_stale_retry
+        )
+
 
 def test_followup_commit_preserves_prepared_base_integration_diff(tmp_path):
     worktree = tmp_path / "worktree"
@@ -11577,7 +14470,10 @@ def _controller_commit_result(
     authenticated: bool = True,
     worktree: Path | None = None,
     additional_changed_files: tuple[str, ...] = (),
+    additional_baseline_files: tuple[str, ...] = (),
     reported_code_paths: tuple[str, ...] | None = None,
+    probe_code_paths: tuple[str, ...] = ("runtime.py",),
+    omit_reported_code_paths: bool = False,
 ) -> tuple[RadarLedger, Path, Path]:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
@@ -11585,14 +14481,16 @@ def _controller_commit_result(
     store, worktree = registered_store(tmp_path, worktree=worktree)
     run_git(worktree, "config", "user.name", "Test Contributor")
     run_git(worktree, "config", "user.email", "test@example.com")
+    receipt_code_paths = list(probe_code_paths)
     source = worktree / "runtime.py"
     source.write_text("value = 1\n", encoding="utf-8")
-    for relative in additional_changed_files:
+    for relative in (*additional_changed_files, *additional_baseline_files):
         extra = worktree / relative
         extra.parent.mkdir(parents=True, exist_ok=True)
         extra.write_text("value = 1\n", encoding="utf-8")
     changed_files = sorted(["runtime.py", *additional_changed_files])
-    run_git(worktree, "add", *changed_files)
+    baseline_files = sorted([*changed_files, *additional_baseline_files])
+    run_git(worktree, "add", *baseline_files)
     run_git(worktree, "commit", "-m", "chore: baseline")
     run_git(worktree, "branch", "-M", "main")
     run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
@@ -11626,7 +14524,7 @@ def _controller_commit_result(
         repo="a/b",
         default_branch="main",
         selected_base_sha=base_sha,
-        code_paths=["runtime.py"],
+        code_paths=receipt_code_paths,
         profile_id=profile_id,
         issue_url="https://github.com/a/b/issues/1",
         task_id="intent-1",
@@ -11650,9 +14548,9 @@ def _controller_commit_result(
                 "preTaskEvidence": {
                     "defaultBranch": "main",
                     "baseSha": base_sha,
-                    "codePathsPlan": ["runtime.py"],
+                    "codePathsPlan": receipt_code_paths,
                 },
-                "codePaths": ["runtime.py"],
+                "codePaths": receipt_code_paths,
                 "probeRequired": True,
                 "probeLevel": "REPRODUCED_VALIDATED",
                 "taskStage": "IMPLEMENTATION_READY",
@@ -11737,7 +14635,7 @@ def _controller_commit_result(
         "preTaskEvidence": {
             "defaultBranch": "main",
             "baseSha": base_sha,
-            "codePathsPlan": ["runtime.py"],
+            "codePathsPlan": receipt_code_paths,
         },
         "probeRequired": True,
         "probeLevel": "REPRODUCED_VALIDATED",
@@ -11756,6 +14654,8 @@ def _controller_commit_result(
             "bodyFile": str(body_path.resolve()),
         },
     }
+    if omit_reported_code_paths:
+        result.pop("codePaths")
     if publication_blocked_reason:
         result["publicationBlockedReason"] = publication_blocked_reason
     if quality.get("independent_review_passed") is not True:
@@ -11796,7 +14696,7 @@ def _controller_commit_result(
         repo="a/b",
         default_branch="main",
         selected_base_sha=base_sha,
-        code_paths=["runtime.py"],
+        code_paths=receipt_code_paths,
         profile_id=profile_id,
         issue_url="https://github.com/a/b/issues/1",
         task_id="intent-1",
@@ -11818,7 +14718,7 @@ def _controller_commit_result(
         state="SYSTEM_PROCESSING",
         source="test-legal-fixture",
         provenance={"fixture": True},
-        metadata={"selectedBaseSha": base_sha, "codePaths": ["runtime.py"]},
+        metadata={"selectedBaseSha": base_sha, "codePaths": receipt_code_paths},
     )
     managed.bind_task(
         task_id="intent-1",
@@ -11827,7 +14727,7 @@ def _controller_commit_result(
         worktree_path=str(worktree),
         state="REPRODUCTION_REQUIRED",
         provenance={
-            "codePaths": ["runtime.py"],
+            "codePaths": receipt_code_paths,
             "selectedBaseSha": probe["baseSha"],
             "headSha": probe["headSha"],
             "commitSha": probe["commitSha"],
@@ -12039,6 +14939,1789 @@ def _bind_published_pr_authority_fixture(
     return managed, degraded_context, pr_url
 
 
+def _superseded_missing_worktree_result_fixture(tmp_path):
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=worktree,
+    )
+    managed, historical_context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+        degrade_stage=False,
+    )
+    historical_result = json.loads(result_path.read_text(encoding="utf-8"))
+    historical_head = str(historical_result["headSha"])
+    historical_wake = str(historical_context["prFollowup"]["wakeDigest"])
+    managed.record_result(
+        task_id="intent-1",
+        result_digest=sha256_json(
+            {"fixture": "superseded-missing-worktree", "headSha": historical_head}
+        ),
+        worker_state="patched",
+        pr_key=None,
+        head_sha=historical_head,
+        commit_sha=historical_head,
+        validation={"passed": False, "legacy": True},
+        waiting_external=True,
+        source="test-historical-fix-ready",
+        provenance={
+            "stage": "FIX_READY",
+            "issueUrl": "https://github.com/a/b/issues/1",
+        },
+    )
+    with managed._connection() as connection:
+        connection.execute(
+            "UPDATE managed_tasks SET state='IMPLEMENTATION_READY' WHERE task_id='intent-1'"
+        )
+        connection.commit()
+
+    run_git(worktree, "switch", "--detach", str(historical_result["selectedBaseSha"]))
+    (worktree / "runtime.py").write_text(
+        "value = 3\nassert value == 3\n",
+        encoding="utf-8",
+    )
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: publish replacement runtime head")
+    publication_head = run_git(worktree, "rev-parse", "HEAD")
+    assert publication_head != historical_head
+    assert (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", historical_head, publication_head],
+            cwd=worktree,
+            check=False,
+        ).returncode
+        == 1
+    )
+
+    now = iso_z(datetime.now(UTC) + timedelta(minutes=2))
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET commit_sha=?,updated_at=? "
+            "WHERE request_id='published-authority-request'",
+            (publication_head, now),
+        )
+        connection.execute(
+            "UPDATE publication_permits SET commit_sha=?,updated_at=? "
+            "WHERE permit_id='published-authority-permit'",
+            (publication_head, now),
+        )
+    managed.upsert_pr(
+        pr_key="a/b#9",
+        owner="a",
+        repo="b",
+        number=9,
+        head_sha=publication_head,
+        pr_url=pr_url,
+        state="OPEN",
+        auto_created=True,
+        source_kind="MANAGED_PUBLICATION_RECEIPT",
+        source="test-published-authority-new-head",
+    )
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": now,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": publication_head,
+                    "actionDigest": "replacement-published-authority-action",
+                    "taskActionDigest": "replacement-published-authority-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["复核替代后的公开提交"],
+                    "evidence": {
+                        "actionableCheckNames": ["Regression"],
+                        "baseRefName": "main",
+                        "baseSha": str(historical_result["selectedBaseSha"]),
+                    },
+                    "checkedAt": now,
+                }
+            ],
+        }
+    )
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    current_context = json.loads(context_path.read_text(encoding="utf-8"))
+    assert current_context["publicationReceipt"]["commitSha"] == publication_head
+    assert current_context["prFollowup"]["headSha"] == publication_head
+    assert current_context["prFollowup"]["wakeDigest"] != historical_wake
+
+    historical_result.pop("worktreePath")
+    historical_result["contextDigest"] = "f" * 64
+    historical_result["followupDigest"] = historical_wake
+    result_path.write_text(json.dumps(historical_result), encoding="utf-8")
+    shared_path = MODULE.shared_context_path(current_context["issueUrl"])
+    return {
+        "store": store,
+        "managed": managed,
+        "worktree": worktree,
+        "resultPath": result_path,
+        "sharedPath": shared_path,
+        "context": current_context,
+        "value": historical_result,
+        "historicalHead": historical_head,
+        "publicationHead": publication_head,
+        "prUrl": pr_url,
+    }
+
+
+def _record_missing_worktree_quarantine_history(fixture, *, count=2):
+    path = fixture["sharedPath"]
+    context = fixture["context"]
+    for index in range(count):
+        historical = json.loads(json.dumps(context))
+        historical["prFollowup"]["checkedAt"] = iso_z(
+            datetime.now(UTC) + timedelta(minutes=index + 3)
+        )
+        raw = (json.dumps(historical, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
+            "utf-8"
+        )
+        recorded = MODULE._quarantine_shared_context(
+            fixture["store"],
+            path,
+            RuntimeError("published task result mismatch: worktreePath"),
+            raw=raw,
+            source_stat=path.stat(),
+        )
+        assert recorded is not None
+        assert recorded["new"] is True
+
+
+def test_superseded_fix_ready_missing_worktree_is_ignored_and_clears_exact_history(
+    tmp_path,
+):
+    fixture = _superseded_missing_worktree_result_fixture(tmp_path)
+    _record_missing_worktree_quarantine_history(fixture)
+    result_bytes = fixture["resultPath"].read_bytes()
+    assert len(fixture["store"].active_task_quarantines("a/b#1")) == 2
+
+    recovered = MODULE.recover_shared_task_contexts(fixture["store"])
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    assert recovered["resultReceiptsRestored"] == 0
+    assert fixture["store"].active_task_quarantines("a/b#1") == []
+    assert fixture["resultPath"].read_bytes() == result_bytes
+    with fixture["store"].connect() as connection:
+        cleared = connection.execute(
+            """SELECT clear_payload_json FROM task_quarantines
+               WHERE opportunity_key='a/b#1' ORDER BY quarantine_id"""
+        ).fetchall()
+    assert len(cleared) == 2
+    for row in cleared:
+        evidence = json.loads(row["clear_payload_json"])
+        assert evidence["repair"] == "SUPERSEDED_FIX_READY_RESULT_IGNORED"
+        assert evidence["resultHeadSha"] == fixture["historicalHead"]
+        assert evidence["publicationHeadSha"] == fixture["publicationHead"]
+        assert evidence["prUrl"] == fixture["prUrl"]
+
+    repeated_recovery = MODULE.recover_shared_task_contexts(fixture["store"])
+    assert repeated_recovery["errors"] == []
+    assert repeated_recovery["quarantined"] == []
+    assert repeated_recovery["resultReceiptsRestored"] == 0
+
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=fixture["store"].path))
+    assert ingested["ok"] is True, ingested["errors"]
+    assert ingested["ingested"] == []
+    assert ingested["ignored"] == [
+        {
+            "key": "a/b#1",
+            "reason": "MANAGED_PUBLISHED_PR_SUPERSEDED_FIX_READY",
+        }
+    ]
+    assert fixture["resultPath"].read_bytes() == result_bytes
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "explicit-worktree",
+        "null-worktree",
+        "current-result",
+        "current-head",
+        "random-head",
+        "managed-thread",
+        "managed-authorization",
+        "managed-pr-head",
+    ],
+)
+def test_missing_worktree_supersession_requires_every_exact_authority_binding(
+    tmp_path,
+    tamper,
+):
+    fixture = _superseded_missing_worktree_result_fixture(tmp_path)
+    value = dict(fixture["value"])
+    if tamper == "explicit-worktree":
+        value["worktreePath"] = "/tmp/not-the-bound-worktree"
+    elif tamper == "null-worktree":
+        value["worktreePath"] = None
+    elif tamper == "current-result":
+        value["contextDigest"] = fixture["context"]["contextDigest"]
+        value["followupDigest"] = fixture["context"]["prFollowup"]["wakeDigest"]
+    elif tamper == "current-head":
+        value["headSha"] = fixture["publicationHead"]
+        value["commitSha"] = fixture["publicationHead"]
+    elif tamper == "random-head":
+        value["headSha"] = "d" * 40
+        value["commitSha"] = "d" * 40
+    elif tamper == "managed-thread":
+        with fixture["managed"]._connection() as connection:
+            connection.execute(
+                "UPDATE managed_tasks SET thread_id='other-thread' WHERE task_id='intent-1'"
+            )
+            connection.commit()
+    elif tamper == "managed-authorization":
+        task = fixture["managed"].read_task("intent-1")
+        provenance = json.loads(task["provenance_json"])
+        provenance["probeReceiptDigest"] = "0" * 64
+        with fixture["managed"]._connection() as connection:
+            connection.execute(
+                "UPDATE managed_tasks SET provenance_json=? WHERE task_id='intent-1'",
+                (json.dumps(provenance, sort_keys=True),),
+            )
+            connection.commit()
+    else:
+        fixture["managed"].upsert_pr(
+            pr_key="a/b#9",
+            owner="a",
+            repo="b",
+            number=9,
+            head_sha="e" * 40,
+            pr_url=fixture["prUrl"],
+            state="OPEN",
+            auto_created=True,
+            source_kind="MANAGED_PUBLICATION_RECEIPT",
+            source="test-tampered-published-head",
+        )
+    fixture["resultPath"].write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="published task result mismatch: worktreePath"):
+        MODULE._recoverable_published_result(
+            fixture["context"],
+            store=fixture["store"],
+            context_path=fixture["sharedPath"],
+        )
+
+
+def test_unpublished_missing_worktree_result_remains_fail_closed(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(tmp_path)
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.pop("worktreePath")
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is False
+    assert result["ingested"] == []
+    assert any(
+        item["key"] == "a/b#1" and item["error"] == "task result mismatch: worktreePath"
+        for item in result["errors"]
+    )
+
+
+def test_missing_worktree_stale_ignore_requires_verified_shared_context(tmp_path):
+    fixture = _superseded_missing_worktree_result_fixture(tmp_path)
+    local_context_path = fixture["worktree"] / MODULE.TASK_PRIVATE_DIR / "task-context.json"
+    local_context = json.loads(local_context_path.read_text(encoding="utf-8"))
+    local_context["titleTime"] = "tampered-local-only"
+    local_context_path.write_text(json.dumps(local_context), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=fixture["store"].path))
+
+    assert result["ok"] is False
+    assert result["ingested"] == []
+    assert "ignored" not in result
+    assert any(
+        item["key"] == "a/b#1" and item["error"] == "task result mismatch: worktreePath"
+        for item in result["errors"]
+    )
+
+
+def test_superseded_missing_worktree_does_not_clear_tampered_quarantine_artifact(
+    tmp_path,
+):
+    fixture = _superseded_missing_worktree_result_fixture(tmp_path)
+    _record_missing_worktree_quarantine_history(fixture, count=1)
+    gate = fixture["store"].active_task_quarantines("a/b#1")[0]
+    artifact_path = Path(gate["payload"]["artifactPath"])
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    artifact["originalMode"] = 0o640
+    artifact_path.write_text(
+        json.dumps(artifact, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    recovered = MODULE.recover_shared_task_contexts(fixture["store"])
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    remaining = fixture["store"].active_task_quarantines("a/b#1")
+    assert len(remaining) == 1
+    assert remaining[0]["dedupeKey"] == gate["dedupeKey"]
+
+
+def test_superseded_missing_worktree_clears_generation_and_preserves_unrelated_gate(
+    tmp_path,
+):
+    fixture = _superseded_missing_worktree_result_fixture(tmp_path)
+    historical = json.loads(json.dumps(fixture["context"]))
+    historical["prFollowup"]["checkedAt"] = iso_z(datetime.now(UTC) + timedelta(minutes=3))
+    raw = (json.dumps(historical, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
+        "utf-8"
+    )
+    first = MODULE._quarantine_shared_context(
+        fixture["store"],
+        fixture["sharedPath"],
+        RuntimeError("published task result mismatch: worktreePath"),
+        raw=raw,
+        source_stat=fixture["sharedPath"].stat(),
+    )
+    assert first is not None
+    first_gate = fixture["store"].active_task_quarantines("a/b#1")[0]
+    fixture["store"].clear_task_quarantine_member_exact(
+        "a/b#1",
+        reason=first_gate["reason"],
+        dedupe_key=first_gate["dedupeKey"],
+        payload_digest=first_gate["payloadDigest"],
+        evidence={"revalidated": True, "repair": "TEST_REOBSERVATION"},
+    )
+    repeated = MODULE._quarantine_shared_context(
+        fixture["store"],
+        fixture["sharedPath"],
+        RuntimeError("published task result mismatch: worktreePath"),
+        raw=raw,
+        source_stat=fixture["sharedPath"].stat(),
+    )
+    assert repeated is not None
+    generation_gate = fixture["store"].active_task_quarantines("a/b#1")[0]
+    assert generation_gate["dedupeKey"].endswith("|generation=2")
+    fixture["store"].record_shared_context_quarantine(
+        key="a/b#1",
+        reason="SHARED_CONTEXT_INVALID",
+        dedupe_key="unrelated-context-gate",
+        payload={"error": "a different shared context failure"},
+        created_at=iso_z(datetime.now(UTC)),
+    )
+
+    recovered = MODULE.recover_shared_task_contexts(fixture["store"])
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    remaining = fixture["store"].active_task_quarantines("a/b#1")
+    assert [(item["dedupeKey"], item["payload"]["error"]) for item in remaining] == [
+        ("unrelated-context-gate", "a different shared context failure")
+    ]
+
+
+def _durable_scope_fixture(
+    tmp_path: Path,
+    *,
+    tombstone_path: str = "deleted.py",
+    worktree: Path | None = None,
+) -> tuple[RadarLedger, Path, Path, list[str]]:
+    code_paths = [tombstone_path, "runtime.py"]
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=(tombstone_path,),
+        reported_code_paths=tuple(code_paths),
+        probe_code_paths=tuple(code_paths),
+        worktree=worktree,
+    )
+    context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert context["reproductionReceipt"]["codePaths"] == code_paths
+    return store, worktree, result_path, code_paths
+
+
+def _commit_durable_scope_mutation(
+    worktree: Path, *, replacement: str, tombstone_path: str = "deleted.py"
+) -> str:
+    path = worktree / tombstone_path
+    path.unlink()
+    if replacement == "symlink":
+        path.symlink_to("runtime.py")
+    run_git(worktree, "add", "-A", "--", tombstone_path)
+    run_git(worktree, "commit", "-m", f"test: {replacement} historical scope path")
+    return run_git(worktree, "rev-parse", "HEAD")
+
+
+def _reserve_durable_scope_tombstone(
+    monkeypatch,
+    tmp_path: Path,
+    *,
+    tombstone_path: str = "deleted.py",
+    managed_worktree: bool = False,
+) -> tuple[
+    RadarLedger,
+    Path,
+    Path,
+    list[str],
+    dict,
+    dict,
+    str,
+]:
+    requested_worktree = (
+        MODULE.managed_worktree_path("intent-1", "a/b") if managed_worktree else None
+    )
+    store, worktree, result_path, old_scope = _durable_scope_fixture(
+        tmp_path,
+        tombstone_path=tombstone_path,
+        worktree=requested_worktree,
+    )
+    _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+        degrade_stage=False,
+    )
+    prepared_head = _commit_durable_scope_mutation(
+        worktree,
+        replacement="missing",
+        tombstone_path=tombstone_path,
+    )
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": prepared_head},
+    )
+    reserved = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            wake_digest=candidate["wakeDigest"],
+        )
+    )
+    context = json.loads(Path(reserved["contextPath"]).read_text(encoding="utf-8"))
+    return (
+        store,
+        worktree,
+        result_path,
+        old_scope,
+        candidate,
+        context,
+        prepared_head,
+    )
+
+
+def _tombstone_followup_result(
+    *,
+    result_path: Path,
+    context: dict,
+    changed_files: list[str],
+    reported_code_paths: list[str] | None = None,
+) -> dict:
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "followupDigest": context["prFollowup"]["wakeDigest"],
+            "stage": "FIX_READY",
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "branch": value["branch"],
+            "commitMessage": "fix: preserve current PR scope",
+            "changedFiles": changed_files,
+            "codePaths": reported_code_paths or list(context["codePaths"]),
+        }
+    )
+    value.pop("controllerCommitChangedFiles", None)
+    value.pop("mergeResolutionFiles", None)
+    return value
+
+
+def _ingest_tombstone_followup_result(
+    monkeypatch,
+    tmp_path: Path,
+    *,
+    validation_deferred: bool,
+    managed_worktree: bool = False,
+) -> tuple[RadarLedger, Path, Path, dict, dict, dict]:
+    (
+        store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        _prepared_head,
+    ) = _reserve_durable_scope_tombstone(
+        monkeypatch,
+        tmp_path,
+        managed_worktree=managed_worktree,
+    )
+    runtime = worktree / "runtime.py"
+    runtime.write_text(runtime.read_text(encoding="utf-8") + "# follow-up\n", encoding="utf-8")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["runtime.py"],
+    )
+    value["quality"] = dict(value["quality"])
+    if validation_deferred:
+        value["quality"]["relevant_tests_green"] = False
+    else:
+        monkeypatch.setattr(
+            MODULE,
+            "controller_review_result",
+            lambda *_args, **_kwargs: {
+                "schemaVersion": REVIEW_SCHEMA,
+                "verdict": "PASS",
+                "summary": "The exact follow-up commit passed controller review.",
+            },
+        )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    return store, worktree, result_path, context, ingested, finalized
+
+
+def _materialize_tombstone_filesystem_hazard(
+    worktree: Path,
+    tmp_path: Path,
+    *,
+    tombstone_path: str,
+    hazard: str,
+) -> None:
+    path = worktree / tombstone_path
+    first_component = Path(tombstone_path).parts[0]
+    ignore_path = worktree / ".git" / "info" / "exclude"
+    ignore_rule = first_component if hazard == "symlink_parent" else tombstone_path
+    ignore_path.write_text(
+        ignore_path.read_text(encoding="utf-8") + f"/{ignore_rule}\n",
+        encoding="utf-8",
+    )
+    if hazard == "ignored_regular":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("ignored but materialized\n", encoding="utf-8")
+        return
+    if hazard == "dangling_symlink":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to("missing-target")
+        return
+    if hazard == "symlink_parent":
+        assert len(Path(tombstone_path).parts) > 1
+        outside = tmp_path / "tombstone-outside"
+        outside.mkdir()
+        parent = worktree / first_component
+        if parent.is_dir():
+            parent.rmdir()
+        parent.symlink_to(outside, target_is_directory=True)
+        return
+    raise AssertionError(f"unknown tombstone hazard: {hazard}")
+
+
+def _resign_code_path_tombstone_receipt(receipt: dict) -> dict:
+    from oss_pr_radar.managed_security import sign_current
+    from oss_pr_radar.repo_probe import CODE_PATH_TOMBSTONE_CONTEXT
+
+    unsigned = {
+        key: value
+        for key, value in receipt.items()
+        if key not in {"keyId", "signature", "receiptDigest"}
+    }
+    if "receiptDigest" in receipt:
+        unsigned["receiptDigest"] = sha256_json(unsigned)
+    return unsigned | sign_current(
+        unsigned,
+        context=CODE_PATH_TOMBSTONE_CONTEXT,
+    )
+
+
+def test_pr_followup_reserve_retains_durable_scope_when_old_path_is_deleted(monkeypatch, tmp_path):
+    from oss_pr_radar.managed_security import verify_current
+    from oss_pr_radar.repo_probe import CODE_PATH_TOMBSTONE_CONTEXT, thread_fingerprint
+
+    (
+        _store,
+        worktree,
+        _result_path,
+        old_scope,
+        candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    receipt = context["codePathTombstoneReceipt"]
+    unsigned = {key: value for key, value in receipt.items() if key not in {"keyId", "signature"}}
+
+    assert receipt["schemaVersion"] == "code-path-tombstone-v1"
+    assert receipt["sourceReceiptDigest"] == context["reproductionReceipt"]["receiptDigest"]
+    assert receipt["preparedHeadSha"] == prepared_head
+    assert receipt["wakeDigest"] == candidate["wakeDigest"]
+    assert receipt["intentId"] == context["intentId"]
+    assert receipt["threadFingerprint"] == thread_fingerprint(candidate["threadId"])
+    assert receipt["codePaths"] == old_scope
+    assert receipt["presentPaths"] == ["runtime.py"]
+    assert receipt["tombstonePaths"] == ["deleted.py"]
+    assert receipt["keyId"]
+    assert receipt["signature"]
+    assert verify_current(
+        unsigned,
+        context=CODE_PATH_TOMBSTONE_CONTEXT,
+        key_id=receipt["keyId"],
+        signature=receipt["signature"],
+    )
+    assert not (worktree / "deleted.py").exists()
+    assert context["headSha"] == prepared_head
+    assert context["commitSha"] == prepared_head
+    assert context["prFollowup"]["preparedHeadSha"] == prepared_head
+    assert context["codePaths"] == old_scope
+    assert context["reproductionReceipt"]["codePaths"] == old_scope
+    recovered = RadarLedger(tmp_path / "recovered-tombstone.sqlite3")
+    restored = recovered.restore_task_context(context)
+    assert restored["intentRestored"] is True
+    with recovered.connect() as connection:
+        event_types = {
+            row[0]
+            for row in connection.execute(
+                "SELECT event_type FROM events WHERE opportunity_key='a/b#1'"
+            )
+        }
+    assert "TASK_CONTEXT_AUTHORITY_BOUND" in event_types
+    assert "TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND" in event_types
+
+
+def test_context_recovery_clears_only_exact_repaired_tombstone_head_gate(monkeypatch, tmp_path):
+    (
+        store,
+        worktree,
+        result_path,
+        _old_scope,
+        candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(
+        monkeypatch,
+        tmp_path,
+        managed_worktree=True,
+    )
+    result_path.unlink()
+    shared_path = MODULE.shared_context_path(context["issueUrl"])
+    historical = dict(context) | {
+        "headSha": context["reproductionReceipt"]["headSha"],
+        "commitSha": context["reproductionReceipt"]["commitSha"],
+    }
+    assert historical["headSha"] != prepared_head
+    assert historical["contextDigest"] == context["contextDigest"]
+    historical_raw = (
+        json.dumps(historical, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode()
+    MODULE._quarantine_shared_context(
+        store,
+        shared_path,
+        RuntimeError("task context tombstone authority is invalid"),
+        raw=historical_raw,
+        source_stat=shared_path.stat(),
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """DELETE FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
+                 AND dedupe_key=?""",
+            (candidate["wakeDigest"],),
+        )
+    store.mark_pr_followup_reservation_repair_required(
+        thread_id=candidate["threadId"],
+        wake_digest=candidate["wakeDigest"],
+        reason="task code paths are not indexable: CODE_PATH_MISSING",
+    )
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+        payload["probeReceiptDigest"] = context["probeReceiptDigest"]
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
+            (json.dumps(payload, sort_keys=True),),
+        )
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    assert recovered["restored"][0]["key"] == "a/b#1"
+    gates = store.active_task_quarantines("a/b#1")
+    assert len(gates) == 1
+    assert gates[0]["reason"] == MODULE.PR_FOLLOWUP_REBIND_REQUIRED
+    assert gates[0]["payload"]["reservationPending"] is True
+    assert run_git(worktree, "rev-parse", "HEAD") == prepared_head
+    with store.connect() as connection:
+        cleared = connection.execute(
+            """SELECT clear_payload_json FROM task_quarantines
+               WHERE opportunity_key='a/b#1' AND reason='SHARED_CONTEXT_INVALID'"""
+        ).fetchone()
+    evidence = json.loads(cleared["clear_payload_json"])
+    assert evidence["repair"] == "CODE_PATH_TOMBSTONE_PREPARED_HEAD_REBOUND"
+    assert evidence["previousHeadSha"] == historical["headSha"]
+    assert evidence["preparedHeadSha"] == prepared_head
+
+
+@pytest.mark.parametrize(
+    "replacement_race",
+    [None, "newer_refresh", "older_checked_at", "different_head", "different_pr"],
+)
+def test_context_recovery_supersedes_old_repair_and_releases_newer_followup(
+    monkeypatch, tmp_path, replacement_race
+):
+    (
+        store,
+        worktree,
+        result_path,
+        _old_scope,
+        old_candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(
+        monkeypatch,
+        tmp_path,
+        managed_worktree=True,
+    )
+    result_path.unlink()
+    shared_path = MODULE.shared_context_path(context["issueUrl"])
+    historical = dict(context) | {
+        "headSha": context["reproductionReceipt"]["headSha"],
+        "commitSha": context["reproductionReceipt"]["commitSha"],
+    }
+    historical_raw = (
+        json.dumps(historical, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode()
+    MODULE._quarantine_shared_context(
+        store,
+        shared_path,
+        RuntimeError("task context tombstone authority is invalid"),
+        raw=historical_raw,
+        source_stat=shared_path.stat(),
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """DELETE FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
+                 AND dedupe_key=?""",
+            (old_candidate["wakeDigest"],),
+        )
+    store.mark_pr_followup_reservation_repair_required(
+        thread_id=old_candidate["threadId"],
+        wake_digest=old_candidate["wakeDigest"],
+        reason="task code paths are not indexable: CODE_PATH_MISSING",
+    )
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT payload_json FROM intents WHERE intent_id='intent-1'"
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+        payload["probeReceiptDigest"] = context["probeReceiptDigest"]
+        connection.execute(
+            "UPDATE intents SET payload_json=? WHERE intent_id='intent-1'",
+            (json.dumps(payload, sort_keys=True),),
+        )
+    checked_at = iso_z(parse_time(context["prFollowup"]["checkedAt"]) + timedelta(minutes=2))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": checked_at,
+            "items": [
+                {
+                    "url": context["prFollowup"]["prUrl"],
+                    "headSha": prepared_head,
+                    "actionDigest": "newer-action-digest",
+                    "taskActionDigest": "newer-task-action-digest",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["处理更新后的合并冲突"],
+                    "evidence": {
+                        "actionableCheckNames": [],
+                        "baseRefName": "main",
+                        "baseSha": context["selectedBaseSha"],
+                    },
+                    "checkedAt": checked_at,
+                }
+            ],
+        }
+    )
+    active = store.active_pr_followup(context["key"])
+    replacement_wake = active["wake_digest"]
+    assert replacement_wake != old_candidate["wakeDigest"]
+
+    if replacement_race is not None:
+        original_supersede = store.supersede_pr_followup_reservation_repair_exact
+
+        def supersede_after_replacement_race(*args, **kwargs):
+            updates = {
+                "newer_refresh": {
+                    "checked_at": iso_z(parse_time(checked_at) + timedelta(minutes=1)),
+                    "action_digest": "newer-refreshed-action-digest",
+                    "evidence_json": json.dumps({"refreshed": True}, sort_keys=True),
+                },
+                "older_checked_at": {
+                    "checked_at": iso_z(
+                        parse_time(context["prFollowup"]["checkedAt"]) - timedelta(minutes=1)
+                    ),
+                },
+                "different_head": {
+                    "checked_at": iso_z(parse_time(checked_at) + timedelta(minutes=1)),
+                    "head_sha": "f" * 40,
+                },
+                "different_pr": {
+                    "checked_at": iso_z(parse_time(checked_at) + timedelta(minutes=1)),
+                    "pr_url": "https://github.com/a/b/pull/2",
+                },
+            }[replacement_race]
+            assignments = ",".join(f"{field}=?" for field in updates)
+            with store.connect() as connection:
+                connection.execute(
+                    f"UPDATE pr_followups SET {assignments} WHERE opportunity_key=?",
+                    (*updates.values(), context["key"]),
+                )
+            return original_supersede(*args, **kwargs)
+
+        monkeypatch.setattr(
+            store,
+            "supersede_pr_followup_reservation_repair_exact",
+            supersede_after_replacement_race,
+        )
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    if replacement_race in {"older_checked_at", "different_head", "different_pr"}:
+        assert {gate["reason"] for gate in store.active_task_quarantines(context["key"])} == {
+            "SHARED_CONTEXT_INVALID",
+            MODULE.PR_FOLLOWUP_REBIND_REQUIRED,
+        }
+        with store.connect() as connection:
+            clear_count = connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key=? AND event_type='TASK_QUARANTINE_CLEARED'""",
+                (context["key"],),
+            ).fetchone()[0]
+            abandoned_count = connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key=? AND event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'""",
+                (context["key"],),
+            ).fetchone()[0]
+            authority = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=? AND event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+                   ORDER BY id DESC LIMIT 1""",
+                (context["key"],),
+            ).fetchone()
+        assert clear_count == 0
+        assert abandoned_count == 0
+        assert json.loads(authority["payload_json"])["hasContinuation"] is True
+        return
+    assert store.active_task_quarantines(context["key"]) == []
+    assert {item["wakeDigest"] for item in store.pr_followup_candidates()} == {replacement_wake}
+    assert old_candidate["wakeDigest"] not in {
+        item["wake_digest"] for item in store.unresolved_pr_followups()
+    }
+    refreshed = store.task_context(
+        issue_url=context["issueUrl"],
+        thread_id=context["threadId"],
+    )
+    assert refreshed["prFollowup"]["wakeDigest"] == replacement_wake
+    assert "codePathTombstoneReceipt" not in refreshed
+    with store.connect() as connection:
+        abandoned = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+               ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+        authority = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='TASK_CONTEXT_AUTHORITY_BOUND'
+               ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+    assert json.loads(abandoned["payload_json"])["replacementWakeDigest"] == replacement_wake
+    assert json.loads(authority["payload_json"])["hasContinuation"] is False
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True
+    assert synced["errors"] == []
+    assert synced["written"] == []
+    assert synced["prFollowupsPendingPreparation"] == [
+        {
+            "key": context["key"],
+            "threadId": context["threadId"],
+            "wakeDigest": replacement_wake,
+            "tombstonePaths": context["codePathTombstoneReceipt"]["tombstonePaths"],
+        }
+    ]
+    assert run_git(worktree, "rev-parse", "HEAD") == prepared_head
+
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": prepared_head},
+    )
+    reserved = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=context["threadId"],
+            wake_digest=replacement_wake,
+        )
+    )
+    rebound = json.loads(Path(reserved["contextPath"]).read_text(encoding="utf-8"))
+    assert rebound["prFollowup"]["wakeDigest"] == replacement_wake
+    assert rebound["codePathTombstoneReceipt"]["wakeDigest"] == replacement_wake
+    assert rebound["headSha"] == prepared_head
+    assert rebound["commitSha"] == prepared_head
+
+
+@pytest.mark.parametrize("tamper", ["historical-context", "extra-gate"])
+def test_tombstone_head_repair_preserves_gate_on_any_unrelated_change(
+    monkeypatch, tmp_path, tamper
+):
+    (
+        store,
+        _worktree,
+        _result_path,
+        _old_scope,
+        _candidate,
+        context,
+        _prepared_head,
+    ) = _reserve_durable_scope_tombstone(
+        monkeypatch,
+        tmp_path,
+        managed_worktree=True,
+    )
+    shared_path = MODULE.shared_context_path(context["issueUrl"])
+    historical = dict(context) | {
+        "headSha": context["reproductionReceipt"]["headSha"],
+        "commitSha": context["reproductionReceipt"]["commitSha"],
+    }
+    if tamper == "historical-context":
+        historical["title"] = "unrelated historical change"
+    historical_raw = (
+        json.dumps(historical, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode()
+    MODULE._quarantine_shared_context(
+        store,
+        shared_path,
+        RuntimeError("task context tombstone authority is invalid"),
+        raw=historical_raw,
+        source_stat=shared_path.stat(),
+    )
+    if tamper == "extra-gate":
+        store.record_shared_context_quarantine(
+            key=context["key"],
+            reason="OTHER_ACTIVE_GATE",
+            dedupe_key="other-active-gate",
+            payload={"unexpected": True},
+            created_at=iso_z(datetime.now(UTC)),
+        )
+
+    assert (
+        MODULE._clear_exact_tombstone_authority_quarantine(
+            store,
+            path=shared_path,
+            context=context,
+        )
+        == 0
+    )
+    assert any(
+        gate["reason"] == "SHARED_CONTEXT_INVALID"
+        for gate in store.active_task_quarantines(context["key"])
+    )
+
+
+@pytest.mark.parametrize(
+    "hazard",
+    ["ignored_regular", "dangling_symlink", "symlink_parent"],
+)
+def test_pr_followup_reserve_rejects_tombstone_present_only_on_filesystem(
+    monkeypatch, tmp_path, hazard
+):
+    tombstone_path = "ghost/deleted.py"
+    store, worktree, result_path, _old_scope = _durable_scope_fixture(
+        tmp_path,
+        tombstone_path=tombstone_path,
+    )
+    _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+        degrade_stage=False,
+    )
+    prepared_head = _commit_durable_scope_mutation(
+        worktree,
+        replacement="missing",
+        tombstone_path=tombstone_path,
+    )
+    _materialize_tombstone_filesystem_hazard(
+        worktree,
+        tmp_path,
+        tombstone_path=tombstone_path,
+        hazard=hazard,
+    )
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": prepared_head},
+    )
+
+    with pytest.raises(RuntimeError, match="(?i)code.path|tombstone"):
+        MODULE.pr_followup_reserve(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id=candidate["threadId"],
+                wake_digest=candidate["wakeDigest"],
+            )
+        )
+
+    assert run_git(worktree, "rev-parse", "HEAD") == prepared_head
+
+
+@pytest.mark.parametrize(
+    "hazard",
+    ["ignored_regular", "dangling_symlink", "symlink_parent"],
+)
+def test_controller_finalize_rejects_tombstone_materialized_after_reserve(
+    monkeypatch, tmp_path, hazard
+):
+    tombstone_path = "ghost/deleted.py"
+    (
+        _store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(
+        monkeypatch,
+        tmp_path,
+        tombstone_path=tombstone_path,
+    )
+    _materialize_tombstone_filesystem_hazard(
+        worktree,
+        tmp_path,
+        tombstone_path=tombstone_path,
+        hazard=hazard,
+    )
+    runtime = worktree / "runtime.py"
+    runtime.write_text(runtime.read_text(encoding="utf-8") + "# follow-up\n", encoding="utf-8")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["runtime.py"],
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="(?i)code.path|tombstone"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=value,
+            result_path=result_path,
+        )
+
+    assert run_git(worktree, "rev-parse", "HEAD") == prepared_head
+
+
+def test_validation_followup_context_refresh_preserves_pr_tombstone(monkeypatch, tmp_path):
+    (
+        store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        _prepared_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    runtime = worktree / "runtime.py"
+    runtime.write_text(runtime.read_text(encoding="utf-8") + "# follow-up\n", encoding="utf-8")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["runtime.py"],
+    )
+    value["quality"] = dict(value["quality"])
+    value["quality"]["relevant_tests_green"] = False
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert ingested["ok"] is True, ingested["errors"]
+    assert ingested["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": ["relevant_tests_green", "independent_review_passed"],
+        }
+    ]
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM events
+                   WHERE opportunity_key='a/b#1'
+                     AND event_type='PR_FOLLOWUP_RESULT_INGESTED'"""
+            ).fetchone()[0]
+            == 1
+        )
+    candidate = store.validation_followup_candidates()[0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+
+    assert reserved["ok"] is True
+    refreshed = json.loads(Path(reserved["contextPath"]).read_text(encoding="utf-8"))
+    assert refreshed["codePaths"] == ["deleted.py", "runtime.py"]
+    assert refreshed["codePathTombstoneReceipt"]["tombstonePaths"] == ["deleted.py"]
+    assert MODULE._verified_context_code_path_tombstone_receipt(refreshed) is not None
+
+
+def test_context_sync_rebinds_deferred_pr_tombstone_to_current_commit(monkeypatch, tmp_path):
+    (
+        store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        _prepared_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    runtime = worktree / "runtime.py"
+    runtime.write_text(runtime.read_text(encoding="utf-8") + "# follow-up\n", encoding="utf-8")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["runtime.py"],
+    )
+    value["quality"] = dict(value["quality"])
+    value["quality"]["relevant_tests_green"] = False
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert ingested["ok"] is True, ingested["errors"]
+    assert ingested["validationDeferred"]
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    current_commit = run_git(worktree, "rev-parse", "HEAD")
+    assert finalized["commitSha"] == current_commit
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True, synced["errors"]
+    assert [item["key"] for item in synced["written"]] == ["a/b#1"]
+    refreshed = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    receipt = refreshed["codePathTombstoneReceipt"]
+    assert refreshed["prFollowup"]["preparedHeadSha"] == current_commit
+    assert receipt["preparedHeadSha"] == current_commit
+    assert receipt["tombstonePaths"] == ["deleted.py"]
+    assert MODULE._verified_context_code_path_tombstone_receipt(refreshed) is not None
+
+
+def test_consecutive_validation_deferred_results_advance_tombstone_binding(monkeypatch, tmp_path):
+    store, worktree, result_path, initial_context, first_ingest, first_result = (
+        _ingest_tombstone_followup_result(
+            monkeypatch,
+            tmp_path,
+            validation_deferred=True,
+        )
+    )
+    assert first_ingest["ok"] is True, first_ingest["errors"]
+    c1 = first_result["commitSha"]
+    r0 = initial_context["codePathTombstoneReceipt"]
+
+    first_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert first_sync["ok"] is True, first_sync["errors"]
+    first_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    r1 = first_context["codePathTombstoneReceipt"]
+    assert r1["preparedHeadSha"] == c1
+    assert r1["receiptDigest"] != r0["receiptDigest"]
+
+    candidate = store.validation_followup_candidates()[0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            prefetch_complete=False,
+        )
+    )
+    MODULE.validation_followup_commit(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            reservation_digest=reserved["reservationDigest"],
+        )
+    )
+    runtime = worktree / "runtime.py"
+    runtime.write_text(
+        runtime.read_text(encoding="utf-8") + "# second follow-up\n", encoding="utf-8"
+    )
+    second_value = _tombstone_followup_result(
+        result_path=result_path,
+        context=first_context,
+        changed_files=["runtime.py"],
+    )
+    second_value["codePathTombstoneReceipt"] = r1
+    second_value.pop("previousCommitSha", None)
+    second_value.pop("independentReview", None)
+    second_value.pop("reproductionReceipt", None)
+    second_value.pop("probeReceipt", None)
+    second_value.pop("resultDigest", None)
+    result_path.write_text(json.dumps(second_value), encoding="utf-8")
+
+    second_ingest = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert second_ingest["ok"] is True, second_ingest["errors"]
+    second_result = json.loads(result_path.read_text(encoding="utf-8"))
+    c2 = second_result["commitSha"]
+    assert c2 != c1
+    assert second_result["codePathTombstoneReceipt"]["receiptDigest"] == r1["receiptDigest"]
+
+    second_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert second_sync["ok"] is True, second_sync["errors"]
+    second_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    r2 = second_context["codePathTombstoneReceipt"]
+    assert r2["preparedHeadSha"] == c2
+    assert r2["receiptDigest"] not in {r0["receiptDigest"], r1["receiptDigest"]}
+
+
+def test_pr_open_result_sync_keeps_tombstone_bound_to_current_commit(monkeypatch, tmp_path):
+    store, worktree, _result_path, _context, ingested, finalized = (
+        _ingest_tombstone_followup_result(
+            monkeypatch,
+            tmp_path,
+            validation_deferred=False,
+        )
+    )
+
+    assert ingested["ok"] is True, ingested["errors"]
+    assert ingested["validationDeferred"] == []
+    current_commit = finalized["commitSha"]
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "PR_OPEN"
+    )
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True, synced["errors"]
+    refreshed = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert refreshed["codePathTombstoneReceipt"]["preparedHeadSha"] == current_commit
+    assert refreshed["codePathTombstoneReceipt"]["tombstonePaths"] == ["deleted.py"]
+    assert MODULE._verified_context_code_path_tombstone_receipt(refreshed) is not None
+
+
+@pytest.mark.parametrize("terminal_stage", [None, "MERGED"], ids=["pr-open", "merged"])
+def test_shared_context_recovery_then_sync_preserves_pr_open_tombstone(
+    monkeypatch,
+    tmp_path,
+    terminal_stage,
+):
+    store, worktree, result_path, followup_context, ingested, finalized = (
+        _ingest_tombstone_followup_result(
+            monkeypatch,
+            tmp_path,
+            validation_deferred=False,
+            managed_worktree=True,
+        )
+    )
+    assert ingested["ok"] is True, ingested["errors"]
+    current_commit = finalized["commitSha"]
+    assert len(ingested["publicationRequests"]) == 1
+    request = store.publication_request(ingested["publicationRequests"][0]["requestId"])
+    assert request is not None
+    permit = store.grant_publication_request(
+        request["request_id"],
+        issue_url="https://github.com/a/b/issues/1",
+        commit_sha=current_commit,
+        branch=str(finalized["branch"]),
+        evidence={},
+    )
+    store.consume_publication_permit(
+        permit["permit_id"],
+        followup_context["prFollowup"]["prUrl"],
+    )
+    if terminal_stage is not None:
+        ManagedLedger(store.path, ensure_schema=True).upsert_pr(
+            pr_key="a/b#9",
+            owner="a",
+            repo="b",
+            number=9,
+            head_sha=current_commit,
+            pr_url=followup_context["prFollowup"]["prUrl"],
+            state=terminal_stage,
+            auto_created=True,
+            source_kind="MANAGED_PUBLICATION_RECEIPT",
+            source="test-terminal-shared-context-recovery",
+            observed_at=iso_z(datetime.now(UTC) + timedelta(minutes=1)),
+        )
+        store.record_stage(
+            "a/b#1",
+            terminal_stage,
+            evidence={"prUrl": followup_context["prFollowup"]["prUrl"]},
+        )
+
+    source_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert source_sync["ok"] is True, source_sync["errors"]
+    source_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    source_result = json.loads(result_path.read_text(encoding="utf-8"))
+    expected_stage = terminal_stage or "PR_OPEN"
+    assert source_context["stage"] == expected_stage
+    assert source_context["headSha"] == current_commit
+    assert source_context["commitSha"] == current_commit
+    assert source_context["prFollowup"]["preparedHeadSha"] == current_commit
+    assert source_context["codePathTombstoneReceipt"]["preparedHeadSha"] == current_commit
+    assert source_result["codePathTombstoneReceipt"]["tombstonePaths"] == ["deleted.py"]
+
+    recovered_path = tmp_path / "empty-recovered.sqlite3"
+    recovered_store = RadarLedger(recovered_path)
+    with recovered_store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
+
+    recovery = MODULE.recover_shared_task_contexts(recovered_store)
+
+    assert recovery["errors"] == []
+    assert recovery["quarantined"] == []
+    assert recovery["verified"] == 1, recovery
+    assert recovery["resultReceiptsRestored"] == 1
+
+    recovered_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=recovered_path))
+
+    assert recovered_sync["ok"] is True, recovered_sync["errors"]
+    recovered_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert recovered_context["stage"] == expected_stage
+    assert (
+        recovered_context["publicationReceipt"]["prUrl"]
+        == source_context["publicationReceipt"]["prUrl"]
+    )
+    assert (
+        recovered_context["prFollowup"]["wakeDigest"] == source_context["prFollowup"]["wakeDigest"]
+    )
+    assert recovered_context["headSha"] == current_commit
+    assert recovered_context["commitSha"] == current_commit
+    assert recovered_context["prFollowup"]["preparedHeadSha"] == current_commit
+    receipt = recovered_context["codePathTombstoneReceipt"]
+    assert receipt["preparedHeadSha"] == current_commit
+    assert receipt["tombstonePaths"] == ["deleted.py"]
+    assert MODULE._verified_context_code_path_tombstone_receipt(recovered_context) is not None
+
+
+@pytest.mark.parametrize("recovered_stage", ["VALIDATION_PENDING", "FIX_READY"])
+def test_shared_context_recovery_then_sync_preserves_unpublished_tombstone(
+    monkeypatch,
+    tmp_path,
+    recovered_stage,
+):
+    store, worktree, _result_path, _followup_context, ingested, finalized = (
+        _ingest_tombstone_followup_result(
+            monkeypatch,
+            tmp_path,
+            validation_deferred=True,
+            managed_worktree=True,
+        )
+    )
+    assert ingested["ok"] is True, ingested["errors"]
+    assert ingested["validationDeferred"]
+    current_commit = finalized["commitSha"]
+
+    source_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert source_sync["ok"] is True, source_sync["errors"]
+    source_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert source_context["stage"] == "PR_OPEN"
+    assert source_context["headSha"] == current_commit
+    assert source_context["commitSha"] == current_commit
+    assert source_context["codePathTombstoneReceipt"]["preparedHeadSha"] == current_commit
+    source_context["stage"] = recovered_stage
+    serialized_context = json.dumps(source_context, sort_keys=True)
+    (worktree / ".oss-pr-radar" / "task-context.json").write_text(
+        serialized_context,
+        encoding="utf-8",
+    )
+    Path(source_context["bootstrapContextPath"]).write_text(
+        serialized_context,
+        encoding="utf-8",
+    )
+
+    recovered_path = tmp_path / "empty-validation-recovered.sqlite3"
+    recovered_store = RadarLedger(recovered_path)
+    recovery = MODULE.recover_shared_task_contexts(recovered_store)
+
+    assert recovery["errors"] == []
+    assert recovery["quarantined"] == []
+    assert recovery["verified"] == 1, recovery
+    assert recovery["resultReceiptsRestored"] == 0
+
+    recovered_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=recovered_path))
+
+    assert recovered_sync["ok"] is True, recovered_sync["errors"]
+    recovered_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    assert recovered_context["stage"] == recovered_stage
+    assert (
+        recovered_context["prFollowup"]["wakeDigest"] == source_context["prFollowup"]["wakeDigest"]
+    )
+    assert recovered_context["headSha"] == current_commit
+    assert recovered_context["commitSha"] == current_commit
+    assert recovered_context["prFollowup"]["preparedHeadSha"] == current_commit
+    receipt = recovered_context["codePathTombstoneReceipt"]
+    assert receipt["preparedHeadSha"] == current_commit
+    assert receipt["tombstonePaths"] == ["deleted.py"]
+    assert MODULE._verified_context_code_path_tombstone_receipt(recovered_context) is not None
+
+
+def test_latest_result_without_tombstone_does_not_reuse_older_binding(monkeypatch, tmp_path):
+    store, _worktree, _result_path, _context, ingested, _finalized = (
+        _ingest_tombstone_followup_result(
+            monkeypatch,
+            tmp_path,
+            validation_deferred=True,
+        )
+    )
+    assert ingested["ok"] is True, ingested["errors"]
+    first = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert first["codePathTombstoneReceipt"]["tombstonePaths"] == ["deleted.py"]
+
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest="f" * 64,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+
+    latest = store.task_context(
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+    )
+    assert "codePathTombstoneReceipt" not in latest
+    assert "codePathTombstoneContinuationHeadSha" not in latest
+
+
+def test_active_pr_followup_preparation_overrides_older_result_tombstone(monkeypatch, tmp_path):
+    store, worktree, result_path, _context, ingested, finalized = _ingest_tombstone_followup_result(
+        monkeypatch,
+        tmp_path,
+        validation_deferred=True,
+    )
+    assert ingested["ok"] is True, ingested["errors"]
+    first_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    assert first_sync["ok"] is True, first_sync["errors"]
+    old_context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    old_receipt = old_context["codePathTombstoneReceipt"]
+    current_commit = finalized["commitSha"]
+    checked_at = iso_z(datetime.now(UTC) + timedelta(minutes=1))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": checked_at,
+            "items": [
+                {
+                    "url": "https://github.com/a/b/pull/9",
+                    "headSha": current_commit,
+                    "actionDigest": "new-active-action",
+                    "taskActionDigest": "new-active-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["处理新的审查反馈"],
+                    "evidence": {
+                        "actionableCheckNames": ["New Review"],
+                        "baseRefName": "main",
+                        "baseSha": str(finalized["selectedBaseSha"]),
+                    },
+                    "checkedAt": checked_at,
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": current_commit},
+    )
+
+    reserved = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            wake_digest=candidate["wakeDigest"],
+        )
+    )
+
+    fresh = json.loads(Path(reserved["contextPath"]).read_text(encoding="utf-8"))
+    fresh_receipt = fresh["codePathTombstoneReceipt"]
+    assert fresh["prFollowup"]["wakeDigest"] == candidate["wakeDigest"]
+    assert fresh["prFollowup"]["preparedHeadSha"] == current_commit
+    assert fresh_receipt["wakeDigest"] == candidate["wakeDigest"]
+    assert fresh_receipt["preparedHeadSha"] == current_commit
+    assert fresh_receipt["receiptDigest"] != old_receipt["receiptDigest"]
+    assert json.loads(result_path.read_text(encoding="utf-8"))["commitSha"] == current_commit
+
+
+def test_controller_commit_required_rejects_recreated_tombstone_before_commit(
+    monkeypatch, tmp_path
+):
+    (
+        _store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    base_sha = context["reproductionReceipt"]["baseSha"]
+    base_content = run_git(worktree, "show", f"{base_sha}:deleted.py") + "\n"
+    (worktree / "deleted.py").write_text(base_content, encoding="utf-8")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["deleted.py"],
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="(?i)tombstone"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=value,
+            result_path=result_path,
+        )
+
+    assert run_git(worktree, "rev-parse", "HEAD") == prepared_head
+    assert run_git(worktree, "rev-list", "--count", f"{prepared_head}..HEAD") == "0"
+
+
+def test_controller_commit_complete_rejects_reintroduced_tombstone(monkeypatch, tmp_path):
+    (
+        _store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    base_sha = context["reproductionReceipt"]["baseSha"]
+    base_content = run_git(worktree, "show", f"{base_sha}:deleted.py") + "\n"
+    (worktree / "deleted.py").write_text(base_content, encoding="utf-8")
+    run_git(worktree, "add", "--", "deleted.py")
+    run_git(worktree, "commit", "-m", "fix: restore historical path")
+    recreated_head = run_git(worktree, "rev-parse", "HEAD")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["deleted.py"],
+    ) | {
+        "handoffMode": "controller_commit_complete",
+        "commitSha": recreated_head,
+        "controllerCommitChangedFiles": ["deleted.py"],
+        "previousCommitSha": prepared_head,
+    }
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="(?i)tombstone"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=value,
+            result_path=result_path,
+        )
+
+
+def test_controller_merge_complete_rejects_tombstone_reintroduced_from_base(monkeypatch, tmp_path):
+    (
+        _store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    branch = run_git(worktree, "symbolic-ref", "--short", "HEAD")
+    selected_base = context["reproductionReceipt"]["baseSha"]
+    run_git(worktree, "switch", "-c", "upstream/tombstone", selected_base)
+    (worktree / "deleted.py").write_text("value = 'upstream'\n", encoding="utf-8")
+    run_git(worktree, "add", "--", "deleted.py")
+    run_git(worktree, "commit", "-m", "refactor: update historical path")
+    merge_base = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", branch)
+    completed = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", merge_base],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 1
+    assert run_git(worktree, "diff", "--name-only", "--diff-filter=U") == "deleted.py"
+    run_git(worktree, "checkout", merge_base, "--", "deleted.py")
+    run_git(worktree, "add", "--", "deleted.py")
+    merge_message = "merge: reintroduce historical path"
+    run_git(worktree, "commit", "-m", merge_message)
+    merge_head = run_git(worktree, "rev-parse", "HEAD")
+    context = json.loads(json.dumps(context))
+    context["prFollowup"]["headSha"] = prepared_head
+    context["prFollowup"]["preparedHeadSha"] = prepared_head
+    context["prFollowup"]["evidence"].update(
+        {
+            "mergeConflict": True,
+            "baseSha": merge_base,
+            "mergeConflictFiles": ["deleted.py"],
+        }
+    )
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["deleted.py"],
+    ) | {
+        "handoffMode": "controller_merge_complete",
+        "commitSha": merge_head,
+        "branch": branch,
+        "commitMessage": merge_message,
+        "controllerCommitChangedFiles": ["deleted.py"],
+        "mergeResolutionFiles": ["deleted.py"],
+        "mergeBaseSha": merge_base,
+        "previousCommitSha": prepared_head,
+    }
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="(?i)tombstone"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=value,
+            result_path=result_path,
+        )
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["signature", "preparedHeadSha", "sourceReceiptDigest"],
+)
+def test_controller_rejects_tampered_code_path_tombstone_receipt(monkeypatch, tmp_path, tamper):
+    (
+        _store,
+        worktree,
+        result_path,
+        _old_scope,
+        _candidate,
+        context,
+        prepared_head,
+    ) = _reserve_durable_scope_tombstone(monkeypatch, tmp_path)
+    context = json.loads(json.dumps(context))
+    receipt = dict(context["codePathTombstoneReceipt"])
+    if tamper == "signature":
+        receipt["signature"] = "0" * 64
+    else:
+        receipt[tamper] = ("f" if tamper == "preparedHeadSha" else "0") * (
+            40 if tamper == "preparedHeadSha" else 64
+        )
+        receipt = _resign_code_path_tombstone_receipt(receipt)
+    context["codePathTombstoneReceipt"] = receipt
+    runtime = worktree / "runtime.py"
+    runtime.write_text(runtime.read_text(encoding="utf-8") + "# follow-up\n", encoding="utf-8")
+    value = _tombstone_followup_result(
+        result_path=result_path,
+        context=context,
+        changed_files=["runtime.py"],
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="(?i)tombstone"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=value,
+            result_path=result_path,
+        )
+
+    assert run_git(worktree, "rev-parse", "HEAD") == prepared_head
+
+
+def test_non_followup_implementation_context_rejects_missing_durable_scope_path(tmp_path):
+    store, worktree, _result_path, _old_scope = _durable_scope_fixture(tmp_path)
+    _commit_durable_scope_mutation(worktree, replacement="missing")
+
+    with pytest.raises(RuntimeError, match="CODE_PATH_MISSING"):
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        )
+
+
+def test_pr_followup_reserve_rejects_durable_scope_path_replaced_by_symlink(monkeypatch, tmp_path):
+    store, worktree, result_path, _old_scope = _durable_scope_fixture(tmp_path)
+    _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+        degrade_stage=False,
+    )
+    prepared_head = _commit_durable_scope_mutation(worktree, replacement="symlink")
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": prepared_head},
+    )
+
+    with pytest.raises(RuntimeError, match="CODE_PATH_SYMLINK"):
+        MODULE.pr_followup_reserve(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id=candidate["threadId"],
+                wake_digest=candidate["wakeDigest"],
+            )
+        )
+
+
 @pytest.mark.parametrize(
     ("managed_state", "expected_stage"), [("OPEN", "PR_OPEN"), ("MERGED", "MERGED")]
 )
@@ -12171,6 +16854,146 @@ def test_published_fix_ready_file_repairs_current_result_and_binds_pr(tmp_path):
     assert context["resultDigest"] == reviewed_digest
 
 
+@pytest.mark.parametrize("advanced_stage", ["CI_GREEN", "MAINTAINER_ACCEPTED"])
+def test_published_fix_ready_replay_preserves_immutable_binding_stage(tmp_path, advanced_stage):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    reviewed_value = json.loads(result_path.read_text(encoding="utf-8"))
+    reviewed_value["independentReview"] = MODULE.controller_review_result(
+        MODULE.ROOT, reviewed_value
+    )
+    result_path.write_text(json.dumps(reviewed_value), encoding="utf-8")
+    managed, _context, _pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    result_digest = MODULE._task_result_digest(value, result_path.read_bytes())
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert first["ok"] is True, first["errors"]
+    assert managed.current_published_result_for_task("intent-1")["stage"] == "PR_OPEN"
+
+    store.record_stage("a/b#1", advanced_stage, evidence={"checks": "green"})
+    replayed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert replayed["ok"] is True, replayed["errors"]
+    assert replayed["ignored"] == [{"key": "a/b#1", "reason": "MANAGED_PUBLISHED_PR_AUTHORITATIVE"}]
+    restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert restored["stage"] == advanced_stage
+    assert managed.current_published_result_for_task("intent-1")["stage"] == "PR_OPEN"
+    with managed._connection() as connection:
+        binding_rows = connection.execute(
+            """SELECT payload_json FROM managed_lifecycle_events
+               WHERE event_type='PUBLISHED_TASK_RESULT_BOUND'
+                 AND task_id='intent-1' AND pr_key='a/b#9'"""
+        ).fetchall()
+        result_rows = connection.execute(
+            """SELECT worker_state FROM managed_results
+               WHERE task_id='intent-1' AND pr_key='a/b#9'"""
+        ).fetchall()
+    assert [json.loads(row["payload_json"])["stage"] for row in binding_rows] == ["PR_OPEN"]
+    assert [row["worker_state"] for row in result_rows] == ["PR_OPEN"]
+    with store.connect() as connection:
+        marker_rows = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PUBLISHED_TASK_RESULT_BACKFILLED'
+                 AND dedupe_key=?""",
+            (result_digest,),
+        ).fetchall()
+    assert [json.loads(row["payload_json"])["stage"] for row in marker_rows] == ["PR_OPEN"]
+
+
+def test_published_fix_ready_first_binding_uses_current_lifecycle_stage(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    reviewed_value = json.loads(result_path.read_text(encoding="utf-8"))
+    reviewed_value["independentReview"] = MODULE.controller_review_result(
+        MODULE.ROOT, reviewed_value
+    )
+    result_path.write_text(json.dumps(reviewed_value), encoding="utf-8")
+    managed, _context, _pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        degrade_stage=False,
+    )
+    store.record_stage("a/b#1", "CI_GREEN", evidence={"checks": "green"})
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True, first["errors"]
+    assert managed.current_published_result_for_task("intent-1")["stage"] == "CI_GREEN"
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT event_type,payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type IN (
+                   'PUBLISHED_TASK_RESULT_BACKFILLED','TASK_RESULT_INGESTED'
+                 )
+               ORDER BY event_type"""
+        ).fetchall()
+    assert {row["event_type"]: json.loads(row["payload_json"])["stage"] for row in rows} == {
+        "PUBLISHED_TASK_RESULT_BACKFILLED": "CI_GREEN",
+        "TASK_RESULT_INGESTED": "CI_GREEN",
+    }
+
+
+def test_published_fix_ready_replay_repairs_missing_marker_with_binding_stage(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    reviewed_value = json.loads(result_path.read_text(encoding="utf-8"))
+    reviewed_value["independentReview"] = MODULE.controller_review_result(
+        MODULE.ROOT, reviewed_value
+    )
+    result_path.write_text(json.dumps(reviewed_value), encoding="utf-8")
+    managed, _context, _pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    result_digest = MODULE._task_result_digest(value, result_path.read_bytes())
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert first["ok"] is True, first["errors"]
+
+    store.record_stage("a/b#1", "CI_GREEN", evidence={"checks": "green"})
+    with store.connect() as connection:
+        connection.execute(
+            """DELETE FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type IN (
+                   'PUBLISHED_TASK_RESULT_BACKFILLED','TASK_RESULT_INGESTED'
+                 )
+                 AND dedupe_key=?""",
+            (result_digest,),
+        )
+
+    replayed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert replayed["ok"] is True, replayed["errors"]
+    assert (
+        store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "stage"
+        ]
+        == "CI_GREEN"
+    )
+    assert managed.current_published_result_for_task("intent-1")["stage"] == "PR_OPEN"
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT event_type,payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type IN (
+                   'PUBLISHED_TASK_RESULT_BACKFILLED','TASK_RESULT_INGESTED'
+                 )
+                 AND dedupe_key=?""",
+            (result_digest,),
+        ).fetchall()
+    assert {row["event_type"]: json.loads(row["payload_json"])["stage"] for row in rows} == {
+        "PUBLISHED_TASK_RESULT_BACKFILLED": "PR_OPEN",
+        "TASK_RESULT_INGESTED": "PR_OPEN",
+    }
+
+
 @pytest.mark.parametrize(
     "missing_binding",
     ["reproductionReceipt", "resultDigest", "independentReview"],
@@ -12279,6 +17102,426 @@ def test_published_pr_authority_rejects_unbound_receipt_head(tmp_path):
         )
         is None
     )
+
+
+def _published_no_local_action_without_head(
+    monkeypatch, tmp_path, *, previously_ingested: bool = True
+):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+        degrade_stage=False,
+    )
+    store.record_stage("a/b#1", "CI_GREEN", evidence={"checks": "green"})
+    head_sha = run_git(worktree, "rev-parse", "HEAD")
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": head_sha},
+    )
+    reserved = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            wake_digest=candidate["wakeDigest"],
+        )
+    )
+    context = json.loads(Path(reserved["contextPath"]).read_text(encoding="utf-8"))
+    assert store.task_result_candidates()[0]["stage"] == "CI_GREEN"
+    value = {
+        "schemaVersion": "radar-task-result-v1",
+        "contextDigest": context["contextDigest"],
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "stage": "PR_OPEN",
+        "followupDigest": context["prFollowup"]["wakeDigest"],
+        "commitSha": head_sha,
+        "prUrl": pr_url,
+        "reason": "CONFLICT_SCOPE_INSUFFICIENT",
+        "evidence": {"headSha": head_sha, "verified": True},
+    }
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    if previously_ingested:
+        result_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+        store.record_task_result_ingested(
+            "a/b#1",
+            digest=result_digest,
+            stage="PR_OPEN",
+            task_id="intent-1",
+            thread_id="thread-1",
+        )
+        store.record_followup_result(
+            "a/b#1",
+            wake_digest=str(context["prFollowup"]["wakeDigest"]),
+            result_digest=result_digest,
+            stage="PR_OPEN",
+        )
+    return store, managed, worktree, result_path, context, value, head_sha, pr_url
+
+
+def _published_tombstone_no_local_action_without_head(monkeypatch, tmp_path):
+    store, worktree, result_path, _old_scope = _durable_scope_fixture(tmp_path)
+    managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        explicit_pr_followup=True,
+        degrade_stage=False,
+    )
+    head_sha = _commit_durable_scope_mutation(worktree, replacement="missing")
+    managed.upsert_pr(
+        pr_key="a/b#9",
+        owner="a",
+        repo="b",
+        number=9,
+        head_sha=head_sha,
+        pr_url=pr_url,
+        state="OPEN",
+        auto_created=True,
+        source_kind="MANAGED_PUBLICATION_RECEIPT",
+        source="test-published-tombstone-head-reconciliation",
+        observed_at=iso_z(datetime.now(UTC) + timedelta(seconds=1)),
+    )
+    source = json.loads(result_path.read_text(encoding="utf-8"))
+    checked_at = iso_z(datetime.now(UTC) + timedelta(seconds=2))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": checked_at,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": head_sha,
+                    "actionDigest": "published-tombstone-action",
+                    "taskActionDigest": "published-tombstone-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["处理当前 PR 上的真实回归"],
+                    "evidence": {
+                        "actionableCheckNames": ["Regression"],
+                        "baseRefName": "main",
+                        "baseSha": str(source["selectedBaseSha"]),
+                    },
+                    "checkedAt": checked_at,
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+    monkeypatch.setattr(
+        MODULE,
+        "_prepare_pr_followup",
+        lambda _candidate: {"preparedHeadSha": head_sha},
+    )
+    reserved = MODULE.pr_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id=candidate["threadId"],
+            wake_digest=candidate["wakeDigest"],
+        )
+    )
+    context = json.loads(Path(reserved["contextPath"]).read_text(encoding="utf-8"))
+    store.record_stage("a/b#1", "CI_GREEN", evidence={"checks": "green"})
+    value = {
+        "schemaVersion": "radar-task-result-v1",
+        "contextDigest": context["contextDigest"],
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "stage": "PR_OPEN",
+        "followupDigest": context["prFollowup"]["wakeDigest"],
+        "commitSha": head_sha,
+        "prUrl": pr_url,
+        "reason": "CONFLICT_SCOPE_INSUFFICIENT",
+        "evidence": {"headSha": head_sha, "verified": True},
+    }
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    result_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=result_digest,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        **MODULE._recovered_task_result_tombstone_continuation_kwargs(
+            context,
+            value,
+            worktree=worktree,
+            continuation_head=head_sha,
+        ),
+    )
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=str(context["prFollowup"]["wakeDigest"]),
+        result_digest=result_digest,
+        stage="PR_OPEN",
+    )
+    return store, managed, worktree, result_path, context, value, head_sha, pr_url
+
+
+def test_exact_published_no_local_action_backfills_omitted_legacy_head(monkeypatch, tmp_path):
+    store, managed, _worktree, result_path, _context, value, head_sha, pr_url = (
+        _published_no_local_action_without_head(monkeypatch, tmp_path)
+    )
+    original = result_path.read_bytes()
+    result_digest = hashlib.sha256(original).hexdigest()
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert first["ok"] is True, first["errors"]
+    assert first["ingested"] == [{"key": "a/b#1", "stage": "PR_OPEN"}], first
+    assert first["errors"] == []
+    assert result_path.read_bytes() == original
+    assert "headSha" not in value
+    current = managed.current_result_for_pr("a/b#9")
+    assert current is not None
+    assert current["head_sha"] == head_sha
+    assert current["commit_sha"] == head_sha
+    assert current["result_digest"] == result_digest
+    published = managed.current_published_result_for_task("intent-1")
+    assert published is not None
+    assert published["headSha"] == head_sha
+    assert published["prUrl"] == pr_url
+    assert repeated["ok"] is True, repeated["errors"]
+    assert repeated["ingested"] == []
+
+
+def test_exact_published_no_local_action_recovers_omitted_tombstone_receipt_before_writes(
+    monkeypatch, tmp_path
+):
+    store, managed, _worktree, result_path, context, value, head_sha, _pr_url = (
+        _published_tombstone_no_local_action_without_head(monkeypatch, tmp_path)
+    )
+    original = result_path.read_bytes()
+    result_digest = hashlib.sha256(original).hexdigest()
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True, first["errors"]
+    assert first["ingested"] == [{"key": "a/b#1", "stage": "PR_OPEN"}], first
+    assert first.get("workBlocked", []) == []
+    assert repeated["ok"] is True, repeated["errors"]
+    assert repeated["ingested"] == []
+    assert repeated.get("workBlocked", []) == []
+    assert result_path.read_bytes() == original
+    assert "headSha" not in value
+    assert "codePathTombstoneReceipt" not in value
+    current = managed.current_result_for_pr("a/b#9")
+    assert current is not None
+    assert current["head_sha"] == head_sha
+    assert current["commit_sha"] == head_sha
+    assert current["result_digest"] == result_digest
+    restored = store.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+    assert restored["codePathTombstoneContinuationHeadSha"] == head_sha
+    assert (
+        restored["codePathTombstoneReceipt"]["receiptDigest"]
+        == context["codePathTombstoneReceipt"]["receiptDigest"]
+    )
+    with managed._connection() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM managed_lifecycle_events
+                   WHERE event_type='TASK_RESULT_EVIDENCE_BLOCKED'"""
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "explicit_old_head",
+        "explicit_null_head",
+        "explicit_object_head",
+        "explicit_array_head",
+        "evidence_old_head",
+        "conflicting_commit_alias",
+    ],
+)
+def test_published_no_local_action_legacy_head_normalization_fails_closed(
+    monkeypatch, tmp_path, tamper
+):
+    store, managed, _worktree, result_path, _context, value, _head_sha, _pr_url = (
+        _published_no_local_action_without_head(monkeypatch, tmp_path)
+    )
+    old_head = "f" * 40
+    if tamper == "explicit_old_head":
+        value["headSha"] = old_head
+    elif tamper == "explicit_null_head":
+        value["headSha"] = None
+    elif tamper == "explicit_object_head":
+        value["headSha"] = {"sha": old_head}
+    elif tamper == "explicit_array_head":
+        value["headSha"] = [old_head]
+    elif tamper == "evidence_old_head":
+        value["evidence"] = dict(value["evidence"]) | {"headSha": old_head}
+    else:
+        value["commit_sha"] = old_head
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True
+    assert first["ingested"] == []
+    assert first["errors"] == []
+    assert first["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID",
+            "alreadyRecorded": False,
+        }
+    ]
+    assert repeated["ok"] is True
+    assert repeated["ingested"] == []
+    assert repeated["errors"] == []
+    assert repeated["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID",
+            "alreadyRecorded": True,
+        }
+    ]
+    assert managed.current_result_for_pr("a/b#9") is None
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                """SELECT COUNT(*) FROM managed_lifecycle_events
+                   WHERE event_type='TASK_RESULT_EVIDENCE_BLOCKED'"""
+            ).fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.parametrize(
+    "allowed_stages",
+    [7, "PR_OPEN", {"PR_OPEN": True}, ["PR_OPEN", 7]],
+)
+def test_published_no_local_action_legacy_head_rejects_malformed_allowed_stages(
+    allowed_stages,
+):
+    value = {
+        "stage": "PR_OPEN",
+        "contextDigest": "c" * 64,
+        "commitSha": "a" * 40,
+        "followupDigest": "w" * 64,
+        "prUrl": "https://github.com/a/b/pull/9",
+        "evidence": {"headSha": "a" * 40},
+    }
+    context = {
+        "contextDigest": "c" * 64,
+        "headSha": "a" * 40,
+        "commitSha": "a" * 40,
+        "publicationReceipt": {
+            "commitSha": "a" * 40,
+            "prUrl": "https://github.com/a/b/pull/9",
+        },
+        "prFollowup": {
+            "headSha": "a" * 40,
+            "preparedHeadSha": "a" * 40,
+            "wakeDigest": "w" * 64,
+            "prUrl": "https://github.com/a/b/pull/9",
+            "resultContract": {
+                "noLocalActionStage": "PR_OPEN",
+                "allowedStages": allowed_stages,
+            },
+        },
+    }
+
+    normalized, recovered_head = MODULE._normalize_exact_published_no_local_action_result(
+        object(),
+        candidate={"key": "a/b#1", "stage": "CI_GREEN"},
+        context=context,
+        value=value,
+        previously_ingested=True,
+    )
+
+    assert normalized is value
+    assert recovered_head is None
+
+
+def test_new_published_no_local_action_contract_does_not_repair_uningested_missing_head(
+    monkeypatch, tmp_path
+):
+    store, managed, _worktree, result_path, context, _value, _head_sha, _pr_url = (
+        _published_no_local_action_without_head(monkeypatch, tmp_path, previously_ingested=False)
+    )
+    assert (
+        context["prFollowup"]["resultContract"]["schemaVersion"] == "pr-followup-result-contract-v3"
+    )
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True, first["errors"]
+    assert first["ingested"] == []
+    assert first["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID",
+            "alreadyRecorded": False,
+        }
+    ]
+    assert managed.current_result_for_pr("a/b#9") is None
+    assert not store.task_result_digest_seen(
+        "a/b#1", hashlib.sha256(result_path.read_bytes()).hexdigest()
+    )
+
+
+def test_exact_published_no_local_action_rejects_conflicting_tombstone_before_managed_write(
+    monkeypatch, tmp_path
+):
+    store, managed, worktree, result_path, context, value, head_sha, _pr_url = (
+        _published_tombstone_no_local_action_without_head(monkeypatch, tmp_path)
+    )
+    value["codePathTombstoneReceipt"] = {"receiptDigest": "f" * 64}
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    tampered_digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    historical_value = dict(value)
+    historical_value.pop("codePathTombstoneReceipt")
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=tampered_digest,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+        **MODULE._recovered_task_result_tombstone_continuation_kwargs(
+            context,
+            historical_value,
+            worktree=worktree,
+            continuation_head=head_sha,
+        ),
+    )
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True, first["errors"]
+    assert first["ingested"] == []
+    assert first["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "CODE_PATH_TOMBSTONE_CONTINUATION_INVALID",
+            "alreadyRecorded": False,
+        }
+    ]
+    assert repeated["ok"] is True, repeated["errors"]
+    assert repeated["ingested"] == []
+    assert repeated["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "CODE_PATH_TOMBSTONE_CONTINUATION_INVALID",
+            "alreadyRecorded": True,
+        }
+    ]
+    assert managed.current_result_for_pr("a/b#9") is None
+    assert not store.published_task_result_backfill_seen("a/b#1", digest=tampered_digest)
 
 
 @pytest.mark.parametrize("include_result_receipt", [True, False])
@@ -13068,6 +18311,228 @@ def test_context_recovery_clears_only_exact_validation_auth_quarantine(monkeypat
     assert restored["publicationReceipt"]["prUrl"] == pr_url
 
 
+def _missing_publication_receipt_quarantine_fixture(monkeypatch, tmp_path):
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(tmp_path, worktree=worktree)
+    _managed, current, _pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        degrade_stage=False,
+    )
+    shared_path = MODULE.shared_context_path(current["issueUrl"])
+    local_path = worktree / MODULE.TASK_PRIVATE_DIR / "task-context.json"
+    blocked_at = iso_z(datetime.now(UTC) + timedelta(minutes=1))
+    blocked_commit = "d" * 40
+    blocked_request = {
+        "requestId": "blocked-update-request",
+        "opportunityKey": current["key"],
+        "issueUrl": current["issueUrl"],
+        "intentId": current["intentId"],
+        "threadId": current["threadId"],
+        "worktreePath": current["worktreePath"],
+        "commitSha": blocked_commit,
+        "branch": current["publicationReceipt"]["branch"],
+        "publicationKind": "PR_UPDATE",
+        "existingPrUrl": current["publicationReceipt"]["prUrl"],
+        "previousCommitSha": current["publicationReceipt"]["commitSha"],
+    }
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,reason,request_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,'BLOCKED','ACTIVE_OR_CONDITIONAL_CLAIM',?,?,?)""",
+            (
+                blocked_request["requestId"],
+                blocked_request["opportunityKey"],
+                blocked_request["threadId"],
+                blocked_request["commitSha"],
+                blocked_request["branch"],
+                blocked_request["worktreePath"],
+                "blocked-update-evidence",
+                json.dumps(blocked_request, sort_keys=True),
+                blocked_at,
+                blocked_at,
+            ),
+        )
+    historical = dict(current) | {
+        "publicationReceipt": {
+            "status": "BLOCKED",
+            "prUrl": None,
+            "commitSha": blocked_request["commitSha"],
+            "branch": blocked_request["branch"],
+            "requestedAt": blocked_at,
+            "updatedAt": blocked_at,
+        },
+    }
+    historical_raw = (
+        json.dumps(historical, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+    shared_path.write_bytes(historical_raw)
+    local_path.write_bytes(historical_raw)
+
+    first = MODULE.recover_shared_task_contexts(store)
+
+    assert first["errors"] == []
+    assert first["verified"] == 0
+    assert first["quarantined"][0]["reason"] == "SHARED_CONTEXT_INVALID"
+    gate = next(
+        gate
+        for gate in store.active_task_quarantines(current["key"])
+        if gate["payload"].get("error")
+        == "published task context is missing a pull request receipt"
+    )
+    assert gate["payload"]["originalBytesSha256"] == hashlib.sha256(historical_raw).hexdigest()
+    return store, worktree, shared_path, local_path, historical, current, gate
+
+
+def test_missing_publication_receipt_repair_is_receipt_only_and_keeps_old_head(
+    monkeypatch, tmp_path
+):
+    store, worktree, shared_path, local_path, historical, current, gate = (
+        _missing_publication_receipt_quarantine_fixture(monkeypatch, tmp_path)
+    )
+    original_head = run_git(worktree, "rev-parse", "HEAD")
+    store.record_shared_context_quarantine(
+        key=current["key"],
+        reason="SHARED_CONTEXT_INVALID",
+        dedupe_key="unrelated-context-invalid",
+        payload={"error": "a different context failure"},
+        created_at=iso_z(datetime.now(UTC)),
+    )
+
+    cleared = MODULE._clear_exact_missing_publication_receipt_quarantine(
+        store,
+        path=local_path,
+        context=historical,
+    )
+
+    assert cleared == 1
+    assert run_git(worktree, "rev-parse", "HEAD") == original_head
+    assert shared_path.read_bytes() == local_path.read_bytes()
+    repaired = json.loads(shared_path.read_text(encoding="utf-8"))
+    historical_without_receipt = dict(historical)
+    historical_without_receipt.pop("publicationReceipt")
+    repaired_without_receipt = dict(repaired)
+    repaired_without_receipt.pop("publicationReceipt")
+    assert repaired_without_receipt == historical_without_receipt
+    assert repaired["contextDigest"] == historical["contextDigest"]
+    assert repaired["publicationReceipt"] == current["publicationReceipt"]
+    remaining = store.active_task_quarantines(current["key"])
+    assert [(item["reason"], item["dedupeKey"]) for item in remaining] == [
+        ("SHARED_CONTEXT_INVALID", "unrelated-context-invalid")
+    ]
+    with store.connect() as connection:
+        cleared_row = connection.execute(
+            "SELECT clear_payload_json FROM task_quarantines WHERE dedupe_key=?",
+            (gate["dedupeKey"],),
+        ).fetchone()
+    evidence = json.loads(cleared_row["clear_payload_json"])
+    assert evidence["repair"] == "DURABLE_PUBLICATION_RECEIPT_REPROJECTED"
+    assert evidence["prUrl"] == current["publicationReceipt"]["prUrl"]
+    assert evidence["commitSha"] == current["publicationReceipt"]["commitSha"]
+    assert evidence["branch"] == current["publicationReceipt"]["branch"]
+
+
+def test_context_recovery_replays_exact_missing_publication_receipt_gate(monkeypatch, tmp_path):
+    store, worktree, shared_path, local_path, _historical, current, _gate = (
+        _missing_publication_receipt_quarantine_fixture(monkeypatch, tmp_path)
+    )
+    original_head = run_git(worktree, "rev-parse", "HEAD")
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    assert recovered["verified"] == 1
+    assert store.active_task_quarantines(current["key"]) == []
+    assert shared_path.read_bytes() == local_path.read_bytes()
+    repaired = json.loads(shared_path.read_text(encoding="utf-8"))
+    assert repaired["publicationReceipt"] == current["publicationReceipt"]
+    assert run_git(worktree, "rev-parse", "HEAD") == original_head
+
+
+def test_missing_publication_receipt_repair_resumes_split_mirror_write(monkeypatch, tmp_path):
+    store, _worktree, shared_path, local_path, historical, current, _gate = (
+        _missing_publication_receipt_quarantine_fixture(monkeypatch, tmp_path)
+    )
+    repaired = dict(historical) | {"publicationReceipt": current["publicationReceipt"]}
+    repaired_raw = (
+        json.dumps(repaired, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+    local_path.write_bytes(repaired_raw)
+    assert shared_path.read_bytes() != local_path.read_bytes()
+
+    recovered = MODULE.recover_shared_task_contexts(store)
+
+    assert recovered["errors"] == []
+    assert recovered["quarantined"] == []
+    assert recovered["verified"] == 1
+    assert shared_path.read_bytes() == local_path.read_bytes() == repaired_raw
+    assert store.active_task_quarantines(current["key"]) == []
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["gate-dedupe", "artifact-metadata", "current-bytes", "ledger-permit", "managed-binding"],
+)
+def test_missing_publication_receipt_repair_fails_closed_on_tamper(monkeypatch, tmp_path, tamper):
+    store, _worktree, shared_path, local_path, historical, current, gate = (
+        _missing_publication_receipt_quarantine_fixture(monkeypatch, tmp_path)
+    )
+    if tamper == "gate-dedupe":
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE task_quarantines SET dedupe_key='tampered' WHERE dedupe_key=?",
+                (gate["dedupeKey"],),
+            )
+    elif tamper == "artifact-metadata":
+        artifact_path = Path(gate["payload"]["artifactPath"])
+        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+        artifact["originalMode"] = 0o640
+        artifact_path.write_text(
+            json.dumps(artifact, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    elif tamper == "current-bytes":
+        changed = dict(historical) | {"titleTime": "01-01 00:00"}
+        changed_raw = (
+            json.dumps(changed, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+        ).encode("utf-8")
+        shared_path.write_bytes(changed_raw)
+        local_path.write_bytes(changed_raw)
+        historical = changed
+    elif tamper == "ledger-permit":
+        with store.connect() as connection:
+            connection.execute(
+                "UPDATE publication_permits SET branch='tampered-branch' "
+                "WHERE permit_id='published-authority-permit'"
+            )
+    elif tamper == "managed-binding":
+        with ManagedLedger(store.path, ensure_schema=True)._connection() as connection:
+            connection.execute(
+                "UPDATE managed_publication_reservations SET head_ref='tampered-branch' "
+                "WHERE reservation_key='publication:published-authority'"
+            )
+
+    before_shared = shared_path.read_bytes()
+    before_local = local_path.read_bytes()
+    cleared = MODULE._clear_exact_missing_publication_receipt_quarantine(
+        store,
+        path=shared_path,
+        context=historical,
+    )
+
+    assert cleared == 0
+    assert shared_path.read_bytes() == before_shared
+    assert local_path.read_bytes() == before_local
+    assert any(
+        item["reason"] == "SHARED_CONTEXT_INVALID"
+        for item in store.active_task_quarantines(current["key"])
+    )
+
+
 def test_published_validation_repair_is_idempotent_when_locked_writer_wins_race(
     monkeypatch, tmp_path
 ):
@@ -13357,6 +18822,12 @@ def _sign_reproduction_certificate(
 ) -> str:
     from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES, run_reproduction_probe
 
+    prior_receipt = value.get("reproductionReceipt")
+    receipt_code_paths = (
+        list(prior_receipt.get("codePaths") or [])
+        if isinstance(prior_receipt, dict)
+        else ["runtime.py"]
+    )
     unsigned = dict(value)
     unsigned.pop("reproductionReceipt", None)
     unsigned.pop("probeReceipt", None)
@@ -13383,7 +18854,7 @@ def _sign_reproduction_certificate(
         repo="a/b",
         default_branch="main",
         selected_base_sha=base_sha,
-        code_paths=["runtime.py"],
+        code_paths=receipt_code_paths,
         profile_id=profile_id,
         issue_url="https://github.com/a/b/issues/1",
         task_id="intent-1",
@@ -13417,7 +18888,7 @@ def _sign_reproduction_certificate(
             state="SYSTEM_PROCESSING",
             source="test-legal-fixture",
             provenance={"fixture": True},
-            metadata={"selectedBaseSha": base_sha, "codePaths": ["runtime.py"]},
+            metadata={"selectedBaseSha": base_sha, "codePaths": receipt_code_paths},
         )
         managed.bind_task(
             task_id=task_id,
@@ -13426,7 +18897,7 @@ def _sign_reproduction_certificate(
             worktree_path=str(worktree),
             state="REPRODUCTION_REQUIRED",
             provenance={
-                "codePaths": list(receipt.get("codePaths") or ["runtime.py"]),
+                "codePaths": list(receipt.get("codePaths") or receipt_code_paths),
                 "selectedBaseSha": receipt.get("baseSha"),
                 "headSha": receipt.get("headSha"),
                 "commitSha": receipt.get("commitSha"),
@@ -13590,6 +19061,50 @@ def test_implementation_context_survives_missing_opportunity_code_paths(tmp_path
     assert context["childMayEditFiles"] is True
     assert context["codePaths"] == ["runtime.py"]
     assert context["reproductionReceipt"]["receiptDigest"] == context["probeReceiptDigest"]
+
+
+@pytest.mark.parametrize(
+    ("intent_status", "opportunity_stage"),
+    [
+        ("REJECTED", None),
+        ("SUPERSEDED", None),
+        ("COMPLETED", "AUDIT_NO_GO"),
+    ],
+)
+def test_inactive_context_cannot_be_reauthorized_from_managed_probe_receipt(
+    tmp_path,
+    intent_status,
+    opportunity_stage,
+):
+    store, worktree, _result_path = _controller_commit_result(tmp_path)
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    assert managed.read_task("intent-1")["state"] == "IMPLEMENTATION_READY"
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE intents SET status=? WHERE intent_id='intent-1'", (intent_status,)
+        )
+        if opportunity_stage is not None:
+            connection.execute(
+                "UPDATE opportunities SET stage=? WHERE key='a/b#1'",
+                (opportunity_stage,),
+            )
+
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+
+    assert context["intentStatus"] == intent_status
+    assert context["stage"] == (opportunity_stage or "DISPATCHED")
+    assert context["taskStage"] == "REPRODUCTION_REQUIRED"
+    assert context["childMayEditFiles"] is False
+    assert "edit_files" not in context["allowedActions"]
+    assert "reproductionReceipt" not in context
+    assert "codePathTombstoneReceipt" not in context
 
 
 def test_implementation_context_prefers_durable_receipt_paths(monkeypatch, tmp_path):
@@ -13797,6 +19312,170 @@ def test_implementation_followup_reserve_repairs_context_before_delivery(tmp_pat
     assert refreshed["resultDigest"] == candidate["resultDigest"]
 
 
+def test_implementation_followup_reserve_forwards_exact_identity(monkeypatch, tmp_path):
+    candidate = {
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "shared-implementation-thread",
+        "intentId": "intent-one",
+        "worktreePath": str(tmp_path / "implementation-one"),
+        "resultDigest": "a" * 64,
+    }
+    observed: dict[str, Any] = {}
+    context_path = tmp_path / "task-context.json"
+    context_path.write_text(
+        json.dumps(
+            {
+                "taskStage": "IMPLEMENTATION_READY",
+                "probeLevel": MODULE.REPRODUCED_VALIDATED,
+                "childMayEditFiles": True,
+                "resultDigest": candidate["resultDigest"],
+                "reproductionReceipt": {"receiptDigest": "receipt"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class Store:
+        path = tmp_path / "ledger.sqlite3"
+
+        def implementation_followup_candidates(self):
+            return [candidate]
+
+        def active_task_quarantine(self, _key):
+            return None
+
+        def reserve_implementation_followup(self, **kwargs):
+            observed.update(kwargs)
+            return candidate | kwargs
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "write_task_context", lambda *_args, **_kwargs: context_path)
+
+    result = MODULE.implementation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            intent_id=candidate["intentId"],
+            worktree_path=candidate["worktreePath"],
+        )
+    )
+
+    assert result["intentId"] == candidate["intentId"]
+    assert observed == {
+        "thread_id": candidate["threadId"],
+        "result_digest": candidate["resultDigest"],
+        "intent_id": candidate["intentId"],
+        "worktree_path": candidate["worktreePath"],
+    }
+
+
+def test_implementation_context_repair_ignores_foreign_sent_event(tmp_path):
+    """A newer same-thread result from another intent cannot authorize repair."""
+
+    store, worktree, _result_path = _controller_commit_result(tmp_path)
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    provenance = json.loads(managed.read_task("intent-1")["provenance_json"])
+    result_digest = str(provenance["probeReceipt"]["resultDigest"])
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=result_digest,
+        stage="IMPLEMENTATION_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+    store.reserve_implementation_followup(thread_id="thread-1", result_digest=result_digest)
+    store.commit_implementation_followup(thread_id="thread-1", result_digest=result_digest)
+    with store.connect() as connection:
+        valid_sent = connection.execute(
+            """SELECT id FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                 AND json_extract(payload_json,'$.intentId')='intent-1'"""
+        ).fetchone()
+        assert valid_sent is not None
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES ('intent-foreign','a/b#1','foreign-digest','DISPATCHED',?,?,?,?,?,?,?)""",
+            (
+                iso_z(datetime.now(UTC)),
+                iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                "thread-1",
+                "github",
+                "/tmp/foreign-implementation-worktree",
+                json.dumps({"intentId": "intent-foreign"}),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','IMPLEMENTATION_FOLLOWUP_SENT','foreign-attempt',?,?)""",
+            (
+                json.dumps(
+                    {
+                        "intentId": "intent-foreign",
+                        "threadId": "thread-1",
+                        "worktreePath": "/tmp/foreign-implementation-worktree",
+                        "resultDigest": result_digest,
+                        "attemptDigest": "foreign-attempt",
+                    }
+                ),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+
+    assert (
+        store.record_implementation_context_repair(
+            key="a/b#1",
+            task_id="intent-1",
+            thread_id="thread-1",
+            worktree_path=str(worktree),
+            result_digest=result_digest,
+            context_digest="context-digest",
+        )
+        is True
+    )
+    with store.connect() as connection:
+        repair = connection.execute(
+            """SELECT json_extract(payload_json,'$.priorSentEventId')
+               FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='IMPLEMENTATION_CONTEXT_REPAIRED'"""
+        ).fetchone()
+    assert repair is not None
+    assert int(repair[0]) == int(valid_sent[0])
+
+
+def test_implementation_task_turn_commit_forwards_exact_identity(tmp_path):
+    observed: dict[str, Any] = {}
+
+    class Store:
+        def commit_implementation_followup(self, **kwargs):
+            observed.update(kwargs)
+
+    MODULE._commit_task_turn_delivery(
+        Store(),
+        delivery_kind="implementation-followup",
+        thread_id="shared-implementation-thread",
+        delivery_token="a" * 64,
+        candidate={
+            "intentId": "intent-one",
+            "worktreePath": str(tmp_path / "implementation-one"),
+        },
+    )
+
+    assert observed == {
+        "thread_id": "shared-implementation-thread",
+        "result_digest": "a" * 64,
+        "intent_id": "intent-one",
+        "worktree_path": str(tmp_path / "implementation-one"),
+    }
+
+
 def test_implementation_followup_without_result_uses_bounded_recovery(tmp_path):
     store, _worktree, _result_path = _controller_commit_result(tmp_path)
     managed = ManagedLedger(store.path, ensure_schema=True)
@@ -13929,6 +19608,420 @@ def test_controller_accepts_verified_changed_files_beyond_reproduction_scope(tmp
     assert finalized["reproductionReceipt"]["codePaths"] == ["runtime.py"]
 
 
+def test_controller_defaults_omitted_code_paths_from_exact_commit_scope(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("tests/test_runtime.py",),
+        additional_baseline_files=("tests/test_runtime.py",),
+        omit_reported_code_paths=True,
+    )
+    candidate = store.task_result_candidates()[0]
+    result_raw = result_path.read_bytes()
+    context_raw = (result_path.parent / "task-context.json").read_bytes()
+    old_snapshot_digest = hashlib.sha256(result_raw + b"\0" + context_raw).hexdigest()
+    ManagedLedger(store.path, ensure_schema=False).record_event(
+        event_type="TASK_RESULT_EVIDENCE_BLOCKED",
+        idempotency_key=(
+            "task-result-evidence-blocked:managed-reproduction-scope-v2:"
+            f"{candidate['key']}:{candidate['threadId']}:{old_snapshot_digest}"
+        ),
+        opportunity_key=candidate["key"],
+        task_id=candidate["intentId"],
+        state="DISPATCHED",
+        source="result-ingestion",
+        provenance={"policyRevision": "managed-reproduction-scope-v2"},
+        payload={"reason": "CONTROLLER_CHANGED_FILES_OUTSIDE_REPORTED_SCOPE"},
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result
+    assert result["errors"] == []
+    assert result.get("workBlocked", []) == []
+    assert result["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["changedFiles"] == ["runtime.py", "tests/test_runtime.py"]
+    assert finalized["codePaths"] == ["runtime.py"]
+    assert finalized["reproductionReceipt"]["codePaths"] == ["runtime.py"]
+    assert finalized["controllerCodePathScope"]["reported"] == [
+        "runtime.py",
+        "tests/test_runtime.py",
+    ]
+    assert finalized["controllerCodePathScope"]["added"] == ["tests/test_runtime.py"]
+
+
+def test_completed_controller_commit_defaults_code_paths_when_field_is_absent(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("integration.py",),
+    )
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.pop("codePaths")
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        finalized, _raw = MODULE._finalize_controller_commit(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=result_access,
+            write_if_unchanged=False,
+        )
+
+    assert finalized["codePaths"] == ["integration.py", "runtime.py"]
+    assert finalized["controllerCommitChangedFiles"] == ["integration.py", "runtime.py"]
+
+
+def _write_completed_implementation_turn_receipt(
+    state: Path,
+    *,
+    context: dict[str, Any],
+    attempt_digest: str | None = None,
+) -> Path:
+    delivery_token = str(context["resultDigest"])
+    attempt_digest = attempt_digest or delivery_token
+    receipt_key = MODULE._task_turn_delivery_file_key(
+        delivery_kind="implementation-followup",
+        thread_id="thread-1",
+        delivery_token=delivery_token,
+        delivery_attempt_digest=attempt_digest,
+    )
+    receipt_root = state / "task_turn_receipts"
+    receipt_root.mkdir(parents=True)
+    receipt_path = receipt_root / f"{receipt_key}.json"
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "threadId": "thread-1",
+                "deliveryKind": "implementation-followup",
+                "deliveryToken": delivery_token,
+                "deliveryAttemptDigest": attempt_digest,
+                "turnId": "turn-implementation-1",
+                "turnStatus": "completed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    receipt_path.chmod(0o600)
+    return receipt_path
+
+
+def _record_completed_implementation_followup(
+    store: RadarLedger,
+    *,
+    context: dict[str, Any],
+) -> str:
+    result_digest = str(context["resultDigest"])
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=result_digest,
+        stage="IMPLEMENTATION_READY",
+    )
+    reserved = store.reserve_implementation_followup(
+        thread_id="thread-1",
+        result_digest=result_digest,
+    )
+    attempt_digest = str(reserved["implementationFollowupAttemptDigest"])
+    store.authorize_task_turn_delivery(
+        delivery_kind="implementation-followup",
+        thread_id="thread-1",
+        delivery_token=result_digest,
+        delivery_attempt_digest=attempt_digest,
+    )
+    store.commit_implementation_followup(
+        thread_id="thread-1",
+        result_digest=result_digest,
+    )
+    return attempt_digest
+
+
+def test_context_sync_preserves_exact_completed_result_pending_ingestion(monkeypatch, tmp_path):
+    managed_worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=managed_worktree,
+        additional_changed_files=("tests/test_runtime.py",),
+        additional_baseline_files=("tests/test_runtime.py",),
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.pop("codePaths")
+    value.pop("taskId")
+    result_path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+    result_raw = result_path.read_bytes()
+    context_path = result_path.parent / "task-context.json"
+    context_raw = context_path.read_bytes()
+    context = json.loads(context_raw)
+    state = tmp_path / "runtime-state"
+    attempt_digest = _record_completed_implementation_followup(store, context=context)
+    _write_completed_implementation_turn_receipt(
+        state,
+        context=context,
+        attempt_digest=attempt_digest,
+    )
+    monkeypatch.setattr(MODULE, "STATE", state)
+
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+
+    assert synced["ok"] is True, synced
+    assert synced["errors"] == []
+    assert synced["pendingResultIngestion"] == [{"key": "a/b#1", "threadId": "thread-1"}]
+    assert result_path.read_bytes() == result_raw
+    assert context_path.read_bytes() == context_raw
+
+
+def test_context_sync_does_not_defer_mismatched_completed_commit(monkeypatch, tmp_path):
+    managed_worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=managed_worktree,
+        additional_changed_files=("integration.py",),
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["controllerCommitChangedFiles"] = ["runtime.py"]
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    candidate = store.task_result_candidates()[0]
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    state = tmp_path / "runtime-state"
+    attempt_digest = _record_completed_implementation_followup(store, context=context)
+    _write_completed_implementation_turn_receipt(
+        state,
+        context=context,
+        attempt_digest=attempt_digest,
+    )
+    monkeypatch.setattr(MODULE, "STATE", state)
+
+    assert (
+        MODULE._controller_commit_result_pending_ingestion(
+            store,
+            candidate,
+            worktree=worktree,
+        )
+        is False
+    )
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    assert synced["pendingResultIngestion"] == []
+
+
+def test_context_sync_requires_completed_implementation_turn_receipt(monkeypatch, tmp_path):
+    managed_worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, _result_path = _controller_commit_result(
+        tmp_path,
+        worktree=managed_worktree,
+    )
+    candidate = store.task_result_candidates()[0]
+    context = json.loads(
+        (worktree / MODULE.TASK_PRIVATE_DIR / "task-context.json").read_text(encoding="utf-8")
+    )
+    _record_completed_implementation_followup(store, context=context)
+    monkeypatch.setattr(MODULE, "STATE", tmp_path / "empty-runtime-state")
+
+    assert (
+        MODULE._controller_commit_result_pending_ingestion(
+            store,
+            candidate,
+            worktree=worktree,
+        )
+        is False
+    )
+
+
+def test_context_sync_rejects_explicit_wrong_task_id(monkeypatch, tmp_path):
+    managed_worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=managed_worktree,
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["taskId"] = "different-intent"
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    state = tmp_path / "runtime-state"
+    attempt_digest = _record_completed_implementation_followup(store, context=context)
+    _write_completed_implementation_turn_receipt(
+        state,
+        context=context,
+        attempt_digest=attempt_digest,
+    )
+    monkeypatch.setattr(MODULE, "STATE", state)
+    candidate = store.task_result_candidates()[0]
+
+    assert (
+        MODULE._controller_commit_result_pending_ingestion(
+            store,
+            candidate,
+            worktree=worktree,
+        )
+        is False
+    )
+
+
+def test_context_sync_accepts_completed_repaired_implementation_attempt(monkeypatch, tmp_path):
+    managed_worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=managed_worktree,
+    )
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    initial_attempt = _record_completed_implementation_followup(store, context=context)
+    assert initial_attempt == context["resultDigest"]
+    assert store.record_implementation_context_repair(
+        key="a/b#1",
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=str(worktree),
+        result_digest=str(context["resultDigest"]),
+        context_digest=str(context["contextDigest"]),
+    )
+    repaired_attempt = _record_completed_implementation_followup(store, context=context)
+    assert repaired_attempt != initial_attempt
+    state = tmp_path / "runtime-state"
+    _write_completed_implementation_turn_receipt(
+        state,
+        context=context,
+        attempt_digest=repaired_attempt,
+    )
+    monkeypatch.setattr(MODULE, "STATE", state)
+    candidate = store.task_result_candidates()[0]
+
+    assert MODULE._controller_commit_result_pending_ingestion(
+        store,
+        candidate,
+        worktree=worktree,
+    )
+
+
+def test_context_sync_rejects_stale_receipt_after_repaired_attempt(monkeypatch, tmp_path):
+    managed_worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        worktree=managed_worktree,
+    )
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    initial_attempt = _record_completed_implementation_followup(store, context=context)
+    state = tmp_path / "runtime-state"
+    _write_completed_implementation_turn_receipt(
+        state,
+        context=context,
+        attempt_digest=initial_attempt,
+    )
+    assert store.record_implementation_context_repair(
+        key="a/b#1",
+        task_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=str(worktree),
+        result_digest=str(context["resultDigest"]),
+        context_digest=str(context["contextDigest"]),
+    )
+    repaired_attempt = _record_completed_implementation_followup(store, context=context)
+    assert repaired_attempt != initial_attempt
+    monkeypatch.setattr(MODULE, "STATE", state)
+    candidate = store.task_result_candidates()[0]
+
+    assert (
+        MODULE._controller_commit_result_pending_ingestion(
+            store,
+            candidate,
+            worktree=worktree,
+        )
+        is False
+    )
+
+
+def test_controller_recovers_prebind_review_after_receipt_binding_crash(monkeypatch, tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("integration.py",),
+        reported_code_paths=("runtime.py", "integration.py"),
+    )
+    candidate = store.task_result_candidates()[0]
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    original_write = MODULE._write_task_result_json_to_private
+
+    def crash_before_final_result_write(result_access, value):
+        if (
+            "controllerCodePathScope" in value
+            and value.get("quality", {}).get("independent_review_passed") is True
+        ):
+            raise OSError("simulated crash before canonical result write")
+        return original_write(result_access, value)
+
+    monkeypatch.setattr(
+        MODULE, "_write_task_result_json_to_private", crash_before_final_result_write
+    )
+    interrupted = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert interrupted["ok"] is False
+    assert interrupted["publicationRequests"] == []
+
+    prebind_after_crash = json.loads(result_path.read_text(encoding="utf-8"))
+    assert "controllerCodePathScope" not in prebind_after_crash
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        canonical_preview, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=prebind_after_crash,
+            result_access=result_access,
+            managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+            write_result=False,
+        )
+    assert canonical_preview["codePaths"] == ["runtime.py"]
+    assert canonical_preview["controllerCodePathScope"]["reported"] == [
+        "integration.py",
+        "runtime.py",
+    ]
+    assert (
+        MODULE._controller_review_result(SimpleNamespace(ledger=store.path), canonical_preview)
+        is not None
+    )
+
+    monkeypatch.setattr(MODULE, "_write_task_result_json_to_private", original_write)
+    recovered = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+
+    assert recovered["ok"] is True, recovered
+    assert recovered["errors"] == []
+    assert recovered["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(recovered["publicationRequests"]) == 1
+    assert recovered["publicationRequests"][0]["status"] == "PENDING"
+    assert finalized["quality"]["independent_review_passed"] is True
+    assert finalized["independentReview"]["verdict"] == "PASS"
+    assert (
+        MODULE._controller_review_result(SimpleNamespace(ledger=store.path), finalized) is not None
+    )
+    request = store.publication_request(recovered["publicationRequests"][0]["requestId"])
+    assert request is not None
+    assert request["status"] == "PENDING"
+    assert request["reason"] is None
+
+
+def test_controller_rejects_actual_commit_file_missing_from_reported_code_paths(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("integration.py",),
+        reported_code_paths=("runtime.py",),
+    )
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+
+    assert value["controllerCommitChangedFiles"] == ["integration.py", "runtime.py"]
+    assert value["codePaths"] == ["runtime.py"]
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        with pytest.raises(
+            MODULE.TaskResultEvidenceBlocked,
+            match="SCOPE.*REPORTED|REPORTED.*SCOPE",
+        ):
+            MODULE._bind_final_reproduction_receipt(
+                candidate=candidate,
+                context=context,
+                value=value,
+                result_access=result_access,
+                managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+            )
+
+
 def test_child_cannot_self_attest_independent_review(monkeypatch, tmp_path):
     store, _worktree, result_path = _controller_commit_result(tmp_path, authenticated=False)
     monkeypatch.setattr(MODULE, "controller_review_result", lambda _root, _value: None)
@@ -14032,6 +20125,132 @@ def test_final_receipt_keeps_managed_reproduction_scope_when_child_reports_more_
     assert finalized_again == finalized
 
 
+def test_expanded_controller_code_path_scope_is_idempotent_across_second_rebind(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("integration.py",),
+        reported_code_paths=("runtime.py", "integration.py"),
+    )
+    candidate = store.task_result_candidates()[0]
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+
+    assert value["controllerCommitChangedFiles"] == ["integration.py", "runtime.py"]
+    assert value["codePaths"] == ["runtime.py", "integration.py"]
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        finalized, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=result_access,
+            managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+        )
+
+    assert finalized["controllerCodePathScope"]["authorized"] == ["runtime.py"]
+    assert finalized["controllerCodePathScope"]["reported"] == [
+        "integration.py",
+        "runtime.py",
+    ]
+    assert finalized["controllerCodePathScope"]["added"] == ["integration.py"]
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        rebound, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=finalized,
+            result_access=result_access,
+            managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+        )
+
+    assert rebound == finalized
+
+
+def test_commit_finalizer_drops_forged_merge_resolution_provenance(tmp_path):
+    store, worktree, result_path = _controller_commit_result(tmp_path)
+    candidate = store.task_result_candidates()[0]
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "mergeResolutionFiles": ["unrelated.py"],
+            "mergeBaseSha": "a" * 40,
+            "resolutionSourceCommit": "b" * 40,
+        }
+    )
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        with pytest.raises(
+            MODULE.TaskResultEvidenceBlocked,
+            match="CONTROLLER_CHANGED_FILES_MODE_MISMATCH",
+        ):
+            MODULE._bind_final_reproduction_receipt(
+                candidate=candidate,
+                context=context,
+                value=value,
+                result_access=result_access,
+                managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+                write_result=False,
+            )
+
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate=candidate,
+        context=context,
+        value=value,
+        result_path=result_path,
+    )
+    assert finalized["controllerCommitChangedFiles"] == ["runtime.py"]
+    assert "mergeResolutionFiles" not in finalized
+    assert "mergeBaseSha" not in finalized
+    assert "resolutionSourceCommit" not in finalized
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        rebound, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=finalized,
+            result_access=result_access,
+            managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+            write_result=False,
+        )
+    assert "mergeResolutionFiles" not in rebound
+    assert "controllerCodePathScope" not in rebound
+
+
+def test_merge_receipt_keeps_resolution_path_restored_out_of_publication_diff(tmp_path):
+    store, _worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("integration.py",),
+        reported_code_paths=("runtime.py", "integration.py"),
+    )
+    candidate = store.task_result_candidates()[0]
+    context = json.loads((result_path.parent / "task-context.json").read_text(encoding="utf-8"))
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    resolution_files = list(value["controllerCommitChangedFiles"])
+    value.update(
+        {
+            "handoffMode": "controller_merge_complete",
+            "mergeResolutionFiles": resolution_files,
+            "changedFiles": ["runtime.py"],
+        }
+    )
+
+    with MODULE._task_worktree_private_descriptor(candidate) as result_access:
+        rebound, _raw = MODULE._bind_final_reproduction_receipt(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=result_access,
+            managed_ledger=ManagedLedger(store.path, ensure_schema=False),
+            write_result=False,
+        )
+
+    assert rebound["changedFiles"] == ["runtime.py"]
+    assert rebound["controllerCodePathScope"]["reported"] == [
+        "integration.py",
+        "runtime.py",
+    ]
+    assert rebound["controllerCodePathScope"]["added"] == ["integration.py"]
+
+
 def test_final_receipt_never_falls_back_when_managed_durable_binding_disagrees(
     tmp_path,
 ):
@@ -14061,6 +20280,8 @@ def test_final_receipt_never_falls_back_when_managed_durable_binding_disagrees(
     ("reported", "changed", "reason"),
     [
         (["replacement.py"], ["replacement.py"], "REPRODUCTION_SCOPE_OMITTED_OR_REPLACED"),
+        ([], ["runtime.py"], "REPORTED_SCOPE_PATHS_INVALID"),
+        (None, ["runtime.py"], "REPORTED_SCOPE_PATHS_INVALID"),
         (
             ["runtime.py", "unrelated.py"],
             ["runtime.py"],
@@ -14547,6 +20768,959 @@ def test_existing_policy_block_with_refreshed_context_stays_idempotent(tmp_path)
     }
 
 
+def _merge_resolution_scope_request_fixture(
+    tmp_path,
+    *,
+    head_changed_files: tuple[str, ...] = (),
+    head_unchanged_files: tuple[str, ...] = (),
+    requested_extra: str = "runtime/new.py",
+    signed_changed_files: tuple[str, ...] | None = None,
+    signed_review_paths: tuple[str, ...] = (),
+):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=head_changed_files,
+        additional_baseline_files=head_unchanged_files,
+    )
+    source_result = json.loads(result_path.read_text(encoding="utf-8"))
+    head_sha = str(source_result["reproductionReceipt"]["commitSha"])
+    run_git(worktree, "switch", "main")
+    (worktree / "runtime.py").write_text("value = 3\n", encoding="utf-8")
+    (worktree / "runtime").mkdir()
+    (worktree / "runtime" / "new.py").write_text("value = 3\n", encoding="utf-8")
+    (worktree / "unrelated.py").write_text("UNRELATED = True\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py", "runtime/new.py", "unrelated.py")
+    run_git(worktree, "commit", "-m", "refactor: split runtime implementation")
+    base_sha = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", "fix/1-runtime-boundary")
+    _managed, _context, pr_url = _bind_published_pr_authority_fixture(
+        store,
+        worktree,
+        result_path,
+        degrade_stage=False,
+    )
+    checked_at = iso_z(datetime.now(UTC) + timedelta(seconds=1))
+    followup_evidence = {
+        "mergeConflict": True,
+        "baseRefName": "main",
+        "baseSha": base_sha,
+        "mergeConflictFiles": ["runtime.py"],
+    }
+    if signed_changed_files is not None:
+        followup_evidence["changedFiles"] = sorted(signed_changed_files)
+    if signed_review_paths:
+        followup_evidence["unresolvedReviewThreads"] = [
+            {"path": path} for path in sorted(signed_review_paths)
+        ]
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": checked_at,
+            "items": [
+                {
+                    "url": pr_url,
+                    "headSha": head_sha,
+                    "actionDigest": "merge-conflict-action",
+                    "taskActionDigest": "merge-conflict-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["解决当前基线重构引起的冲突"],
+                    "evidence": followup_evidence,
+                    "checkedAt": checked_at,
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=str(candidate["wakeDigest"]),
+        prepared_head_sha=head_sha,
+        prepared_base_sha=base_sha,
+        merge_conflict_files=["runtime.py"],
+    )
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+        prepared_followup_head=head_sha,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    request = {
+        "schemaVersion": "radar-task-result-v1",
+        "contextDigest": context["contextDigest"],
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "stage": "PR_OPEN",
+        "followupDigest": context["prFollowup"]["wakeDigest"],
+        "headSha": head_sha,
+        "commitSha": head_sha,
+        "prUrl": pr_url,
+        "reason": "CONFLICT_SCOPE_INSUFFICIENT",
+        "evidence": {
+            "headSha": head_sha,
+            "mergeConflictFiles": ["runtime.py"],
+            "requiredResolutionFiles": sorted(["runtime.py", requested_extra]),
+        },
+    }
+    result_path.write_text(json.dumps(request), encoding="utf-8")
+    return store, worktree, result_path, context, request, head_sha, base_sha
+
+
+def test_ingest_accepts_explicit_none_merge_resolution_local_action(tmp_path):
+    store, _worktree, result_path, _context, request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    request["evidence"]["localAction"] = "none"
+    result_path.write_text(json.dumps(request), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["resolutionScopeAuthorized"][0]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+
+
+@pytest.mark.parametrize("local_action", [None, False, "changed"])
+def test_ingest_rejects_explicit_non_none_merge_resolution_local_action(tmp_path, local_action):
+    store, _worktree, result_path, _context, request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    request["evidence"]["localAction"] = local_action
+    result_path.write_text(json.dumps(request), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["ingested"] == []
+    assert result["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "MERGE_RESOLUTION_SCOPE_REQUEST_INVALID",
+            "alreadyRecorded": False,
+        }
+    ]
+
+
+def test_ingest_authorizes_review_bound_existing_pr_path_and_finalizer_consumes_it(tmp_path):
+    store, worktree, result_path, _context, request, head_sha, base_sha = (
+        _merge_resolution_scope_request_fixture(
+            tmp_path,
+            head_changed_files=("worker.py",),
+            requested_extra="worker.py",
+            signed_changed_files=("runtime.py", "worker.py"),
+            signed_review_paths=("worker.py",),
+        )
+    )
+
+    authorized = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert authorized["ok"] is True, authorized["errors"]
+    assert authorized.get("workBlocked", []) == []
+    authorization = authorized["resolutionScopeAuthorized"][0]
+    assert authorization["authorizedResolutionFiles"] == ["runtime.py", "worker.py"]
+    replacement = store.pr_followup_candidates()[0]
+    assert replacement["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "worker.py",
+    ]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=str(replacement["wakeDigest"]),
+        prepared_head_sha=head_sha,
+        prepared_base_sha=base_sha,
+        merge_conflict_files=["runtime.py"],
+    )
+    next_context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+            prepared_followup_head=head_sha,
+        ).read_text(encoding="utf-8")
+    )
+    assert next_context["prFollowup"]["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "worker.py",
+    ]
+
+    (worktree / "runtime.py").write_text("value = 4\n", encoding="utf-8")
+    (worktree / "worker.py").write_text("value = 4\n", encoding="utf-8")
+    quality = {field: True for field in QUALITY_FIELDS}
+    quality["independent_review_passed"] = False
+    merge_value = {
+        "schemaVersion": "radar-task-result-v1",
+        "contextDigest": next_context["contextDigest"],
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "stage": "FIX_READY",
+        "reason": "MERGE_CONFLICT_RESOLVED",
+        "prUrl": request["prUrl"],
+        "followupDigest": replacement["wakeDigest"],
+        "handoffMode": "controller_merge_required",
+        "commitSha": None,
+        "headSha": head_sha,
+        "branch": "fix/1-runtime-boundary",
+        "commitMessage": "merge: resolve runtime review findings",
+        "changedFiles": ["runtime.py", "worker.py"],
+        "mergeBaseSha": base_sha,
+        "selectedBaseSha": next_context["selectedBaseSha"],
+        "taskId": "intent-1",
+        "codePaths": list(next_context["codePaths"]),
+        "probeRequired": True,
+        "probeLevel": "REPRODUCED_VALIDATED",
+        "tests": [{"command": "pytest tests/runtime", "exitCode": 0}],
+        "quality": quality,
+        "publication": {
+            "headOwner": "Oxygen56",
+            "baseBranch": "main",
+            "title": "fix: resolve runtime review findings",
+            "bodyFile": str((worktree / ".oss-pr-radar" / "pr-body.md").resolve()),
+        },
+    }
+    result_path.write_text(json.dumps(merge_value), encoding="utf-8")
+
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate={"worktreePath": str(worktree)},
+        context=next_context,
+        value=merge_value,
+        result_path=result_path,
+    )
+
+    assert finalized["mergeResolutionFiles"] == ["runtime.py", "worker.py"]
+    assert finalized["controllerCommitChangedFiles"] == ["runtime.py", "worker.py"]
+    assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
+        head_sha,
+        base_sha,
+    ]
+    assert (worktree / "worker.py").read_text(encoding="utf-8") == "value = 4\n"
+    assert run_git(worktree, "status", "--porcelain") == ""
+
+
+def test_ingest_rejects_pr_changed_path_without_signed_review_thread(tmp_path):
+    store, _worktree, _result_path, _context, _request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(
+            tmp_path,
+            head_changed_files=("worker.py",),
+            requested_extra="worker.py",
+            signed_changed_files=("runtime.py", "worker.py"),
+        )
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "MERGE_RESOLUTION_SCOPE_UNRELATED_PATH",
+            "alreadyRecorded": False,
+        }
+    ]
+
+
+def test_ingest_rejects_forged_local_review_path_absent_from_historical_preparation(tmp_path):
+    store, _worktree, result_path, _context, request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(
+            tmp_path,
+            head_changed_files=("worker.py",),
+            requested_extra="worker.py",
+            signed_changed_files=("runtime.py", "worker.py"),
+        )
+    )
+    context_path = result_path.parent / "task-context.json"
+    forged_context = json.loads(context_path.read_text(encoding="utf-8"))
+    forged_context["prFollowup"]["evidence"]["unresolvedReviewThreads"] = [{"path": "worker.py"}]
+    forged_context["contextDigest"] = MODULE._task_context_digest(
+        forged_context, forged_context["prFollowup"]["preparedHeadSha"]
+    )
+    context_path.write_text(json.dumps(forged_context), encoding="utf-8")
+    request["contextDigest"] = forged_context["contextDigest"]
+    result_path.write_text(json.dumps(request), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "MERGE_RESOLUTION_SCOPE_UNRELATED_PATH",
+            "alreadyRecorded": False,
+        }
+    ]
+
+
+def test_ingest_rejects_review_path_outside_signed_changed_files(tmp_path):
+    store, _worktree, _result_path, _context, _request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(
+            tmp_path,
+            head_changed_files=("worker.py",),
+            requested_extra="worker.py",
+            signed_changed_files=("runtime.py",),
+            signed_review_paths=("worker.py",),
+        )
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "MERGE_RESOLUTION_SCOPE_UNRELATED_PATH",
+            "alreadyRecorded": False,
+        }
+    ]
+
+
+def test_ingest_rejects_signed_review_path_outside_bound_pr_delta(tmp_path):
+    store, _worktree, _result_path, _context, _request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(
+            tmp_path,
+            head_unchanged_files=("stable.py",),
+            requested_extra="stable.py",
+            signed_changed_files=("runtime.py", "stable.py"),
+            signed_review_paths=("stable.py",),
+        )
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "MERGE_RESOLUTION_SCOPE_BASE_DELTA_INVALID",
+            "alreadyRecorded": False,
+        }
+    ]
+
+
+def test_ingest_authorizes_base_only_merge_resolution_scope_and_finalizer_consumes_it(
+    tmp_path,
+):
+    store, worktree, result_path, source_context, request, head_sha, base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    source_wake = str(source_context["prFollowup"]["wakeDigest"])
+    source_code_paths = list(source_context["codePaths"])
+    source_receipt_digest = source_context["reproductionReceipt"]["receiptDigest"]
+    assert "localAction" not in request["evidence"]
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True, first["errors"]
+    assert first.get("workBlocked", []) == []
+    authorization = first["resolutionScopeAuthorized"][0]
+    assert authorization["authorizedResolutionFiles"] == ["runtime.py", "runtime/new.py"]
+    assert authorization["replacementWakeDigest"] != source_wake
+    assert repeated["resolutionScopeAuthorized"][0]["alreadyRecorded"] is True
+    refreshed_at = iso_z(datetime.now(UTC) + timedelta(seconds=2))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": refreshed_at,
+            "items": [
+                {
+                    "url": request["prUrl"],
+                    "headSha": head_sha,
+                    "actionDigest": "same-snapshot-refreshed-action",
+                    "taskActionDigest": "same-snapshot-refreshed-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["继续处理同一基线和冲突集"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseRefName": "main",
+                        "baseSha": base_sha,
+                        "mergeConflictFiles": ["runtime.py"],
+                    },
+                    "checkedAt": refreshed_at,
+                }
+            ],
+        }
+    )
+    replacement = store.pr_followup_candidates()[0]
+    assert replacement["wakeDigest"] == authorization["replacementWakeDigest"]
+    assert replacement["evidence"]["mergeConflictFiles"] == ["runtime.py"]
+    assert replacement["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+    assert "authorizedResolutionFiles" in MODULE._pr_followup_prompt(replacement)
+
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=str(replacement["wakeDigest"]),
+        prepared_head_sha=head_sha,
+        prepared_base_sha=base_sha,
+        merge_conflict_files=["runtime.py"],
+    )
+    next_context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+        prepared_followup_head=head_sha,
+    )
+    next_context = json.loads(next_context_path.read_text(encoding="utf-8"))
+    assert next_context["codePaths"] == source_code_paths
+    assert next_context["reproductionReceipt"]["receiptDigest"] == source_receipt_digest
+    assert next_context["prFollowup"]["evidence"]["mergeConflictFiles"] == ["runtime.py"]
+    assert next_context["prFollowup"]["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+
+    (worktree / "runtime.py").write_text("value = 4\n", encoding="utf-8")
+    (worktree / "runtime").mkdir(exist_ok=True)
+    (worktree / "runtime" / "new.py").write_text("value = 4\n", encoding="utf-8")
+    quality = {field: True for field in QUALITY_FIELDS}
+    quality["independent_review_passed"] = False
+    body_path = worktree / ".oss-pr-radar" / "pr-body.md"
+    merge_value = {
+        "schemaVersion": "radar-task-result-v1",
+        "contextDigest": next_context["contextDigest"],
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "thread-1",
+        "worktreePath": str(worktree.resolve()),
+        "stage": "FIX_READY",
+        "reason": "MERGE_CONFLICT_RESOLVED",
+        "prUrl": request["prUrl"],
+        "followupDigest": replacement["wakeDigest"],
+        "handoffMode": "controller_merge_required",
+        "commitSha": None,
+        "headSha": head_sha,
+        "branch": "fix/1-runtime-boundary",
+        "commitMessage": "merge: refresh split runtime implementation",
+        "changedFiles": ["runtime.py", "runtime/new.py"],
+        "mergeBaseSha": base_sha,
+        "selectedBaseSha": next_context["selectedBaseSha"],
+        "taskId": "intent-1",
+        "codePaths": list(next_context["codePaths"]),
+        "probeRequired": True,
+        "probeLevel": "REPRODUCED_VALIDATED",
+        "tests": [{"command": "pytest tests/runtime", "exitCode": 0}],
+        "quality": quality,
+        "publication": {
+            "headOwner": "Oxygen56",
+            "baseBranch": "main",
+            "title": "fix: refresh split runtime implementation",
+            "bodyFile": str(body_path.resolve()),
+        },
+    }
+    result_path.write_text(json.dumps(merge_value), encoding="utf-8")
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate={"worktreePath": str(worktree)},
+        context=next_context,
+        value=merge_value,
+        result_path=result_path,
+    )
+
+    assert finalized["mergeResolutionFiles"] == ["runtime.py", "runtime/new.py"]
+    assert finalized["controllerCommitChangedFiles"] == ["runtime.py", "runtime/new.py"]
+    assert finalized["codePaths"] == sorted(set(source_code_paths) | {"runtime/new.py"})
+    assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
+        head_sha,
+        base_sha,
+    ]
+    assert (worktree / "runtime" / "new.py").read_text(encoding="utf-8") == "value = 4\n"
+    assert run_git(worktree, "status", "--porcelain") == ""
+    assert request["evidence"]["requiredResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+
+    # Simulate a crash-era controller intermediate: the merge envelope was
+    # finalized, but it still carries the implementation receipt for the old
+    # commit. The next ingestion must re-verify the merge before re-signing it.
+    stale_complete = dict(finalized)
+    stale_complete["resultDigest"] = next_context["resultDigest"]
+    stale_complete["reproductionReceipt"] = next_context["reproductionReceipt"]
+    result_path.write_text(json.dumps(stale_complete), encoding="utf-8")
+
+    with store.connect() as connection:
+        requests_before = connection.execute(
+            "SELECT COUNT(*) FROM publication_requests"
+        ).fetchone()[0]
+        followup_event_id_before = connection.execute(
+            """SELECT COALESCE(MAX(id), 0) FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PR_FOLLOWUP_RESULT_INGESTED'"""
+        ).fetchone()[0]
+        task_result_event_id_before = connection.execute(
+            """SELECT COALESCE(MAX(id), 0) FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='TASK_RESULT_INGESTED'"""
+        ).fetchone()[0]
+
+    before_review = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    normalized_before_review = json.loads(result_path.read_text(encoding="utf-8"))
+    _write_explicit_controller_review(tmp_path, normalized_before_review)
+    assert (
+        MODULE._controller_review_result(
+            SimpleNamespace(ledger=store.path), normalized_before_review
+        )
+        is not None
+    )
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    receipt_bound_raw = result_path.read_bytes()
+    receipt_bound = json.loads(receipt_bound_raw)
+    receipt_bound_ingest_digest = MODULE._task_result_digest(receipt_bound, receipt_bound_raw)
+    repeated_ingest = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert before_review["ok"] is True, before_review
+    assert before_review["errors"] == []
+    assert before_review["publicationRequests"] == []
+    assert normalized_before_review["handoffMode"] == "controller_merge_complete"
+    assert normalized_before_review["quality"]["independent_review_passed"] is False
+    assert ingested["ok"] is True, ingested
+    assert ingested["errors"] == []
+    assert ingested["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert len(ingested["publicationRequests"]) == 1
+    assert receipt_bound["handoffMode"] == "controller_merge_complete"
+    assert receipt_bound["commitSha"] == finalized["commitSha"]
+    assert receipt_bound["headSha"] == receipt_bound["commitSha"]
+    assert receipt_bound["previousCommitSha"] == head_sha
+    assert receipt_bound["mergeBaseSha"] == base_sha
+    assert receipt_bound["resultDigest"]
+    assert receipt_bound["reproductionReceipt"]["bindingPurpose"] == ("implementation-result-v1")
+    assert receipt_bound["reproductionReceipt"]["headSha"] == receipt_bound["commitSha"]
+    assert receipt_bound["reproductionReceipt"]["commitSha"] == receipt_bound["commitSha"]
+    assert receipt_bound["reproductionReceipt"]["resultDigest"] == receipt_bound["resultDigest"]
+    assert receipt_bound["quality"]["independent_review_passed"] is True
+    assert receipt_bound["independentReview"]["verdict"] == "PASS"
+    assert "codePathTombstoneReceipt" not in receipt_bound
+    publication_id = ingested["publicationRequests"][0]["requestId"]
+    publication_request = store.publication_request(publication_id)["request"]
+    historical_context = MODULE._publication_review_context(
+        store,
+        request=publication_request,
+        value=receipt_bound,
+    )
+    assert historical_context["prFollowup"]["wakeDigest"] == replacement["wakeDigest"]
+    assert historical_context["prFollowup"]["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+    drifted_context = json.loads(json.dumps(next_context))
+    drifted_context["prFollowup"]["wakeDigest"] = "f" * 64
+    next_context_path.write_text(json.dumps(drifted_context), encoding="utf-8")
+    assert (
+        MODULE._controller_review_result(
+            SimpleNamespace(ledger=store.path, runtime_root=tmp_path), receipt_bound
+        )
+        is None
+    )
+    assert (
+        MODULE._controller_review_result(
+            SimpleNamespace(ledger=store.path, runtime_root=tmp_path),
+            receipt_bound,
+            review_context=historical_context,
+        )["verdict"]
+        == "PASS"
+    )
+    next_context_path.write_text(json.dumps(next_context), encoding="utf-8")
+    assert repeated_ingest["ok"] is True, repeated_ingest
+    assert repeated_ingest["errors"] == []
+    assert repeated_ingest["ingested"] == []
+    assert repeated_ingest["publicationRequests"] == []
+    with store.connect() as connection:
+        requests_after = connection.execute("SELECT COUNT(*) FROM publication_requests").fetchone()[
+            0
+        ]
+        followup_events = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                 AND id>?""",
+            (followup_event_id_before,),
+        ).fetchall()
+        task_result_events = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='TASK_RESULT_INGESTED'
+                 AND id>?""",
+            (task_result_event_id_before,),
+        ).fetchall()
+    assert requests_after == requests_before + 1
+    assert len(followup_events) == 1
+    assert json.loads(followup_events[0]["payload_json"])["stage"] == "VALIDATION_PENDING"
+    assert len(task_result_events) == 2
+    assert (
+        sum(
+            json.loads(event["payload_json"])["resultDigest"] == receipt_bound_ingest_digest
+            and json.loads(event["payload_json"])["stage"] == "FIX_READY"
+            for event in task_result_events
+        )
+        == 1
+    )
+
+    run_git(worktree, "switch", "--detach", head_sha)
+    forged_merge = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", base_sha],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert forged_merge.returncode == 1
+    (worktree / "runtime.py").write_text("value = 4\n", encoding="utf-8")
+    (worktree / "runtime" / "new.py").write_text("value = 4\n", encoding="utf-8")
+    (worktree / "unrelated.py").write_text("UNRELATED = 'forged'\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py", "runtime/new.py", "unrelated.py")
+    run_git(worktree, "commit", "-m", merge_value["commitMessage"])
+    forged_head = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "branch", "-f", "fix/1-runtime-boundary", forged_head)
+    run_git(worktree, "switch", "fix/1-runtime-boundary")
+    forged_complete = finalized | {"commitSha": forged_head}
+    result_path.write_text(json.dumps(forged_complete), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="outside signed resolution scope"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=next_context,
+            value=forged_complete,
+            result_path=result_path,
+        )
+
+
+@pytest.mark.parametrize(
+    "handoff_mode",
+    [None, "controller_commit_required", "controller_merge_required", "unknown"],
+)
+def test_final_receipt_digest_rejects_unfinished_or_unknown_handoff_mode(handoff_mode):
+    with pytest.raises(
+        RuntimeError,
+        match="task result must be controller-finalized before receipt binding",
+    ):
+        MODULE._unsigned_final_task_result_digest({"handoffMode": handoff_mode})
+
+
+def test_ingest_rejects_unrelated_base_file_in_merge_resolution_scope(tmp_path):
+    store, _worktree, result_path, _context, request, _head_sha, _base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    request["evidence"]["requiredResolutionFiles"].append("unrelated.py")
+    result_path.write_text(json.dumps(request), encoding="utf-8")
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result["ingested"] == []
+    assert result["workBlocked"] == [
+        {
+            "key": "a/b#1",
+            "reason": "MERGE_RESOLUTION_SCOPE_UNRELATED_PATH",
+            "alreadyRecorded": False,
+        }
+    ]
+    assert "resolutionScopeAuthorized" not in result
+
+
+def test_legacy_ingested_source_wake_can_backfill_merge_resolution_scope(tmp_path):
+    store, _worktree, result_path, source_context, request, head_sha, base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    source_followup = source_context["prFollowup"]
+    source_wake = str(source_followup["wakeDigest"])
+    raw = result_path.read_bytes()
+    result_digest = MODULE._task_result_digest(json.loads(raw), raw)
+    store.record_task_result_ingested("a/b#1", digest=result_digest, stage="PR_OPEN")
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=source_wake,
+        result_digest=result_digest,
+        stage="PR_OPEN",
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    authorization = result["resolutionScopeAuthorized"][0]
+    assert authorization["replacementWakeDigest"] != source_wake
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["wakeDigest"] == authorization["replacementWakeDigest"]
+    assert candidate["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+    post_authorization_at = iso_z(datetime.now(UTC) + timedelta(seconds=3))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": post_authorization_at,
+            "items": [
+                {
+                    "url": request["prUrl"],
+                    "headSha": head_sha,
+                    "actionDigest": "same-task-post-authorization-action",
+                    "taskActionDigest": source_followup["taskActionDigest"],
+                    "taskFollowupRequired": True,
+                    "taskActions": ["继续处理同一冲突"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseRefName": "main",
+                        "baseSha": base_sha,
+                    },
+                    "checkedAt": post_authorization_at,
+                }
+            ],
+        }
+    )
+    preserved = store.pr_followup_candidates()[0]
+    assert preserved["wakeDigest"] == authorization["replacementWakeDigest"]
+    assert preserved["evidence"]["mergeConflictFiles"] == ["runtime.py"]
+    assert preserved["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+    assert isinstance(preserved["evidence"]["mergeResolutionScopeReceipt"], dict)
+
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=str(preserved["wakeDigest"]),
+        prepared_head_sha=head_sha,
+        prepared_base_sha=base_sha,
+        merge_conflict_files=["runtime.py"],
+    )
+    next_context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=Path(request["worktreePath"]),
+        prepared_followup_head=head_sha,
+    )
+    next_context = json.loads(next_context_path.read_text(encoding="utf-8"))
+    assert next_context["prFollowup"]["evidence"]["mergeConflictFiles"] == ["runtime.py"]
+    assert next_context["prFollowup"]["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+
+
+def test_scope_backfill_uses_bound_preparation_when_refresh_omits_conflicts(tmp_path):
+    store, _worktree, result_path, source_context, request, head_sha, base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    source_followup = source_context["prFollowup"]
+    source_wake = str(source_followup["wakeDigest"])
+    raw = result_path.read_bytes()
+    result_digest = MODULE._task_result_digest(json.loads(raw), raw)
+    store.record_task_result_ingested("a/b#1", digest=result_digest, stage="PR_OPEN")
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=source_wake,
+        result_digest=result_digest,
+        stage="PR_OPEN",
+    )
+    refreshed_at = iso_z(datetime.now(UTC) + timedelta(seconds=2))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": refreshed_at,
+            "items": [
+                {
+                    "url": request["prUrl"],
+                    "headSha": head_sha,
+                    "actionDigest": "same-task-refreshed-action",
+                    "taskActionDigest": source_followup["taskActionDigest"],
+                    "taskFollowupRequired": True,
+                    "taskActions": ["继续处理同一冲突"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseRefName": "main",
+                        "baseSha": base_sha,
+                    },
+                    "checkedAt": refreshed_at,
+                }
+            ],
+        }
+    )
+    with store.connect() as connection:
+        refreshed = connection.execute(
+            "SELECT wake_digest,evidence_json FROM pr_followups WHERE opportunity_key='a/b#1'"
+        ).fetchone()
+    assert refreshed["wake_digest"] == source_wake
+    assert "mergeConflictFiles" not in json.loads(refreshed["evidence_json"])
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    authorization = result["resolutionScopeAuthorized"][0]
+    assert authorization["replacementWakeDigest"] != source_wake
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["evidence"]["mergeConflictFiles"] == ["runtime.py"]
+    assert candidate["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+
+
+def test_pr_followup_base_drift_drops_authorized_merge_resolution_scope(tmp_path):
+    store, worktree, _result_path, _context, _request, head_sha, base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    authorized = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert authorized["resolutionScopeAuthorized"][0]["alreadyRecorded"] is False
+    replacement = store.pr_followup_candidates()[0]
+    assert replacement["evidence"]["authorizedResolutionFiles"] == [
+        "runtime.py",
+        "runtime/new.py",
+    ]
+
+    run_git(worktree, "switch", "main")
+    (worktree / "runtime.py").write_text("value = 5\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "refactor: advance split runtime")
+    advanced_base = run_git(worktree, "rev-parse", "HEAD")
+    assert advanced_base != base_sha
+    run_git(worktree, "switch", "fix/1-runtime-boundary")
+    checked_at = iso_z(datetime.now(UTC) + timedelta(seconds=3))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": checked_at,
+            "items": [
+                {
+                    "url": "https://github.com/a/b/pull/9",
+                    "headSha": head_sha,
+                    "actionDigest": "advanced-base-action",
+                    "taskActionDigest": "advanced-base-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["重新检查已变化的基线冲突"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseRefName": "main",
+                        "baseSha": advanced_base,
+                        "mergeConflictFiles": ["runtime.py"],
+                    },
+                    "checkedAt": checked_at,
+                }
+            ],
+        }
+    )
+
+    refreshed = store.pr_followup_candidates()[0]
+    assert refreshed["evidence"]["baseSha"] == advanced_base
+    assert "authorizedResolutionFiles" not in refreshed["evidence"]
+    assert "mergeResolutionScopeReceipt" not in refreshed["evidence"]
+
+
+def test_completed_authorized_wake_does_not_mask_new_followup_action(tmp_path):
+    store, _worktree, _result_path, _context, request, head_sha, base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    authorized = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    completed_wake = authorized["resolutionScopeAuthorized"][0]["replacementWakeDigest"]
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=completed_wake,
+        result_digest="c" * 64,
+        stage="PR_OPEN",
+    )
+    checked_at = iso_z(datetime.now(UTC) + timedelta(seconds=4))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": checked_at,
+            "items": [
+                {
+                    "url": request["prUrl"],
+                    "headSha": head_sha,
+                    "actionDigest": "new-action-after-resolution-scope",
+                    "taskActionDigest": "new-task-action-after-resolution-scope",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["处理同一快照上的新审查意见"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseRefName": "main",
+                        "baseSha": base_sha,
+                        "mergeConflictFiles": ["runtime.py"],
+                    },
+                    "checkedAt": checked_at,
+                }
+            ],
+        }
+    )
+
+    candidate = store.pr_followup_candidates()[0]
+    assert candidate["wakeDigest"] != completed_wake
+    assert "authorizedResolutionFiles" not in candidate["evidence"]
+    assert "mergeResolutionScopeReceipt" not in candidate["evidence"]
+
+
+def test_reserved_authorized_wake_does_not_consume_later_followup_action(tmp_path):
+    store, _worktree, _result_path, _context, request, head_sha, base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    authorized = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    reserved_wake = authorized["resolutionScopeAuthorized"][0]["replacementWakeDigest"]
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=reserved_wake,
+        prepared_head_sha=head_sha,
+        prepared_base_sha=base_sha,
+        merge_conflict_files=["runtime.py"],
+    )
+
+    def scan(checked_at: str) -> None:
+        store.import_pr_followups(
+            {
+                "version": "pr_followup_v3",
+                "generatedAt": checked_at,
+                "items": [
+                    {
+                        "url": request["prUrl"],
+                        "headSha": head_sha,
+                        "actionDigest": "later-action-after-reserved-scope",
+                        "taskActionDigest": "later-task-action-after-reserved-scope",
+                        "taskFollowupRequired": True,
+                        "taskActions": ["处理授权任务领取后出现的新审查意见"],
+                        "evidence": {
+                            "mergeConflict": True,
+                            "baseRefName": "main",
+                            "baseSha": base_sha,
+                            "mergeConflictFiles": ["runtime.py"],
+                        },
+                        "checkedAt": checked_at,
+                    }
+                ],
+            }
+        )
+
+    scan(iso_z(datetime.now(UTC) + timedelta(seconds=5)))
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT wake_digest,evidence_json FROM pr_followups WHERE opportunity_key='a/b#1'"
+        ).fetchone()
+    assert row is not None
+    replacement_wake = str(row["wake_digest"])
+    replacement_evidence = json.loads(row["evidence_json"])
+    assert replacement_wake != reserved_wake
+    assert "authorizedResolutionFiles" not in replacement_evidence
+    assert store.pr_followup_candidates() == []
+
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=reserved_wake,
+        result_digest="d" * 64,
+        stage="PR_OPEN",
+    )
+    scan(iso_z(datetime.now(UTC) + timedelta(seconds=6)))
+
+    candidates = store.pr_followup_candidates()
+    assert len(candidates) == 1
+    assert candidates[0]["wakeDigest"] == replacement_wake
+    assert candidates[0]["wakeDigest"] != reserved_wake
+    assert "authorizedResolutionFiles" not in candidates[0]["evidence"]
+
+
 def test_controller_creates_two_parent_commit_for_conflicted_pr_followup(tmp_path):
     worktree = tmp_path / "worktree"
     worktree.mkdir()
@@ -14581,6 +21755,8 @@ def test_controller_creates_two_parent_commit_for_conflicted_pr_followup(tmp_pat
         "mergeBaseSha": base_sha,
         "resolutionSourceCommit": previous_head,
         "publication": {"baseBranch": "main"},
+        "resultDigest": "a" * 64,
+        "reproductionReceipt": {"resultDigest": "a" * 64},
     }
     result_path.write_text(json.dumps(value), encoding="utf-8")
     finalized, _raw = _finalize_controller_commit_for_test(
@@ -14604,6 +21780,8 @@ def test_controller_creates_two_parent_commit_for_conflicted_pr_followup(tmp_pat
     assert finalized["mergeResolutionFiles"] == ["runtime.py"]
     assert finalized["controllerCommitChangedFiles"] == ["runtime.py"]
     assert finalized["changedFiles"] == ["runtime.py"]
+    assert "resultDigest" not in finalized
+    assert "reproductionReceipt" not in finalized
     assert run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()[1:] == [
         previous_head,
         base_sha,
@@ -15559,6 +22737,836 @@ def test_validation_worker_projects_snapshot_and_sends_exact_local_input_prompt(
     assert str(MODULE.STATE) not in prompt
     assert result["ok"] is True
     assert store.unresolved_validation_followups() == []
+
+
+def test_task_turn_worker_writes_terminal_failure_when_app_server_exits(monkeypatch, tmp_path):
+    store, _candidate, _worktree, _result_path, _original, _binding, args = (
+        _bound_validation_worker_fixture(monkeypatch, tmp_path)
+    )
+    process = _FakeTaskTurnProcess()
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": args.thread_id}}}
+        return buffer, {"result": {"turn": {"id": "turn-exited"}}}
+
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+    monkeypatch.setattr(MODULE, "_wait_for_app_server_terminal_turn", lambda *_a, **_k: None)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    result = MODULE._app_server_task_turn_worker(args)
+
+    assert result["ok"] is True
+    assert result["turnStatus"] == "failed"
+    assert result["turnError"]["message"] == "app-server exited before terminal turn status"
+    persisted = json.loads(Path(args.receipt).read_text(encoding="utf-8"))
+    assert persisted["turnStatus"] == "failed"
+    assert persisted["turnError"] == result["turnError"]
+    assert store.unresolved_validation_followups() == []
+
+
+def _managed_rebuild_cache_fixture(monkeypatch, tmp_path):
+    state = tmp_path / "runtime" / "state"
+    monkeypatch.setattr(MODULE, "STATE", state)
+    worktree = MODULE.managed_worktree_root() / "intent-1-deadbeef00" / "repo"
+    worktree.mkdir(parents=True)
+    run_git(worktree, "init")
+    run_git(worktree, "config", "user.name", "Radar Test")
+    run_git(worktree, "config", "user.email", "radar@example.com")
+    (worktree / ".gitignore").write_text(
+        ".oss-pr-radar/\ntarget/\n.pytest_cache/\n",
+        encoding="utf-8",
+    )
+    source = worktree / "source.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    run_git(worktree, "add", ".gitignore", "source.py")
+    run_git(worktree, "commit", "-m", "test: baseline")
+    private = worktree / MODULE.TASK_PRIVATE_DIR
+    private.mkdir(mode=0o700)
+    protected = {
+        "result.json": b'{"stage":"FIX_READY"}\n',
+        "pr-body.md": b"private draft\n",
+        "task-context.json": (
+            json.dumps(
+                {
+                    "issueUrl": "https://github.com/a/b/issues/1",
+                    "threadId": "thread-cache",
+                    "worktreePath": str(worktree),
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8"),
+    }
+    for name, raw in protected.items():
+        (private / name).write_bytes(raw)
+    return state, worktree, source, private, protected
+
+
+def _write_rebuild_cache(worktree: Path, name: str) -> Path:
+    creators = {
+        "target": "# This file is a cache directory tag created by cargo.",
+        ".pytest_cache": "# This file is a cache directory tag created by pytest.",
+    }
+    cache = worktree / name
+    cache.mkdir()
+    (cache / "CACHEDIR.TAG").write_text(
+        "Signature: 8a477f597d28d172789f06886806bc55" + "\n" + creators[name] + "\n",
+        encoding="utf-8",
+    )
+    (cache / "rebuild-only.bin").write_bytes(b"cache")
+    return cache
+
+
+def _write_terminal_cleanup_receipt(path: Path, *, terminal: bool = True) -> bytes:
+    value = {
+        "ok": True,
+        "threadId": "thread-cache",
+        "turnId": "turn-cache",
+        **({"turnStatus": "completed"} if terminal else {}),
+    }
+    path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
+    return path.read_bytes()
+
+
+def test_active_turn_does_not_reclaim_managed_rebuild_cache(monkeypatch, tmp_path):
+    _state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "active-turn.json"
+    _write_terminal_cleanup_receipt(receipt, terminal=False)
+
+    result = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "skipped"
+    assert result["reason"] == "TURN_NOT_DURABLY_TERMINAL"
+    assert cache.is_dir()
+
+    _write_terminal_cleanup_receipt(receipt)
+    monkeypatch.setattr(
+        MODULE,
+        "active_task_turn_workers",
+        lambda _thread_id: [{"pid": os.getpid()}, {"pid": os.getpid() + 1}],
+    )
+    result = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+    assert result["status"] == "skipped"
+    assert result["reason"] == "ANOTHER_TASK_TURN_IS_ACTIVE"
+    assert cache.is_dir()
+
+
+def test_unverifiable_live_worker_blocks_cache_reclaim(monkeypatch, tmp_path):
+    state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "terminal-unverified-worker.json"
+    _write_terminal_cleanup_receipt(receipt)
+    launch_root = state / "task_turn_receipts"
+    launch_root.mkdir(parents=True)
+    (launch_root / "unverified.launch.json").write_text(
+        json.dumps(
+            {
+                "threadId": "thread-cache",
+                "pid": os.getpid() + 1000,
+                "deliveryKind": "implementation-followup",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(MODULE, "_pid_is_alive", lambda _pid: True)
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(subprocess.TimeoutExpired("ps", 2)),
+    )
+
+    blocked = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert blocked["status"] == "skipped"
+    assert blocked["reason"] == "ANOTHER_TASK_TURN_IS_ACTIVE"
+    assert cache.is_dir()
+
+
+def test_terminal_turn_reclaims_only_managed_rebuild_caches(monkeypatch, tmp_path):
+    _state, worktree, source, private, protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    target = _write_rebuild_cache(worktree, "target")
+    pytest_cache = _write_rebuild_cache(worktree, ".pytest_cache")
+    receipt = tmp_path / "terminal-turn.json"
+    receipt_raw = _write_terminal_cleanup_receipt(receipt)
+    head = run_git(worktree, "rev-parse", "HEAD")
+    source_raw = source.read_bytes()
+
+    result = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "completed"
+    assert set(result["removed"]) == {"target", ".pytest_cache"}
+    assert sorted(path.name for path in target.iterdir()) == ["CACHEDIR.TAG"]
+    assert sorted(path.name for path in pytest_cache.iterdir()) == ["CACHEDIR.TAG"]
+    assert receipt.read_bytes() == receipt_raw
+    assert source.read_bytes() == source_raw
+    assert run_git(worktree, "rev-parse", "HEAD") == head
+    for name, raw in protected.items():
+        assert (private / name).read_bytes() == raw
+
+    repeated = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+    assert repeated["ok"] is True
+    assert set(repeated["absent"]) == {"target", ".pytest_cache"}
+
+
+@pytest.mark.parametrize("unsafe_kind", ["symlink", "unmarked", "tracked", "nonmanaged"])
+def test_terminal_turn_refuses_unsafe_rebuild_cache(monkeypatch, tmp_path, unsafe_kind):
+    _state, managed, source, private, protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    worktree = managed
+    outside = tmp_path / "outside-cache"
+    outside.mkdir()
+    sentinel = outside / "sentinel"
+    sentinel.write_text("keep", encoding="utf-8")
+    if unsafe_kind == "symlink":
+        (worktree / "target").symlink_to(outside, target_is_directory=True)
+    elif unsafe_kind == "unmarked":
+        (worktree / "target").mkdir()
+        (worktree / "target" / "ordinary.txt").write_text("keep", encoding="utf-8")
+    elif unsafe_kind == "tracked":
+        _write_rebuild_cache(worktree, "target")
+        run_git(worktree, "add", "-f", "target/CACHEDIR.TAG", "target/rebuild-only.bin")
+        run_git(worktree, "commit", "-m", "test: tracked target")
+    else:
+        worktree = tmp_path / "unmanaged-repo"
+        worktree.mkdir()
+        run_git(worktree, "init")
+        run_git(worktree, "config", "user.name", "Radar Test")
+        run_git(worktree, "config", "user.email", "radar@example.com")
+        (worktree / ".gitignore").write_text(".oss-pr-radar/\ntarget/\n", encoding="utf-8")
+        (worktree / "source.py").write_text("VALUE = 1\n", encoding="utf-8")
+        run_git(worktree, "add", ".gitignore", "source.py")
+        run_git(worktree, "commit", "-m", "test: unmanaged")
+        unmanaged_private = worktree / MODULE.TASK_PRIVATE_DIR
+        unmanaged_private.mkdir(mode=0o700)
+        _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / f"terminal-{unsafe_kind}.json"
+    receipt_raw = _write_terminal_cleanup_receipt(receipt)
+    source_raw = source.read_bytes()
+    protected_raw = {name: (private / name).read_bytes() for name in protected}
+
+    result = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert result["ok"] is False
+    assert receipt.read_bytes() == receipt_raw
+    assert (worktree / "target").exists() or (worktree / "target").is_symlink()
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert source.read_bytes() == source_raw
+    for name, raw in protected_raw.items():
+        assert (private / name).read_bytes() == raw
+    if unsafe_kind == "tracked":
+        assert "contains tracked files" in result["refused"][0]["reason"]
+
+
+def test_cache_cleanup_failure_does_not_change_completed_turn_receipt(monkeypatch, tmp_path):
+    _state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "terminal-cleanup-failure.json"
+    receipt_raw = _write_terminal_cleanup_receipt(receipt)
+
+    def fail_cache_clear(*_args, **_kwargs):
+        raise PermissionError("injected cleanup failure")
+
+    monkeypatch.setattr(MODULE, "_clear_task_cache_contents", fail_cache_clear)
+
+    result = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "failed"
+    assert "injected cleanup failure" in result["refused"][0]["reason"]
+    assert receipt.read_bytes() == receipt_raw
+    assert cache.is_dir()
+
+
+def test_cache_cleanup_refuses_open_cache_file(monkeypatch, tmp_path):
+    _state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "terminal-open-cache.json"
+    _write_terminal_cleanup_receipt(receipt)
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import pathlib,time; "
+                f"handle=pathlib.Path({str(cache / 'rebuild-only.bin')!r}).open('rb'); "
+                "print('ready', flush=True); time.sleep(30)"
+            ),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "ready"
+        blocked = MODULE._cleanup_after_terminal_turn(
+            receipt_path=receipt,
+            worktree=worktree,
+            thread_id="thread-cache",
+            turn_id="turn-cache",
+        )
+        assert blocked["ok"] is False
+        assert "still has open files" in blocked["refused"][0]["reason"]
+        assert cache.is_dir()
+    finally:
+        holder.terminate()
+        holder.wait(timeout=5)
+
+    cleared = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+    assert cleared["ok"] is True
+    assert sorted(path.name for path in cache.iterdir()) == ["CACHEDIR.TAG"]
+
+
+def test_cache_cleanup_does_not_delete_a_replacement_after_final_binding_check(
+    monkeypatch, tmp_path
+):
+    _state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    authenticated_cache = _write_rebuild_cache(worktree, "target")
+    replacement = tmp_path / "ordinary-directory"
+    replacement.mkdir()
+    (replacement / "sentinel.txt").write_text("keep", encoding="utf-8")
+    receipt = tmp_path / "terminal-cache-swap.json"
+    receipt_raw = _write_terminal_cleanup_receipt(receipt)
+    real_clear = MODULE._clear_task_cache_contents
+
+    def swap_before_clear(cache_fd, *, cache_name):
+        authenticated_cache.rename(worktree / "authenticated-target-moved")
+        replacement.rename(authenticated_cache)
+        return real_clear(cache_fd, cache_name=cache_name)
+
+    monkeypatch.setattr(MODULE, "_clear_task_cache_contents", swap_before_clear)
+
+    blocked = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert blocked["ok"] is False
+    assert "changed before cleanup" in blocked["refused"][0]["reason"]
+    assert (authenticated_cache / "sentinel.txt").read_text(encoding="utf-8") == "keep"
+    assert receipt.read_bytes() == receipt_raw
+
+
+def test_cache_cleanup_requires_context_worktree_binding(monkeypatch, tmp_path):
+    _state, worktree, _source, private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "terminal-wrong-context.json"
+    _write_terminal_cleanup_receipt(receipt)
+    context = json.loads((private / "task-context.json").read_text(encoding="utf-8"))
+    context["threadId"] = "another-thread"
+    (private / "task-context.json").write_text(json.dumps(context), encoding="utf-8")
+
+    blocked = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert blocked["ok"] is False
+    assert "context binding does not match" in blocked["error"]
+    assert cache.is_dir()
+
+
+def test_process_cleanup_failure_blocks_cache_reclaim(monkeypatch, tmp_path):
+    _state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "terminal-process-cleanup-failure.json"
+    receipt_raw = _write_terminal_cleanup_receipt(receipt)
+
+    result = MODULE._cleanup_after_terminal_turn(
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+        process_cleanup_error="cargo descendant could not be stopped",
+    )
+
+    assert result["ok"] is False
+    assert result["reason"] == "APP_SERVER_CLEANUP_FAILED"
+    assert receipt.read_bytes() == receipt_raw
+    assert cache.is_dir()
+
+
+def test_nonquiescent_process_tree_blocks_cache_reclaim(monkeypatch, tmp_path):
+    _state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "terminal-nonquiescent.json"
+    _write_terminal_cleanup_receipt(receipt)
+    monkeypatch.setattr(MODULE, "_capture_app_server_cleanup_guard", lambda _process: {"ok": True})
+    monkeypatch.setattr(MODULE, "_terminate_app_server_process", lambda _process: None)
+    monkeypatch.setattr(MODULE, "_app_server_cleanup_is_quiescent", lambda *_args: False)
+
+    MODULE._finalize_terminal_turn_resources(
+        process=object(),
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert cache.is_dir()
+    diagnostic = json.loads(
+        MODULE._task_cache_cleanup_receipt_path(
+            thread_id="thread-cache",
+            turn_id="turn-cache",
+            worktree=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    assert diagnostic["reason"] == "APP_SERVER_CLEANUP_FAILED"
+
+
+def test_process_group_must_be_gone_before_cache_cleanup():
+    process = subprocess.Popen(["/bin/sleep", "30"], start_new_session=True)
+    guard = {"processGroup": process.pid, "descendantPids": []}
+    try:
+        assert (
+            MODULE._app_server_cleanup_is_quiescent(
+                process,
+                guard,
+                timeout_seconds=0,
+            )
+            is False
+        )
+    finally:
+        os.killpg(process.pid, MODULE.signal.SIGKILL)
+        process.wait(timeout=5)
+    assert (
+        MODULE._app_server_cleanup_is_quiescent(
+            process,
+            guard,
+            timeout_seconds=1,
+        )
+        is True
+    )
+
+
+def test_terminal_resource_cleanup_stops_process_before_reclaim(monkeypatch, tmp_path):
+    events: list[str] = []
+    receipt = tmp_path / "terminal-order.json"
+    _write_terminal_cleanup_receipt(receipt)
+    process = object()
+
+    monkeypatch.setattr(MODULE, "_capture_app_server_cleanup_guard", lambda _process: {"ok": True})
+    monkeypatch.setattr(
+        MODULE,
+        "_terminate_app_server_process",
+        lambda observed: events.append("terminated") if observed is process else None,
+    )
+    monkeypatch.setattr(MODULE, "_app_server_cleanup_is_quiescent", lambda *_args: True)
+
+    def observe_cleanup(**kwargs):
+        assert kwargs["process_cleanup_error"] is None
+        assert json.loads(receipt.read_text(encoding="utf-8"))["turnStatus"] == "completed"
+        events.append("reclaimed")
+        return {"ok": True}
+
+    monkeypatch.setattr(MODULE, "_cleanup_after_terminal_turn", observe_cleanup)
+
+    MODULE._finalize_terminal_turn_resources(
+        process=process,
+        receipt_path=receipt,
+        worktree=tmp_path / "worktree",
+        thread_id="thread-cache",
+        turn_id="turn-cache",
+    )
+
+    assert events == ["terminated", "reclaimed"]
+
+
+def test_unbound_turn_id_cannot_reclaim_cache(monkeypatch, tmp_path):
+    _state, worktree, _source, _private, _protected = _managed_rebuild_cache_fixture(
+        monkeypatch, tmp_path
+    )
+    cache = _write_rebuild_cache(worktree, "target")
+    receipt = tmp_path / "different-terminal-turn.json"
+    _write_terminal_cleanup_receipt(receipt)
+    monkeypatch.setattr(MODULE, "_capture_app_server_cleanup_guard", lambda _process: {"ok": True})
+    monkeypatch.setattr(MODULE, "_terminate_app_server_process", lambda _process: None)
+    monkeypatch.setattr(MODULE, "_app_server_cleanup_is_quiescent", lambda *_args: True)
+
+    MODULE._finalize_terminal_turn_resources(
+        process=object(),
+        receipt_path=receipt,
+        worktree=worktree,
+        thread_id="thread-cache",
+        turn_id="",
+    )
+
+    assert cache.is_dir()
+    diagnostic = json.loads(
+        MODULE._task_cache_cleanup_receipt_path(
+            thread_id="thread-cache",
+            turn_id="",
+            worktree=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    assert diagnostic["status"] == "skipped"
+    assert diagnostic["reason"] == "TURN_NOT_DURABLY_TERMINAL"
+
+
+def test_task_worker_orders_terminal_receipt_process_stop_and_cache_reclaim(monkeypatch, tmp_path):
+    _store, candidate, _worktree, _result_path, _original, _binding, args = (
+        _bound_validation_worker_fixture(monkeypatch, tmp_path)
+    )
+    process = _FakeTaskTurnProcess()
+    events: list[str] = []
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": candidate["threadId"]}}}
+        return buffer, {"result": {"turn": {"id": "turn-ordered"}}}
+
+    original_write_terminal = MODULE._write_terminal_turn_receipt
+
+    def write_terminal(*call_args, **call_kwargs):
+        terminal = original_write_terminal(*call_args, **call_kwargs)
+        events.append("receipt")
+        return terminal
+
+    def reclaim(**kwargs):
+        persisted = json.loads(Path(args.receipt).read_text(encoding="utf-8"))
+        assert persisted["turnId"] == "turn-ordered"
+        assert persisted["turnStatus"] == "completed"
+        assert kwargs["process_cleanup_error"] is None
+        events.append("reclaimed")
+        return {"ok": True}
+
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+    monkeypatch.setattr(
+        MODULE,
+        "_wait_for_app_server_terminal_turn",
+        lambda *_args, **_kwargs: {"turnId": "turn-ordered", "status": "completed"},
+    )
+    monkeypatch.setattr(MODULE, "_write_terminal_turn_receipt", write_terminal)
+    monkeypatch.setattr(
+        MODULE,
+        "_terminate_app_server_process",
+        lambda observed: events.append("terminated") if observed is process else None,
+    )
+    monkeypatch.setattr(MODULE, "_capture_app_server_cleanup_guard", lambda _process: {"ok": True})
+    monkeypatch.setattr(MODULE, "_app_server_cleanup_is_quiescent", lambda *_args: True)
+    monkeypatch.setattr(MODULE, "_cleanup_after_terminal_turn", reclaim)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    result = MODULE._app_server_task_turn_worker(args)
+
+    assert result["turnStatus"] == "completed"
+    assert events == ["receipt", "terminated", "reclaimed"]
+
+
+def test_app_server_cleanup_terminates_its_process_group(monkeypatch):
+    class Process:
+        pid = 123
+
+        def __init__(self):
+            self.calls: list[str] = []
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout):
+            self.calls.append(f"wait:{timeout}")
+            if timeout == 10:
+                raise subprocess.TimeoutExpired("codex", timeout)
+            return 0
+
+    process = Process()
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(MODULE.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(MODULE.os, "killpg", lambda pgid, signum: signals.append((pgid, signum)))
+
+    MODULE._terminate_app_server_process(process)
+
+    assert signals == [(123, MODULE.signal.SIGTERM), (123, MODULE.signal.SIGKILL)]
+    assert process.calls == ["wait:10", "wait:5"]
+
+
+def test_app_server_cleanup_reaps_group_after_parent_exit(monkeypatch):
+    class Process:
+        pid = 456
+
+        @staticmethod
+        def poll():
+            return 0
+
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(MODULE.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(MODULE.os, "killpg", lambda pgid, signum: signals.append((pgid, signum)))
+
+    MODULE._terminate_app_server_process(Process())
+
+    assert signals == [(456, MODULE.signal.SIGTERM), (456, MODULE.signal.SIGKILL)]
+
+
+def test_app_server_cleanup_terminates_descendant_process_group_safely(monkeypatch):
+    class Process:
+        pid = 100
+
+        def __init__(self):
+            self.calls: list[str] = []
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout):
+            self.calls.append(f"wait:{timeout}")
+            if timeout == 10:
+                raise subprocess.TimeoutExpired("codex", timeout)
+            return 0
+
+        def kill(self):
+            self.calls.append("kill")
+
+    snapshot = {
+        100: (1, 100, "codex app-server --stdio"),
+        101: (100, 200, "sh -c find . -type f | head"),
+        102: (101, 200, "find . -type f"),
+        103: (101, 200, "head"),
+    }
+    process = Process()
+    process_groups: list[tuple[int, int]] = []
+    individual_signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(MODULE, "_app_server_process_snapshot", lambda: snapshot)
+    monkeypatch.setattr(MODULE.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(MODULE.os, "getpgrp", lambda: 999)
+    monkeypatch.setattr(
+        MODULE.os,
+        "killpg",
+        lambda pgid, signum: process_groups.append((pgid, signum)),
+    )
+    monkeypatch.setattr(
+        MODULE.os,
+        "kill",
+        lambda pid, signum: individual_signals.append((pid, signum)),
+    )
+
+    MODULE._terminate_app_server_process(process)
+
+    assert process_groups == [
+        (100, MODULE.signal.SIGTERM),
+        (100, MODULE.signal.SIGKILL),
+        (200, MODULE.signal.SIGTERM),
+        (200, MODULE.signal.SIGKILL),
+    ]
+    assert individual_signals == []
+    assert process.calls == ["wait:10", "wait:5"]
+
+
+def test_app_server_cleanup_signals_only_known_descendants_in_mixed_group(monkeypatch):
+    class Process:
+        pid = 110
+
+        def poll(self):
+            return 0
+
+    snapshot = {
+        110: (1, 110, "codex app-server --stdio"),
+        111: (110, 210, "sh -c find ."),
+        112: (111, 210, "find ."),
+        999: (1, 210, "unrelated-process"),
+    }
+    process = Process()
+    process_groups: list[tuple[int, int]] = []
+    individual_signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(MODULE, "_app_server_process_snapshot", lambda: snapshot)
+    monkeypatch.setattr(MODULE.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(MODULE.os, "getpgrp", lambda: 9999)
+    monkeypatch.setattr(
+        MODULE.os,
+        "killpg",
+        lambda pgid, signum: process_groups.append((pgid, signum)),
+    )
+    monkeypatch.setattr(
+        MODULE.os,
+        "kill",
+        lambda pid, signum: individual_signals.append((pid, signum)),
+    )
+
+    MODULE._terminate_app_server_process(process)
+
+    assert process_groups == [
+        (110, MODULE.signal.SIGTERM),
+        (110, MODULE.signal.SIGKILL),
+    ]
+    assert sorted(individual_signals) == sorted(
+        [
+            (111, MODULE.signal.SIGTERM),
+            (112, MODULE.signal.SIGTERM),
+            (111, MODULE.signal.SIGKILL),
+            (112, MODULE.signal.SIGKILL),
+        ]
+    )
+
+
+def test_root_task_terminal_receipt_preserves_creation_binding(tmp_path):
+    receipt = tmp_path / "root-task.json"
+    initial = {
+        "ok": True,
+        "intentId": "intent-1",
+        "threadId": "thread-1",
+        "turnId": "turn-1",
+        "projectId": "project-1",
+    }
+
+    terminal = MODULE._write_terminal_turn_receipt(
+        receipt,
+        initial,
+        status="interrupted",
+        error={"message": "turn interrupted"},
+    )
+
+    assert terminal["turnStatus"] == "interrupted"
+    assert terminal["turnError"] == {"message": "turn interrupted"}
+    persisted = json.loads(receipt.read_text(encoding="utf-8"))
+    assert persisted == terminal
+    assert persisted["intentId"] == "intent-1"
+    assert persisted["threadId"] == "thread-1"
+
+
+def test_task_turn_worker_replaces_optimistic_receipt_on_watchdog_error(monkeypatch, tmp_path):
+    _store, _candidate, _worktree, _result_path, _original, _binding, args = (
+        _bound_validation_worker_fixture(monkeypatch, tmp_path)
+    )
+    process = _FakeTaskTurnProcess()
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": args.thread_id}}}
+        return buffer, {"result": {"turn": {"id": "turn-error"}}}
+
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+
+    def fail_watchdog(*_args, **_kwargs):
+        raise RuntimeError("watchdog read failed")
+
+    monkeypatch.setattr(MODULE, "_wait_for_app_server_terminal_turn", fail_watchdog)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    with pytest.raises(RuntimeError, match="watchdog read failed"):
+        MODULE._app_server_task_turn_worker(args)
+
+    persisted = json.loads(Path(args.receipt).read_text(encoding="utf-8"))
+    assert persisted["ok"] is True
+    assert persisted["turnId"] == "turn-error"
+    assert persisted["turnStatus"] == "failed"
+    assert persisted["turnError"]["message"] == "RuntimeError:watchdog read failed"
+
+
+def test_task_turn_worker_records_failed_receipt_for_malformed_watchdog_frame(
+    monkeypatch, tmp_path
+):
+    _store, _candidate, _worktree, _result_path, _original, _binding, args = (
+        _bound_validation_worker_fixture(monkeypatch, tmp_path)
+    )
+    process = _FakeTaskTurnProcess()
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": args.thread_id}}}
+        return b'"unexpected frame"\n', {"result": {"turn": {"id": "turn-malformed"}}}
+
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    with pytest.raises(RuntimeError, match="malformed non-object frame"):
+        MODULE._app_server_task_turn_worker(args)
+
+    persisted = json.loads(Path(args.receipt).read_text(encoding="utf-8"))
+    assert persisted["ok"] is True
+    assert persisted["turnId"] == "turn-malformed"
+    assert persisted["turnStatus"] == "failed"
+    assert persisted["turnError"]["message"] == (
+        "RuntimeError:app-server emitted a malformed non-object frame"
+    )
 
 
 @pytest.mark.parametrize("mutation", ["missing", "tampered", "symlink"])
@@ -18015,6 +26023,7 @@ def test_validation_followup_uses_cumulative_files_for_first_publication(tmp_pat
             "controllerCommitChangedFiles": ["test_runtime.py"],
             "commitMessage": "test: cover runtime boundary",
             "changedFiles": ["runtime.py", "test_runtime.py"],
+            "codePaths": ["runtime.py", "test_runtime.py"],
             "quality": {field: True for field in QUALITY_FIELDS},
         }
     )
@@ -18047,6 +26056,239 @@ def test_validation_followup_uses_cumulative_files_for_first_publication(tmp_pat
     )
 
 
+def test_validation_followup_rebuilds_controller_normalized_scope(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("test_runtime.py",),
+        reported_code_paths=("runtime.py", "test_runtime.py"),
+        missing_quality=("independent_review_passed",),
+    )
+
+    deferred = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert deferred["ok"] is True, deferred
+    assert deferred["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": ["independent_review_passed"],
+        }
+    ]
+    normalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert normalized["codePaths"] == ["runtime.py"]
+    assert normalized["controllerCodePathScope"]["reported"] == [
+        "runtime.py",
+        "test_runtime.py",
+    ]
+
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    assert context["stage"] == "VALIDATION_PENDING"
+    previous_head = run_git(worktree, "rev-parse", "HEAD")
+    (worktree / "runtime.py").write_text("value = 3\nassert value == 3\n", encoding="utf-8")
+    (worktree / "test_runtime.py").write_text("value = 3\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py", "test_runtime.py")
+    run_git(worktree, "commit", "-m", "fix: address validation finding")
+    corrected_head = run_git(worktree, "rev-parse", "HEAD")
+
+    followup = dict(normalized)
+    followup.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "commitSha": corrected_head,
+            "headSha": previous_head,
+            "controllerCommitChangedFiles": ["runtime.py", "test_runtime.py"],
+            "changedFiles": ["runtime.py", "test_runtime.py"],
+        }
+    )
+    followup.pop("resultDigest", None)
+    followup.pop("reproductionReceipt", None)
+    followup.pop("probeReceipt", None)
+    followup.pop("independentReview", None)
+    result_path.write_text(json.dumps(followup), encoding="utf-8")
+    old_snapshot_digest = hashlib.sha256(
+        result_path.read_bytes() + b"\0" + (result_path.parent / "task-context.json").read_bytes()
+    ).hexdigest()
+    ManagedLedger(store.path, ensure_schema=False).record_event(
+        event_type="TASK_RESULT_EVIDENCE_BLOCKED",
+        idempotency_key=(
+            "task-result-evidence-blocked:managed-reproduction-scope-v3:"
+            f"a/b#1:thread-1:{old_snapshot_digest}"
+        ),
+        opportunity_key="a/b#1",
+        task_id="intent-1",
+        state="VALIDATION_PENDING",
+        source="result-ingestion",
+        provenance={"policyRevision": "managed-reproduction-scope-v3"},
+        payload={"reason": "CONTROLLER_CHANGED_FILES_OUTSIDE_REPORTED_SCOPE"},
+    )
+
+    advanced = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert advanced["ok"] is True, advanced
+    assert advanced.get("workBlocked", []) == []
+    assert advanced["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+            "missing": ["independent_review_passed"],
+        }
+    ]
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["commitSha"] == corrected_head
+    assert finalized["headSha"] == corrected_head
+    assert finalized["codePaths"] == ["runtime.py"]
+    assert finalized["controllerCodePathScope"]["reported"] == [
+        "runtime.py",
+        "test_runtime.py",
+    ]
+    assert finalized["controllerCodePathScope"]["added"] == ["test_runtime.py"]
+    assert finalized["reproductionReceipt"]["commitSha"] == corrected_head
+
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert repeated["ok"] is True, repeated
+    assert repeated["errors"] == []
+    assert repeated.get("workBlocked", []) == []
+
+
+def test_validation_followup_keeps_commit_path_restored_out_of_publication_diff(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("integration.py",),
+        reported_code_paths=("runtime.py", "integration.py"),
+        missing_quality=("independent_review_passed",),
+    )
+    deferred = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert deferred["ok"] is True, deferred
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    assert context["stage"] == "VALIDATION_PENDING"
+    normalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert normalized["codePaths"] == ["runtime.py"]
+
+    previous_head = run_git(worktree, "rev-parse", "HEAD")
+    (worktree / "runtime.py").write_text("value = 3\nassert value == 3\n", encoding="utf-8")
+    (worktree / "integration.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py", "integration.py")
+    run_git(worktree, "commit", "-m", "fix: narrow validated runtime change")
+    corrected_head = run_git(worktree, "rev-parse", "HEAD")
+    assert run_git(
+        worktree,
+        "diff",
+        "--name-only",
+        f"{context['selectedBaseSha']}..HEAD",
+    ).splitlines() == ["runtime.py"]
+
+    followup = dict(normalized)
+    followup.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "commitSha": corrected_head,
+            "headSha": previous_head,
+            "controllerCommitChangedFiles": ["integration.py", "runtime.py"],
+            "changedFiles": ["runtime.py"],
+        }
+    )
+    followup.pop("resultDigest", None)
+    followup.pop("reproductionReceipt", None)
+    followup.pop("probeReceipt", None)
+    followup.pop("independentReview", None)
+    result_path.write_text(json.dumps(followup), encoding="utf-8")
+
+    advanced = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+
+    assert advanced["ok"] is True, advanced
+    assert advanced.get("workBlocked", []) == []
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["commitSha"] == corrected_head
+    assert finalized["changedFiles"] == ["runtime.py"]
+    assert finalized["controllerCommitChangedFiles"] == [
+        "integration.py",
+        "runtime.py",
+    ]
+    assert finalized["codePaths"] == ["runtime.py"]
+    assert finalized["controllerCodePathScope"]["reported"] == [
+        "integration.py",
+        "runtime.py",
+    ]
+    assert finalized["controllerCodePathScope"]["added"] == ["integration.py"]
+
+
+def test_validation_scope_rebuild_is_retryable_if_receipt_rebind_crashes(monkeypatch, tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        additional_changed_files=("test_runtime.py",),
+        reported_code_paths=("runtime.py", "test_runtime.py"),
+        missing_quality=("independent_review_passed",),
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    context = json.loads(
+        MODULE.write_task_context(
+            store,
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            cwd=worktree,
+        ).read_text(encoding="utf-8")
+    )
+    normalized = json.loads(result_path.read_text(encoding="utf-8"))
+    (worktree / "runtime.py").write_text("value = 4\nassert value == 4\n", encoding="utf-8")
+    (worktree / "test_runtime.py").write_text("value = 4\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py", "test_runtime.py")
+    run_git(worktree, "commit", "-m", "fix: complete validation correction")
+    corrected_head = run_git(worktree, "rev-parse", "HEAD")
+    followup = dict(normalized)
+    followup.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "commitSha": corrected_head,
+            "controllerCommitChangedFiles": ["runtime.py", "test_runtime.py"],
+            "changedFiles": ["runtime.py", "test_runtime.py"],
+        }
+    )
+    followup.pop("independentReview", None)
+    assert followup["reproductionReceipt"]["commitSha"] != corrected_head
+    result_path.write_text(json.dumps(followup), encoding="utf-8")
+
+    original_bind = MODULE._bind_final_reproduction_receipt
+    calls = {"count": 0}
+
+    def crash_once(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise OSError("simulated receipt rebind interruption")
+        return original_bind(*args, **kwargs)
+
+    monkeypatch.setattr(MODULE, "_bind_final_reproduction_receipt", crash_once)
+    interrupted = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert interrupted["ok"] is False
+    assert interrupted["errors"] == [
+        {"key": "a/b#1", "error": "simulated receipt rebind interruption"}
+    ]
+    unsigned = json.loads(result_path.read_text(encoding="utf-8"))
+    assert unsigned["codePaths"] == ["runtime.py", "test_runtime.py"]
+    assert "controllerCodePathScope" not in unsigned
+    assert "resultDigest" not in unsigned
+    assert "reproductionReceipt" not in unsigned
+
+    recovered = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    assert recovered["ok"] is True, recovered
+    assert recovered["errors"] == []
+    assert recovered.get("workBlocked", []) == []
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["reproductionReceipt"]["commitSha"] == corrected_head
+
+
 def test_validation_followup_accepts_cumulative_files_with_local_correction(tmp_path):
     store, worktree, result_path = _controller_commit_result(
         tmp_path,
@@ -18076,6 +26318,7 @@ def test_validation_followup_accepts_cumulative_files_with_local_correction(tmp_
             "controllerCommitChangedFiles": ["test_runtime.py"],
             "commitMessage": "test: cover runtime boundary",
             "changedFiles": ["runtime.py", "test_runtime.py"],
+            "codePaths": ["runtime.py", "test_runtime.py"],
             "quality": {field: True for field in QUALITY_FIELDS},
         }
     )
@@ -18238,6 +26481,570 @@ def test_validation_followup_recovers_a_committed_cumulative_file_handoff(tmp_pa
     assert finalized["handoffMode"] == "controller_commit_complete"
     assert finalized["controllerCommitChangedFiles"] == ["replacement.py", "runtime.py"]
     assert finalized["changedFiles"] == ["replacement.py"]
+    expected_parent = context["reproductionReceipt"]["commitSha"]
+    assert "previousCommitSha" not in finalized
+    assert run_git(worktree, "rev-parse", "HEAD^") == expected_parent
+
+    repeated, _raw = _finalize_controller_commit_for_test(
+        candidate={"worktreePath": str(worktree)},
+        context=context,
+        value=finalized,
+        result_path=result_path,
+        write_if_unchanged=False,
+    )
+    assert repeated == finalized
+
+
+def _stale_context_validation_parent_fixture(tmp_path: Path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("independent_review_passed",),
+    )
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert first["errors"] == []
+    assert first["validationDeferred"][0]["key"] == "a/b#1"
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    previous_head = run_git(worktree, "rev-parse", "HEAD")
+    base_sha = str(context["selectedBaseSha"])
+    assert run_git(worktree, "rev-parse", f"{previous_head}^") == base_sha
+
+    # Reproduce the production recovery shape: the durable managed result is
+    # the implementation head, while the mutable context still carries the
+    # earlier reproduction/base receipt.
+    stale_receipt = dict(context["reproductionReceipt"])
+    stale_receipt["headSha"] = base_sha
+    stale_receipt["commitSha"] = base_sha
+    context["reproductionReceipt"] = stale_receipt
+    candidate = next(
+        item
+        for item in store.task_result_candidates()
+        if item["key"] == "a/b#1" and item["threadId"] == "thread-1"
+    )
+    managed = ManagedLedger(store.path, ensure_schema=False)
+    historical = managed.latest_authenticated_fix_ready_result_for_task(
+        "intent-1",
+        issue_url="https://github.com/a/b/issues/1",
+    )
+    assert historical is not None
+    assert historical["head_sha"] == previous_head
+    assert historical["validation"]["passed"] is False
+    assert historical["validation"]["reproductionReceiptAuthenticated"] is True
+    return store, managed, candidate, context, worktree, result_path, previous_head
+
+
+def _completed_validation_child(
+    worktree: Path,
+    result_path: Path,
+    context: dict,
+    previous_head: str,
+) -> dict:
+    test_path = worktree / "tests" / "test_runtime.py"
+    test_path.parent.mkdir(exist_ok=True)
+    test_path.write_text("def test_runtime():\n    assert True\n", encoding="utf-8")
+    run_git(worktree, "add", "tests/test_runtime.py")
+    run_git(worktree, "commit", "-m", "test: verify runtime correction")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_complete",
+            "commitSha": run_git(worktree, "rev-parse", "HEAD"),
+            "headSha": previous_head,
+            "controllerCommitChangedFiles": ["tests/test_runtime.py"],
+            "changedFiles": ["runtime.py", "tests/test_runtime.py"],
+            "codePaths": ["runtime.py", "tests/test_runtime.py"],
+        }
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    return value
+
+
+def test_non_pr_validation_accepts_latest_authenticated_managed_parent(tmp_path):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    value = _completed_validation_child(worktree, result_path, context, previous_head)
+
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate=candidate,
+        context=context,
+        value=value,
+        result_path=result_path,
+        managed_ledger=managed,
+    )
+
+    assert run_git(worktree, "rev-parse", "HEAD^") == previous_head
+    assert finalized["commitSha"] == run_git(worktree, "rev-parse", "HEAD")
+    assert finalized["headSha"] == previous_head
+    assert finalized["controllerCommitChangedFiles"] == ["tests/test_runtime.py"]
+
+    managed.record_result(
+        task_id="intent-1",
+        result_digest="f" * 64,
+        worker_state="patched",
+        head_sha=finalized["commitSha"],
+        commit_sha=finalized["commitSha"],
+        validation={
+            "passed": False,
+            "reproductionReceiptAuthenticated": True,
+        },
+        prior_head_sha=previous_head,
+        new_head_sha=finalized["commitSha"],
+        source="dispatch-result",
+        provenance={
+            "stage": "FIX_READY",
+            "issueUrl": "https://github.com/a/b/issues/1",
+        },
+    )
+    latest = managed.latest_authenticated_fix_ready_result_for_task(
+        "intent-1",
+        issue_url="https://github.com/a/b/issues/1",
+    )
+    assert latest is not None
+    assert latest["head_sha"] == finalized["commitSha"]
+    replayed = dict(finalized)
+    replayed["headSha"] = finalized["commitSha"]
+    result_path.write_text(json.dumps(replayed), encoding="utf-8")
+    repeated, _raw = _finalize_controller_commit_for_test(
+        candidate=candidate,
+        context=context,
+        value=replayed,
+        result_path=result_path,
+        managed_ledger=managed,
+        write_if_unchanged=False,
+    )
+    assert repeated == replayed
+
+
+def test_non_pr_validation_required_commits_on_latest_authenticated_managed_parent(tmp_path):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    test_path = worktree / "tests" / "test_runtime.py"
+    test_path.parent.mkdir(exist_ok=True)
+    test_path.write_text("def test_runtime():\n    assert True\n", encoding="utf-8")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "headSha": previous_head,
+            "changedFiles": ["runtime.py", "tests/test_runtime.py"],
+            "codePaths": ["runtime.py", "tests/test_runtime.py"],
+        }
+    )
+    value.pop("controllerCommitChangedFiles", None)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate=candidate,
+        context=context,
+        value=value,
+        result_path=result_path,
+        managed_ledger=managed,
+    )
+
+    assert run_git(worktree, "rev-parse", "HEAD^") == previous_head
+    assert finalized["handoffMode"] == "controller_commit_complete"
+    assert finalized["controllerCommitChangedFiles"] == ["tests/test_runtime.py"]
+    assert finalized["changedFiles"] == ["runtime.py", "tests/test_runtime.py"]
+
+
+def test_non_pr_validation_required_recovers_omitted_authenticated_managed_parent(tmp_path):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    test_path = worktree / "tests" / "test_runtime.py"
+    test_path.parent.mkdir(exist_ok=True)
+    test_path.write_text("def test_runtime():\n    assert True\n", encoding="utf-8")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "changedFiles": ["runtime.py", "tests/test_runtime.py"],
+            "codePaths": ["runtime.py", "tests/test_runtime.py"],
+        }
+    )
+    value.pop("headSha", None)
+    value.pop("controllerCommitChangedFiles", None)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    finalized, _raw = _finalize_controller_commit_for_test(
+        candidate=candidate,
+        context=context,
+        value=value,
+        result_path=result_path,
+        managed_ledger=managed,
+    )
+
+    assert run_git(worktree, "rev-parse", "HEAD^") == previous_head
+    assert finalized["headSha"] == previous_head
+    assert finalized["handoffMode"] == "controller_commit_complete"
+    assert finalized["controllerCommitChangedFiles"] == ["tests/test_runtime.py"]
+    assert finalized["changedFiles"] == ["runtime.py", "tests/test_runtime.py"]
+
+
+def test_omitted_validation_parent_with_unmanaged_head_is_persistently_task_blocked(tmp_path):
+    (
+        store,
+        _managed,
+        _candidate,
+        context,
+        worktree,
+        result_path,
+        _previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    (worktree / "unmanaged.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "unmanaged.py")
+    run_git(worktree, "commit", "-m", "fix: unmanaged intermediate")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "changedFiles": ["runtime.py", "unmanaged.py"],
+            "codePaths": ["runtime.py", "unmanaged.py"],
+        }
+    )
+    value.pop("headSha", None)
+    value.pop("controllerCommitChangedFiles", None)
+    value.pop("reproductionReceipt", None)
+    value.pop("resultDigest", None)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+
+    first = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    repeated = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert first["ok"] is True
+    assert first["errors"] == []
+    assert first.get("workBlocked") == [
+        {
+            "key": "a/b#1",
+            "reason": "VALIDATION_PARENT_BINDING_INVALID",
+            "alreadyRecorded": False,
+        }
+    ], first
+    assert repeated["ok"] is True
+    assert repeated["errors"] == []
+    assert repeated.get("workBlocked") == [
+        {
+            "key": "a/b#1",
+            "reason": "VALIDATION_PARENT_BINDING_INVALID",
+            "alreadyRecorded": True,
+        }
+    ], repeated
+
+
+def test_non_pr_validation_rejects_an_unmanaged_intermediate_parent(tmp_path):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    (worktree / "intermediate.py").write_text("value = 1\n", encoding="utf-8")
+    run_git(worktree, "add", "intermediate.py")
+    run_git(worktree, "commit", "-m", "fix: unmanaged intermediate")
+    unmanaged_parent = run_git(worktree, "rev-parse", "HEAD")
+    value = _completed_validation_child(worktree, result_path, context, unmanaged_parent)
+    value["changedFiles"] = ["intermediate.py", "runtime.py", "tests/test_runtime.py"]
+    value["codePaths"] = ["intermediate.py", "runtime.py", "tests/test_runtime.py"]
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    before = result_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="parent does not match validation input"):
+        _finalize_controller_commit_for_test(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_path=result_path,
+            managed_ledger=managed,
+        )
+
+    assert previous_head != unmanaged_parent
+    assert result_path.read_bytes() == before
+
+
+def test_non_pr_validation_rejects_a_direct_child_of_stale_context_when_managed_head_exists(
+    tmp_path,
+):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    stale_context_parent = str(context["reproductionReceipt"]["commitSha"])
+    assert stale_context_parent != previous_head
+    branch = str(json.loads(result_path.read_text(encoding="utf-8"))["branch"])
+    run_git(worktree, "switch", "-C", branch, stale_context_parent)
+    (worktree / "runtime.py").write_text("value = 9\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: bypass managed validation head")
+    rogue_head = run_git(worktree, "rev-parse", "HEAD")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_complete",
+            "commitSha": rogue_head,
+            "headSha": rogue_head,
+            "controllerCommitChangedFiles": ["runtime.py"],
+            "changedFiles": ["runtime.py"],
+            "codePaths": ["runtime.py"],
+        }
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    before = result_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="parent does not match validation input"):
+        _finalize_controller_commit_for_test(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_path=result_path,
+            managed_ledger=managed,
+        )
+
+    assert run_git(worktree, "rev-parse", "HEAD^") == stale_context_parent
+    assert result_path.read_bytes() == before
+
+
+def test_non_pr_validation_rejects_a_different_task_with_shared_thread_and_worktree(tmp_path):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    value = _completed_validation_child(worktree, result_path, context, previous_head)
+    mismatched_candidate = dict(candidate) | {"intentId": "different-task"}
+    before = result_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="validation parent identity is invalid"):
+        _finalize_controller_commit_for_test(
+            candidate=mismatched_candidate,
+            context=context,
+            value=value,
+            result_path=result_path,
+            managed_ledger=managed,
+        )
+
+    assert result_path.read_bytes() == before
+
+
+def test_non_pr_validation_rejects_a_managed_parent_outside_the_context_ancestry(tmp_path):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    tree = run_git(worktree, "rev-parse", f"{previous_head}^{{tree}}")
+    unrelated = subprocess.run(
+        ["git", "commit-tree", tree],
+        cwd=worktree,
+        check=True,
+        input="unrelated context parent\n",
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    context_receipt = dict(context["reproductionReceipt"])
+    context_receipt["headSha"] = unrelated
+    context_receipt["commitSha"] = unrelated
+    context["reproductionReceipt"] = context_receipt
+    value = _completed_validation_child(worktree, result_path, context, previous_head)
+    before = result_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="parent does not match validation input"):
+        _finalize_controller_commit_for_test(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_path=result_path,
+            managed_ledger=managed,
+        )
+
+    assert result_path.read_bytes() == before
+
+
+def test_non_pr_validation_rejects_a_merge_over_the_managed_parent(tmp_path):
+    (
+        _store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    run_git(worktree, "switch", "-c", "validation-side", previous_head)
+    (worktree / "runtime.py").write_text("value = 3\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "test: side validation")
+    side_head = run_git(worktree, "rev-parse", "HEAD")
+    run_git(worktree, "switch", "fix/1-runtime-boundary")
+    (worktree / "runtime.py").write_text("value = 4\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "test: competing validation")
+    completed = subprocess.run(
+        ["git", "merge", "--no-ff", "--no-commit", side_head],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 1
+    (worktree / "runtime.py").write_text("value = 5\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "test: merge validation")
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_complete",
+            "commitSha": run_git(worktree, "rev-parse", "HEAD"),
+            "headSha": previous_head,
+            "controllerCommitChangedFiles": ["runtime.py"],
+            "changedFiles": ["runtime.py"],
+            "codePaths": ["runtime.py"],
+        }
+    )
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    before = result_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="parent does not match validation input"):
+        _finalize_controller_commit_for_test(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_path=result_path,
+            managed_ledger=managed,
+        )
+
+    assert len(run_git(worktree, "rev-list", "--parents", "-n", "1", "HEAD").split()) == 3
+    assert result_path.read_bytes() == before
+
+
+def test_non_pr_validation_rejects_tampered_managed_parent_authentication(tmp_path):
+    (
+        store,
+        managed,
+        candidate,
+        context,
+        worktree,
+        result_path,
+        previous_head,
+    ) = _stale_context_validation_parent_fixture(tmp_path)
+    value = _completed_validation_child(worktree, result_path, context, previous_head)
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT result_key,validation_json FROM managed_results WHERE task_id='intent-1'"
+        ).fetchone()
+        validation = json.loads(row["validation_json"])
+        validation["reproductionReceiptAuthenticated"] = False
+        connection.execute(
+            "UPDATE managed_results SET validation_json=? WHERE result_key=?",
+            (json.dumps(validation, sort_keys=True, separators=(",", ":")), row["result_key"]),
+        )
+    before = result_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="parent does not match validation input"):
+        _finalize_controller_commit_for_test(
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_path=result_path,
+            managed_ledger=managed,
+        )
+
+    assert result_path.read_bytes() == before
+
+
+def test_validation_followup_required_rejects_a_wrong_parent_before_commit(tmp_path):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("independent_review_passed",),
+    )
+    MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    expected_parent = context["reproductionReceipt"]["commitSha"]
+
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    publication_base = value["selectedBaseSha"]
+    branch = value["branch"]
+    assert publication_base != expected_parent
+    run_git(worktree, "switch", "-C", branch, publication_base)
+    (worktree / "runtime.py").write_text("value = 9\n", encoding="utf-8")
+    value.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "changedFiles": ["runtime.py"],
+        }
+    )
+    value.pop("controllerCommitChangedFiles", None)
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    before = result_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="parent drifted"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=value,
+            result_path=result_path,
+        )
+
+    assert result_path.read_bytes() == before
+    assert run_git(worktree, "rev-parse", "HEAD") == publication_base
+    assert run_git(worktree, "status", "--porcelain") == "M runtime.py"
 
 
 def test_controller_accepts_equivalent_rebased_commit_receipt(tmp_path):
@@ -18268,6 +27075,78 @@ def test_controller_accepts_equivalent_rebased_commit_receipt(tmp_path):
     assert normalized["commitSha"] == rebased_commit
     assert normalized["controllerCommitChangedFiles"] == ["runtime.py"]
     assert normalized["changedFiles"] == ["runtime.py"]
+    assert "resultDigest" not in normalized
+    assert "reproductionReceipt" not in normalized
+
+    repeated, _raw = _finalize_controller_commit_for_test(
+        candidate={"worktreePath": str(worktree)},
+        context=context,
+        value=normalized,
+        result_path=result_path,
+        write_if_unchanged=False,
+    )
+    assert repeated == normalized
+
+
+def test_controller_complete_rejects_rogue_pr_followup_parent_before_rebinding(tmp_path):
+    _store, worktree, result_path = _controller_commit_result(tmp_path)
+    context = json.loads(
+        (worktree / ".oss-pr-radar" / "task-context.json").read_text(encoding="utf-8")
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    expected_parent = str(value["commitSha"])
+    publication_base = str(value["selectedBaseSha"])
+    branch = str(value["branch"])
+    wake_digest = "a" * 64
+    context.update(
+        {
+            "stage": "PR_OPEN",
+            "prFollowup": {
+                "wakeDigest": wake_digest,
+                "preparedHeadSha": expected_parent,
+                "headSha": expected_parent,
+                "evidence": {"baseSha": publication_base},
+            },
+        }
+    )
+
+    run_git(worktree, "switch", "-C", branch, publication_base)
+    (worktree / "runtime.py").write_text("value = 9\n", encoding="utf-8")
+    run_git(worktree, "add", "runtime.py")
+    run_git(worktree, "commit", "-m", "fix: rogue side-branch correction")
+    rogue_head = run_git(worktree, "rev-parse", "HEAD")
+    assert run_git(worktree, "rev-parse", "HEAD^") == publication_base
+    assert publication_base != expected_parent
+
+    stale_complete = dict(value)
+    stale_complete.update(
+        {
+            "contextDigest": context["contextDigest"],
+            "followupDigest": wake_digest,
+            "previousCommitSha": expected_parent,
+            "commitSha": rogue_head,
+            "headSha": rogue_head,
+            "controllerCommitChangedFiles": ["runtime.py"],
+            "changedFiles": ["runtime.py"],
+        }
+    )
+    result_path.write_text(json.dumps(stale_complete), encoding="utf-8")
+    before = result_path.read_bytes()
+    assert MODULE._finalized_validation_result_requires_authentication_rebind(
+        candidate={"stage": "PR_OPEN"},
+        context=context,
+        value=stale_complete,
+        raw=before,
+    )
+
+    with pytest.raises(RuntimeError, match="parent does not match the PR follow-up"):
+        _finalize_controller_commit_for_test(
+            candidate={"worktreePath": str(worktree)},
+            context=context,
+            value=stale_complete,
+            result_path=result_path,
+        )
+    assert result_path.read_bytes() == before
 
 
 def test_controller_rejects_changed_commit_behind_an_old_receipt(tmp_path):
@@ -18347,7 +27226,7 @@ def test_ingestion_recovers_seen_complete_pr_followup_parent(tmp_path, monkeypat
         "probeLevel": "REPRODUCED_VALIDATED",
         "selectedBaseSha": previous_head,
         "headSha": run_git(worktree, "rev-parse", "HEAD"),
-        "codePaths": ["runtime.py"],
+        "codePaths": ["runtime.py", "test_runtime.py"],
         "preTaskEvidence": {
             "defaultBranch": "main",
             "baseSha": previous_head,
@@ -19767,6 +28646,50 @@ def test_every_bridge_operation_requires_authorization_before_dispatch(
     assert "authorization" in result["error"]
 
 
+def test_authorization_status_is_read_only_without_authorization(monkeypatch, tmp_path, capsys):
+    from test_stage7 import _runtime
+
+    runtime = _runtime(tmp_path)
+    ledger_path = runtime / "state" / "radar_ledger.sqlite3"
+    RadarLedger(ledger_path).enqueue(
+        {
+            "intentId": "intent-pending",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "issueUpdatedAt": iso_z(datetime.now(UTC)),
+            "policyDigest": "policy",
+            "title": "Pending task",
+            "mode": "canary",
+            "score": 1,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(datetime.now(UTC)),
+            "expiresAt": iso_z(datetime.now(UTC) + timedelta(hours=1)),
+        }
+    )
+    # Finish any transient SQLite writer cleanup before taking the baseline;
+    # the status command itself must not be responsible for that checkpoint.
+    gc.collect()
+    before = ledger_path.read_bytes()
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["local_dispatch_bridge.py", "authorization-status", "--runtime-root", str(runtime)],
+    )
+
+    assert MODULE.main() == 0
+    result = json.loads(capsys.readouterr().out)
+
+    assert result["ok"] is True
+    assert result["readOnly"] is True
+    assert result["authorization"] == {"present": False, "state": "MISSING"}
+    assert result["blockedReason"] == "OPERATIONAL_AUTHORIZATION_MISSING"
+    assert result["pending"]["pendingIntents"] == 1
+    assert ledger_path.read_bytes() == before
+
+
 def test_bridge_rejects_wrong_release_binding_before_authorization(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
         MODULE,
@@ -19880,7 +28803,12 @@ def test_slow_cycle_quarantine_excludes_bad_result_and_continues_normal_task(mon
     """Exercise recovery, ingestion, and the slow cycle with two real tasks."""
 
     monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
+        "oss_pr_radar.local_publication.disk_snapshot",
+        lambda _root: {
+            "level": "ok",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.5,
+        },
     )
     monkeypatch.setattr(MODULE, "ROOT", tmp_path)
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
@@ -20301,6 +29229,7 @@ def test_real_slow_worker_subprocess_quarantines_history_without_publication(mon
         "actualAutomationEvidence": {"valid": True},
         "pendingPublicationEffectsValid": True,
         "diskStopThresholdOk": True,
+        "diskRestartSafe": True,
         "runtimeReleasePolicyIdentityMatch": True,
         "noRuntimeCodeDrift": True,
         "noSharedGitWrites": True,
@@ -20324,6 +29253,22 @@ def test_real_slow_worker_subprocess_quarantines_history_without_publication(mon
         managed_counts_evidence=counts_path,
         automation_snapshot=automation_path,
     )
+    monkeypatch.setattr(
+        operational_auth,
+        "read_disk_pressure_gate_health",
+        lambda _root: {
+            "ok": True,
+            "blocked": False,
+            "reason": None,
+            "active": False,
+            "snapshot": {
+                "level": "warning",
+                "freeBytes": 100 * 1024**3,
+                "usedFraction": 0.93,
+            },
+            "restartSafe": True,
+        },
+    )
     finalize_operational_authorization(runtime)
     operational_auth.require_operational_authorization(runtime)
 
@@ -20334,7 +29279,9 @@ from pathlib import Path
 import oss_pr_radar.local_publication as _publication
 from oss_pr_radar.release_binding import runtime_ledger_path
 _bridge = Path(os.environ['RADAR_TEST_BRIDGE'])
-_publication.disk_snapshot = lambda _root: {'level': 'ok'}
+_publication.disk_snapshot = lambda _root: {
+    'level': 'ok', 'freeBytes': 100 * 1024**3, 'usedFraction': 0.5
+}
 def _real_bridge(root, operation, **kwargs):
     if operation == 'publish-terminal-feedback':
         return {'ok': True, 'published': 1, 'errors': []}
@@ -20539,20 +29486,51 @@ def test_duplicate_task_list_only_returns_stale_unbound_raw_tasks(monkeypatch, t
     with sqlite3.connect(thread_db) as connection:
         connection.execute(
             """CREATE TABLE threads (
-                id TEXT, cwd TEXT, title TEXT, first_user_message TEXT,
+                id TEXT, cwd TEXT, title TEXT, name TEXT, first_user_message TEXT,
                 archived INTEGER, created_at INTEGER, updated_at INTEGER,
                 thread_source TEXT
             )"""
         )
         rows = [
-            ("canonical", str(project_root), "[有价值]", prompt, 0, -300, -60, "app"),
-            ("duplicate", str(project_root), "<codex_delegation>raw", prompt, 0, -240, -60, "app"),
-            ("recent", str(project_root), "<codex_delegation>raw", prompt, 0, -20, -5, "app"),
-            ("archived", str(project_root), "<codex_delegation>raw", prompt, 1, -240, -60, "app"),
+            ("canonical", str(project_root), "[有价值]", None, prompt, 0, -300, -60, "app"),
+            (
+                "duplicate",
+                str(project_root),
+                "<codex_delegation>raw",
+                None,
+                prompt,
+                0,
+                -240,
+                -60,
+                "app",
+            ),
+            (
+                "recent",
+                str(project_root),
+                "<codex_delegation>raw",
+                None,
+                prompt,
+                0,
+                -20,
+                -5,
+                "app",
+            ),
+            (
+                "archived",
+                str(project_root),
+                "<codex_delegation>raw",
+                None,
+                prompt,
+                1,
+                -240,
+                -60,
+                "app",
+            ),
             (
                 "helper",
                 str(project_root),
                 "<codex_delegation>raw",
+                None,
                 prompt,
                 0,
                 -240,
@@ -20562,12 +29540,12 @@ def test_duplicate_task_list_only_returns_stale_unbound_raw_tasks(monkeypatch, t
         ]
         for row in rows:
             connection.execute(
-                "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
-                row[:5]
+                "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?,?)",
+                row[:6]
                 + (
-                    int((now + timedelta(minutes=row[5])).timestamp()),
                     int((now + timedelta(minutes=row[6])).timestamp()),
-                    row[7],
+                    int((now + timedelta(minutes=row[7])).timestamp()),
+                    row[8],
                 ),
             )
 
@@ -20596,15 +29574,26 @@ def test_duplicate_task_list_only_returns_stale_unbound_raw_tasks(monkeypatch, t
     assert result["duplicates"][0]["canonicalThreadId"] == "canonical"
     assert result["duplicates"][0]["desiredTitle"].startswith("[无价值·重复任务]")
 
-    with sqlite3.connect(thread_db) as connection:
-        connection.execute(
-            "UPDATE threads SET title=? WHERE id=?",
-            (result["duplicates"][0]["desiredTitle"], "duplicate"),
-        )
+    def apply_titles(candidates):
+        with sqlite3.connect(thread_db) as connection:
+            connection.execute(
+                "UPDATE threads SET name=? WHERE id=?",
+                (candidates[0]["desiredTitle"], candidates[0]["threadId"]),
+            )
+        return {"duplicate": None}
+
+    monkeypatch.setattr(MODULE, "_set_desktop_thread_titles", apply_titles)
+    reconciled = MODULE.duplicate_task_title_reconcile(
+        SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=30)
+    )
+    assert reconciled["ok"] is True
+    assert [item["threadId"] for item in reconciled["renamed"]] == ["duplicate"]
+
     after_rename = MODULE.duplicate_task_list(
         SimpleNamespace(ledger=tmp_path / "ledger.sqlite3", min_age_minutes=30)
     )
     assert [item["threadId"] for item in after_rename["duplicates"]] == ["duplicate"]
+    assert after_rename["duplicates"][0]["currentTitle"].startswith("[无价值·重复任务]")
 
 
 def test_orphan_list_recovers_thread_created_in_github_project(monkeypatch, tmp_path):
@@ -21193,6 +30182,124 @@ def test_publication_feedback_list_reconciles_stale_archived_history(monkeypatch
             "reason": "STALE_STATUS_BACKFILL_SKIPPED",
         }
     ]
+
+
+def test_controller_publication_notice_reconciles_visible_reply_then_reserves_next(
+    monkeypatch, tmp_path
+):
+    first_url = "https://github.com/a/b/pull/9"
+    second_url = "https://github.com/c/d/pull/10"
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "agent_message",
+                    "message": MODULE.controller_publication_notice_text(first_url),
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    thread_db = tmp_path / "state.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, archived INTEGER, rollout_path TEXT)"
+        )
+        connection.execute("INSERT INTO threads VALUES ('heartbeat',0,?)", (str(rollout),))
+
+    committed = []
+    reserved = []
+
+    class Store:
+        def __init__(self):
+            self.unresolved = [
+                {
+                    "key": "a/b#1",
+                    "prUrl": first_url,
+                    "publishedAt": "2026-08-31T00:00:00Z",
+                    "reservationNonce": "notice-1",
+                }
+            ]
+
+        def unresolved_controller_publication_notices(self):
+            return list(self.unresolved)
+
+        def commit_controller_publication_notice(self, **kwargs):
+            committed.append(kwargs)
+            self.unresolved = []
+
+        def controller_publication_notice_candidates(self):
+            return [
+                {
+                    "key": "c/d#2",
+                    "prUrl": second_url,
+                    "publishedAt": "2026-08-31T01:00:00Z",
+                }
+            ]
+
+        def reserve_controller_publication_notice(self, **kwargs):
+            reserved.append(kwargs)
+            return {
+                "key": "c/d#2",
+                "prUrl": second_url,
+                "publishedAt": "2026-08-31T01:00:00Z",
+                "reservationNonce": "notice-2",
+            }
+
+    store = Store()
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: store)
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "HEARTBEAT_TARGET_THREAD_ID", "heartbeat")
+
+    result = MODULE.controller_publication_notice(SimpleNamespace(ledger=tmp_path / "ledger"))
+
+    assert committed == [{"reservation_nonce": "notice-1", "pr_url": first_url}]
+    assert reserved == [{"pr_url": second_url}]
+    assert result["notice"] == {
+        "key": "c/d#2",
+        "prUrl": second_url,
+        "publishedAt": "2026-08-31T01:00:00Z",
+    }
+
+
+def test_controller_publication_notice_replays_unacknowledged_reservation(monkeypatch, tmp_path):
+    pr_url = "https://github.com/a/b/pull/9"
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text("", encoding="utf-8")
+    thread_db = tmp_path / "state.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, archived INTEGER, rollout_path TEXT)"
+        )
+        connection.execute("INSERT INTO threads VALUES ('heartbeat',0,?)", (str(rollout),))
+
+    class Store:
+        def unresolved_controller_publication_notices(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "prUrl": pr_url,
+                    "publishedAt": "2026-08-31T00:00:00Z",
+                    "reservationNonce": "notice-1",
+                }
+            ]
+
+        def commit_controller_publication_notice(self, **_kwargs):
+            raise AssertionError("an invisible reply must not advance the cursor")
+
+        def controller_publication_notice_candidates(self):
+            raise AssertionError("the existing reservation must be replayed")
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "HEARTBEAT_TARGET_THREAD_ID", "heartbeat")
+
+    result = MODULE.controller_publication_notice(SimpleNamespace(ledger=tmp_path / "ledger"))
+
+    assert result["notice"]["prUrl"] == pr_url
 
 
 def test_event_drain_prioritizes_visible_publication_feedback(monkeypatch, tmp_path):

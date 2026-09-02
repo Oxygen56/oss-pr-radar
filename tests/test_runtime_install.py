@@ -162,6 +162,21 @@ def test_controller_never_resolves_executables_from_poisoned_runtime_scripts(tmp
     monkeypatch.setattr(
         "oss_pr_radar.controller.require_operational_authorization", lambda _root: {}
     )
+    monkeypatch.setattr(
+        "oss_pr_radar.controller.read_disk_pressure_gate_health",
+        lambda _root: {
+            "ok": True,
+            "blocked": False,
+            "reason": None,
+            "active": False,
+            "snapshot": {
+                "level": "ok",
+                "freeBytes": 100 * 1024**3,
+                "usedFraction": 0.5,
+            },
+            "restartSafe": True,
+        },
+    )
     controller_cycle(target, code_root=release, runner=runner, notify=False)
     executable_args = [
         argument for _stage, argv in calls for argument in argv if argument.endswith(".py")

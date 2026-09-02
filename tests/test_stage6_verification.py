@@ -186,6 +186,25 @@ def test_stage6_manifest_requires_bound_results_or_run(tmp_path):
     assert not artifact_root.exists()
 
 
+def test_stage6_manifest_resolves_active_release_symlink(tmp_path):
+    release = tmp_path / "releases" / "candidate"
+    script = release / "scripts" / "stage6_manifest.py"
+    script.parent.mkdir(parents=True)
+    source = Path(__file__).parents[1] / "scripts" / "stage6_manifest.py"
+    script.write_bytes(source.read_bytes())
+    active = tmp_path / "current-release"
+    active.symlink_to(release)
+
+    module_spec = importlib.util.spec_from_file_location(
+        "stage6_manifest_symlink_test", active / "scripts" / "stage6_manifest.py"
+    )
+    assert module_spec and module_spec.loader
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+
+    assert module.ROOT == release.resolve()
+
+
 def test_stage6_manifest_results_output_is_directly_consumable(tmp_path):
     root = Path(__file__).parents[1]
     clean_root = tmp_path / "clean-candidate"
