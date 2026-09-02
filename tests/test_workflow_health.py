@@ -383,6 +383,53 @@ def test_component_health_checks_each_required_job_below_green_run(monkeypatch):
     assert result["issues"] == []
 
 
+def test_component_health_requires_full_chain_proof_for_natural_run(monkeypatch):
+    natural = {
+        "id": 11,
+        "event": "schedule",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-04T01:20:00Z",
+        "updated_at": "2026-08-04T01:30:00Z",
+        "html_url": "https://github.com/a/b/actions/runs/11",
+    }
+    jobs = [
+        {"name": name, "conclusion": "success"}
+        for name in (*MODULE._NATURAL_REQUIRED_JOBS, MODULE._FULL_CHAIN_PROOF_JOB)
+    ]
+    monkeypatch.setattr(MODULE, "github_json", lambda _path: {"jobs": jobs})
+
+    result = MODULE.workflow_component_health("a/b", [natural])
+
+    assert result["healthy"] is True
+    assert result["naturalFullChainProven"] is True
+    assert result["scanSucceeded"] is True
+
+
+def test_component_health_rejects_natural_run_with_skipped_business_job(monkeypatch):
+    natural = {
+        "id": 12,
+        "event": "schedule",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-04T01:20:00Z",
+        "updated_at": "2026-08-04T01:30:00Z",
+        "html_url": "https://github.com/a/b/actions/runs/12",
+    }
+    jobs = [
+        {"name": name, "conclusion": "success"}
+        for name in (*MODULE._NATURAL_REQUIRED_JOBS, MODULE._FULL_CHAIN_PROOF_JOB)
+    ]
+    jobs[-2]["conclusion"] = "skipped"
+    monkeypatch.setattr(MODULE, "github_json", lambda _path: {"jobs": jobs})
+
+    result = MODULE.workflow_component_health("a/b", [natural])
+
+    assert result["healthy"] is False
+    assert result["naturalFullChainProven"] is False
+    assert result["issues"] == ["NATURAL_FULL_CHAIN_DEGRADED"]
+
+
 def test_component_health_ignores_schedule_canary_after_cancelled_dispatch(monkeypatch):
     workflow_runs = [
         {
@@ -407,7 +454,11 @@ def test_component_health_ignores_schedule_canary_after_cancelled_dispatch(monke
     monkeypatch.setattr(
         MODULE,
         "github_json",
-        lambda path: pytest.fail(f"schedule canary jobs must not be assessed: {path}"),
+        lambda path: {
+            "jobs": [{"name": "schedule-canary", "conclusion": "success"}]
+        }
+        if path.endswith("/jobs?per_page=100")
+        else pytest.fail(path),
     )
 
     result = MODULE.workflow_component_health("a/b", workflow_runs)

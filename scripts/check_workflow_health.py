@@ -22,6 +22,17 @@ from oss_pr_radar.release_binding import bind_runtime, runtime_ledger_path  # no
 from oss_pr_radar.util import parse_time, sha256_json  # noqa: E402
 
 _FULL_SCAN_EVENT = "workflow_dispatch"
+_NATURAL_EVENT = "schedule"
+_NATURAL_REQUIRED_JOBS = (
+    "watch",
+    "pr-followup",
+    "scan",
+    "build-state",
+    "persist-pending",
+    "notify",
+    "persist-receipt",
+)
+_FULL_CHAIN_PROOF_JOB = "full-chain-proof"
 _STATE_JOBS = {"build-state", "persist-pending", "persist-receipt"}
 _MANAGED_FOLLOWUP_MAX_AGE = timedelta(minutes=150)
 
@@ -60,78 +71,145 @@ def runs(repo: str) -> list[dict]:
     return value.get("workflow_runs") or []
 
 
+def _run_jobs(repo: str, run_id: int) -> list[dict] | None:
+    """Return the jobs for a run, or ``None`` when the API response is unusable."""
+
+    value = github_json(f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100")
+    jobs = value.get("jobs") if isinstance(value, dict) else None
+    return jobs if isinstance(jobs, list) else None
+
+
+def _job_conclusions(jobs: list[dict]) -> dict[str, str]:
+    return {
+        str(job.get("name")): str(job.get("conclusion") or job.get("status") or "unknown")
+        for job in jobs
+        if isinstance(job, dict) and job.get("name")
+    }
+
+
+def _natural_chain_issues(conclusions: dict[str, str]) -> list[str]:
+    """Require every business job and the terminal proof job to finish successfully."""
+
+    issues: list[str] = []
+    missing = [name for name in (*_NATURAL_REQUIRED_JOBS, _FULL_CHAIN_PROOF_JOB) if name not in conclusions]
+    if missing:
+        issues.append("NATURAL_FULL_CHAIN_PROOF_MISSING")
+    failed = [
+        name
+        for name in (*_NATURAL_REQUIRED_JOBS, _FULL_CHAIN_PROOF_JOB)
+        if conclusions.get(name) != "success"
+    ]
+    if failed:
+        issues.append("NATURAL_FULL_CHAIN_DEGRADED")
+    return issues
+
+
 def workflow_component_health(repo: str, workflow_runs: list[dict]) -> dict:
-    """Assess the latest completed run below its aggregate conclusion."""
+    """Assess the latest completed full chain below its aggregate conclusion.
+
+    A scheduled run is only evidence of a real scan when the Jobs API shows all
+    business jobs and the terminal ``full-chain-proof`` job succeeded.  This
+    deliberately rejects the historical schedule-canary-only runs.  Manual
+    dispatch remains a valid full scan and does not need the natural proof job.
+    """
 
     completed = [
         item
         for item in workflow_runs
-        if item.get("event") == _FULL_SCAN_EVENT
+        if item.get("event") in {_FULL_SCAN_EVENT, _NATURAL_EVENT}
         and item.get("status") == "completed"
         and item.get("conclusion") != "cancelled"
         and item.get("id")
         and (item.get("updated_at") or item.get("created_at"))
     ]
-    latest = max(
+    ordered = sorted(
         completed,
         key=lambda item: parse_time(str(item.get("updated_at") or item.get("created_at"))),
-        default=None,
+        reverse=True,
     )
-    if latest is None:
+    if not ordered:
         return {
             "assessed": False,
             "healthy": True,
             "issues": [],
             "scanSucceeded": None,
         }
-
-    run_id = int(latest["id"])
-    base = {
-        "assessed": True,
-        "runId": run_id,
-        "runUrl": latest.get("html_url"),
-        "runEvent": latest.get("event"),
-        "runUpdatedAt": latest.get("updated_at") or latest.get("created_at"),
-    }
-    try:
-        jobs_value = github_json(f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100")
-    except (RuntimeError, TypeError, ValueError) as exc:
+    for latest in ordered:
+        run_id = int(latest["id"])
+        base = {
+            "assessed": True,
+            "runId": run_id,
+            "runUrl": latest.get("html_url"),
+            "runEvent": latest.get("event"),
+            "runUpdatedAt": latest.get("updated_at") or latest.get("created_at"),
+        }
+        try:
+            jobs = _run_jobs(repo, run_id)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            return {
+                **base,
+                "healthy": False,
+                "issues": ["WORKFLOW_COMPONENT_STATUS_UNAVAILABLE"],
+                "scanSucceeded": None,
+                "error": f"{type(exc).__name__}:{str(exc)[:200]}",
+            }
+        if jobs is None:
+            return {
+                **base,
+                "healthy": False,
+                "issues": ["WORKFLOW_COMPONENT_STATUS_UNAVAILABLE"],
+                "scanSucceeded": None,
+            }
+        conclusions = _job_conclusions(jobs)
+        if latest.get("event") == _NATURAL_EVENT:
+            natural_issues = _natural_chain_issues(conclusions)
+            # A schedule-canary-only run is not a failed scan and must not hide
+            # an older manual scan; it is simply not usable as scan evidence.
+            if natural_issues:
+                if (
+                    "NATURAL_FULL_CHAIN_PROOF_MISSING" in natural_issues
+                    and not any(name in conclusions for name in _NATURAL_REQUIRED_JOBS)
+                ):
+                    continue
+                return {
+                    **base,
+                    "healthy": False,
+                    "issues": natural_issues,
+                    "scanSucceeded": conclusions.get("scan") == "success",
+                    "jobs": conclusions,
+                    "naturalFullChainProven": False,
+                }
+            return {
+                **base,
+                "healthy": True,
+                "issues": [],
+                "scanSucceeded": True,
+                "jobs": conclusions,
+                "naturalFullChainProven": True,
+            }
+        issues: list[str] = []
+        scan_succeeded = conclusions.get("scan") == "success"
+        if not scan_succeeded:
+            issues.append("SCAN_JOB_DEGRADED")
+        if conclusions.get("pr-followup") != "success":
+            issues.append("PR_FOLLOWUP_DEGRADED")
+        if any(conclusions.get(name) != "success" for name in _STATE_JOBS):
+            issues.append("STATE_PERSISTENCE_DEGRADED")
+        if conclusions.get("notify") != "success":
+            issues.append("NOTIFICATION_DEGRADED")
         return {
             **base,
-            "healthy": False,
-            "issues": ["WORKFLOW_COMPONENT_STATUS_UNAVAILABLE"],
-            "scanSucceeded": None,
-            "error": f"{type(exc).__name__}:{str(exc)[:200]}",
+            "healthy": not issues,
+            "issues": issues,
+            "scanSucceeded": scan_succeeded,
+            "jobs": conclusions,
+            "naturalFullChainProven": False,
         }
-    jobs = jobs_value.get("jobs") if isinstance(jobs_value, dict) else None
-    if not isinstance(jobs, list):
-        return {
-            **base,
-            "healthy": False,
-            "issues": ["WORKFLOW_COMPONENT_STATUS_UNAVAILABLE"],
-            "scanSucceeded": None,
-        }
-    conclusions = {
-        str(job.get("name")): str(job.get("conclusion") or job.get("status") or "unknown")
-        for job in jobs
-        if isinstance(job, dict) and job.get("name")
-    }
-    issues: list[str] = []
-    scan_succeeded = conclusions.get("scan") == "success"
-    if not scan_succeeded:
-        issues.append("SCAN_JOB_DEGRADED")
-    if conclusions.get("pr-followup") != "success":
-        issues.append("PR_FOLLOWUP_DEGRADED")
-    if any(conclusions.get(name) != "success" for name in _STATE_JOBS):
-        issues.append("STATE_PERSISTENCE_DEGRADED")
-    if conclusions.get("notify") != "success":
-        issues.append("NOTIFICATION_DEGRADED")
     return {
-        **base,
-        "healthy": not issues,
-        "issues": issues,
-        "scanSucceeded": scan_succeeded,
-        "jobs": conclusions,
+        "assessed": False,
+        "healthy": True,
+        "issues": [],
+        "scanSucceeded": None,
     }
 
 
