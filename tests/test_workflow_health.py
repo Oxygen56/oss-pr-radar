@@ -1501,6 +1501,7 @@ def test_health_help_has_no_auth_bypass_option():
     assert "allow-unreleased-code" not in completed.stdout
     assert "--repair" not in completed.stdout
 
+
 def test_sparse_natural_schedule_coverage_is_reported_without_hiding_freshness():
     runs = [
         {
@@ -1555,7 +1556,6 @@ def test_sparse_natural_schedule_coverage_is_reported_without_hiding_freshness()
     }
 
 
-
 def test_latest_failed_natural_schedule_is_not_masked_by_prior_success():
     runs = [
         {
@@ -1579,7 +1579,6 @@ def test_latest_failed_natural_schedule_is_not_masked_by_prior_success():
 
     assert result["healthy"] is False
     assert "NATURAL_SCHEDULE_RUN_FAILED" in result["issues"]
-
 
 
 def test_health_orders_schedule_rows_by_creation_time_before_selecting_latest():
@@ -1610,7 +1609,6 @@ def test_health_orders_schedule_rows_by_creation_time_before_selecting_latest():
     assert "NATURAL_SCHEDULE_RUN_FAILED" in result["issues"]
 
 
-
 def test_component_health_requires_full_chain_proof_for_natural_run(monkeypatch):
     natural = {
         "id": 11,
@@ -1632,7 +1630,6 @@ def test_component_health_requires_full_chain_proof_for_natural_run(monkeypatch)
     assert result["healthy"] is True
     assert result["naturalFullChainProven"] is True
     assert result["scanSucceeded"] is True
-
 
 
 def test_component_health_requires_watch_for_manual_fallback(monkeypatch):
@@ -1663,7 +1660,6 @@ def test_component_health_requires_watch_for_manual_fallback(monkeypatch):
     assert result["issues"] == ["WATCH_DEGRADED"]
 
 
-
 def test_duplicate_job_name_cannot_hide_a_failure(monkeypatch):
     natural = {
         "id": 14,
@@ -1685,7 +1681,6 @@ def test_duplicate_job_name_cannot_hide_a_failure(monkeypatch):
     assert result["healthy"] is False
     assert result["jobs"]["scan"] == "failure"
     assert result["naturalFullChainProven"] is False
-
 
 
 def test_component_health_rejects_natural_run_with_skipped_business_job(monkeypatch):
@@ -1712,7 +1707,6 @@ def test_component_health_rejects_natural_run_with_skipped_business_job(monkeypa
     assert result["issues"] == ["NATURAL_FULL_CHAIN_DEGRADED"]
 
 
-
 def test_proven_natural_ids_cover_only_jobs_api_verified_runs(monkeypatch):
     workflow_runs = [
         {"id": 21, "event": "schedule", "status": "completed", "conclusion": "success"},
@@ -1729,7 +1723,6 @@ def test_proven_natural_ids_cover_only_jobs_api_verified_runs(monkeypatch):
     monkeypatch.setattr(MODULE, "github_json", fake_json)
 
     assert MODULE.proven_natural_schedule_run_ids("a/b", workflow_runs) == {21}
-
 
 
 def test_proven_natural_ids_bound_jobs_queries_to_window_and_reuse_cache(monkeypatch):
@@ -1777,7 +1770,6 @@ def test_proven_natural_ids_bound_jobs_queries_to_window_and_reuse_cache(monkeyp
     assert len(calls) == len(cache)
 
 
-
 def test_component_health_fails_closed_on_schedule_canary_after_cancelled_dispatch(monkeypatch):
     workflow_runs = [
         {
@@ -1817,7 +1809,6 @@ def test_component_health_fails_closed_on_schedule_canary_after_cancelled_dispat
     assert result["scanSucceeded"] is False
     assert "NATURAL_FULL_CHAIN_PROOF_MISSING" in result["issues"]
     assert "NATURAL_SCHEDULE_FULL_CHAIN_MISSING" in result["issues"]
-
 
 
 def test_unproven_natural_component_does_not_keep_effective_scan_fresh():

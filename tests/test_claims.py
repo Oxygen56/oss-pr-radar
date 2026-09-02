@@ -300,6 +300,7 @@ def test_hypothetical_or_qualified_stand_down_does_not_clear_claim():
         assert signals
         assert {signal.author for signal in signals} == {"alice"}
 
+
 def test_maintainer_approval_requires_privileged_association():
     assert detect_maintainer_approval([comment("Please open a PR for this", association="MEMBER")])
     assert not detect_maintainer_approval(

@@ -353,9 +353,7 @@ def workflow_component_health(
         "scanSucceeded": scan_succeeded,
         "jobs": conclusions,
         "fullChainProven": full_chain_proven,
-        "naturalFullChainProven": bool(
-            latest.get("event") == _NATURAL_EVENT and full_chain_proven
-        ),
+        "naturalFullChainProven": bool(latest.get("event") == _NATURAL_EVENT and full_chain_proven),
     }
     if latest.get("event") == _NATURAL_EVENT:
         result["naturalFullChainRunIds"] = [str(run_id)] if full_chain_proven else []
@@ -550,9 +548,11 @@ def health(
         coverage_warnings.append("NATURAL_SCHEDULE_GAP_EXCESSIVE")
     coverage_healthy = None if not coverage_assessed else not coverage_warnings
     canary_healthy = not canary_issues
-    issues = list(dict.fromkeys([*canary_issues, *full_chain_issues, *(
-        coverage_warnings if coverage_assessed else []
-    )]))
+    issues = list(
+        dict.fromkeys(
+            [*canary_issues, *full_chain_issues, *(coverage_warnings if coverage_assessed else [])]
+        )
+    )
 
     full_coverage = full_slot_coverage(
         workflow_runs,
@@ -586,7 +586,9 @@ def health(
         "naturalScheduleWarnings": coverage_warnings,
         "latestScheduleUrl": latest_schedule.get("html_url") if latest_schedule else None,
         "latestSuccessUrl": latest_success.get("html_url") if latest_success else None,
-        "provenNaturalRunIds": sorted(proven_natural_ids) if proven_natural_ids is not None else None,
+        "provenNaturalRunIds": sorted(proven_natural_ids)
+        if proven_natural_ids is not None
+        else None,
         "naturalScheduleCoverage": {
             "assessed": coverage_assessed,
             "healthy": coverage_healthy,
