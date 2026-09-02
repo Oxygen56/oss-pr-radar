@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the fast, slow, and signed-queue worker LaunchAgents together."""
+"""Install all required local Radar worker LaunchAgents together."""
 
 from __future__ import annotations
 
@@ -24,11 +24,14 @@ FIXED_WORKER_LABELS = (
     "com.oss-pr-radar.local-publication",
     "com.oss-pr-radar.local-publication-slow",
     "com.oss-pr-radar.queue-importer",
+    "com.oss-pr-radar.scheduler-watchdog",
 )
 
 from oss_pr_radar.launch_config import parse_launchctl_config  # noqa: E402
-from oss_pr_radar.local_publication import worker_specs  # noqa: E402
+from oss_pr_radar.local_publication import SLOW_WORK_LOCK, worker_specs  # noqa: E402
 from oss_pr_radar.operational_auth import (  # noqa: E402
+    _read_staged_receipt,
+    _validate_receipt_staging_window,
     authorization_path,
     consume_worker_staging_authorization,
     finalize_operational_authorization,
@@ -36,16 +39,20 @@ from oss_pr_radar.operational_auth import (  # noqa: E402
     require_worker_staging_authorization,
     revoke_operational_authorization,
     staged_worker_receipt_path,
+    verify_staged_worker_receipt,
     worker_spec_digest,
     worker_staging_transaction_lock,
 )
 from oss_pr_radar.release_binding import runtime_ledger_path  # noqa: E402
 from oss_pr_radar.runtime import (  # noqa: E402
     REQUIRED_WORKERS,
+    RuntimeLockBusy,
     disk_snapshot,
     evaluate_health,
+    exclusive_lock,
     pending_publication_effects,
     pid_probe,
+    read_disk_pressure_gate_health,
     read_json,
 )
 from oss_pr_radar.runtime_audit import active_release_evidence  # noqa: E402
@@ -104,8 +111,10 @@ def _snapshot_plist(service: str, path: Path) -> PlistSnapshot:
 
 
 def _validate_specs(specs: list[dict[str, object]]) -> None:
-    if len(specs) != 3:
-        raise RuntimeError(f"expected three worker specs, got {len(specs)}")
+    if len(specs) != len(REQUIRED_WORKERS):
+        raise RuntimeError(
+            f"expected {len(REQUIRED_WORKERS)} required worker specs, got {len(specs)}"
+        )
     labels: set[str] = set()
     required = {
         "Label",
@@ -229,7 +238,14 @@ def _launchctl_config_matches(service: str, expected: dict[str, object]) -> bool
     ] and actual.get("WorkingDirectory") == str(expected["WorkingDirectory"])
 
 
-def service_status(service: str, plist_path: Path, expected: dict) -> dict:
+def service_status(
+    service: str,
+    plist_path: Path,
+    expected: dict,
+    *,
+    disk: dict | None = None,
+    disk_pressure_gate: dict | None = None,
+) -> dict:
     """Read one worker status without changing launchd or the managed ledger."""
 
     result = launchctl("print", service, check=False)
@@ -249,6 +265,7 @@ def service_status(service: str, plist_path: Path, expected: dict) -> dict:
         FIXED_WORKER_LABELS[0]: "fast",
         FIXED_WORKER_LABELS[1]: "slow",
         FIXED_WORKER_LABELS[2]: "queue-importer",
+        FIXED_WORKER_LABELS[3]: "scheduler-watchdog",
     }.get(str(expected.get("Label")), "fast")
     release = active_release_evidence(root)
     # Status is deliberately observational: evaluate the complete persisted
@@ -289,7 +306,13 @@ def service_status(service: str, plist_path: Path, expected: dict) -> dict:
             slow_state["lastExitCode"] = 1
         workers["slow"] = slow_state
         runtime_state["workers"] = workers
-    disk = disk_snapshot(root)
+    if disk_pressure_gate is None:
+        disk = disk_snapshot(root)
+        disk_pressure_gate = read_disk_pressure_gate_health(
+            root, snapshot_fn=lambda _root: dict(disk)
+        )
+    elif disk is None and isinstance(disk_pressure_gate.get("snapshot"), dict):
+        disk = dict(disk_pressure_gate["snapshot"])
     log_bytes = sum(
         path.stat().st_size
         for path in (
@@ -303,6 +326,7 @@ def service_status(service: str, plist_path: Path, expected: dict) -> dict:
         expected_release=release.get("releaseId") if release.get("valid") else None,
         expected_policy_digest=release.get("policyDigest") if release.get("valid") else None,
         disk=disk,
+        disk_pressure_gate=disk_pressure_gate,
         log_bytes=log_bytes,
     )
     if pid is not None and not process["alive"]:
@@ -543,8 +567,10 @@ def ensure_workers(
 ) -> dict[str, object]:
     """Keep correctly loaded workers running, or repair them under authorization."""
 
-    require_operational_authorization(runtime_root)
+    authorization = require_operational_authorization(runtime_root)
     _validate_specs(specs)
+    if authorization.get("workerConfigDigest") != worker_spec_digest(specs):
+        raise RuntimeError("worker configuration changed; controlled restage required")
     snapshots = _snapshot_workers(specs, home=home, domain=domain)
     if all(
         snapshot.loaded
@@ -572,41 +598,130 @@ def ensure_workers(
     )
 
 
-def _uninstall_labels(labels: tuple[str, ...], *, home: Path, domain: str) -> dict[str, object]:
+def _snapshot_file_matches(snapshot: PlistSnapshot) -> bool:
+    if not snapshot.exists:
+        return not snapshot.path.exists() and not snapshot.path.is_symlink()
+    try:
+        metadata = snapshot.path.lstat()
+        return (
+            stat.S_ISREG(metadata.st_mode)
+            and not stat.S_ISLNK(metadata.st_mode)
+            and stat.S_IMODE(metadata.st_mode) == snapshot.mode
+            and snapshot.path.read_bytes() == snapshot.data
+        )
+    except OSError:
+        return False
+
+
+def _rollback_uninstall(snapshots: list[PlistSnapshot], *, domain: str) -> list[str]:
     errors: list[str] = []
-    for label in labels:
-        service = f"{domain}/{label}"
-        path = home / "Library" / "LaunchAgents" / f"{label}.plist"
+    for snapshot in snapshots:
         try:
-            launchctl("bootout", service, check=False)
+            _restore_snapshot(snapshot)
         except Exception as exc:
-            errors.append(f"bootout {service}: {type(exc).__name__}:{exc}")
-            continue
+            errors.append(f"restore {snapshot.path}: {type(exc).__name__}:{exc}")
+    for snapshot in snapshots:
         try:
-            if _loaded(service):
-                errors.append(f"bootout {service}: service remained loaded")
-                continue
+            loaded = _loaded(snapshot.service)
+            if snapshot.loaded and not loaded:
+                _checked_launchctl("bootstrap", domain, str(snapshot.path))
+            elif not snapshot.loaded and loaded:
+                _checked_launchctl("bootout", snapshot.service)
         except Exception as exc:
-            errors.append(f"verify {service}: {type(exc).__name__}:{exc}")
-            continue
+            errors.append(f"restore {snapshot.service}: {type(exc).__name__}:{exc}")
+    for snapshot in snapshots:
+        if not _snapshot_file_matches(snapshot):
+            errors.append(f"verify {snapshot.path}: plist state mismatch")
         try:
-            path.unlink(missing_ok=True)
-        except OSError as exc:
-            errors.append(f"remove {path}: {type(exc).__name__}:{exc}")
+            if _loaded(snapshot.service) != snapshot.loaded:
+                expected = "loaded" if snapshot.loaded else "unloaded"
+                errors.append(f"verify {snapshot.service}: service not {expected}")
+        except Exception as exc:
+            errors.append(f"verify {snapshot.service}: {type(exc).__name__}:{exc}")
+    return errors
+
+
+def _uninstall_snapshots(snapshots: list[PlistSnapshot], *, domain: str) -> dict[str, object]:
+    try:
+        # First quiesce and verify the complete worker set.  Deleting even one
+        # plist before all three services are down would invalidate the active
+        # authorization and make an ordinary retry impossible.
+        for snapshot in snapshots:
+            if snapshot.loaded:
+                _checked_launchctl("bootout", snapshot.service)
+            if _loaded(snapshot.service):
+                raise RuntimeError(f"worker remained loaded: {snapshot.service}")
+        for snapshot in snapshots:
+            snapshot.path.unlink(missing_ok=True)
+        for snapshot in snapshots:
+            if snapshot.path.exists() or snapshot.path.is_symlink():
+                raise RuntimeError(f"worker plist remained installed: {snapshot.path}")
+            if _loaded(snapshot.service):
+                raise RuntimeError(f"worker reloaded during uninstall: {snapshot.service}")
+    except Exception as exc:
+        rollback_errors = _rollback_uninstall(snapshots, domain=domain)
+        detail = f"{type(exc).__name__}:{exc}"
+        if rollback_errors:
+            raise RuntimeError(
+                "worker uninstall rollback incomplete: "
+                + detail
+                + "; rollback="
+                + ", ".join(rollback_errors)
+            ) from exc
+        raise RuntimeError(f"worker uninstall rolled back: {detail}") from exc
+
     return {
-        "ok": not errors,
-        "workers": [{"label": label, "installed": False} for label in labels],
-        "errors": errors,
+        "ok": True,
+        "workers": [{"label": snapshot.path.stem, "installed": False} for snapshot in snapshots],
+        "errors": [],
     }
 
 
+def _require_slow_worker_quiescent(*, runtime_root: Path, domain: str) -> None:
+    """Refuse to stop services while the durable slow cycle may still be running."""
+
+    runtime = read_json(runtime_root / "state" / "runtime-health.json", {})
+    workers = runtime.get("workers") if isinstance(runtime, dict) else None
+    slow_health = workers.get("slow") if isinstance(workers, dict) else None
+    backoff = read_json(runtime_root / "state" / "slow-worker-backoff.json", {})
+    in_flight = (isinstance(slow_health, dict) and slow_health.get("inFlight") is True) or (
+        isinstance(backoff, dict) and backoff.get("inFlight") is True
+    )
+    if in_flight:
+        raise RuntimeError("worker uninstall refused: slow worker is in flight")
+
+    service = f"{domain}/{FIXED_WORKER_LABELS[1]}"
+    observation = launchctl("print", service, check=False)
+    if observation.returncode != 0:
+        return
+    output = "\n".join(part for part in (observation.stdout, observation.stderr) if part)
+    match = re.search(r"\bpid = (\d+)", output)
+    if match is None:
+        return
+    pid = int(match.group(1))
+    process = pid_probe(pid)
+    if process.get("alive") is True:
+        raise RuntimeError(f"worker uninstall refused: slow worker process is alive: {pid}")
+    if process.get("error") not in {None, "ESRCH"}:
+        raise RuntimeError(
+            f"worker uninstall refused: slow worker process state is uncertain: {pid}"
+        )
+
+
 def uninstall_workers(
-    specs: list[dict[str, object]], *, home: Path, domain: str
+    specs: list[dict[str, object]], *, home: Path, domain: str, runtime_root: Path
 ) -> dict[str, object]:
-    """Remove every worker, continuing through individual bootout failures."""
+    """Remove all workers transactionally after proving the slow lane is idle."""
 
     _validate_specs(specs)
-    return _uninstall_labels(tuple(str(spec["Label"]) for spec in specs), home=home, domain=domain)
+    runtime_root = runtime_root.resolve()
+    try:
+        with exclusive_lock(runtime_root / "state" / SLOW_WORK_LOCK):
+            _require_slow_worker_quiescent(runtime_root=runtime_root, domain=domain)
+            snapshots = _snapshot_workers(specs, home=home, domain=domain)
+            return _uninstall_snapshots(snapshots, domain=domain)
+    except RuntimeLockBusy as exc:
+        raise RuntimeError("worker uninstall refused: slow worker lock is busy") from exc
 
 
 def main() -> int:
@@ -635,17 +750,36 @@ def main() -> int:
         )
         _validate_specs(specs)
         if args.status:
+            disk_pressure_gate = read_disk_pressure_gate_health(
+                runtime_root, snapshot_fn=lambda root: disk_snapshot(root)
+            )
+            shared_disk = (
+                dict(disk_pressure_gate["snapshot"])
+                if isinstance(disk_pressure_gate.get("snapshot"), dict)
+                else None
+            )
             statuses: list[dict[str, object]] = []
             for spec in specs:
                 label = str(spec["Label"])
                 plist_path = home / "Library" / "LaunchAgents" / f"{label}.plist"
-                status = service_status(f"{domain}/{label}", plist_path, spec)
+                status = service_status(
+                    f"{domain}/{label}",
+                    plist_path,
+                    spec,
+                    disk=shared_disk,
+                    disk_pressure_gate=disk_pressure_gate,
+                )
                 status["label"] = label
                 statuses.append(status)
             print(
                 json.dumps(
                     {
-                        "ok": all(status.get("ok") is True for status in statuses),
+                        "ok": (
+                            disk_pressure_gate.get("ok") is True
+                            and disk_pressure_gate.get("blocked") is False
+                            and all(status.get("ok") is True for status in statuses)
+                        ),
+                        "diskPressureGate": disk_pressure_gate,
                         "workers": statuses,
                     },
                     sort_keys=True,
@@ -654,7 +788,7 @@ def main() -> int:
             return 0
         if args.uninstall:
             require_operational_authorization(runtime_root)
-            result = uninstall_workers(specs, home=home, domain=domain)
+            result = uninstall_workers(specs, home=home, domain=domain, runtime_root=runtime_root)
         elif args.stage:
             if (
                 authorization_path(runtime_root).exists()
@@ -663,8 +797,9 @@ def main() -> int:
                 raise RuntimeError("--stage refuses to modify an already authorized runtime")
             with worker_staging_transaction_lock(runtime_root):
                 receipt_path = staged_worker_receipt_path(runtime_root)
+                receipt_preexisting = receipt_path.exists() or receipt_path.is_symlink()
                 replace_complete_unloaded = False
-                if not receipt_path.exists():
+                if not receipt_preexisting:
                     require_worker_staging_authorization(
                         runtime_root, specs=specs, home=home, _lock_held=True
                     )
@@ -672,6 +807,50 @@ def main() -> int:
                     # replace a complete unloaded trio from the prior release.
                     # Receipt recovery must validate its existing files first.
                     replace_complete_unloaded = True
+                else:
+                    # Validate a signed existing receipt's time window before
+                    # touching any plist.  In particular, an expired receipt
+                    # must not let a partial worker set be rewritten before
+                    # consume rejects it.
+                    try:
+                        existing_receipt = _read_staged_receipt(runtime_root)
+                    except Exception as exc:
+                        # A receipt is a durable claim over the on-disk
+                        # workers.  If it cannot be read or authenticated
+                        # (including JSON/OSError failures), fail closed
+                        # before touching any plist; never treat it as an
+                        # invitation to stage a replacement set.
+                        raise RuntimeError(
+                            "existing staged worker receipt cannot be validated"
+                        ) from exc
+                    if existing_receipt is not None:
+                        _validate_receipt_staging_window(existing_receipt)
+                        # A structurally valid receipt is a durable claim over
+                        # the exact plist bytes.  Re-check that claim before
+                        # staging so a stale/partial worker set cannot be
+                        # rewritten and only then fail during consume.
+                        records = _staging_records(specs, home=home, domain=domain)
+                        specs_by_label = {str(spec["Label"]): spec for spec in specs}
+                        reports = [
+                            {
+                                "label": record["label"],
+                                "loaded": record["loaded"],
+                                "actualConfigMatch": _config_matches(
+                                    Path(str(record["plistPath"])),
+                                    specs_by_label[str(record["label"])],
+                                ),
+                            }
+                            for record in records
+                        ]
+                        if not verify_staged_worker_receipt(
+                            runtime_root,
+                            specs=specs,
+                            worker_reports=reports,
+                            home=home,
+                        ):
+                            raise RuntimeError(
+                                "existing staged worker receipt does not match current worker files"
+                            )
                 initial = _snapshot_workers(specs, home=home, domain=domain)
                 changed = False
                 try:
@@ -692,7 +871,11 @@ def main() -> int:
                     # The signed receipt is the durable commit point. Before
                     # it exists, restore both newly created files and any
                     # complete unloaded prior-release trio replaced here.
-                    if changed and not receipt_path.exists():
+                    # A receipt that was already present before this stage is
+                    # not a commit produced by the failed attempt.  Restore
+                    # every plist in that case as well (notably when an
+                    # expired receipt is discovered only during consume).
+                    if changed and (receipt_preexisting or not receipt_path.exists()):
                         rollback_errors = _rollback(
                             initial,
                             [snapshot.service for snapshot in initial],

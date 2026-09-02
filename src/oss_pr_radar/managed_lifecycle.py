@@ -1849,10 +1849,15 @@ class ManagedLedger:
                 )
             ):
                 raise ValueError("task identity is immutable")
-            if existing and existing["state"] == "IMPLEMENTATION_READY":
-                # A legacy result rebind must never roll back the managed
-                # lifecycle fact established by a current-key receipt.
-                state = "IMPLEMENTATION_READY"
+            if existing and existing["state"] in {
+                "IMPLEMENTATION_READY",
+                "PORTFOLIO_READY",
+            }:
+                # A result rebind must never roll back the managed lifecycle
+                # fact or replace the authorization receipt established by a
+                # current-key reproduction transition. PORTFOLIO_READY is the
+                # same durable authorization after a validated patch advances.
+                state = str(existing["state"])
                 try:
                     existing_provenance = json.loads(existing["provenance_json"] or "{}")
                 except json.JSONDecodeError:
@@ -2483,6 +2488,26 @@ class ManagedLedger:
                 "SELECT * FROM managed_results WHERE result_key=?", (result_key,)
             ).fetchone()
             if existing:
+                stored_validation = json_payload(existing["validation_json"])
+                stored_validation_ok = _valid_validation(stored_validation)
+                validation_upgraded = not stored_validation_ok and validation_ok
+                effective_validation_ok = stored_validation_ok or validation_ok
+                patch_advanced = (
+                    patched and bool(commit_sha) and effective_validation_ok and has_new_head
+                )
+                if worker_state == "needs_human":
+                    state = "DECISION_REQUIRED"
+                elif worker_state == "skipped":
+                    state = "WAITING_EXTERNAL" if waiting_external else "SUPERSEDED"
+                elif patch_advanced:
+                    state = "PORTFOLIO_READY"
+                elif waiting_external:
+                    state = "WAITING_EXTERNAL"
+                else:
+                    state = "SYSTEM_PROCESSING"
+                event_type = "PATCHED" if patch_advanced else "TASK_RESULT_RECORDED"
+                if patched and not patch_advanced:
+                    event_type = "PATCH_REJECTED_MISSING_EVIDENCE"
                 # record_result observes the caller's current result file.  A
                 # replay therefore has to repair the current projection too;
                 # returning the historical row unchanged can leave a later,
@@ -2516,6 +2541,52 @@ class ManagedLedger:
                 connection.execute(
                     "UPDATE managed_tasks SET state=? WHERE task_id=?", (state, task_id)
                 )
+                if validation_upgraded:
+                    connection.execute(
+                        "UPDATE managed_results SET validation_json=? WHERE result_key=?",
+                        (_json(persisted_validation), result_key),
+                    )
+                patch_event_created = False
+                if patch_advanced:
+                    upgrade_key = f"result-patch-advanced:{result_key}"
+                    upgrade_fingerprint = stable_fingerprint(upgrade_key)
+                    original_fingerprint = stable_fingerprint(f"result:{result_key}")
+                    if (
+                        connection.execute(
+                            "SELECT 1 FROM managed_lifecycle_events WHERE event_type='PATCHED' "
+                            "AND idempotency_fingerprint IN (?,?)",
+                            (original_fingerprint, upgrade_fingerprint),
+                        ).fetchone()
+                        is None
+                    ):
+                        connection.execute(
+                            """INSERT INTO managed_lifecycle_events
+                               (opportunity_key,task_id,pr_key,event_type,state,idempotency_key,
+                                source,idempotency_fingerprint,provenance_json,observed_at,
+                                payload_json)
+                               VALUES (NULL,?,?,?,?,?,?,?,?,?,?)""",
+                            (
+                                task_id,
+                                pr_key,
+                                "PATCHED",
+                                state,
+                                upgrade_key,
+                                source,
+                                upgrade_fingerprint,
+                                _json(provenance or {}),
+                                _utc(observed_at),
+                                _json(
+                                    {
+                                        "worker_state": worker_state,
+                                        "commit_sha": commit_sha,
+                                        "new_head_sha": new_head_sha,
+                                        "advanced": True,
+                                        "validationUpgraded": validation_upgraded,
+                                    }
+                                ),
+                            ),
+                        )
+                        patch_event_created = True
                 if superseded:
                     previous_event_id = int(
                         connection.execute(
@@ -2598,8 +2669,9 @@ class ManagedLedger:
                     "created": False,
                     "state": state,
                     "advanced": patch_advanced,
+                    "validationUpgraded": validation_upgraded,
                     "reactivated": reactivation_event is not None,
-                    "observationCreated": reactivation_event is not None,
+                    "observationCreated": reactivation_event is not None or patch_event_created,
                 }
             current_rows = connection.execute(
                 """SELECT result_key,result_type,result_digest FROM managed_results
@@ -3467,6 +3539,121 @@ class ManagedLedger:
                 (pr_key,),
             ).fetchone()
             return dict(row) if row else None
+        finally:
+            connection.close()
+
+    def read_result(self, result_key: str) -> dict[str, Any] | None:
+        """Return one exact managed result with its validation status."""
+
+        connection = self._connection()
+        try:
+            row = connection.execute(
+                "SELECT * FROM managed_results WHERE result_key=?",
+                (result_key,),
+            ).fetchone()
+            if row is None:
+                return None
+            result = dict(row)
+            validation = json_payload(result.get("validation_json"))
+            return result | {
+                "validation": validation,
+                "validationValid": _valid_validation(validation),
+            }
+        finally:
+            connection.close()
+
+    def fix_ready_result_for_task_head(
+        self,
+        task_id: str,
+        *,
+        head_sha: str,
+        issue_url: str,
+    ) -> dict[str, Any] | None:
+        """Return an exact historical FIX_READY head bound to one managed task."""
+
+        if (
+            not task_id
+            or re.fullmatch(r"[0-9a-f]{40}", head_sha) is None
+            or _ISSUE_URL_RE.fullmatch(issue_url) is None
+        ):
+            return None
+        connection = self._connection()
+        try:
+            row = connection.execute(
+                """SELECT * FROM managed_results
+                   WHERE task_id=? AND head_sha=? AND commit_sha=?
+                   ORDER BY observed_at DESC,result_key DESC LIMIT 1""",
+                (task_id, head_sha, head_sha),
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return None
+        result = dict(row)
+        provenance = json_payload(result.get("provenance_json"))
+        if provenance.get("stage") != "FIX_READY" or provenance.get("issueUrl") != issue_url:
+            return None
+        return result | {"provenance": provenance}
+
+    def latest_authenticated_fix_ready_result_for_task(
+        self,
+        task_id: str,
+        *,
+        issue_url: str,
+    ) -> dict[str, Any] | None:
+        """Return the latest controller-ingested unpublished implementation head.
+
+        Validation continuations can outlive the mutable task context that
+        originally authorized implementation.  The managed result is the
+        durable authority for the exact implementation head a corrective
+        commit is allowed to extend.  Overall validation may still be pending;
+        only the reproduction binding must already be authenticated.
+        """
+
+        if not task_id or _ISSUE_URL_RE.fullmatch(issue_url) is None:
+            return None
+        connection = self._connection()
+        try:
+            row = connection.execute(
+                """SELECT * FROM managed_results
+                   WHERE task_id=? AND pr_key IS NULL AND result_type IS NULL
+                     AND head_sha=commit_sha AND is_current=1
+                     AND superseded_by IS NULL
+                   ORDER BY observed_at DESC,result_key DESC LIMIT 1""",
+                (task_id,),
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return None
+        result = dict(row)
+        provenance = json_payload(result.get("provenance_json"))
+        validation = json_payload(result.get("validation_json"))
+        if (
+            provenance.get("stage") != "FIX_READY"
+            or provenance.get("issueUrl") != issue_url
+            or result.get("source") != "dispatch-result"
+            or str(result.get("worker_state") or "").casefold() != "patched"
+            or re.fullmatch(r"[0-9a-f]{40}", str(result.get("head_sha") or "")) is None
+            or result.get("commit_sha") != result.get("head_sha")
+            or re.fullmatch(r"[0-9a-f]{64}", str(result.get("result_digest") or "")) is None
+            or validation.get("reproductionReceiptAuthenticated") is not True
+        ):
+            return None
+        return result | {"provenance": provenance, "validation": validation}
+
+    def has_unpublished_result_for_task(self, task_id: str) -> bool:
+        """Return whether any durable non-PR result already claims this task."""
+
+        if not task_id:
+            return False
+        connection = self._connection()
+        try:
+            row = connection.execute(
+                "SELECT 1 FROM managed_results WHERE task_id=? AND pr_key IS NULL LIMIT 1",
+                (task_id,),
+            ).fetchone()
+            return row is not None
         finally:
             connection.close()
 

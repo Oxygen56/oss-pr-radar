@@ -359,7 +359,8 @@ evidence, bootstrap the retained legacy ledger, create the authoritative live
 snapshot, verify the Stage 6 report and detached envelope, run the Stage 6
 rehearsal, prepare the managed ledger without any live-state input, rehearse Git
 preservation restore in an isolated clone, activate the pointer (which revokes
-any old operational authorization), generate and validate managed-counts evidence
+any old operational authorization), **pause outbound publication and wait for
+the workflow to become idle**, generate and validate managed-counts evidence
 against the exact Stage 6 projection, issue the short-lived worker-staging
 authorization, stage the three worker plists unloaded, update the two automations,
 generate the automation snapshot from the actual TOML files and staged plist bytes,
@@ -383,6 +384,27 @@ python current-release/scripts/stage7_evidence.py operational-authorization \
 python current-release/scripts/install_local_publication_workers.py \
   --runtime-root <runtime-root> --activate
 ```
+
+The pause is a release-bound, durable precondition rather than a reminder:
+
+```bash
+python current-release/scripts/set_publication_pause.py \
+  --runtime-root /Users/oxygen/Documents/github/oss-pr-radar \
+  --minutes 60 --reason STAGE7_CUTOVER
+```
+
+Run it **after** `activate` (a pause from the previous release is invalid) and
+keep the `ACTIVE` pause record until strict final acceptance has passed. Stage 7
+records the exact pause-file digest in managed-counts evidence and rechecks that
+digest, release binding, and idle confirmation at preflight and final acceptance.
+If the final report contains `managed_ledger_projection_drift`, a PR or other
+PR-state change occurred during the evidence window: keep publication paused,
+rerun the live PR snapshot plus Stage 6 verification/rehearsal, regenerate
+managed-counts, then repeat staging, preflight, authorization, worker activation,
+and final acceptance. If it contains `automation_snapshot_stale`, regenerate the
+automation snapshot while the same pause is active and repeat preflight through
+final acceptance. Never extend the ten-minute freshness limit or accept a changed
+PR projection as an append-only bookkeeping update.
 
 `--status` is a runtime-bound read-only check. `--stage` requires the short-lived
 signed stage-only authorization; `--activate`, `--ensure`, and `--uninstall`
@@ -518,6 +540,9 @@ Radar ledger, scanner state, task WIP slot, task contexts, controller command,
 or quality metrics; only the user's common GitHub identity and normal repository
 policies are shared.
 `githubNaturalScheduleHealthy` refers only to GitHub Actions cron delivery;
+the scheduler watchdog requires the latest cron run to be successful and no
+older than `max(1 hour, window_hours)`, so an old success or a fresh fallback
+cannot keep this signal green.
 `operationalHealthy` also accepts a recent successful or currently active
 manual/fallback scan. Historical rolling-window gaps are reported separately in
 `githubNaturalScheduleWarnings`; they do not describe a current outage or

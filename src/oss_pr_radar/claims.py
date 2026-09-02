@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import Any, Iterable
 
 CLAIM_RE = re.compile(
@@ -35,6 +36,32 @@ CONDITIONAL_CLAIM_RE = re.compile(
     r"(?:i can|i(?:['’]?ll| will| would|['’]?d))"
     r")\b",
     re.I | re.S,
+)
+
+CLAIM_RETRACTION_SIMPLE_RE = re.compile(
+    r"(?:update:\s*)?(?:"
+    r"standing down"
+    r"|i(?:['’]?m| am) standing down"
+    r"|i(?:['’]?m| am) withdrawing (?:my )?(?:claim|offer)"
+    r"|i(?:['’]?m| am) (?:no longer|not) (?:working on|taking|claiming) (?:this|it)"
+    r"|i (?:won['’]?t|will not) (?:work on|take|claim) (?:this|it)"
+    r")[.!]?",
+    re.I,
+)
+
+CLAIM_RETRACTION_HANDOFF_RE = re.compile(
+    r"(?:update:\s*)?standing down\s*[—-]\s*"
+    r"i see (?:pr|pull request)\s*#?\d+"
+    r"(?:\s*\(\s*and\s*#?\d+\s*\))?\s+already address(?:es)? this\.\s*"
+    r"i(?:['’]?ll| will) defer to (?:those|them)"
+    r"[.!]?",
+    re.I,
+)
+
+CLAIM_RETRACTION_UNCERTAIN_RE = re.compile(
+    r"\b(?:for now|temporar(?:y|ily)|until|unless|yet|right now|alone|"
+    r"maybe|might|may|perhaps|possibly|consider(?:ing|ed)?|if|whether)\b|\?",
+    re.I,
 )
 
 MAINTAINER_APPROVAL_RE = re.compile(
@@ -86,6 +113,14 @@ def _body(comment: dict[str, Any]) -> str:
     return str(comment.get("body") or "").strip()
 
 
+def _created_timestamp(value: str) -> datetime | None:
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return timestamp if timestamp.tzinfo is not None else None
+
+
 def detect_claims(
     comments: Iterable[dict[str, Any]],
     *,
@@ -94,6 +129,7 @@ def detect_claims(
 ) -> list[ClaimSignal]:
     actor = (current_actor or "").casefold()
     signals: list[ClaimSignal] = []
+    retractions: dict[str, list[datetime]] = {}
     sources = list(comments)
     if issue:
         sources.insert(
@@ -113,12 +149,18 @@ def detect_claims(
         body = _body(comment)
         if not body:
             continue
+        retraction_match = None
+        if not CLAIM_RETRACTION_UNCERTAIN_RE.search(body):
+            retraction_match = CLAIM_RETRACTION_SIMPLE_RE.fullmatch(
+                body
+            ) or CLAIM_RETRACTION_HANDOFF_RE.fullmatch(body)
+        search_start = retraction_match.end() if retraction_match else 0
         kind = ""
-        match = CONDITIONAL_CLAIM_RE.search(body)
+        match = CONDITIONAL_CLAIM_RE.search(body, search_start)
         if match:
             kind = "conditional_claim"
         else:
-            match = CLAIM_RE.search(body)
+            match = CLAIM_RE.search(body, search_start)
         if match and not kind:
             kind = "active_claim"
         if kind:
@@ -133,7 +175,19 @@ def detect_claims(
                     association=_association(comment),
                 )
             )
-    return signals
+            continue
+        if retraction_match:
+            created = _created_timestamp(_created(comment))
+            if created is not None:
+                retractions.setdefault(author.casefold(), []).append(created)
+    active: list[ClaimSignal] = []
+    for signal in signals:
+        created = _created_timestamp(signal.created_at)
+        if created is None or not any(
+            retracted_at > created for retracted_at in retractions.get(signal.author.casefold(), [])
+        ):
+            active.append(signal)
+    return active
 
 
 def detect_maintainer_approval(comments: Iterable[dict[str, Any]]) -> list[ClaimSignal]:

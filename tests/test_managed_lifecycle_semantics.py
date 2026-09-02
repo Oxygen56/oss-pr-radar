@@ -108,6 +108,171 @@ def test_result_semantics_require_new_head_and_validation(tmp_path):
         )
 
 
+def test_replayed_result_monotonically_upgrades_invalid_validation(tmp_path):
+    _, ledger = new_ledger(tmp_path)
+    ledger.bind_task(
+        task_id="task-upgrade",
+        opportunity_key="owner/repo#2",
+        thread_id="thread-upgrade",
+        worktree_path="/tmp/task-upgrade",
+    )
+    common = {
+        "task_id": "task-upgrade",
+        "result_digest": "same-result",
+        "worker_state": "patched",
+        "pr_key": "owner/repo#2",
+        "head_sha": "head-2",
+        "commit_sha": "commit-2",
+        "prior_head_sha": "head-1",
+        "new_head_sha": "head-2",
+    }
+
+    rejected = ledger.record_result(
+        **common,
+        validation={"root_cause_verified": True},
+    )
+    assert rejected["advanced"] is False
+
+    upgraded = ledger.record_result(
+        **common,
+        validation={"passed": True, "evidence": ["root_cause_verified"]},
+    )
+    assert upgraded["advanced"] is True
+    assert upgraded["validationUpgraded"] is True
+    assert upgraded["state"] == "PORTFOLIO_READY"
+    stored_validation = json.loads(upgraded["validation_json"])
+    assert stored_validation["passed"] is True
+    assert stored_validation["certificate"]["passed"] is True
+
+    repeated = ledger.record_result(
+        **common,
+        validation={"passed": True, "evidence": ["root_cause_verified"]},
+    )
+    assert repeated["advanced"] is True
+    assert repeated["validationUpgraded"] is False
+
+    weaker = ledger.record_result(
+        **common,
+        validation={"passed": False, "evidence": []},
+    )
+    assert weaker["advanced"] is True
+    assert weaker["validationUpgraded"] is False
+    assert json.loads(weaker["validation_json"])["passed"] is True
+    with ledger._connection() as connection:
+        events = connection.execute(
+            """SELECT event_type,idempotency_key FROM managed_lifecycle_events
+               WHERE task_id='task-upgrade' ORDER BY event_id"""
+        ).fetchall()
+    assert [row["event_type"] for row in events] == [
+        "TASK_BOUND",
+        "PATCH_REJECTED_MISSING_EVIDENCE",
+        "PATCHED",
+    ]
+    assert events[-1]["idempotency_key"].startswith("result-patch-advanced:")
+
+
+def test_replayed_result_emits_patched_when_prerequisites_arrive_after_validation(tmp_path):
+    _, ledger = new_ledger(tmp_path)
+    ledger.bind_task(
+        task_id="task-delayed-advance",
+        opportunity_key="owner/repo#3",
+        thread_id="thread-delayed-advance",
+        worktree_path="/tmp/task-delayed-advance",
+    )
+    common = {
+        "task_id": "task-delayed-advance",
+        "result_digest": "same-delayed-result",
+        "worker_state": "patched",
+        "pr_key": "owner/repo#3",
+        "head_sha": "head-3",
+        "commit_sha": "commit-3",
+        "prior_head_sha": "head-2",
+    }
+
+    rejected = ledger.record_result(
+        **common,
+        new_head_sha=None,
+        validation={"root_cause_verified": True},
+    )
+    assert rejected["advanced"] is False
+
+    validation_only = ledger.record_result(
+        **common,
+        new_head_sha=None,
+        validation={"passed": True, "evidence": ["root_cause_verified"]},
+    )
+    assert validation_only["validationUpgraded"] is True
+    assert validation_only["advanced"] is False
+
+    advanced = ledger.record_result(
+        **common,
+        new_head_sha="head-3",
+        validation={"passed": True, "evidence": ["root_cause_verified"]},
+    )
+    assert advanced["validationUpgraded"] is False
+    assert advanced["advanced"] is True
+    assert advanced["observationCreated"] is True
+    with ledger._connection() as connection:
+        events = connection.execute(
+            """SELECT event_type,idempotency_key FROM managed_lifecycle_events
+               WHERE task_id='task-delayed-advance' ORDER BY event_id"""
+        ).fetchall()
+    assert [row["event_type"] for row in events] == [
+        "TASK_BOUND",
+        "PATCH_REJECTED_MISSING_EVIDENCE",
+        "PATCHED",
+    ]
+    assert events[-1]["idempotency_key"].startswith("result-patch-advanced:")
+
+
+def test_replayed_result_keeps_one_patched_event_across_signing_key_rotation(monkeypatch, tmp_path):
+    _, ledger = new_ledger(tmp_path)
+    ledger.bind_task(
+        task_id="task-key-rotation",
+        opportunity_key="owner/repo#4",
+        thread_id="thread-key-rotation",
+        worktree_path="/tmp/task-key-rotation",
+    )
+    common = {
+        "task_id": "task-key-rotation",
+        "result_digest": "same-rotated-result",
+        "worker_state": "patched",
+        "pr_key": "owner/repo#4",
+        "head_sha": "head-4",
+        "commit_sha": "commit-4",
+        "prior_head_sha": "head-3",
+        "new_head_sha": "head-4",
+    }
+    ledger.record_result(
+        **common,
+        validation={"root_cause_verified": True},
+    )
+    upgraded = ledger.record_result(
+        **common,
+        validation={"passed": True, "evidence": ["root_cause_verified"]},
+    )
+    assert upgraded["advanced"] is True
+    assert upgraded["observationCreated"] is True
+
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "rotated-key-0123456789abcdef")
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "rotated-current")
+    replayed = ledger.record_result(
+        **common,
+        validation={"passed": True, "evidence": ["root_cause_verified"]},
+    )
+    assert replayed["advanced"] is True
+    assert replayed["validationUpgraded"] is True
+    assert replayed["observationCreated"] is False
+    with ledger._connection() as connection:
+        patched_events = connection.execute(
+            """SELECT idempotency_key FROM managed_lifecycle_events
+               WHERE task_id='task-key-rotation' AND event_type='PATCHED'"""
+        ).fetchall()
+    assert [row["idempotency_key"] for row in patched_events] == [
+        f"result-patch-advanced:{upgraded['result_key']}"
+    ]
+
+
 def test_replayed_result_restores_the_current_projection(tmp_path):
     _, ledger = new_ledger(tmp_path)
     ledger.bind_task(

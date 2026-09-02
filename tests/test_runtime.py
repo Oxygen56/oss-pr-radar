@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import multiprocessing
 import os
 import time
@@ -9,8 +10,10 @@ from pathlib import Path
 import pytest
 
 from oss_pr_radar.runtime import (
+    REQUIRED_WORKERS,
     DiskThresholds,
     RuntimeLockBusy,
+    disk_restart_safe,
     disk_snapshot,
     evaluate_health,
     exclusive_lock,
@@ -106,6 +109,30 @@ def test_disk_warning_is_reported_without_marking_workers_unhealthy():
     assert result["warnings"] == ["DISK_WARNING_THRESHOLD"]
 
 
+def test_health_keeps_persisted_disk_episode_unhealthy_during_live_warning():
+    now = time.time()
+    gate = {
+        "ok": False,
+        "blocked": True,
+        "reason": "DISK_STOP_THRESHOLD",
+        "active": True,
+        "gateActive": True,
+    }
+
+    result = evaluate_health(
+        healthy_state(now),
+        now=now,
+        expected_release="release-a",
+        expected_policy_digest="policy-a",
+        disk={"level": "warning", "freeBytes": 50 * 1024**3, "usedFraction": 0.93},
+        disk_pressure_gate=gate,
+    )
+
+    assert result["healthy"] is False
+    assert "DISK_STOP_THRESHOLD" in result["issues"]
+    assert result["diskPressureGate"] == gate
+
+
 def test_lock_is_non_blocking_and_restart_safe(tmp_path: Path):
     lock_path = tmp_path / "state" / "controller.lock"
     with exclusive_lock(lock_path):
@@ -158,7 +185,7 @@ def _record_cycle_process(root: str, worker: str) -> None:
 def test_runtime_health_keeps_worker_state_and_aggregate_atomic(tmp_path: Path):
     processes = [
         multiprocessing.Process(target=_record_cycle_process, args=(str(tmp_path), worker))
-        for worker in ("fast", "slow", "queue-importer")
+        for worker in REQUIRED_WORKERS
     ]
     for process in processes:
         process.start()
@@ -167,7 +194,7 @@ def test_runtime_health_keeps_worker_state_and_aggregate_atomic(tmp_path: Path):
         assert process.exitcode == 0
 
     state = json.loads((tmp_path / "state" / "runtime-health.json").read_text())
-    assert set(state["workers"]) == {"fast", "slow", "queue-importer"}
+    assert set(state["workers"]) == set(REQUIRED_WORKERS)
     assert "worker" not in state
     assert "lastExitCode" not in state
     assert state["workers"]["fast"]["lastExitCode"] == 0
@@ -184,7 +211,7 @@ def test_required_worker_failure_cannot_be_hidden_by_successful_worker():
                 "lastExitCode": 0,
                 "consecutiveFailures": 0,
             }
-            for worker in ("fast", "slow", "queue-importer")
+            for worker in REQUIRED_WORKERS
         },
         "deployment": {
             "pendingPublicationEffects": 0,
@@ -228,7 +255,7 @@ def test_health_does_not_mark_live_slow_cycle_stale_before_inflight_deadline(mon
                 "queueLastExitCode": 0,
                 "consecutiveFailures": 0,
             }
-            for worker in ("fast", "slow", "queue-importer")
+            for worker in REQUIRED_WORKERS
         },
         "deployment": {
             "pendingPublicationEffects": 0,
@@ -284,7 +311,7 @@ def test_health_rejects_dead_or_overdue_slow_cycle(
                 "lastExitCode": 0,
                 "consecutiveFailures": 0,
             }
-            for worker in ("fast", "slow", "queue-importer")
+            for worker in REQUIRED_WORKERS
         },
         "deployment": {
             "pendingPublicationEffects": 0,
@@ -323,7 +350,7 @@ def test_health_rejects_nonexistent_recorded_slow_pid():
                 "queueLastExitCode": 0,
                 "consecutiveFailures": 0,
             }
-            for worker in ("fast", "slow", "queue-importer")
+            for worker in REQUIRED_WORKERS
         },
         "deployment": {
             "pendingPublicationEffects": 0,
@@ -382,3 +409,133 @@ def test_disk_snapshot_uses_free_space_and_capacity_limits(monkeypatch, tmp_path
 
     assert result["level"] == "stop"
     assert result["freeBytes"] == 4
+    assert result["restartFreeBytes"] == 5 + 8 * 1024**3
+    assert result["restartUsedFraction"] == 0.94
+
+
+def test_disk_snapshot_keeps_unrounded_fraction_for_restart_decision(monkeypatch, tmp_path: Path):
+    class Usage:
+        total = 10_000_000
+        used = 9_400_004
+        free = 599_996
+
+    thresholds = DiskThresholds(
+        warning_free_bytes=0,
+        stop_free_bytes=0,
+        warning_used_fraction=0.90,
+        stop_used_fraction=0.95,
+        restart_free_margin_bytes=0,
+        restart_used_fraction=0.94,
+    )
+    monkeypatch.setattr("oss_pr_radar.runtime.shutil.disk_usage", lambda _path: Usage())
+
+    result = disk_snapshot(tmp_path, thresholds)
+
+    assert result["usedFraction"] > 0.94
+    assert result["usedFraction"] != 0.94
+    assert disk_restart_safe(result, thresholds) is False
+
+
+@pytest.mark.parametrize(
+    ("snapshot", "expected"),
+    [
+        (
+            {
+                "level": "warning",
+                "freeBytes": 24 * 1024**3,
+                "usedFraction": 0.94,
+            },
+            True,
+        ),
+        (
+            {
+                "level": "warning",
+                "freeBytes": 24 * 1024**3,
+                "usedFraction": 0.940001,
+            },
+            False,
+        ),
+        (
+            {
+                "level": "warning",
+                "freeBytes": 24 * 1024**3 - 1,
+                "usedFraction": 0.93,
+            },
+            False,
+        ),
+        (
+            {
+                "level": "stop",
+                "freeBytes": 100 * 1024**3,
+                "usedFraction": 0.5,
+            },
+            False,
+        ),
+        (
+            {
+                "level": "ok",
+                "freeBytes": 100 * 1024**3,
+            },
+            False,
+        ),
+        (
+            {
+                "level": "ok",
+                "freeBytes": 100 * 1024**3,
+                "usedFraction": float("nan"),
+            },
+            False,
+        ),
+        (
+            {
+                "level": "ok",
+                "freeBytes": 100 * 1024**3,
+                "usedFraction": -math.ulp(1.0),
+            },
+            False,
+        ),
+        (
+            {
+                "level": "stop",
+                "freeBytes": 100 * 1024**3,
+                "usedFraction": math.nextafter(1.0, math.inf),
+            },
+            False,
+        ),
+        (
+            {
+                "level": "ok",
+                "freeBytes": -1,
+                "usedFraction": 0.0,
+            },
+            False,
+        ),
+        (
+            {
+                "level": "ok",
+                "freeBytes": True,
+                "usedFraction": 0.0,
+            },
+            False,
+        ),
+        (
+            {
+                "level": "warning",
+                "freeBytes": 24 * 1024**3,
+                "usedFraction": math.nextafter(0.94, math.inf),
+            },
+            False,
+        ),
+        (
+            {
+                "level": "warning",
+                "freeBytes": 24 * 1024**3,
+                "usedFraction": 0.94,
+                "stopFreeBytes": 1,
+            },
+            False,
+        ),
+    ],
+)
+def test_disk_restart_safe_requires_real_headroom(snapshot, expected):
+    assert disk_restart_safe(snapshot) is expected

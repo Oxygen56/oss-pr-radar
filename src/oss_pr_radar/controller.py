@@ -17,8 +17,12 @@ from typing import Any
 
 from .managed_adapter import GitHubAbsenceQueries, ManagedAdapter
 from .managed_snapshot import export_snapshot, import_snapshot
-from .operational_auth import require_operational_authorization
+from .operational_auth import (
+    read_operational_authorization_status,
+    require_operational_authorization,
+)
 from .release_binding import bind_runtime, runtime_ledger_path, runtime_python
+from .runtime import read_disk_pressure_gate_health
 
 DEFAULT_PROJECT_ID = "5e41d21c-cba3-4be0-9a02-7eef35b67625"
 CONTROLLER_DIAGNOSTIC_SCAN_AGE_MINUTES = 90
@@ -103,6 +107,20 @@ def controller_cycle(
     )
     if not allow_unreleased_code:
         require_operational_authorization(root)
+    stages: dict[str, dict[str, Any]] = {}
+    disk_pressure_health = read_disk_pressure_gate_health(root)
+    stages["diskPressureGate"] = disk_pressure_health
+    if _disk_pressure_health_blocked(disk_pressure_health):
+        final_blockers = _final_blockers(stages)
+        return {
+            "ok": False,
+            "checkedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "blocked": "disk pressure gate blocked",
+            "stages": stages,
+            "failures": [],
+            "finalBlockers": final_blockers,
+            "summary": _compact_summary(stages),
+        }
     managed_path = runtime_ledger_path(root)
     managed_snapshot_path = root / "state" / "managed_lifecycle.snapshot.json.gz"
     if _managed_runtime_has_local_state(managed_path):
@@ -111,10 +129,9 @@ def controller_cycle(
         managed_restore = import_snapshot(managed_path, managed_snapshot_path, allow_missing=True)
     managed_adapter = ManagedAdapter(root)
     managed_adapter.ensure()
+    stages["managedRestore"] = managed_restore
     python = str(runtime_python(root))
     bridge_script = str(binding.script("scripts/local_dispatch_bridge.py"))
-    stages: dict[str, dict[str, Any]] = {}
-    stages["managedRestore"] = managed_restore
     failures: list[dict[str, str]] = []
 
     def run_stage(
@@ -176,6 +193,13 @@ def controller_cycle(
             "finalBlockers": final_blockers,
             "summary": _compact_summary(stages),
         }
+    run_stage(
+        "eventLaneEnsure",
+        [python, event_lane_health_script, "--root", str(root), "--repair"],
+        allowed_codes={0, 2},
+        timeout=150,
+        require_ok=False,
+    )
     health = run_stage(
         "workflowHealth",
         [
@@ -192,6 +216,9 @@ def controller_cycle(
         require_ok=False,
     )
     remote_scan_active = (health.get("effectiveScan") or {}).get("recentActive") is True
+    current_operational = health.get("currentOperationalHealthy")
+    if not isinstance(current_operational, bool):
+        current_operational = health.get("operationalHealthy") is True
 
     bridge(
         "orphanReconcile",
@@ -201,7 +228,7 @@ def controller_cycle(
         require_ok=True,
     )
     bridge("terminalFeedbackBeforeSync", "publish-terminal-feedback")
-    if health.get("operationalHealthy") is True and not remote_scan_active:
+    if current_operational is True and not remote_scan_active:
         bridge("queueSync", "sync", timeout=1200)
     else:
         stages["queueSync"] = {
@@ -323,6 +350,7 @@ def controller_cycle(
         allowed_codes={0, 2},
         require_ok=False,
     )
+    bridge("controllerPublicationNotice", "controller-publication-notice")
 
     final_blockers = _final_blockers(stages)
     stages["absenceReconcile"] = managed_adapter.reconcile_pending_absences(GitHubAbsenceQueries())
@@ -342,21 +370,61 @@ def controller_cycle(
     }
 
 
-def _local_agent_disk_stop(status: dict[str, Any]) -> bool:
+def _disk_pressure_health_blocked(value: object) -> bool:
+    return (
+        not isinstance(value, dict)
+        or value.get("ok") is not True
+        or value.get("blocked") is not False
+    )
+
+
+def _disk_pressure_blocker_queue(value: object) -> str:
+    if not isinstance(value, dict) or value.get("reason") == "DISK_PRESSURE_GATE_UNAVAILABLE":
+        return "gate_unavailable"
+    return "disk_stop"
+
+
+def _local_agent_disk_blocker(status: dict[str, Any]) -> str | None:
+    top_level_gate = status.get("diskPressureGate")
+    if top_level_gate is not None and _disk_pressure_health_blocked(top_level_gate):
+        return _disk_pressure_blocker_queue(top_level_gate)
     for worker in status.get("workers") or []:
         if not isinstance(worker, dict):
             continue
         health = worker.get("runtimeHealth")
-        if isinstance(health, dict) and (health.get("disk") or {}).get("level") == "stop":
-            return True
-    return False
+        if isinstance(health, dict):
+            if (health.get("disk") or {}).get("level") == "stop":
+                return "disk_stop"
+            gate = health.get("diskPressureGate")
+            if gate is not None and _disk_pressure_health_blocked(gate):
+                return _disk_pressure_blocker_queue(gate)
+            health_issues = set(health.get("issues") or [])
+            if "DISK_PRESSURE_GATE_UNAVAILABLE" in health_issues:
+                return "gate_unavailable"
+            if "DISK_STOP_THRESHOLD" in health_issues:
+                return "disk_stop"
+    return None
+
+
+def _local_agent_disk_stop(status: dict[str, Any]) -> bool:
+    return _local_agent_disk_blocker(status) is not None
 
 
 def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
+    gate_health = stages.get("diskPressureGate")
+    if gate_health is not None and _disk_pressure_health_blocked(gate_health):
+        blockers.append(
+            {
+                "stage": "diskPressureGate",
+                "queue": _disk_pressure_blocker_queue(gate_health),
+                "count": 1,
+            }
+        )
     checks = {
-        "resultIngestion": ("errors", "workBlocked"),
-        "resultIngestionAfterReview": ("errors", "workBlocked"),
+        "contextSync": ("revalidationErrors",),
+        "resultIngestion": ("errors",),
+        "resultIngestionAfterReview": ("errors",),
         "independentReview": ("candidateErrors", "retryExhausted"),
         "finalOrphans": ("blocked",),
         "finalPrFollowups": ("blocked", "unresolved", "restoreRequired"),
@@ -373,6 +441,12 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
             items = value.get(key) or []
             if items:
                 blockers.append({"stage": stage, "queue": key, "count": len(items)})
+        if stage in {"resultIngestion", "resultIngestionAfterReview"}:
+            work_blocked = _new_work_blocked(value)
+            if work_blocked:
+                blockers.append(
+                    {"stage": stage, "queue": "workBlocked", "count": len(work_blocked)}
+                )
     local_status = stages.get("finalLocalAgentStatus") or {}
     if "finalLocalAgentStatus" in stages and local_status.get("ok") is not True:
         unhealthy = [
@@ -383,7 +457,7 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         blockers.append(
             {
                 "stage": "finalLocalAgentStatus",
-                "queue": ("disk_stop" if _local_agent_disk_stop(local_status) else "unhealthy"),
+                "queue": _local_agent_disk_blocker(local_status) or "unhealthy",
                 "count": max(1, len(unhealthy)),
             }
         )
@@ -410,6 +484,15 @@ def _final_blockers(stages: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
                 "count": max(1, len(unhealthy_lanes)),
             }
         )
+    event_lane_ensure = stages.get("eventLaneEnsure") or {}
+    if "eventLaneEnsure" in stages and event_lane_ensure.get("ok") is not True:
+        blockers.append(
+            {
+                "stage": "eventLaneEnsure",
+                "queue": "reconcile_failed",
+                "count": 1,
+            }
+        )
     return blockers
 
 
@@ -421,22 +504,84 @@ def _compact_summary(stages: dict[str, dict[str, Any]]) -> dict[str, Any]:
     decision_sessions = stages.get("codexDecisionSessions") or {}
     result_ingestion = stages.get("resultIngestion") or {}
     post_review_ingestion = stages.get("resultIngestionAfterReview") or {}
+    local_status = stages.get("finalLocalAgentStatus") or {}
+    context_sync = stages.get("contextSync") or {}
+    natural_coverage = health.get("naturalScheduleCoverage") or {}
+    full_slot_coverage = health.get("fullSlotCoverage") or {}
+    all_work_blocked = list(result_ingestion.get("workBlocked") or []) + list(
+        post_review_ingestion.get("workBlocked") or []
+    )
+    new_work_blocked = _new_work_blocked(result_ingestion) + _new_work_blocked(
+        post_review_ingestion
+    )
     return {
+        "diskPressureBlocked": (
+            _disk_pressure_health_blocked(stages["diskPressureGate"])
+            if "diskPressureGate" in stages
+            else False
+        ),
         "localAgentHealthy": (stages.get("finalLocalAgentStatus") or {}).get("ok") is True,
+        "localWorkerStates": _compact_local_worker_states(local_status),
         "eventLanesHealthy": (stages.get("finalEventLaneHealth") or {}).get("healthy") is True,
+        "currentOperationalHealthy": health.get("currentOperationalHealthy") is True,
         "operationalHealthy": health.get("operationalHealthy") is True,
         "githubNaturalScheduleHealthy": health.get("githubNaturalScheduleHealthy") is True,
+        "naturalScheduleCanaryHealthy": health.get("naturalScheduleCanaryHealthy") is True,
+        "naturalScheduleCoverageHealthy": natural_coverage.get("healthy"),
+        "naturalScheduleCoverageRatio": natural_coverage.get("coverageRatio"),
+        "fullSlotCoverageHealthy": full_slot_coverage.get("healthy"),
+        "fullSlotCoverageRatio": full_slot_coverage.get("coverageRatio"),
         "drainAction": drain.get("action"),
         "drainKey": drain.get("key"),
         "decisionSessionsCreated": len(decision_sessions.get("created") or []),
         "decisionSessionsExisting": len(decision_sessions.get("existing") or []),
-        "workBlockedCount": len(result_ingestion.get("workBlocked") or [])
-        + len(post_review_ingestion.get("workBlocked") or []),
+        "workBlockedCount": len(all_work_blocked),
+        "newWorkBlockedCount": len(new_work_blocked),
+        "liveAuditRevalidationErrorCount": len(context_sync.get("revalidationErrors") or []),
         "pendingCount": len(queue.get("pending") or []),
         "submitReadyRate": quality.get("submitReadyRate"),
         "filterMissRate": quality.get("filterMissRate"),
         "hardGateEscapes": quality.get("hardGateEscapes"),
     }
+
+
+def _new_work_blocked(stage: dict[str, Any]) -> list[Any]:
+    """Return only task blockers not already durably recorded in an earlier cycle."""
+
+    return [
+        item
+        for item in (stage.get("workBlocked") or [])
+        if not isinstance(item, dict) or item.get("alreadyRecorded") is not True
+    ]
+
+
+def _compact_local_worker_states(status: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expose final worker freshness evidence in the heartbeat JSON."""
+
+    states: list[dict[str, Any]] = []
+    for worker in status.get("workers") or []:
+        if not isinstance(worker, dict):
+            continue
+        runtime = worker.get("workerRuntimeHealth")
+        runtime = runtime if isinstance(runtime, dict) else {}
+        process = worker.get("process")
+        process = process if isinstance(process, dict) else {}
+        states.append(
+            {
+                "label": str(worker.get("label") or ""),
+                "ok": worker.get("ok") is True,
+                "runtimeHealthy": runtime.get("healthy") is True,
+                "inFlight": runtime.get("inFlight") is True,
+                "workerPidAlive": runtime.get("workerPidAlive"),
+                "processAlive": process.get("alive"),
+                "lastSuccessAt": runtime.get("lastSuccessAt")
+                or runtime.get("queueImportSuccessAt"),
+                "lastExitCode": runtime.get("lastExitCode")
+                if runtime.get("lastExitCode") is not None
+                else runtime.get("queueLastExitCode"),
+            }
+        )
+    return states
 
 
 def run_locked_controller_cycle(
@@ -450,18 +595,15 @@ def run_locked_controller_cycle(
     wait_existing: bool = False,
     busy_timeout_seconds: float | None = None,
     report_on_complete: bool = False,
+    automation_run_id: str | None = None,
 ) -> dict[str, Any]:
     if wait_existing and not report_on_complete:
         raise ValueError("joining a controller cycle requires durable reporting")
-    command_digest = _controller_command_digest(
-        code_root=code_root,
-        allow_unreleased_code=allow_unreleased_code,
-        notify=notify,
-        project_id=project_id,
-    )
-    lock_path = root.resolve() / "state" / "controller-cycle.lock"
+    root = root.resolve()
+    lock_path = root / "state" / "controller-cycle.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+", encoding="utf-8") as lock:
+        joined_existing = False
         try:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -494,6 +636,38 @@ def run_locked_controller_cycle(
                             ],
                         }
                     time.sleep(0.25)
+            joined_existing = True
+        # Resolve the active release only after acquiring the shared lock. A
+        # stable automation command uses ``current-release``; this pins the
+        # cycle to one immutable release and prevents an old fixed-release
+        # invocation from reusing a completion marker from another release.
+        binding = None
+        binding_error: Exception | None = None
+        try:
+            binding = bind_runtime(
+                root,
+                code_root=code_root,
+                allow_unreleased_code=allow_unreleased_code,
+            )
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            binding_error = exc
+            if not report_on_complete:
+                raise
+        bound_code_root = binding.code_root if binding is not None else code_root
+        command_digest = _controller_command_digest(
+            code_root=bound_code_root,
+            allow_unreleased_code=allow_unreleased_code,
+            notify=notify,
+            project_id=project_id,
+        )
+        # A failed release preflight must not reuse an old marker. Continue to
+        # the durable failure-reporting path below instead.
+        can_reuse_marker = binding_error is None
+        if joined_existing and not can_reuse_marker:
+            # The waiter joined an existing process but the caller's release
+            # path is stale/invalid. Do not return that process's result.
+            pass
+        elif joined_existing:
             completed_marker = _read_controller_lock_marker(lock)
             existing = _completed_controller_result(
                 root,
@@ -523,24 +697,31 @@ def run_locked_controller_cycle(
                 }
             return existing
         if wait_existing:
-            previous_marker = _read_controller_lock_marker(lock)
-            previous = _completed_controller_result(
-                root,
-                previous_marker,
-                command_digest=command_digest,
-                max_age_seconds=CONTROLLER_COMPLETED_REUSE_SECONDS,
-            )
-            if previous is not None:
-                return previous
-            recovered = _recover_finished_running_marker(
-                root,
-                previous_marker,
-                command_digest=command_digest,
-            )
-            if recovered is not None:
-                result, completed_marker = recovered
-                _write_controller_lock_marker(lock, completed_marker)
-                return result
+            if can_reuse_marker:
+                previous_marker = _read_controller_lock_marker(lock)
+                previous = _completed_controller_result(
+                    root,
+                    previous_marker,
+                    command_digest=command_digest,
+                    max_age_seconds=CONTROLLER_COMPLETED_REUSE_SECONDS,
+                )
+                if (
+                    previous is not None
+                    and not _controller_result_has_pending_publication_notice(previous)
+                    and _cached_disk_pressure_semantics_match(
+                        previous, read_disk_pressure_gate_health(root)
+                    )
+                ):
+                    return previous
+                recovered = _recover_finished_running_marker(
+                    root,
+                    previous_marker,
+                    command_digest=command_digest,
+                )
+                if recovered is not None:
+                    result, completed_marker = recovered
+                    _write_controller_lock_marker(lock, completed_marker)
+                    return result
         started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         run_id = secrets.token_hex(16)
         if report_on_complete:
@@ -554,26 +735,59 @@ def run_locked_controller_cycle(
                     "startedAt": started_at,
                 },
             )
-        try:
-            result = controller_cycle(
-                root,
-                code_root=code_root,
-                allow_unreleased_code=allow_unreleased_code,
-                runner=runner,
-                notify=notify,
-                project_id=project_id,
-            )
-        except RuntimeError as exc:
-            if not report_on_complete:
-                raise
+        if binding_error is not None:
             result = {
                 "ok": False,
                 "checkedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-                "blocked": "operational authorization required",
-                "error": str(exc)[:400],
+                "blocked": "release binding required",
+                "error": str(binding_error)[:400],
             }
+        else:
+            try:
+                result = controller_cycle(
+                    root,
+                    code_root=bound_code_root,
+                    allow_unreleased_code=allow_unreleased_code,
+                    runner=runner,
+                    notify=notify,
+                    project_id=project_id,
+                )
+            except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+                if not report_on_complete:
+                    raise
+                error = str(exc)[:400]
+                blocked = (
+                    "operational authorization required"
+                    if "operational authorization" in error.lower()
+                    else "controller startup failed"
+                )
+                result = {
+                    "ok": False,
+                    "checkedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    "blocked": blocked,
+                    "error": error,
+                }
+                if blocked == "operational authorization required":
+                    # Keep the hard authorization gate.  The read-only
+                    # snapshot makes the recovery path observable and proves
+                    # that pending work remains queued while authorization is
+                    # repaired; it never claims, dispatches, or mutates it.
+                    try:
+                        result["recoveryStatus"] = read_operational_authorization_status(root)
+                    except (OSError, RuntimeError, ValueError, sqlite3.Error) as status_exc:
+                        result["recoveryStatus"] = {
+                            "ok": False,
+                            "readOnly": True,
+                            "error": f"{type(status_exc).__name__}:{str(status_exc)[:240]}",
+                        }
         if report_on_complete:
-            result = {**result, "controllerRunId": run_id}
+            result = {
+                **result,
+                "controllerRunId": run_id,
+                "boundReleaseId": binding.release_id if binding is not None else None,
+            }
+            if automation_run_id:
+                result["automationRunId"] = automation_run_id
             report_path = write_controller_report(root, result)
             completed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
             _write_controller_lock_marker(
@@ -608,6 +822,33 @@ def _controller_command_digest(
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def _cached_disk_pressure_semantics_match(
+    previous: dict[str, Any], current_health: dict[str, Any]
+) -> bool:
+    stages = previous.get("stages") if isinstance(previous.get("stages"), dict) else {}
+    previous_health = stages.get("diskPressureGate")
+    if not isinstance(previous_health, dict) or not isinstance(current_health, dict):
+        return False
+    for health in (previous_health, current_health):
+        if not isinstance(health.get("blocked"), bool) or health.get("ok") is not (
+            not health.get("blocked")
+        ):
+            return False
+    return (
+        previous_health.get("blocked"),
+        previous_health.get("reason"),
+    ) == (
+        current_health.get("blocked"),
+        current_health.get("reason"),
+    )
+
+
+def _controller_result_has_pending_publication_notice(result: dict[str, Any]) -> bool:
+    stages = result.get("stages") if isinstance(result.get("stages"), dict) else {}
+    notice_stage = stages.get("controllerPublicationNotice")
+    return bool(isinstance(notice_stage, dict) and isinstance(notice_stage.get("notice"), dict))
 
 
 def _read_controller_lock_marker(lock) -> dict[str, Any] | None:
@@ -757,12 +998,28 @@ def compact_controller_result(
             else []
         )
     }
-    local_disk_stop = _local_agent_disk_stop(local_status)
+    local_disk_blocker = _local_agent_disk_blocker(local_status)
+    if (
+        local_disk_blocker is None
+        and "diskPressureGate" in stages
+        and _disk_pressure_health_blocked(stages.get("diskPressureGate"))
+    ):
+        local_disk_blocker = _disk_pressure_blocker_queue(stages.get("diskPressureGate"))
     desktop_handoff = _pending_desktop_handoff(stages)
+    publication_notice = (stages.get("controllerPublicationNotice") or {}).get("notice")
+    summary = dict(result.get("summary") or {})
+    if "finalLocalAgentStatus" in stages:
+        # The final status stage is authoritative; do not preserve an optimistic
+        # caller-supplied summary when the worker snapshot says otherwise.
+        summary["localAgentHealthy"] = local_status.get("ok") is True
+        summary["localWorkerStates"] = _compact_local_worker_states(local_status)
+    else:
+        summary.setdefault("localAgentHealthy", local_status.get("ok") is True)
+        summary.setdefault("localWorkerStates", _compact_local_worker_states(local_status))
     compact = {
         "ok": result.get("ok"),
         "checkedAt": result.get("checkedAt"),
-        "summary": result.get("summary") or {},
+        "summary": summary,
         "failures": result.get("failures") or [],
         "finalBlockers": result.get("finalBlockers") or [],
         "warnings": {
@@ -775,14 +1032,46 @@ def compact_controller_result(
             "terminalFeedbackDeferred": len(feedback.get("deferred") or []),
             "parkedRecovery": len(final_recovery.get("parkedRecovery") or []),
             "diskThresholdWarning": int("DISK_WARNING_THRESHOLD" in local_warning_codes),
-            "diskThresholdStop": int(local_disk_stop),
+            "diskThresholdStop": int(local_disk_blocker == "disk_stop"),
+            "diskGateUnavailable": int(local_disk_blocker == "gate_unavailable"),
         },
     }
     if desktop_handoff is not None:
         compact["desktopHandoff"] = desktop_handoff
+    if isinstance(publication_notice, dict) and publication_notice.get("prUrl"):
+        compact["newPullRequest"] = {
+            key: publication_notice[key]
+            for key in ("key", "prUrl", "publishedAt")
+            if publication_notice.get(key) is not None
+        }
     startup_blocker = _safe_startup_blocker(result)
     if startup_blocker is not None:
         compact["startupBlocker"] = startup_blocker
+    recovery_status = result.get("recoveryStatus")
+    if isinstance(recovery_status, dict) and recovery_status.get("readOnly") is True:
+        # Keep the recovery hint useful without exposing signed-record paths,
+        # release internals, or the raw startup exception in the compact
+        # heartbeat payload.
+        pending = recovery_status.get("pending")
+        pending = pending if isinstance(pending, dict) else {}
+        compact["recoveryStatus"] = {
+            "readOnly": True,
+            "blockedReason": str(recovery_status.get("blockedReason") or ""),
+            "authorizationState": str(
+                (recovery_status.get("authorization") or {}).get("state") or "MISSING"
+            ),
+            "pending": {
+                key: pending[key]
+                for key in (
+                    "pendingIntents",
+                    "pendingPublicationRequests",
+                    "activeLeases",
+                    "unresolvedFollowups",
+                    "taskResultIngestions",
+                )
+                if isinstance(pending.get(key), int)
+            },
+        }
     if report_path is not None:
         compact["reportPath"] = str(report_path)
     return compact

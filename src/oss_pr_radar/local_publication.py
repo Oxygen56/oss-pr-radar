@@ -9,18 +9,24 @@ import os
 import plistlib
 import signal
 import subprocess
+import sys
 import time
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from .operational_auth import require_operational_authorization
 from .release_binding import bind_runtime, runtime_ledger_path, runtime_python
 from .runtime import (
     RuntimeLockBusy,
     append_operation,
+    disk_pressure_gate,
+    disk_restart_safe,
     disk_snapshot,
     exclusive_lock,
+    pid_probe,
     read_json,
     record_cycle,
     rotate_log,
@@ -29,6 +35,8 @@ from .runtime import (
     write_json,
 )
 from .runtime_audit import active_release_evidence
+from .runtime_retention import maybe_reclaim_runtime_storage
+from .scheduler_watchdog import WATCHDOG_LABEL
 
 LAUNCH_AGENT_LABEL = "com.oss-pr-radar.local-publication"
 SLOW_WORKER_LABEL = "com.oss-pr-radar.local-publication-slow"
@@ -46,7 +54,9 @@ SENSITIVE_ENVIRONMENT_KEYS = {
     "MODEL_API_KEY",
     "OPENAI_API_KEY",
 }
+SERVICE_NO_PROXY = "localhost,127.0.0.1,::1"
 QUEUE_SYNC_STATE = "local_queue_sync.json"
+QUEUE_IMPORT_LOCK = "queue-import.lock"
 FAST_WORK_LOCK = "fast-worker.lock"
 SLOW_WORK_LOCK = "slow-worker.lock"
 SLOW_REQUEST_STATE = "slow-work-request.json"
@@ -59,6 +69,219 @@ SLOW_CLOUD_SYNC_INTERVAL_SECONDS = 300
 # enough time for that cold start.
 MAX_FAST_OPERATION_SECONDS = 60
 TERMINAL_FEEDBACK_STAGES = {"AUDIT_NO_GO", "MERGED", "CLOSED"}
+PR_FOLLOWUP_REBIND_REQUIRED = "PR_FOLLOWUP_REBIND_REQUIRED"
+
+
+def _record_identity(value: Any) -> str:
+    """Return the stable identity used when combining repeated bridge results.
+
+    A slow cycle may ingest once before independent review and once after it.
+    The ledger treats the second observation as the same event, but the bridge
+    responses are separate lists.  Prefer an explicit result/event digest (or
+    idempotency key) when available; older bridge payloads do not expose one,
+    so their canonical JSON is a safe compatibility fallback.
+    """
+
+    if isinstance(value, dict):
+        for key in (
+            "resultDigest",
+            "result_digest",
+            "eventDigest",
+            "event_digest",
+            "digest",
+            "eventId",
+            "event_id",
+            "idempotencyKey",
+            "idempotency_key",
+            "requestId",
+            "request_id",
+        ):
+            candidate = value.get(key)
+            if candidate not in (None, ""):
+                target = value.get("key") or value.get("opportunityKey") or ""
+                return f"{target}:{key}:{candidate}"
+    try:
+        return "json:" + json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+    except (TypeError, ValueError):
+        return f"repr:{value!r}"
+
+
+def _merge_unique_records(*groups: list[Any]) -> list[Any]:
+    """Merge bridge record groups without counting one event twice.
+
+    When the same identity appears in both ingestion passes, retain the later
+    representation so a refreshed status is not replaced by the stale first
+    observation while preserving the original ordering of identities.
+    """
+
+    merged: list[Any] = []
+    positions: dict[str, int] = {}
+    for group in groups:
+        for value in group:
+            identity = _record_identity(value)
+            position = positions.get(identity)
+            if position is None:
+                positions[identity] = len(merged)
+                merged.append(value)
+            else:
+                merged[position] = value
+    return merged
+
+
+def _new_resolution_scope_authorizations(*groups: list[Any]) -> list[Any]:
+    """Keep only newly recorded resolution-scope authorizations.
+
+    The bridge returns an authorization record on every ingest pass while a
+    durable receipt is being observed.  A record marked ``alreadyRecorded``
+    is informational and must not wake the serial drain again; an omitted
+    marker is treated as new for compatibility with older bridge payloads.
+    """
+
+    return _merge_unique_records(
+        *[
+            [
+                item
+                for item in group
+                if isinstance(item, dict) and item.get("alreadyRecorded") is not True
+            ]
+            for group in groups
+        ]
+    )
+
+
+def _has_rebind_recovery(*groups: list[Any]) -> bool:
+    """Return whether result ingestion produced an actionable PR rebind.
+
+    A rebind quarantine is actionable only after the bridge has successfully
+    rearmed the follow-up and supplied a replacement wake digest.  Invalid
+    rebind evidence is deliberately excluded, as are unrelated and already
+    settled quarantines.  The bridge reports a repeated durable quarantine in
+    ``quarantinedAlreadyRecorded``; callers pass both forms here so a failed
+    drain is retried on the next slow cycle as well.
+    """
+
+    for group in groups:
+        for item in group:
+            if not isinstance(item, dict):
+                continue
+            if item.get("reason") != PR_FOLLOWUP_REBIND_REQUIRED:
+                continue
+            if item.get("rebindEligible", True) is False:
+                continue
+            replacement_digest = item.get("replacementWakeDigest")
+            if isinstance(replacement_digest, str) and replacement_digest:
+                return True
+    return False
+
+
+def _disk_gate(
+    root: Path,
+    *,
+    worker: str,
+    force_recheck: bool = False,
+    observed_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run the shared capacity gate through this module's snapshot seam."""
+
+    # Passing the local alias keeps existing tests and callers able to inject
+    # a deterministic snapshot without bypassing the shared gate.
+    snapshot_fn = (
+        (lambda _root: dict(observed_snapshot))
+        if isinstance(observed_snapshot, dict)
+        else disk_snapshot
+    )
+    return disk_pressure_gate(
+        root,
+        worker=worker,
+        snapshot_fn=snapshot_fn,
+        force_recheck=force_recheck,
+    )
+
+
+def _record_disk_gate_recovery(root: Path, *, worker: str) -> str | None:
+    """Append one best-effort recovery marker after a gate is cleared."""
+
+    try:
+        append_operation(
+            root,
+            {
+                "worker": worker,
+                "operation": "disk-pressure-recovery",
+                "status": "success",
+                "exitCode": 0,
+                "inFlight": False,
+            },
+        )
+    except Exception as exc:
+        return f"{type(exc).__name__}:{str(exc)[:240]}"
+    return None
+
+
+def _disk_gate_failure(
+    root: Path,
+    *,
+    worker: str,
+    started_at: float,
+    gate: dict[str, Any],
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a fail-closed worker result and claim the first stop record."""
+
+    reason = str(gate.get("reason") or "DISK_PRESSURE_GATE_UNAVAILABLE")
+    result: dict[str, Any] = {
+        "ok": False,
+        "activity": False,
+        "reason": reason,
+        "deferred": bool(gate.get("deferred")),
+        "errors": [{"error": reason}],
+        "diskPressureGate": {
+            "active": bool(gate.get("gateActive")),
+            "deferred": bool(gate.get("deferred")),
+            "firstStop": bool(gate.get("firstStop")),
+            "nextCheckAt": gate.get("nextCheckAt"),
+        },
+    }
+    if gate.get("error"):
+        result["diskPressureGate"]["error"] = str(gate["error"])[:240]
+    if gate.get("recordStop") is True:
+        try:
+            record_extra = {}
+            if extra and "storageMaintenance" in extra:
+                record_extra["storageMaintenance"] = extra["storageMaintenance"]
+            record_cycle(
+                root,
+                worker=worker,
+                ok=False,
+                exit_code=78,
+                started_at=started_at,
+                error_code=reason,
+                disk=gate.get("snapshot"),
+                **record_extra,
+            )
+        except Exception as exc:
+            # The gate is already durable and claimed. Do not retry this
+            # health write on every worker interval if the host is still full.
+            result["diskPressureGate"]["recordError"] = f"{type(exc).__name__}:{str(exc)[:240]}"
+    if extra:
+        result.update(extra)
+    return result
+
+
+def _handle_disk_gate_recovery(
+    root: Path,
+    *,
+    worker: str,
+    gate: dict[str, Any],
+) -> str | None:
+    if gate.get("recordRecovery") is True:
+        return _record_disk_gate_recovery(root, worker=worker)
+    return None
 
 
 def _legacy_disk_backoff_recoverable(
@@ -71,7 +294,7 @@ def _legacy_disk_backoff_recoverable(
     """Recognize only a future backoff produced by the former disk-stop bug."""
 
     if (
-        disk.get("level") == "stop"
+        not disk_restart_safe(disk)
         or backoff.get("schemaVersion") != "slow_backoff_v1"
         or backoff.get("inFlight") is not False
         or int(backoff.get("failureCount") or 0) <= 0
@@ -160,6 +383,36 @@ def _record_slow_cycle(
         error_code=error_code,
         **extra,
     )
+
+
+def _stale_slow_inflight(
+    root: Path,
+    *,
+    backoff: dict[str, Any],
+) -> tuple[bool, str | None]:
+    """Verify the owner of a persisted slow attempt before honoring it."""
+
+    if backoff.get("inFlight") is not True:
+        return False, None
+    runtime = read_json(root / "state" / "runtime-health.json", {})
+    workers = runtime.get("workers") if isinstance(runtime, dict) else None
+    slow = workers.get("slow") if isinstance(workers, dict) else None
+    slow = slow if isinstance(slow, dict) else {}
+    try:
+        recorded_pid = int(slow.get("workerPid") or 0)
+    except (TypeError, ValueError):
+        return False, None
+    if recorded_pid <= 0:
+        return False, None
+    operation_id = str(backoff.get("operationId") or "")
+    if operation_id and not operation_id.startswith(f"{recorded_pid}-"):
+        return False, None
+    evidence = pid_probe(recorded_pid, expected_fragment="slow_publication_worker.py")
+    if evidence.get("alive") is True and evidence.get("versionMatched") is True:
+        return False, None
+    reason = "SLOW_WORKER_STALE_PID"
+    detail = str(evidence.get("error") or "process identity mismatch")[:160]
+    return True, f"{reason}:{recorded_pid}:{detail}"
 
 
 def _terminate_process_group(process: subprocess.Popen[str]) -> None:
@@ -341,6 +594,7 @@ def sync_cloud_queue_if_due(
         "ok": True,
         "candidates": [],
         "unresolved": [],
+        "blocked": [],
     }
     followup_import = sync.get("prFollowup")
     if (
@@ -355,12 +609,18 @@ def sync_cloud_queue_if_due(
                 "ok": False,
                 "error": f"{type(exc).__name__}:{str(exc)[:400]}",
             }
+        followup_error = followup_listing.get("error") or followup_listing.get("errors")
+        followup_blocked = list(followup_listing.get("blocked") or [])
         if followup_listing.get("ok") is not True:
             errors.append(
                 {
                     "error": str(
-                        followup_listing.get("error")
-                        or followup_listing.get("errors")
+                        followup_error
+                        or (
+                            f"PR follow-up list blocked: {len(followup_blocked)}"
+                            if followup_blocked
+                            else None
+                        )
                         or "PR follow-up list failed"
                     )[:400]
                 }
@@ -376,6 +636,7 @@ def sync_cloud_queue_if_due(
         "prFollowup": followup_import if isinstance(followup_import, dict) else {},
         "prFollowupCandidates": list(followup_listing.get("candidates") or []),
         "prFollowupUnresolved": list(followup_listing.get("unresolved") or []),
+        "prFollowupBlocked": list(followup_listing.get("blocked") or []),
         "errors": errors,
     }
     _write_queue_sync_state(
@@ -468,23 +729,46 @@ def fast_advance_once(
     started = time.time()
     try:
         with exclusive_lock(root / "state" / FAST_WORK_LOCK):
-            disk = disk_snapshot(root)
-            if disk["level"] == "stop":
-                record_cycle(
+            disk_before = disk_snapshot(root)
+            initial_stop_gate = None
+            if disk_before.get("level") == "stop":
+                # Persist the hard-stop episode before retention changes the
+                # measurement.  A reclaim may recheck immediately, but it may
+                # not turn a near-boundary warning into an implicit restart.
+                initial_stop_gate = _disk_gate(
                     root,
                     worker="fast",
-                    ok=False,
-                    exit_code=78,
-                    started_at=started,
-                    error_code="DISK_STOP_THRESHOLD",
-                    disk=disk,
+                    observed_snapshot=disk_before,
                 )
-                return {
-                    "ok": False,
-                    "activity": False,
-                    "errors": [{"error": "DISK_STOP_THRESHOLD"}],
-                    "slowWorkQueued": False,
-                }
+            storage_maintenance = maybe_reclaim_runtime_storage(root, disk=disk_before)
+            reclaimed = int(storage_maintenance.get("freedBytes") or 0) > 0
+            gate = (
+                _disk_gate(root, worker="fast", force_recheck=True)
+                if reclaimed
+                else (initial_stop_gate or _disk_gate(root, worker="fast"))
+            )
+            if (
+                isinstance(initial_stop_gate, dict)
+                and initial_stop_gate.get("recordStop") is True
+                and gate.get("allowed") is not True
+            ):
+                gate = dict(gate)
+                gate["recordStop"] = True
+                gate["firstStop"] = True
+                gate["snapshot"] = initial_stop_gate.get("snapshot")
+            if gate.get("allowed") is not True:
+                return _disk_gate_failure(
+                    root,
+                    worker="fast",
+                    started_at=started,
+                    gate=gate,
+                    extra={
+                        "slowWorkQueued": False,
+                        "storageMaintenance": storage_maintenance,
+                    },
+                )
+            recovery_error = _handle_disk_gate_recovery(root, worker="fast", gate=gate)
+            disk = gate.get("snapshot")
             ingestion = runner(root, "local-receipt-enqueue")
             errors = list(ingestion.get("errors") or []) + list(ingestion.get("rejected") or [])
             _enqueue_slow_work(root, reason="local_ingest")
@@ -494,6 +778,7 @@ def fast_advance_once(
                 "receiptsQueued": list(ingestion.get("queued") or []),
                 "errors": errors,
                 "slowWorkQueued": True,
+                "storageMaintenance": storage_maintenance,
             }
             record_cycle(
                 root,
@@ -503,7 +788,11 @@ def fast_advance_once(
                 started_at=started,
                 error_code="LOCAL_INGEST_FAILED" if result["ok"] is not True else None,
                 disk=disk,
+                storageMaintenance=storage_maintenance,
             )
+            if recovery_error:
+                result.setdefault("errors", []).append({"error": recovery_error})
+                result["ok"] = False
             return result
     except RuntimeLockBusy:
         return {"ok": True, "busy": True, "activity": False, "errors": []}
@@ -534,12 +823,23 @@ def queue_import_once(
     root = root.resolve()
     started = time.time()
     try:
-        with exclusive_lock(root / "state" / "queue-import.lock"):
-            disk = disk_snapshot(root)
-            if disk["level"] == "stop":
-                result = {"ok": False, "error": "DISK_STOP_THRESHOLD"}
-            else:
-                result = runner(root, "queue-import")
+        with exclusive_lock(root / "state" / QUEUE_IMPORT_LOCK):
+            gate = _disk_gate(root, worker="queue-importer")
+            if gate.get("allowed") is not True:
+                return _disk_gate_failure(
+                    root,
+                    worker="queue-importer",
+                    started_at=started,
+                    gate=gate,
+                    extra={"error": str(gate.get("reason") or "DISK_PRESSURE_GATE_UNAVAILABLE")},
+                )
+            recovery_error = _handle_disk_gate_recovery(
+                root,
+                worker="queue-importer",
+                gate=gate,
+            )
+            disk = gate.get("snapshot")
+            result = runner(root, "queue-import")
             if result.get("ok") is True:
                 write_json(
                     root / "state" / "queue-import-state.json",
@@ -566,6 +866,10 @@ def queue_import_once(
                 failure_field="queueConsecutiveFailures",
                 disk=disk,
             )
+            if recovery_error:
+                result = dict(result)
+                result.setdefault("errors", []).append({"error": recovery_error})
+                result["ok"] = False
             return result
     except RuntimeLockBusy:
         return {"ok": True, "busy": True, "errors": []}
@@ -599,27 +903,18 @@ def slow_advance_once(
             now = time.time()
             backoff = read_json(backoff_path, {})
             backoff = backoff if isinstance(backoff, dict) else {}
-            disk = disk_snapshot(root)
-            if disk["level"] == "stop":
-                # Disk pressure is an external capacity gate, not a failed
-                # network/publication attempt.  Keep any genuine network
-                # backoff unchanged so the next launch can resume as soon as
-                # capacity is available instead of exponentially extending a
-                # wait that disk cleanup has already resolved.
-                _record_slow_cycle(
+            gate = _disk_gate(root, worker="slow")
+            if gate.get("allowed") is not True:
+                result = _disk_gate_failure(
                     root,
-                    ok=False,
-                    exit_code=78,
+                    worker="slow",
                     started_at=started,
-                    error_code="DISK_STOP_THRESHOLD",
-                    disk=disk,
+                    gate=gate,
+                    extra={"slowWorkerDiagnostic": _slow_worker_diagnostic(root)},
                 )
-                return {
-                    "ok": False,
-                    "activity": False,
-                    "errors": [{"error": "DISK_STOP_THRESHOLD"}],
-                    "slowWorkerDiagnostic": _slow_worker_diagnostic(root),
-                }
+                return result
+            disk = gate.get("snapshot")
+            recovery_error = _handle_disk_gate_recovery(root, worker="slow", gate=gate)
             recovered_legacy_disk_backoff = _legacy_disk_backoff_recoverable(
                 root,
                 backoff=backoff,
@@ -643,6 +938,68 @@ def slow_advance_once(
                         "inFlight": False,
                     },
                 )
+            stale_inflight, stale_error = _stale_slow_inflight(root, backoff=backoff)
+            if stale_inflight and stale_error:
+                try:
+                    failures = max(0, int(backoff.get("failureCount") or 0))
+                except (TypeError, ValueError):
+                    failures = 0
+                try:
+                    persisted_retry = float(
+                        backoff.get("retryAfter") or backoff.get("nextAttemptAt") or 0
+                    )
+                except (TypeError, ValueError):
+                    persisted_retry = 0
+                # The interrupted attempt already owned this retry deadline.
+                # Reconciliation must not start the same backoff again from
+                # the later moment when its missing owner is observed.
+                failure_retry = max(now, persisted_retry)
+                try:
+                    persisted_delay = max(0, int(backoff.get("backoffSeconds") or 0))
+                except (TypeError, ValueError):
+                    persisted_delay = 0
+                operation_id = str(
+                    backoff.get("operationId") or f"stale-{os.getpid()}-{time.time_ns()}"
+                )
+                backoff = {
+                    "schemaVersion": "slow_backoff_v1",
+                    "failureCount": failures + 1,
+                    "backoffSeconds": persisted_delay if persisted_retry > now else 0,
+                    "nextAttemptAt": failure_retry,
+                    "retryAfter": failure_retry,
+                    "attemptStartedAt": None,
+                    "lastAttemptAt": utc_now(),
+                    "inFlight": False,
+                    "lastError": stale_error,
+                    "operationId": operation_id,
+                }
+                write_json(backoff_path, backoff)
+                append_operation(
+                    root,
+                    {
+                        "operationId": operation_id,
+                        "worker": "slow",
+                        "operation": "slow-cycle",
+                        "status": "failure",
+                        "errorCode": "SLOW_WORKER_STALE_PID",
+                        "retryAfter": failure_retry,
+                        "inFlight": False,
+                    },
+                )
+                _record_slow_cycle(
+                    root,
+                    ok=False,
+                    exit_code=1,
+                    started_at=started,
+                    error_code="SLOW_WORKER_STALE_PID",
+                    disk=disk,
+                )
+                if persisted_retry > now:
+                    return {
+                        "ok": False,
+                        "errors": [{"error": stale_error}],
+                        "slowWorkerDiagnostic": _slow_worker_diagnostic(root),
+                    }
             retry_at = float(backoff.get("retryAfter") or backoff.get("nextAttemptAt") or 0)
             if backoff.get("inFlight") and now < retry_at:
                 return {
@@ -706,6 +1063,9 @@ def slow_advance_once(
                 result["slowWorkerDiagnostic"] = _slow_worker_diagnostic(root, result, reproduction)
                 if recovered_legacy_disk_backoff:
                     result["legacyDiskBackoffRecovered"] = True
+                if recovery_error:
+                    result.setdefault("errors", []).append({"error": recovery_error})
+                    result["ok"] = False
                 if "slowWorkerDiagnostic" not in result:
                     result["slowWorkerDiagnostic"] = _slow_worker_diagnostic(root, result)
             except BaseException as exc:
@@ -831,15 +1191,25 @@ def advance_once(
         }
     ingestion = runner(root, "ingest-results")
     ingestion_quarantined = list(ingestion.get("quarantined") or [])
+    ingestion_quarantined_already_recorded = list(ingestion.get("quarantinedAlreadyRecorded") or [])
     ingestion_work_blocked = list(ingestion.get("workBlocked") or [])
+    ingestion_resolution_scope_authorized = list(ingestion.get("resolutionScopeAuthorized") or [])
+    new_resolution_scope_authorized = _new_resolution_scope_authorizations(
+        ingestion_resolution_scope_authorized
+    )
     ingestion_errors = list(ingestion.get("errors") or [])
     if ingestion.get("ok") is not True or ingestion_errors:
         return {
             "ok": False,
             "activity": True,
-            "resultsIngested": list(ingestion.get("ingested") or []),
-            "publicationRequests": list(ingestion.get("publicationRequests") or []),
-            "validationDeferred": list(ingestion.get("validationDeferred") or []),
+            "resultsIngested": _merge_unique_records(list(ingestion.get("ingested") or [])),
+            "publicationRequests": _merge_unique_records(
+                list(ingestion.get("publicationRequests") or [])
+            ),
+            "validationDeferred": _merge_unique_records(
+                list(ingestion.get("validationDeferred") or [])
+            ),
+            "resolutionScopeAuthorized": new_resolution_scope_authorized,
             "workBlocked": ingestion_work_blocked,
             "published": [],
             "contextsSynced": [],
@@ -887,10 +1257,15 @@ def advance_once(
         return {
             "ok": False,
             "activity": True,
-            "resultsIngested": list(ingestion.get("ingested") or []),
-            "publicationRequests": list(ingestion.get("publicationRequests") or []),
-            "validationDeferred": list(ingestion.get("validationDeferred") or []),
-            "workBlocked": ingestion_work_blocked + review_work_blocked,
+            "resultsIngested": _merge_unique_records(list(ingestion.get("ingested") or [])),
+            "publicationRequests": _merge_unique_records(
+                list(ingestion.get("publicationRequests") or [])
+            ),
+            "validationDeferred": _merge_unique_records(
+                list(ingestion.get("validationDeferred") or [])
+            ),
+            "resolutionScopeAuthorized": new_resolution_scope_authorized,
+            "workBlocked": _merge_unique_records(ingestion_work_blocked, review_work_blocked),
             "independentReview": independent_review,
             "published": [],
             "contextsSynced": [],
@@ -900,7 +1275,7 @@ def advance_once(
             "contextsUnavailableCount": len(recovery_unavailable),
             "contextsQuarantined": public_quarantined,
             "contextsQuarantinedCount": len(recovery_quarantined),
-            "quarantined": ingestion_quarantined,
+            "quarantined": _merge_unique_records(ingestion_quarantined),
             "errors": review_errors or [{"error": "independent review failed before publication"}],
         }
     post_review_ingestion = (
@@ -916,25 +1291,37 @@ def advance_once(
     )
     post_review_errors = list(post_review_ingestion.get("errors") or [])
     post_review_quarantined = list(post_review_ingestion.get("quarantined") or [])
+    post_review_quarantined_already_recorded = list(
+        post_review_ingestion.get("quarantinedAlreadyRecorded") or []
+    )
     post_review_work_blocked = list(post_review_ingestion.get("workBlocked") or [])
+    post_review_resolution_scope_authorized = list(
+        post_review_ingestion.get("resolutionScopeAuthorized") or []
+    )
     if post_review_ingestion.get("ok") is not True or post_review_errors:
         return {
             "ok": False,
             "activity": True,
-            "resultsIngested": [
-                *list(ingestion.get("ingested") or []),
-                *list(post_review_ingestion.get("ingested") or []),
-            ],
-            "publicationRequests": [
-                *list(ingestion.get("publicationRequests") or []),
-                *list(post_review_ingestion.get("publicationRequests") or []),
-            ],
-            "validationDeferred": [
-                *list(ingestion.get("validationDeferred") or []),
-                *list(post_review_ingestion.get("validationDeferred") or []),
-            ],
-            "workBlocked": (
-                ingestion_work_blocked + review_work_blocked + post_review_work_blocked
+            "resultsIngested": _merge_unique_records(
+                list(ingestion.get("ingested") or []),
+                list(post_review_ingestion.get("ingested") or []),
+            ),
+            "publicationRequests": _merge_unique_records(
+                list(ingestion.get("publicationRequests") or []),
+                list(post_review_ingestion.get("publicationRequests") or []),
+            ),
+            "validationDeferred": _merge_unique_records(
+                list(ingestion.get("validationDeferred") or []),
+                list(post_review_ingestion.get("validationDeferred") or []),
+            ),
+            "resolutionScopeAuthorized": _new_resolution_scope_authorizations(
+                ingestion_resolution_scope_authorized,
+                post_review_resolution_scope_authorized,
+            ),
+            "workBlocked": _merge_unique_records(
+                ingestion_work_blocked,
+                review_work_blocked,
+                post_review_work_blocked,
             ),
             "independentReview": independent_review,
             "published": [],
@@ -945,14 +1332,14 @@ def advance_once(
             "contextsUnavailableCount": len(recovery_unavailable),
             "contextsQuarantined": public_quarantined,
             "contextsQuarantinedCount": len(recovery_quarantined),
-            "quarantined": ingestion_quarantined + post_review_quarantined,
+            "quarantined": _merge_unique_records(ingestion_quarantined, post_review_quarantined),
             "errors": post_review_errors
             or [{"error": "task result ingestion failed after independent review"}],
         }
-    ingested = [
-        *list(ingestion.get("ingested") or []),
-        *list(post_review_ingestion.get("ingested") or []),
-    ]
+    ingested = _merge_unique_records(
+        list(ingestion.get("ingested") or []),
+        list(post_review_ingestion.get("ingested") or []),
+    )
     terminal_feedback_needed = any(
         item.get("stage") in TERMINAL_FEEDBACK_STAGES for item in ingested
     )
@@ -982,19 +1369,34 @@ def advance_once(
         *list(publication.get("errors") or []),
         *list(context_sync.get("errors") or []),
     ]
-    requests = [
-        *list(ingestion.get("publicationRequests") or []),
-        *list(post_review_ingestion.get("publicationRequests") or []),
-    ]
-    validation_deferred = [
-        *list(ingestion.get("validationDeferred") or []),
-        *list(post_review_ingestion.get("validationDeferred") or []),
-    ]
-    work_blocked = ingestion_work_blocked + review_work_blocked + post_review_work_blocked
-    quarantined = ingestion_quarantined + post_review_quarantined
+    requests = _merge_unique_records(
+        list(ingestion.get("publicationRequests") or []),
+        list(post_review_ingestion.get("publicationRequests") or []),
+    )
+    validation_deferred = _merge_unique_records(
+        list(ingestion.get("validationDeferred") or []),
+        list(post_review_ingestion.get("validationDeferred") or []),
+    )
+    new_resolution_scope_authorized = _new_resolution_scope_authorizations(
+        ingestion_resolution_scope_authorized,
+        post_review_resolution_scope_authorized,
+    )
+    work_blocked = _merge_unique_records(
+        ingestion_work_blocked,
+        review_work_blocked,
+        post_review_work_blocked,
+    )
+    quarantined = _merge_unique_records(ingestion_quarantined, post_review_quarantined)
+    rebind_recovery = _has_rebind_recovery(
+        ingestion_quarantined,
+        ingestion_quarantined_already_recorded,
+        post_review_quarantined,
+        post_review_quarantined_already_recorded,
+    )
     blocked = list(publication.get("blocked") or [])
     pending = list(publication.get("pending") or [])
     renamed = list(title_reconciliation.get("renamed") or [])
+    titles_deferred = list(title_reconciliation.get("deferred") or [])
     archived = list(cleanup_reconciliation.get("archived") or [])
     drain = {"ok": True, "action": "not_triggered"}
     terminal_feedback = {"ok": True, "published": 0, "errors": []}
@@ -1012,6 +1414,7 @@ def advance_once(
     recoverable = list(recovery.get("recoverable") or []) if recovery.get("ok") is True else []
     should_drain = bool(
         ingested
+        or new_resolution_scope_authorized
         or validation_deferred
         or archived
         or published
@@ -1022,6 +1425,7 @@ def advance_once(
         or queue_sync.get("pending")
         or queue_sync.get("prFollowupCandidates")
         or queue_sync.get("prFollowupUnresolved")
+        or rebind_recovery
     )
     if should_drain and lifecycle_healthy:
         drain = runner(root, "drain-once")
@@ -1038,8 +1442,10 @@ def advance_once(
     non_quarantine_blocked = any(item.get("reason") != "ACTIVE_TASK_QUARANTINE" for item in blocked)
     activity = bool(
         ingested
+        or new_resolution_scope_authorized
         or requests
         or renamed
+        or titles_deferred
         or archived
         or published
         or publication_feedback.get("reconciled")
@@ -1051,6 +1457,7 @@ def advance_once(
         or queue_sync.get("superseded")
         or queue_sync.get("prFollowupCandidates")
         or queue_sync.get("prFollowupUnresolved")
+        or rebind_recovery
         or drain.get("scannerRechecks")
         or queue_sync.get("errors")
     )
@@ -1068,9 +1475,11 @@ def advance_once(
         "resultsIngested": ingested,
         "publicationRequests": requests,
         "validationDeferred": validation_deferred,
+        "resolutionScopeAuthorized": new_resolution_scope_authorized,
         "workBlocked": work_blocked,
         "independentReview": independent_review,
         "titlesRenamed": renamed,
+        "titlesDeferred": titles_deferred,
         "threadsArchived": archived,
         "published": published,
         "contextsSynced": list(context_sync.get("written") or []),
@@ -1110,6 +1519,7 @@ def compact_advance_result(result: dict[str, Any]) -> dict[str, Any]:
             "workBlocked": len(result.get("workBlocked") or []),
             "reviewsUpdated": len(review.get("updated") or []),
             "titlesRenamed": len(result.get("titlesRenamed") or []),
+            "titlesDeferred": len(result.get("titlesDeferred") or []),
             "threadsArchived": len(result.get("threadsArchived") or []),
             "published": len(result.get("published") or []),
             "publicationFeedbackPending": len(
@@ -1140,6 +1550,89 @@ def compact_advance_result(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _validated_service_proxy(value: object) -> str | None:
+    """Return one credential-free proxy URL safe for a launchd argv entry."""
+
+    text = str(value or "")
+    if (
+        not text
+        or text != text.strip()
+        or len(text) > 2048
+        or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in text
+        )
+    ):
+        return None
+    try:
+        parsed = urlsplit(text)
+        port = parsed.port
+    except (TypeError, ValueError):
+        return None
+    if (
+        parsed.scheme.casefold() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    scheme = parsed.scheme.casefold()
+    host = parsed.hostname.casefold()
+    if ":" in host:
+        host = f"[{host}]"
+    if port is not None and port <= 0:
+        return None
+    port = port if port is not None else (443 if scheme == "https" else 80)
+    return f"{scheme}://{host}:{port}"
+
+
+def _system_service_proxy_environment() -> dict[str, str]:
+    """Read stable macOS proxy settings for hermetic launchd workers."""
+
+    if sys.platform != "darwin":
+        return {}
+    loader = getattr(urllib.request, "getproxies_macosx_sysconf", None)
+    if loader is None:
+        raise RuntimeError("system proxy discovery is unavailable")
+    try:
+        configured = loader()
+    except (OSError, RuntimeError, ValueError):
+        raise RuntimeError("system proxy discovery failed") from None
+    if not isinstance(configured, dict):
+        raise RuntimeError("system proxy discovery returned invalid data")
+    values: dict[str, str] = {}
+    for source, target in (
+        ("http", "HTTP_PROXY"),
+        ("https", "HTTPS_PROXY"),
+    ):
+        raw_proxy = configured.get(source)
+        proxy = _validated_service_proxy(raw_proxy)
+        if raw_proxy and not proxy:
+            raise RuntimeError("system proxy configuration is invalid")
+        if proxy:
+            values[target] = proxy
+            values[target.casefold()] = proxy
+    if values:
+        values["NO_PROXY"] = SERVICE_NO_PROXY
+        values["no_proxy"] = SERVICE_NO_PROXY
+    return values
+
+
+def _hermetic_service_environment_arguments(*, home: Path) -> list[str]:
+    environment = {
+        "HOME": str(home),
+        "USER": home.name,
+        "LOGNAME": home.name,
+        "LANG": "en_US.UTF-8",
+        "PATH": SERVICE_PATH,
+        **_system_service_proxy_environment(),
+    }
+    return [f"{key}={value}" for key, value in environment.items()]
+
+
 def launch_agent_spec(
     root: Path,
     *,
@@ -1147,6 +1640,7 @@ def launch_agent_spec(
     home: Path,
     queue_sync_interval_seconds: int = 300,
     runtime_root: Path | None = None,
+    service_environment_arguments: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     code_root = root.resolve()
     runtime_root = (runtime_root or root).resolve()
@@ -1157,11 +1651,11 @@ def launch_agent_spec(
         "ProgramArguments": [
             "/usr/bin/env",
             "-i",
-            f"HOME={home}",
-            f"USER={home.name}",
-            f"LOGNAME={home.name}",
-            "LANG=en_US.UTF-8",
-            f"PATH={SERVICE_PATH}",
+            *(
+                service_environment_arguments
+                if service_environment_arguments is not None
+                else _hermetic_service_environment_arguments(home=home)
+            ),
             str(runtime_python(runtime_root)),
             str(code_root / "scripts" / "local_publication_agent.py"),
             "--root",
@@ -1193,6 +1687,7 @@ def _worker_spec(
     interval_seconds: int,
     home: Path,
     runtime_root: Path | None = None,
+    service_environment_arguments: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     code_root = code_root.resolve()
     runtime_root = (runtime_root or code_root).resolve()
@@ -1202,11 +1697,11 @@ def _worker_spec(
         "ProgramArguments": [
             "/usr/bin/env",
             "-i",
-            f"HOME={home}",
-            f"USER={home.name}",
-            f"LOGNAME={home.name}",
-            "LANG=en_US.UTF-8",
-            f"PATH={SERVICE_PATH}",
+            *(
+                service_environment_arguments
+                if service_environment_arguments is not None
+                else _hermetic_service_environment_arguments(home=home)
+            ),
             str(runtime_python(runtime_root)),
             str(code_root / "scripts" / script),
             "--root",
@@ -1226,6 +1721,7 @@ def slow_launch_agent_spec(
     home: Path,
     interval_seconds: int = 60,
     runtime_root: Path | None = None,
+    service_environment_arguments: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     return _worker_spec(
         root,
@@ -1234,6 +1730,7 @@ def slow_launch_agent_spec(
         interval_seconds=interval_seconds,
         home=home,
         runtime_root=runtime_root,
+        service_environment_arguments=service_environment_arguments,
     )
 
 
@@ -1243,6 +1740,7 @@ def queue_import_launch_agent_spec(
     home: Path,
     interval_seconds: int = 300,
     runtime_root: Path | None = None,
+    service_environment_arguments: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     return _worker_spec(
         root,
@@ -1251,6 +1749,26 @@ def queue_import_launch_agent_spec(
         interval_seconds=interval_seconds,
         home=home,
         runtime_root=runtime_root,
+        service_environment_arguments=service_environment_arguments,
+    )
+
+
+def scheduler_watchdog_launch_agent_spec(
+    root: Path,
+    *,
+    home: Path,
+    interval_seconds: int = 300,
+    runtime_root: Path | None = None,
+    service_environment_arguments: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    return _worker_spec(
+        root,
+        label=WATCHDOG_LABEL,
+        script="scheduler_watchdog.py",
+        interval_seconds=interval_seconds,
+        home=home,
+        runtime_root=runtime_root,
+        service_environment_arguments=service_environment_arguments,
     )
 
 
@@ -1267,15 +1785,33 @@ def worker_specs(
         raise RuntimeError(f"active release is invalid: {evidence.get('error', 'unknown error')}")
     if Path(str(evidence["path"])).resolve() != code_root:
         raise RuntimeError("worker code root is not the active immutable release")
+    service_environment_arguments = tuple(_hermetic_service_environment_arguments(home=home))
     return [
         launch_agent_spec(
             code_root,
             interval_seconds=20,
             home=home,
             runtime_root=runtime_root,
+            service_environment_arguments=service_environment_arguments,
         ),
-        slow_launch_agent_spec(code_root, home=home, runtime_root=runtime_root),
-        queue_import_launch_agent_spec(code_root, home=home, runtime_root=runtime_root),
+        slow_launch_agent_spec(
+            code_root,
+            home=home,
+            runtime_root=runtime_root,
+            service_environment_arguments=service_environment_arguments,
+        ),
+        queue_import_launch_agent_spec(
+            code_root,
+            home=home,
+            runtime_root=runtime_root,
+            service_environment_arguments=service_environment_arguments,
+        ),
+        scheduler_watchdog_launch_agent_spec(
+            code_root,
+            home=home,
+            runtime_root=runtime_root,
+            service_environment_arguments=service_environment_arguments,
+        ),
     ]
 
 

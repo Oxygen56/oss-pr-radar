@@ -24,6 +24,13 @@ from .util import iso_z, parse_time, sha256_json
 
 PROBE_SCHEMA = "repo_probe_receipt_v1"
 PROBE_CONTEXT = "repo-probe-v1"
+CODE_PATH_TOMBSTONE_RECEIPT_SCHEMA = "code-path-tombstone-v1"
+CODE_PATH_TOMBSTONE_RECEIPT_CONTEXT = "code-path-tombstone-v1"
+MERGE_RESOLUTION_SCOPE_RECEIPT_SCHEMA = "merge-resolution-scope-v1"
+MERGE_RESOLUTION_SCOPE_RECEIPT_CONTEXT = "merge-resolution-scope-v1"
+# Compatibility aliases for callers that adopted the initial internal names.
+CODE_PATH_TOMBSTONE_SCHEMA = CODE_PATH_TOMBSTONE_RECEIPT_SCHEMA
+CODE_PATH_TOMBSTONE_CONTEXT = CODE_PATH_TOMBSTONE_RECEIPT_CONTEXT
 MAX_PROBE_SECONDS = 30
 PATHS_VERIFIED = "PATHS_VERIFIED"
 REPRODUCED_VALIDATED = "REPRODUCED_VALIDATED"
@@ -587,6 +594,374 @@ def rebind_probe_receipt(
     ):
         raise ProbeUnavailable("REPRODUCTION_RECEIPT_REBIND_FAILED")
     return rebound
+
+
+def _normalized_tombstone_paths(values: list[str], *, required: bool) -> list[str]:
+    normalized: list[str] = []
+    for raw in sorted({str(path) for path in values if str(path).strip()}):
+        path = PurePosixPath(raw)
+        if (
+            not raw
+            or path.is_absolute()
+            or "\\" in raw
+            or any(part in {"", ".", ".."} for part in path.parts)
+        ):
+            raise ProbeUnavailable("CODE_PATH_UNSAFE")
+        normalized.append(path.as_posix())
+    if required and not normalized:
+        raise ProbeUnavailable("CODE_PATHS_REQUIRED")
+    return normalized
+
+
+def attest_code_path_tombstones(
+    *,
+    source_receipt_digest: str,
+    base_sha: str,
+    key: str,
+    issue_url: str,
+    intent_id: str,
+    thread_id: str,
+    worktree_path_fingerprint: str,
+    pr_url: str,
+    wake_digest: str,
+    action_digest: str,
+    task_action_digest: str,
+    checked_at: str,
+    prepared_head_sha: str,
+    code_paths: list[str],
+    present_paths: list[str],
+    tombstone_paths: list[str],
+) -> dict[str, Any]:
+    """Sign exact durable-receipt paths absent from one prepared PR head.
+
+    This receipt does not replace or narrow the reproduction receipt. It only
+    proves why a historical path cannot be materialized in this exact follow-up
+    checkout, and gives result ingestion a stable no-recreation boundary.
+    """
+
+    if not re.fullmatch(r"[0-9a-f]{64}", source_receipt_digest):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_SOURCE_RECEIPT_INVALID")
+    if not re.fullmatch(r"[0-9a-f]{40}", base_sha):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_BASE_INVALID")
+    if not re.fullmatch(r"[0-9a-f]{40}", prepared_head_sha):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_HEAD_INVALID")
+    if not re.fullmatch(r"[0-9a-f]{64}", wake_digest):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_WAKE_INVALID")
+    if not re.fullmatch(r"[0-9a-f]{64}", worktree_path_fingerprint):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_WORKTREE_INVALID")
+    if (
+        not isinstance(action_digest, str)
+        or not action_digest
+        or not isinstance(task_action_digest, str)
+        or not task_action_digest
+    ):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_ACTION_INVALID")
+    if not isinstance(checked_at, str) or not checked_at:
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_CHECKED_AT_INVALID")
+    try:
+        parse_time(checked_at)
+    except (TypeError, ValueError) as exc:
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_CHECKED_AT_INVALID") from exc
+    if not all(
+        isinstance(value, str) and value for value in (key, issue_url, intent_id, thread_id, pr_url)
+    ):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_IDENTITY_REQUIRED")
+    if not all(isinstance(value, list) for value in (code_paths, present_paths, tombstone_paths)):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_SCOPE_INVALID")
+
+    full = _normalized_tombstone_paths(code_paths, required=True)
+    present = _normalized_tombstone_paths(present_paths, required=False)
+    tombstones = _normalized_tombstone_paths(tombstone_paths, required=True)
+    if set(present) & set(tombstones) or set(present) | set(tombstones) != set(full):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_SCOPE_INVALID")
+
+    payload: dict[str, Any] = {
+        "schemaVersion": CODE_PATH_TOMBSTONE_RECEIPT_SCHEMA,
+        "sourceReceiptDigest": source_receipt_digest,
+        "baseSha": base_sha,
+        "key": key,
+        "issueUrl": issue_url,
+        "intentId": intent_id,
+        "threadFingerprint": thread_fingerprint(thread_id),
+        "worktreePathFingerprint": worktree_path_fingerprint,
+        "prUrl": pr_url,
+        "wakeDigest": wake_digest,
+        "actionDigest": action_digest,
+        "taskActionDigest": task_action_digest,
+        "checkedAt": checked_at,
+        "preparedHeadSha": prepared_head_sha,
+        "codePaths": full,
+        "presentPaths": present,
+        "tombstonePaths": tombstones,
+    }
+    payload["receiptDigest"] = sha256_json(payload)
+    auth = sign_current(payload, context=CODE_PATH_TOMBSTONE_RECEIPT_CONTEXT)
+    if not auth.get("keyId") or not auth.get("signature"):
+        raise ProbeUnavailable("CODE_PATH_TOMBSTONE_SIGNING_KEY_UNAVAILABLE")
+    return payload | {"keyId": auth["keyId"], "signature": auth["signature"]}
+
+
+def verify_code_path_tombstone_receipt(
+    receipt: dict[str, Any],
+    *,
+    source_receipt_digest: str,
+    base_sha: str,
+    key: str,
+    issue_url: str,
+    intent_id: str,
+    thread_id: str,
+    worktree_path_fingerprint: str,
+    pr_url: str,
+    wake_digest: str,
+    action_digest: str,
+    task_action_digest: str,
+    checked_at: str,
+    prepared_head_sha: str,
+    code_paths: list[str],
+) -> bool:
+    """Verify a tombstone with the active key and its exact follow-up binding."""
+
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("schemaVersion") != CODE_PATH_TOMBSTONE_RECEIPT_SCHEMA
+    ):
+        return False
+    if not all(
+        isinstance(receipt.get(field), list)
+        for field in ("codePaths", "presentPaths", "tombstonePaths")
+    ):
+        return False
+    if (
+        not re.fullmatch(r"[0-9a-f]{64}", source_receipt_digest)
+        or not re.fullmatch(r"[0-9a-f]{40}", base_sha)
+        or not re.fullmatch(r"[0-9a-f]{64}", worktree_path_fingerprint)
+        or not re.fullmatch(r"[0-9a-f]{64}", wake_digest)
+        or not re.fullmatch(r"[0-9a-f]{40}", prepared_head_sha)
+        or not isinstance(action_digest, str)
+        or not action_digest
+        or not isinstance(task_action_digest, str)
+        or not task_action_digest
+    ):
+        return False
+    try:
+        full = _normalized_tombstone_paths(code_paths, required=True)
+        recorded_full = _normalized_tombstone_paths(receipt.get("codePaths") or [], required=True)
+        present = _normalized_tombstone_paths(receipt.get("presentPaths") or [], required=False)
+        tombstones = _normalized_tombstone_paths(receipt.get("tombstonePaths") or [], required=True)
+    except ProbeUnavailable:
+        return False
+    if (
+        recorded_full != full
+        or set(present) & set(tombstones)
+        or set(present) | set(tombstones) != set(full)
+    ):
+        return False
+    expected = {
+        "sourceReceiptDigest": source_receipt_digest,
+        "baseSha": base_sha,
+        "key": key,
+        "issueUrl": issue_url,
+        "intentId": intent_id,
+        "threadFingerprint": thread_fingerprint(thread_id),
+        "worktreePathFingerprint": worktree_path_fingerprint,
+        "prUrl": pr_url,
+        "wakeDigest": wake_digest,
+        "actionDigest": action_digest,
+        "taskActionDigest": task_action_digest,
+        "checkedAt": checked_at,
+        "preparedHeadSha": prepared_head_sha,
+    }
+    if any(receipt.get(field) != value for field, value in expected.items()):
+        return False
+    try:
+        parse_time(str(receipt.get("checkedAt") or ""))
+    except (TypeError, ValueError):
+        return False
+    unsigned = {
+        field: value
+        for field, value in receipt.items()
+        if field not in {"keyId", "signature", "receiptDigest"}
+    }
+    if receipt.get("receiptDigest") != sha256_json(unsigned):
+        return False
+    signed_payload = unsigned | {"receiptDigest": receipt["receiptDigest"]}
+    return verify_current(
+        signed_payload,
+        context=CODE_PATH_TOMBSTONE_RECEIPT_CONTEXT,
+        key_id=receipt.get("keyId"),
+        signature=receipt.get("signature"),
+    )
+
+
+def merge_resolution_scope_wake_digest(
+    *,
+    key: str,
+    source_wake_digest: str,
+    request_result_digest: str,
+    authorized_resolution_files: list[str],
+) -> str:
+    """Return the deterministic follow-up wake for one authorized scope request."""
+
+    if not isinstance(authorized_resolution_files, list):
+        raise ProbeUnavailable("MERGE_RESOLUTION_SCOPE_PATHS_INVALID")
+    files = _normalized_tombstone_paths(authorized_resolution_files, required=True)
+    if (
+        not key
+        or not re.fullmatch(r"[0-9a-f]{64}", source_wake_digest)
+        or not re.fullmatch(r"[0-9a-f]{64}", request_result_digest)
+    ):
+        raise ProbeUnavailable("MERGE_RESOLUTION_SCOPE_BINDING_INVALID")
+    return sha256_json(
+        {
+            "operation": "authorize-merge-resolution-scope-v1",
+            "key": key,
+            "sourceWakeDigest": source_wake_digest,
+            "requestResultDigest": request_result_digest,
+            "authorizedResolutionFiles": files,
+        }
+    )
+
+
+def attest_merge_resolution_scope(
+    *,
+    key: str,
+    issue_url: str,
+    intent_id: str,
+    thread_id: str,
+    worktree_path_fingerprint: str,
+    pr_url: str,
+    source_wake_digest: str,
+    request_result_digest: str,
+    head_sha: str,
+    prepared_head_sha: str,
+    base_sha: str,
+    merge_conflict_files: list[str],
+    authorized_resolution_files: list[str],
+) -> dict[str, Any]:
+    """Sign a narrowly bound superset used only to resolve one PR merge."""
+
+    if not all(
+        isinstance(value, str) and value for value in (key, issue_url, intent_id, thread_id, pr_url)
+    ):
+        raise ProbeUnavailable("MERGE_RESOLUTION_SCOPE_IDENTITY_REQUIRED")
+    if not re.fullmatch(r"[0-9a-f]{64}", worktree_path_fingerprint):
+        raise ProbeUnavailable("MERGE_RESOLUTION_SCOPE_WORKTREE_INVALID")
+    if not all(
+        re.fullmatch(r"[0-9a-f]{40}", value) for value in (head_sha, prepared_head_sha, base_sha)
+    ):
+        raise ProbeUnavailable("MERGE_RESOLUTION_SCOPE_REVISION_INVALID")
+    if not isinstance(merge_conflict_files, list) or not isinstance(
+        authorized_resolution_files, list
+    ):
+        raise ProbeUnavailable("MERGE_RESOLUTION_SCOPE_PATHS_INVALID")
+    conflicts = _normalized_tombstone_paths(merge_conflict_files, required=True)
+    authorized = _normalized_tombstone_paths(authorized_resolution_files, required=True)
+    if not set(conflicts) < set(authorized):
+        raise ProbeUnavailable("MERGE_RESOLUTION_SCOPE_NOT_STRICT_SUPERSET")
+    authorized_wake_digest = merge_resolution_scope_wake_digest(
+        key=key,
+        source_wake_digest=source_wake_digest,
+        request_result_digest=request_result_digest,
+        authorized_resolution_files=authorized,
+    )
+    payload: dict[str, Any] = {
+        "schemaVersion": MERGE_RESOLUTION_SCOPE_RECEIPT_SCHEMA,
+        "key": key,
+        "issueUrl": issue_url,
+        "intentId": intent_id,
+        "threadFingerprint": thread_fingerprint(thread_id),
+        "worktreePathFingerprint": worktree_path_fingerprint,
+        "prUrl": pr_url,
+        "sourceWakeDigest": source_wake_digest,
+        "authorizedWakeDigest": authorized_wake_digest,
+        "requestResultDigest": request_result_digest,
+        "headSha": head_sha,
+        "preparedHeadSha": prepared_head_sha,
+        "baseSha": base_sha,
+        "mergeConflictFiles": conflicts,
+        "authorizedResolutionFiles": authorized,
+    }
+    payload["receiptDigest"] = sha256_json(payload)
+    auth = sign_current(payload, context=MERGE_RESOLUTION_SCOPE_RECEIPT_CONTEXT)
+    if not auth.get("keyId") or not auth.get("signature"):
+        raise ProbeUnavailable("MERGE_RESOLUTION_SCOPE_SIGNING_KEY_UNAVAILABLE")
+    return payload | {"keyId": auth["keyId"], "signature": auth["signature"]}
+
+
+def verify_merge_resolution_scope_receipt(
+    receipt: dict[str, Any],
+    *,
+    key: str,
+    issue_url: str,
+    intent_id: str,
+    thread_id: str,
+    worktree_path_fingerprint: str,
+    pr_url: str,
+    current_wake_digest: str,
+    head_sha: str,
+    prepared_head_sha: str,
+    base_sha: str,
+    merge_conflict_files: list[str],
+    authorized_resolution_files: list[str],
+) -> bool:
+    """Verify the exact identity, revisions and two merge scopes in a receipt."""
+
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("schemaVersion") != MERGE_RESOLUTION_SCOPE_RECEIPT_SCHEMA
+        or not isinstance(merge_conflict_files, list)
+        or not isinstance(authorized_resolution_files, list)
+    ):
+        return False
+    try:
+        conflicts = _normalized_tombstone_paths(merge_conflict_files, required=True)
+        authorized = _normalized_tombstone_paths(authorized_resolution_files, required=True)
+    except ProbeUnavailable:
+        return False
+    if not set(conflicts) < set(authorized):
+        return False
+    expected = {
+        "key": key,
+        "issueUrl": issue_url,
+        "intentId": intent_id,
+        "threadFingerprint": thread_fingerprint(thread_id),
+        "worktreePathFingerprint": worktree_path_fingerprint,
+        "prUrl": pr_url,
+        "authorizedWakeDigest": current_wake_digest,
+        "headSha": head_sha,
+        "preparedHeadSha": prepared_head_sha,
+        "baseSha": base_sha,
+        "mergeConflictFiles": conflicts,
+        "authorizedResolutionFiles": authorized,
+    }
+    if any(receipt.get(field) != value for field, value in expected.items()):
+        return False
+    source_wake_digest = str(receipt.get("sourceWakeDigest") or "")
+    request_result_digest = str(receipt.get("requestResultDigest") or "")
+    try:
+        expected_wake = merge_resolution_scope_wake_digest(
+            key=key,
+            source_wake_digest=source_wake_digest,
+            request_result_digest=request_result_digest,
+            authorized_resolution_files=authorized,
+        )
+    except ProbeUnavailable:
+        return False
+    if current_wake_digest != expected_wake:
+        return False
+    unsigned = {
+        field: value
+        for field, value in receipt.items()
+        if field not in {"keyId", "signature", "receiptDigest"}
+    }
+    if receipt.get("receiptDigest") != sha256_json(unsigned):
+        return False
+    return verify_current(
+        unsigned | {"receiptDigest": receipt["receiptDigest"]},
+        context=MERGE_RESOLUTION_SCOPE_RECEIPT_CONTEXT,
+        key_id=receipt.get("keyId"),
+        signature=receipt.get("signature"),
+    )
 
 
 def run_repo_probe(

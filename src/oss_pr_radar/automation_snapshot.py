@@ -112,18 +112,19 @@ def canonical_prompt(role: str, runtime_root: Path, release_command: list[str]) 
     )
     if role == "heartbeat":
         action = (
-            "execute only the release-command; it may take several minutes; inspect its final JSON; "
+            "execute only the release-command exactly as written, including its first interpreter token; never drop the interpreter or substitute a different path; it may take several minutes; inspect its final JSON; "
             "if context compaction or a missing tool result happens after the command starts, never reply from uncertainty and execute the identical release-command once more, which safely joins the already-running controller, then inspect that final JSON; "
             "if it contains desktopHandoff, send desktopHandoff.prompt unchanged exactly once to desktopHandoff.threadId even when command exit is nonzero or final JSON ok=false, because this handoff is the prescribed recovery action; "
             "only after that message-tool send succeeds reply '已开始或继续处理；你无需操作。'; "
             "when there is no desktopHandoff, if the command fails or final JSON ok=false, reply with one plain-Chinese sentence naming only the real user-visible blocker; "
-            "when there is no desktopHandoff and it succeeds, reply exactly '运行正常；当前没有需要你处理的事情。'; "
+            "when there is no desktopHandoff, it succeeds, and final JSON contains newPullRequest.prUrl, validate that value is an https://github.com/<owner>/<repo>/pull/<number> URL and reply with exactly two plain-text lines: first '新 PR 已创建：<newPullRequest.prUrl>' with the placeholder replaced by that exact URL, then '你无需操作。'; "
+            "when there is no desktopHandoff, it succeeds, and there is no newPullRequest, reply exactly '运行正常；当前没有需要你处理的事情。'; "
             f"{final_reply_contract}"
             "never show JSON, paths, logs, prompts, or internal fields."
         )
     else:
         action = (
-            "execute only the release-command; the command must include --send and is the only daily action; "
+            "execute only the release-command exactly as written, including its first interpreter token; never drop the interpreter or substitute a different path; the command must include --send and is the only daily action; "
             "if context compaction or a missing tool result happens after the command starts, never reply from uncertainty and execute the identical release-command once more, which safely replays the daily cycle through its durable delivery deduplication, then inspect that final JSON; "
             "check command exit and final JSON ok; if the command fails or final JSON ok=false, reply with one plain-Chinese sentence naming only the real user-visible blocker; "
             "only when it succeeds, reply exactly '检查已完成；当前没有需要你处理的事情。'; "
@@ -203,6 +204,9 @@ def _automation_entry(
         "updatedAt": section["updated_at"],
         "targetThreadId": str(expected["targetThreadId"]),
         "releaseCommand": release_command,
+        # Keep the concrete release identity in the signed snapshot while the
+        # command itself follows the stable current-release pointer.
+        "releaseBinding": expected.get("releaseBinding"),
         "runtimeRoot": str(runtime_root.resolve()),
         "promptTemplate": AUTOMATION_PROMPT_TEMPLATE,
         "promptDigest": prompt_digest,
@@ -210,12 +214,22 @@ def _automation_entry(
     }
 
 
-def _actual_workers(runtime_root: Path, home: Path, contracts: dict[str, Any]) -> dict[str, Any]:
-    specs = worker_specs(
-        Path(contracts["release"]["codeRoot"]), home=home, runtime_root=runtime_root
+def _actual_workers(
+    runtime_root: Path,
+    home: Path,
+    contracts: dict[str, Any],
+    *,
+    specs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    selected_specs = (
+        specs
+        if specs is not None
+        else worker_specs(
+            Path(contracts["release"]["codeRoot"]), home=home, runtime_root=runtime_root
+        )
     )
     result: dict[str, Any] = {}
-    for spec in specs:
+    for spec in selected_specs:
         label = str(spec["Label"])
         path = home / "Library" / "LaunchAgents" / f"{label}.plist"
         if path.is_symlink() or not path.is_file():
@@ -242,6 +256,7 @@ def derive_automation_snapshot(
     *,
     home: Path | None = None,
     observed_at: str | None = None,
+    specs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Parse actual TOML/plists and derive, but do not sign, snapshot content."""
 
@@ -252,7 +267,12 @@ def derive_automation_snapshot(
         raise ValueError("heartbeat and daily automation TOML paths must be distinct")
     heartbeat_raw, heartbeat_file = _file_metadata(heartbeat_toml, role="heartbeat")
     daily_raw, daily_file = _file_metadata(daily_toml, role="dailyWarRoom")
-    contracts = build_contracts(runtime_root, home=home)
+    selected_specs = (
+        specs
+        if specs is not None
+        else worker_specs(binding.code_root, home=home, runtime_root=runtime_root)
+    )
+    contracts = build_contracts(runtime_root, home=home, specs=selected_specs)
     heartbeat = _automation_entry(
         _automation_section(heartbeat_raw, heartbeat_toml),
         role="heartbeat",
@@ -280,7 +300,7 @@ def derive_automation_snapshot(
         "sourceFiles": [heartbeat_file, daily_file],
         "heartbeat": heartbeat,
         "dailyWarRoom": daily,
-        "workers": _actual_workers(runtime_root, home, contracts),
+        "workers": _actual_workers(runtime_root, home, contracts, specs=selected_specs),
     }
 
 

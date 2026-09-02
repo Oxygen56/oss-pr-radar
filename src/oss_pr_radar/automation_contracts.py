@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .local_publication import worker_specs
+from .outbound_pause import OUTBOUND_PAUSE_FILENAME, OUTBOUND_PAUSE_SCHEMA
 from .release_binding import bind_runtime, runtime_python
 
 HEARTBEAT_AUTOMATION_ID = "oss-pr-radar"
@@ -16,7 +17,10 @@ AUTOMATION_STATUS = "ACTIVE"
 HEARTBEAT_RRULE = "FREQ=HOURLY;BYMINUTE=30"
 DAILY_WAR_ROOM_RRULE = "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0"
 HEARTBEAT_TARGET_THREAD_ID = "019f71c3-4f26-7030-b126-25f8cfbac4c4"
-DAILY_WAR_ROOM_TARGET_THREAD_ID = "01a03bf2-e310-7f63-8db6-a9ec0a39f4aa"
+# Keep the daily heartbeat on its own durable, normally idle thread.  Binding
+# it to a long-running user conversation lets each scheduler tick postpone the
+# next tick indefinitely.
+DAILY_WAR_ROOM_TARGET_THREAD_ID = "01a047a5-88da-7113-8355-218215cd037a"
 HEARTBEAT_NAME = "OSS PR Radar 控制器（单会话）"
 DAILY_WAR_ROOM_NAME = "Daily GitHub open PR status review"
 AUTOMATION_PROMPT_POLICY = "oss-pr-radar.prompt-bound.v1"
@@ -42,18 +46,34 @@ CUTOVER_ORDER = (
 )
 
 
-def build_contracts(runtime_root: Path, *, home: Path | None = None) -> dict[str, Any]:
+def build_contracts(
+    runtime_root: Path,
+    *,
+    home: Path | None = None,
+    specs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     binding = bind_runtime(runtime_root)
     root = runtime_root.resolve()
     python = str(runtime_python(root))
+    # The automation itself must never pin an immutable release directory.
+    # `current-release` is the stable, runtime-owned pointer; the entrypoint
+    # resolves and verifies it before importing any release code.  Other
+    # cutover/worker commands intentionally remain pinned to the verified
+    # release represented by ``binding.code_root``.
     code = str(binding.code_root)
+    automation_code = str(root / "current-release")
+    selected_specs = (
+        specs
+        if specs is not None
+        else worker_specs(binding.code_root, home=home or Path.home(), runtime_root=root)
+    )
     workers = {
         spec["Label"]: {
             "command": spec["ProgramArguments"],
             "workdir": spec["WorkingDirectory"],
             "status": "configured",
         }
-        for spec in worker_specs(binding.code_root, home=home or Path.home(), runtime_root=root)
+        for spec in selected_specs
     }
     cutover = code + "/scripts/stage7_cutover.py"
     acceptance = code + "/scripts/stage7_acceptance.py"
@@ -79,12 +99,18 @@ def build_contracts(runtime_root: Path, *, home: Path | None = None) -> dict[str
             "targetThreadId": HEARTBEAT_TARGET_THREAD_ID,
             "releaseCommand": [
                 python,
-                code + "/scripts/controller_cycle.py",
+                automation_code + "/scripts/controller_cycle.py",
                 "--root",
                 str(root),
                 "--code-root",
-                code,
+                automation_code,
             ],
+            "releaseBinding": {
+                "kind": "active-release-pointer",
+                "path": automation_code,
+                "releaseId": binding.release_id,
+                "manifestSha256": binding.release.get("manifestSha256"),
+            },
             "externalActionsOwnedBy": "controller",
             "promptPolicy": AUTOMATION_PROMPT_POLICY,
             "workerEnsureCommand": [
@@ -105,11 +131,17 @@ def build_contracts(runtime_root: Path, *, home: Path | None = None) -> dict[str
             "targetThreadId": DAILY_WAR_ROOM_TARGET_THREAD_ID,
             "releaseCommand": [
                 python,
-                code + "/scripts/daily_war_room_cycle.py",
+                automation_code + "/scripts/daily_war_room_cycle.py",
                 "--runtime-root",
                 str(root),
                 "--send",
             ],
+            "releaseBinding": {
+                "kind": "active-release-pointer",
+                "path": automation_code,
+                "releaseId": binding.release_id,
+                "manifestSha256": binding.release.get("manifestSha256"),
+            },
             "sendFlag": "--send",
             "artifactRoot": str(root / "reports" / "war-room" / "daily"),
             "promptPolicy": AUTOMATION_PROMPT_POLICY,
@@ -188,6 +220,28 @@ def build_contracts(runtime_root: Path, *, home: Path | None = None) -> dict[str
             },
         },
         "stage7": {
+            # The pause is a durable precondition for the evidence window.  It
+            # is intentionally metadata (the contract never performs the
+            # remote pause itself); operators run the release-bound helper
+            # after activation and keep it active through final acceptance.
+            "publicationFreeze": {
+                "schema": OUTBOUND_PAUSE_SCHEMA,
+                "path": str(root / "state" / OUTBOUND_PAUSE_FILENAME),
+                "requiredState": "ACTIVE",
+                "workflowIdleRequired": True,
+                "releaseBound": True,
+                "scope": [
+                    "managedCountsEvidence",
+                    "issueWorkerStagingAuthorization",
+                    "stageWorkerConfigs",
+                    "automationSnapshot",
+                    "strictPreflight",
+                    "issueOperationalAuthorization",
+                    "activateWorkers",
+                    "strictFinalAcceptance",
+                ],
+                "onDrift": "rerun_stage6_and_stage7_evidence",
+            },
             "stopEvidence": {
                 "command": [
                     python,

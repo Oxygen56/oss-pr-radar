@@ -10,11 +10,116 @@ from test_ledger import legal_publication_probe
 from oss_pr_radar import scanner
 from oss_pr_radar.ledger import RadarLedger
 from oss_pr_radar.managed_adapter import ManagedAdapter
-from oss_pr_radar.managed_lifecycle import ManagedLedger
+from oss_pr_radar.managed_lifecycle import ManagedLedger, import_open_pr_observations
+from oss_pr_radar.metrics import QUALITY_FIELDS
 from oss_pr_radar.repo_probe import TRUSTED_PROBE_PROFILES
 from oss_pr_radar.scanner import Radar
 
 pytestmark = pytest.mark.usefixtures("current_signing_key")
+
+
+def test_followup_snapshot_ignores_unmanaged_pr_without_admission(tmp_path):
+    database = tmp_path / "state" / "radar_ledger.sqlite3"
+    adapter = ManagedAdapter(tmp_path, database)
+
+    result = adapter.record_followup(
+        {"items": [{"key": "new/repo#1"}]},
+        {"run_id": "followup-unmanaged"},
+    )
+
+    assert result["recorded"] == 0
+    assert result["added"] == []
+    assert result["ignored"] == [{"key": "new/repo#1", "reason": "FOLLOWUP_KEY_NOT_MANAGED"}]
+    assert result["delta"] == {
+        "managedPrsBefore": 0,
+        "managedPrsAfter": 0,
+        "added": 0,
+        "updated": 0,
+        "ignored": 1,
+    }
+    with adapter.ledger._connection() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM managed_prs").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM managed_ci_runs").fetchone()[0] == 0
+
+
+def test_followup_snapshot_updates_an_admitted_pr_without_adding_rows(tmp_path):
+    database = tmp_path / "state" / "radar_ledger.sqlite3"
+    adapter = ManagedAdapter(tmp_path, database)
+    adapter.ledger.upsert_pr(
+        pr_key="owner/repo#1",
+        owner="owner",
+        repo="repo",
+        number=1,
+        head_sha="old-head",
+        pr_url="https://github.com/owner/repo/pull/1",
+        state="OPEN",
+        auto_created=False,
+        observed_at="2026-08-28T00:00:00Z",
+    )
+
+    result = adapter.record_followup(
+        {
+            "items": [
+                {
+                    "key": "owner/repo#1",
+                    "url": "https://github.com/owner/repo/pull/1",
+                    "headSha": "new-head",
+                    "ciStatus": "PASSED",
+                    "checkedAt": "2026-08-29T00:00:00Z",
+                    "evidence": {"failingChecks": [], "requestedChanges": []},
+                }
+            ]
+        },
+        {"run_id": "followup-admitted"},
+    )
+
+    assert result["recorded"] == 1
+    assert result["added"] == []
+    assert result["ignored"] == []
+    assert result["delta"]["managedPrsBefore"] == 1
+    assert result["delta"]["managedPrsAfter"] == 1
+    assert result["delta"]["updated"] == 1
+    with adapter.ledger._connection() as connection:
+        row = connection.execute(
+            "SELECT head_sha FROM managed_prs WHERE pr_key='owner/repo#1'"
+        ).fetchone()
+        assert row["head_sha"] == "new-head"
+
+
+def test_explicit_open_pr_admission_allows_followup_projection(tmp_path):
+    database = tmp_path / "state" / "radar_ledger.sqlite3"
+    RadarLedger(database)
+    adapter = ManagedAdapter(tmp_path, database)
+    import_open_pr_observations(
+        database,
+        [
+            {
+                "url": "https://github.com/owner/repo/pull/2",
+                "headSha": "admitted-head",
+                "state": "OPEN",
+            }
+        ],
+        source="explicit-test-admission",
+    )
+
+    result = adapter.record_followup(
+        {
+            "items": [
+                {
+                    "key": "owner/repo#2",
+                    "url": "https://github.com/owner/repo/pull/2",
+                    "headSha": "admitted-head",
+                    "ciStatus": "PASSED",
+                    "checkedAt": "2026-08-29T00:00:00Z",
+                    "evidence": {"failingChecks": [], "requestedChanges": []},
+                }
+            ]
+        },
+        {"run_id": "followup-after-admission"},
+    )
+
+    assert result["recorded"] == 1
+    assert result["ignored"] == []
 
 
 def test_slow_worker_runs_queued_reproduction_and_keeps_missing_profile_external(tmp_path):
@@ -355,7 +460,7 @@ def test_real_control_plane_adapter_path_reaches_all_projection_buckets(tmp_path
         },
         result_digest=digest_3,
     )
-    adapter.record_task_result(
+    task_4_result = adapter.record_task_result(
         candidate=intents["task-4"],
         value={
             "stage": "FIX_READY",
@@ -372,10 +477,14 @@ def test_real_control_plane_adapter_path_reaches_all_projection_buckets(tmp_path
             "resultDigest": result_digest,
             "previousHeadSha": "old-head",
             "publication": {"prUrl": "https://github.com/owner/repo/pull/4"},
-            "quality": {"passed": True, "evidence": ["pytest-e2e"]},
+            "quality": {field: True for field in QUALITY_FIELDS},
         },
         result_digest=result_digest,
     )
+    assert task_4_result["result"]["advanced"] is True
+    task_4_validation = json.loads(task_4_result["result"]["validation_json"])
+    assert task_4_validation["passed"] is True
+    assert task_4_validation["evidence"] == list(QUALITY_FIELDS)
     reservation = adapter.reserve_publication(
         request_id="request-4", repo="owner/repo", opportunity_key="owner/repo#4"
     )
@@ -680,6 +789,17 @@ def test_followup_importer_records_bound_invitation_and_assignment_events(tmp_pa
             state="OPEN",
             auto_created=True,
         )
+    # Admission is explicit; follow-up observations cannot create #7.
+    adapter.ledger.upsert_pr(
+        pr_key="owner/repo#7",
+        owner="owner",
+        repo="repo",
+        number=7,
+        head_sha="head-7",
+        pr_url="https://github.com/owner/repo/pull/7",
+        state="OPEN",
+        auto_created=False,
+    )
     state = {
         "items": [
             {

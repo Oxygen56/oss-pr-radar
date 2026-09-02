@@ -69,6 +69,7 @@ def prepared_request(tmp_path):
     git("init", cwd=worktree)
     git("config", "user.name", "Tester", cwd=worktree)
     git("config", "user.email", "tester@example.com", cwd=worktree)
+    git("commit", "--allow-empty", "-m", "chore: baseline", cwd=worktree)
     (worktree / "file.txt").write_text('assert "fixed" == "fixed"\n', encoding="utf-8")
     git("add", "file.txt", cwd=worktree)
     git("commit", "-m", "Fix streaming", cwd=worktree)
@@ -576,6 +577,39 @@ def test_broker_reads_private_review_from_durable_runtime_state(monkeypatch, tmp
     assert result["audit"]["reason"] == "LIVE_PUBLICATION_GATES_PASSED"
 
 
+def test_broker_forwards_historical_review_context(monkeypatch, tmp_path):
+    store, request, _ = prepared_request(tmp_path)
+    durable_runtime = tmp_path / "runtime"
+    review_context = {"prFollowup": {"wakeDigest": "historical-wake"}}
+    observed = {}
+
+    def review_passed(root, value, *, state_root=None, review_context=None):
+        observed.update(
+            {
+                "root": root,
+                "value": value,
+                "stateRoot": state_root,
+                "reviewContext": review_context,
+            }
+        )
+        return True
+
+    monkeypatch.setattr(publication, "controller_review_passed", review_passed)
+    monkeypatch.setattr(publication, "_changed_files", lambda *args: ["file.txt"])
+
+    result = broker_publication_request(
+        store,
+        request["request_id"],
+        client=Client(),
+        review_state_root=durable_runtime,
+        review_context=review_context,
+    )
+
+    assert result["granted"] is True
+    assert observed["stateRoot"] == durable_runtime
+    assert observed["reviewContext"] is review_context
+
+
 def test_bound_evidence_snapshot_prevents_evidence_path_reread(monkeypatch, tmp_path):
     store, request, evidence_path = prepared_request(tmp_path)
     evidence_path.write_text("{}", encoding="utf-8")
@@ -898,6 +932,24 @@ def test_broker_allows_bound_update_despite_a_competing_pr(monkeypatch, tmp_path
     )
 
     class UpdateClient(Client):
+        def comments(self, repo, number):
+            return [
+                {
+                    "body": "I'd like to work on this. I'll add regression coverage.",
+                    "user": {"login": "argszero"},
+                    "author_association": "NONE",
+                    "created_at": "2026-08-26T02:36:59Z",
+                },
+                {
+                    "body": (
+                        "Standing down — I see PR #8 already addresses this. I'll defer to those."
+                    ),
+                    "user": {"login": "argszero"},
+                    "author_association": "NONE",
+                    "created_at": "2026-08-26T10:53:24Z",
+                },
+            ]
+
         def related_open_prs(self, repo, number, **kwargs):
             return [
                 {"number": 8, "_repo": repo},
@@ -1114,13 +1166,23 @@ def test_merge_update_uses_live_repository_base_not_pr_snapshot(
     store.consume_publication_permit(permit["permit_id"], pr_url)
     worktree = tmp_path / "worktree"
     previous_head = first["commit_sha"]
-    git("switch", "-c", "upstream-base", cwd=worktree)
+    git("switch", "-c", "upstream-base", f"{previous_head}^", cwd=worktree)
     (worktree / "file.txt").write_text("upstream\n", encoding="utf-8")
     git("add", "file.txt", cwd=worktree)
     git("commit", "-m", "refactor: update file", cwd=worktree)
     base_sha = git("rev-parse", "HEAD", cwd=worktree)
     git("switch", first["branch"], cwd=worktree)
-    git("merge", "--no-ff", base_sha, "-m", "merge: refresh branch", cwd=worktree)
+    merge = subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", base_sha],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert merge.returncode == 1
+    (worktree / "file.txt").write_text('assert "fixed" == "fixed"\n', encoding="utf-8")
+    git("add", "file.txt", cwd=worktree)
+    git("commit", "-m", "merge: refresh branch", cwd=worktree)
     current = git("rev-parse", "HEAD", cwd=worktree)
     quality = {field: True for field in QUALITY_FIELDS}
     store.record_stage("example/project#7", "FIX_READY", evidence=quality)
@@ -1287,6 +1349,13 @@ def test_expired_permit_can_only_finalize_ambiguous_pr_effect(tmp_path):
         "prUrl": "https://github.com/example/project/pull/8",
         "state": "OPEN",
     }
+    legacy_event_payload = {"permitId": permit["permit_id"], "prUrl": result["prUrl"]}
+    store.record_stage(
+        "example/project#7",
+        "PR_OPEN",
+        evidence=legacy_event_payload,
+        dedupe_key=result["prUrl"],
+    )
     store.succeed_pull_request_effect(
         effect_id=effect["effect_id"],
         permit_id=permit["permit_id"],
@@ -1309,10 +1378,19 @@ def test_expired_permit_can_only_finalize_ambiguous_pr_effect(tmp_path):
         intent = connection.execute(
             "SELECT status FROM intents WHERE intent_id='intent-1'"
         ).fetchone()
+        legacy_event = connection.execute(
+            """SELECT payload_json FROM events
+               WHERE opportunity_key='example/project#7'
+                 AND event_type='PR_OPEN' AND dedupe_key=?""",
+            (result["prUrl"],),
+        ).fetchone()
     assert dict(permit_row) == {"status": "CONSUMED", "pr_url": result["prUrl"]}
     assert effect_row["status"] == "SUCCEEDED"
     assert opportunity["stage"] == "PR_OPEN"
     assert intent["status"] == "COMPLETED"
+    assert json.loads(legacy_event["payload_json"]) == legacy_event_payload
+    assert store.controller_publication_notice_candidates() == []
+    assert store.publication_feedback_candidates()[0]["prUrl"] == result["prUrl"]
     replay_permit = store.publication_permit_for_effect(permit["permit_id"], action="create_pr")
     replay_effect = store.publication_effect_by_request(
         permit_id=permit["permit_id"],

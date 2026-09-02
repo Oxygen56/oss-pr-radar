@@ -24,6 +24,11 @@ from oss_pr_radar.outbound_pause import (  # noqa: E402
     outbound_effect_lock,
 )
 from oss_pr_radar.release_binding import active_release, runtime_ledger_path  # noqa: E402
+from oss_pr_radar.runtime import (  # noqa: E402
+    disk_restart_safe,
+    disk_snapshot,
+    read_disk_pressure_gate_health,
+)
 from oss_pr_radar.util import iso_z  # noqa: E402
 
 SCHEMA = OUTBOUND_PAUSE_SCHEMA
@@ -250,6 +255,17 @@ def resume(runtime_root: Path) -> dict[str, object]:
                 return {"ok": True, "paused": False, "removed": False, "path": str(path)}
             validated = active_outbound_pause(runtime_root)
             assert validated is not None
+            disk_pressure_gate = read_disk_pressure_gate_health(
+                runtime_root, snapshot_fn=lambda root: disk_snapshot(root)
+            )
+            if (
+                disk_pressure_gate.get("ok") is not True
+                or disk_pressure_gate.get("blocked") is not False
+            ):
+                raise RuntimeError("publication resume requires a clear disk pressure gate")
+            disk = disk_pressure_gate.get("snapshot")
+            if not isinstance(disk, dict) or not disk_restart_safe(disk):
+                raise RuntimeError("publication resume requires restart-safe disk capacity")
             value = dict(value) | {"pauseState": validated["pauseState"]}
             repo = str(value.get("workflowRepo") or DEFAULT_REPO)
             workflow = str(value.get("workflowFile") or DEFAULT_WORKFLOW)

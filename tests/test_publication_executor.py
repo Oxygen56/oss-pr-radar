@@ -28,6 +28,7 @@ class ReconcileStore:
             "ok": True,
             "prUrl": "https://github.com/example/project/pull/2",
         }
+        self.creation_attempts = []
 
     def publication_effect(self, **_kwargs):
         return {
@@ -46,6 +47,9 @@ class ReconcileStore:
     def complete_publication_effect(self, effect_id, *, status, result):
         self.completed.append((effect_id, status, result))
 
+    def mark_pull_request_creation_attempt(self, **kwargs):
+        self.creation_attempts.append(kwargs)
+
     def retry_publication_effect_after_noop(self, *, effect_id, permit_id, evidence):
         self.retried.append((effect_id, permit_id, evidence))
         return {"status": "ACTIVE", "request_id": "request-1"}
@@ -56,6 +60,7 @@ class ActiveStore:
         self.completed = []
         self.succeeded = []
         self.rearmed = []
+        self.creation_attempts = []
 
     def publication_effect(self, **_kwargs):
         return {
@@ -67,6 +72,9 @@ class ActiveStore:
 
     def complete_publication_effect(self, effect_id, *, status, result):
         self.completed.append((effect_id, status, result))
+
+    def mark_pull_request_creation_attempt(self, **kwargs):
+        self.creation_attempts.append(kwargs)
 
     def succeed_pull_request_effect(self, **kwargs):
         self.succeeded.append(kwargs)
@@ -137,6 +145,7 @@ def test_create_pr_reconciles_previous_ambiguous_attempt_without_recreating(monk
     result = MODULE.create_pr(args, store)
 
     assert result["ok"] is True
+    assert result["created"] is False
     assert result["reconciled"] is False
     assert store.succeeded == [
         {
@@ -146,6 +155,31 @@ def test_create_pr_reconciles_previous_ambiguous_attempt_without_recreating(monk
             "result": result,
         }
     ]
+
+
+def test_create_pr_reconcile_preserves_durable_new_creation_boundary(monkeypatch, tmp_path):
+    args = pr_args(tmp_path)
+    store = ReconcileStore(effect_result={"creationAttempted": True})
+    configure_permit(monkeypatch, args)
+    monkeypatch.setattr(
+        MODULE,
+        "existing_pr",
+        lambda *_args: {
+            "url": "https://github.com/example/project/pull/2",
+            "state": "OPEN",
+            "headRefOid": args.commit_sha,
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("reconciliation must not create another PR"),
+    )
+
+    result = MODULE.create_pr(args, store)
+
+    assert result["created"] is True
+    assert store.creation_attempts == []
 
 
 def test_create_pr_keeps_ambiguous_attempt_when_remote_result_is_still_missing(
@@ -211,8 +245,10 @@ def test_create_pr_retries_transient_503_after_exact_head_is_still_absent(monkey
     result = MODULE.create_pr(args, store)
 
     assert result["ok"] is True
+    assert result["created"] is True
     assert result["prUrl"] == "https://github.com/example/project/pull/2"
     assert len(calls) == 1
+    assert store.creation_attempts == [{"effect_id": "effect-1", "permit_id": "permit-1"}]
     assert calls[0][:3] == ["gh", "pr", "create"]
     assert store.retried == [
         (

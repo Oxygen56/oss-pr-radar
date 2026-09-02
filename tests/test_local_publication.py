@@ -10,8 +10,10 @@ from pathlib import Path
 import pytest
 from test_ledger import insert_publication_preflight, legal_publication_probe
 
+import oss_pr_radar.local_publication as local_publication
 from oss_pr_radar.ledger import RadarLedger
 from oss_pr_radar.local_publication import (
+    PR_FOLLOWUP_REBIND_REQUIRED,
     advance_once,
     compact_advance_result,
     fast_advance_once,
@@ -21,14 +23,24 @@ from oss_pr_radar.local_publication import (
     queue_import_once,
     retryable_delivery_pending,
     run_bridge,
+    scheduler_watchdog_launch_agent_spec,
     slow_advance_once,
     slow_launch_agent_spec,
     sync_cloud_queue_if_due,
     worker_log_paths,
+    worker_specs,
 )
 from oss_pr_radar.runtime import RuntimeLockBusy
 
 pytestmark = pytest.mark.usefixtures("current_signing_key")
+
+
+def _ok_disk_snapshot(_root: Path) -> dict[str, object]:
+    return {
+        "level": "ok",
+        "freeBytes": 100 * 1024**3,
+        "usedFraction": 0.5,
+    }
 
 
 def test_fast_bridge_deadline_covers_bounded_cold_start(monkeypatch, tmp_path):
@@ -241,6 +253,53 @@ def test_implementation_context_is_synced_before_followup_drain(tmp_path):
     assert result["drain"]["action"] == "implementation_followup_dispatched"
 
 
+@pytest.mark.parametrize(
+    ("already_recorded", "expected_drain", "expected_activity", "expected_authorizations"),
+    [
+        (False, True, True, 1),
+        (True, False, False, 0),
+    ],
+)
+def test_new_resolution_scope_authorization_triggers_same_cycle_drain(
+    tmp_path,
+    already_recorded,
+    expected_drain,
+    expected_activity,
+    expected_authorizations,
+):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [],
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "resolutionScopeAuthorized": [
+                    {
+                        "key": "a/b#1",
+                        "replacementWakeDigest": "w" * 64,
+                        "alreadyRecorded": already_recorded,
+                    }
+                ],
+                "errors": [],
+            }
+        if operation == "drain-once":
+            return {"ok": True, "action": "pr_followup_dispatched", "key": "a/b#1"}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert result["activity"] is expected_activity
+    assert len(result["resolutionScopeAuthorized"]) == expected_authorizations
+    assert calls.count("drain-once") == int(expected_drain)
+
+
 def test_advance_once_keeps_legacy_task_quarantine_out_of_global_errors(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.sync_cloud_queue_if_due",
@@ -311,10 +370,99 @@ def test_advance_once_does_not_report_recorded_quarantine_as_activity(monkeypatc
     assert result["quarantined"][0]["new"] is False
 
 
-def test_slow_cycle_is_successful_with_task_local_context_quarantine(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("result_field", "entry", "expected_drain", "expected_activity"),
+    [
+        (
+            "quarantined",
+            {
+                "key": "a/b#1",
+                "reason": PR_FOLLOWUP_REBIND_REQUIRED,
+                "replacementWakeDigest": "w" * 64,
+            },
+            True,
+            True,
+        ),
+        (
+            "quarantinedAlreadyRecorded",
+            {
+                "key": "a/b#1",
+                "reason": PR_FOLLOWUP_REBIND_REQUIRED,
+                "replacementWakeDigest": "w" * 64,
+            },
+            True,
+            True,
+        ),
+        (
+            "quarantined",
+            {
+                "key": "a/b#1",
+                "reason": PR_FOLLOWUP_REBIND_REQUIRED,
+                "replacementWakeDigest": "w" * 64,
+                "rebindEligible": False,
+            },
+            False,
+            False,
+        ),
+    ],
+)
+def test_advance_once_rebind_quarantine_only_drains_actionable_recovery(
+    monkeypatch,
+    tmp_path,
+    result_field,
+    entry,
+    expected_drain,
+    expected_activity,
+):
     monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
+        "oss_pr_radar.local_publication.sync_cloud_queue_if_due",
+        lambda *args, **kwargs: {"ok": True, "errors": [], "pending": []},
     )
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "unavailable": [], "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [],
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "quarantined": [entry] if result_field == "quarantined" else [],
+                "quarantinedAlreadyRecorded": (
+                    [entry] if result_field == "quarantinedAlreadyRecorded" else []
+                ),
+                "errors": [],
+            }
+        if operation == "independent-review-run":
+            return {"ok": True, "updated": [], "errors": []}
+        if operation == "publication-feedback-list":
+            return {"ok": True, "candidates": [], "unresolved": [], "errors": []}
+        if operation == "recovery-list":
+            return {"ok": True, "recoverable": [], "errors": []}
+        if operation == "drain-once":
+            return {"ok": True, "action": "implementation_followup_dispatched"}
+        return {
+            "ok": True,
+            "renamed": [],
+            "archived": [],
+            "published": [],
+            "pending": [],
+            "blocked": [],
+            "errors": [],
+        }
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert result["activity"] is expected_activity
+    assert calls.count("drain-once") == int(expected_drain)
+
+
+def test_slow_cycle_is_successful_with_task_local_context_quarantine(monkeypatch, tmp_path):
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.sync_cloud_queue_if_due",
         lambda *args, **kwargs: {"ok": True, "errors": [], "pending": []},
@@ -618,6 +766,49 @@ def test_fast_publication_surfaces_title_reconciliation_failure(tmp_path):
     assert result["errors"] == [{"error": "rename failed"}]
 
 
+def test_publication_keeps_title_retry_visible_without_failing(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            return {"ok": True, "ingested": [], "publicationRequests": [], "errors": []}
+        if operation == "title-reconcile":
+            return {
+                "ok": True,
+                "renamed": [],
+                "deferred": [
+                    {
+                        "key": "a/b#1",
+                        "threadId": "thread-1",
+                        "error": "app_server_title_update_failed",
+                    }
+                ],
+                "errors": [],
+            }
+        if operation == "publication-feedback-list":
+            return {
+                "ok": True,
+                "candidates": [{"key": "c/d#2"}],
+                "unresolved": [],
+                "errors": [],
+            }
+        if operation == "drain-once":
+            return {"ok": True, "action": "publication_feedback_dispatched", "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert result["activity"] is True
+    assert result["titlesDeferred"][0]["threadId"] == "thread-1"
+    assert result["errors"] == []
+    assert "drain-once" in calls
+    assert compact_advance_result(result)["counts"]["titlesDeferred"] == 1
+
+
 def test_missing_historical_worktree_does_not_stop_fast_publication(tmp_path):
     calls = []
 
@@ -695,6 +886,78 @@ def test_independent_review_update_is_reingested_before_publication(tmp_path):
     ]
     assert result["publicationRequests"] == [{"requestId": "request-1", "status": "PENDING"}]
     assert result["independentReview"]["updated"][0]["verdict"] == "PASS"
+
+
+def test_reingestion_deduplicates_result_and_validation_records(tmp_path):
+    ingestion_count = 0
+    result_record = {"key": "a/b#1", "stage": "FIX_READY"}
+    deferred_record = {
+        "key": "a/b#2",
+        "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+        "missing": ["relevant_tests_green"],
+    }
+
+    def runner(_root: Path, operation: str):
+        nonlocal ingestion_count
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            ingestion_count += 1
+            return {
+                "ok": True,
+                "ingested": [dict(result_record)],
+                "publicationRequests": [{"requestId": "request-1", "status": "PENDING"}],
+                "validationDeferred": [dict(deferred_record)],
+                "errors": [],
+            }
+        if operation == "independent-review-run":
+            return {"ok": True, "updated": [{"key": "a/b#1"}], "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert ingestion_count == 2
+    assert result["resultsIngested"] == [result_record]
+    assert result["publicationRequests"] == [{"requestId": "request-1", "status": "PENDING"}]
+    assert result["validationDeferred"] == [deferred_record]
+
+
+def test_failed_post_review_ingestion_deduplicates_report_records(tmp_path):
+    ingestion_count = 0
+    result_record = {"key": "a/b#1", "stage": "FIX_READY"}
+    deferred_record = {
+        "key": "a/b#2",
+        "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+        "missing": ["relevant_tests_green"],
+    }
+
+    def runner(_root: Path, operation: str):
+        nonlocal ingestion_count
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            ingestion_count += 1
+            response = {
+                "ok": True,
+                "ingested": [dict(result_record)],
+                "publicationRequests": [],
+                "validationDeferred": [dict(deferred_record)],
+                "errors": [],
+            }
+            if ingestion_count == 2:
+                response["ok"] = False
+                response["errors"] = [{"error": "post-review bridge unavailable"}]
+            return response
+        if operation == "independent-review-run":
+            return {"ok": True, "updated": [{"key": "a/b#1"}], "errors": []}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is False
+    assert result["resultsIngested"] == [result_record]
+    assert result["validationDeferred"] == [deferred_record]
+    assert result["errors"] == [{"error": "post-review bridge unavailable"}]
 
 
 def test_review_update_continues_when_an_older_candidate_is_invalid(tmp_path):
@@ -861,9 +1124,7 @@ def test_launch_agent_uses_local_venv_and_contains_no_credentials(tmp_path):
 
 
 def test_fast_cycle_restricts_operations_and_enqueues_slow_work(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
     calls = []
 
     def runner(_root: Path, operation: str):
@@ -879,9 +1140,7 @@ def test_fast_cycle_restricts_operations_and_enqueues_slow_work(monkeypatch, tmp
 
 
 def test_fast_cycle_does_not_call_network_or_publication_operations(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
 
     def runner(_root: Path, operation: str):
         if operation != "local-receipt-enqueue":
@@ -892,9 +1151,7 @@ def test_fast_cycle_does_not_call_network_or_publication_operations(monkeypatch,
 
 
 def test_fast_cycle_injected_bridge_does_not_execute_git(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
 
     calls = []
 
@@ -917,9 +1174,7 @@ def test_fast_cycle_injected_bridge_does_not_execute_git(tmp_path, monkeypatch):
 
 
 def test_queue_importer_is_independent_and_only_imports_signed_queue(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
     calls = []
 
     def runner(_root: Path, operation: str):
@@ -935,9 +1190,7 @@ def test_queue_importer_is_independent_and_only_imports_signed_queue(monkeypatch
 
 
 def test_slow_worker_persists_backoff_after_network_failure(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
 
     def runner(_root: Path, operation: str):
         if operation == "context-recover":
@@ -962,9 +1215,8 @@ def test_slow_worker_persists_backoff_after_network_failure(monkeypatch, tmp_pat
 def test_slow_worker_disk_stop_does_not_create_exponential_backoff(monkeypatch, tmp_path):
     levels = iter(
         [
-            {"level": "stop", "freeBytes": 1},
-            {"level": "stop", "freeBytes": 1},
-            {"level": "ok", "freeBytes": 100},
+            {"level": "stop", "freeBytes": 1, "usedFraction": 0.96},
+            {"level": "warning", "freeBytes": 100 * 1024**3, "usedFraction": 0.93},
         ]
     )
     monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", lambda _root: next(levels))
@@ -985,9 +1237,16 @@ def test_slow_worker_disk_stop_does_not_create_exponential_backoff(monkeypatch, 
 
     assert first["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
     assert second["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
+    assert second["deferred"] is True
     assert not (tmp_path / "state" / "slow-worker-backoff.json").exists()
     assert calls == []
 
+    gate_path = tmp_path / "state" / "disk-pressure-gate.json"
+    gate = json.loads(gate_path.read_text())
+    gate["nextCheckAtEpoch"] = time.time() - 1
+    gate["nextCheckAt"] = datetime.fromtimestamp(gate["nextCheckAtEpoch"], UTC).isoformat()
+    gate_path.write_text(json.dumps(gate) + "\n", encoding="utf-8")
+    gate_path.chmod(0o600)
     recovered = slow_advance_once(tmp_path, runner=runner)
 
     assert recovered["ok"] is True
@@ -1014,8 +1273,17 @@ def test_slow_worker_disk_stop_preserves_real_network_backoff(monkeypatch, tmp_p
     backoff_path.write_text(json.dumps(original, sort_keys=True) + "\n", encoding="utf-8")
     levels = iter(
         [
-            {"level": "stop", "freeBytes": 1},
-            {"level": "warning", "freeBytes": 100},
+            {"level": "stop", "freeBytes": 1, "usedFraction": 0.96},
+            {
+                "level": "warning",
+                "freeBytes": 100 * 1024**3,
+                "usedFraction": 0.945,
+            },
+            {
+                "level": "warning",
+                "freeBytes": 100 * 1024**3,
+                "usedFraction": 0.93,
+            },
         ]
     )
     monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", lambda _root: next(levels))
@@ -1028,6 +1296,22 @@ def test_slow_worker_disk_stop_preserves_real_network_backoff(monkeypatch, tmp_p
     assert result["errors"] == [{"error": "DISK_STOP_THRESHOLD"}]
     assert json.loads(backoff_path.read_text()) == original
 
+    gate_path = state_dir / "disk-pressure-gate.json"
+    gate = json.loads(gate_path.read_text())
+    gate["nextCheckAtEpoch"] = time.time() - 1
+    gate["nextCheckAt"] = datetime.fromtimestamp(gate["nextCheckAtEpoch"], UTC).isoformat()
+    gate_path.write_text(json.dumps(gate) + "\n", encoding="utf-8")
+    gate_path.chmod(0o600)
+    still_stopped = slow_advance_once(tmp_path, runner=must_not_run)
+
+    assert still_stopped["reason"] == "DISK_STOP_THRESHOLD"
+    assert json.loads(backoff_path.read_text()) == original
+
+    gate = json.loads(gate_path.read_text())
+    gate["nextCheckAtEpoch"] = time.time() - 1
+    gate["nextCheckAt"] = datetime.fromtimestamp(gate["nextCheckAtEpoch"], UTC).isoformat()
+    gate_path.write_text(json.dumps(gate) + "\n", encoding="utf-8")
+    gate_path.chmod(0o600)
     deferred = slow_advance_once(tmp_path, runner=must_not_run)
 
     assert deferred["reason"] == "PERSISTED_BACKOFF"
@@ -1072,7 +1356,11 @@ def test_slow_worker_recovers_exact_legacy_disk_backoff(monkeypatch, tmp_path):
     (state_dir / "runtime-health.json").chmod(0o600)
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.disk_snapshot",
-        lambda _root: {"level": "warning", "freeBytes": 100},
+        lambda _root: {
+            "level": "warning",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.93,
+        },
     )
     calls = []
 
@@ -1143,7 +1431,11 @@ def test_slow_worker_does_not_clear_ambiguous_legacy_backoff(
     )
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.disk_snapshot",
-        lambda _root: {"level": "warning", "freeBytes": 100},
+        lambda _root: {
+            "level": "warning",
+            "freeBytes": 100 * 1024**3,
+            "usedFraction": 0.945,
+        },
     )
 
     def must_not_run(_root: Path, _operation: str):
@@ -1162,8 +1454,15 @@ def test_slow_worker_does_not_clear_ambiguous_legacy_backoff(
     ],
 )
 def test_slow_worker_persisted_backoff_does_not_manufacture_success_health(
-    tmp_path, in_flight, reason
+    tmp_path, monkeypatch, in_flight, reason
 ):
+    # This test exercises the persisted-backoff branch, not host capacity.
+    # Keep it deterministic when the development host itself is at the Radar
+    # disk stop threshold.
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.disk_snapshot",
+        _ok_disk_snapshot,
+    )
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     retry_at = time.time() + 3600
@@ -1192,11 +1491,196 @@ def test_slow_worker_persisted_backoff_does_not_manufacture_success_health(
     assert not (state_dir / "runtime-health.json").exists()
 
 
+@pytest.mark.parametrize(
+    "pid_evidence",
+    [
+        {"alive": False, "versionMatched": False, "error": "ESRCH"},
+        {"alive": True, "versionMatched": False},
+    ],
+)
+def test_slow_worker_reconciles_stale_inflight_owner(monkeypatch, tmp_path, pid_evidence):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    now = time.time()
+    retry_at = now + 60
+    operation_id = "26274-1787947635379277000"
+    runtime_health_path = state_dir / "runtime-health.json"
+    runtime_health_path.write_text(
+        json.dumps(
+            {
+                "workers": {
+                    "slow": {
+                        "inFlight": True,
+                        "workerPid": 26274,
+                        "workerPidAlive": True,
+                        "attemptStartedAt": now - 120,
+                        "lastSuccessAt": now - 180,
+                        "lastExitCode": 0,
+                    }
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runtime_health_path.chmod(0o600)
+    (state_dir / "slow-worker-backoff.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": "slow_backoff_v1",
+                "failureCount": 0,
+                "backoffSeconds": 60,
+                "nextAttemptAt": retry_at,
+                "retryAfter": retry_at,
+                "attemptStartedAt": "2026-08-28T20:07:15.379278Z",
+                "inFlight": True,
+                "operationId": operation_id,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.pid_probe", lambda *_args, **_kwargs: pid_evidence
+    )
+
+    def must_not_run(_root: Path, _operation: str):
+        raise AssertionError("stale in-flight worker must be reconciled before retry")
+
+    result = slow_advance_once(tmp_path, runner=must_not_run)
+
+    assert result["ok"] is False
+    assert result["errors"][0]["error"].startswith("SLOW_WORKER_STALE_PID:26274:")
+    backoff = json.loads((state_dir / "slow-worker-backoff.json").read_text())
+    assert backoff["inFlight"] is False
+    assert backoff["attemptStartedAt"] is None
+    assert backoff["failureCount"] == 1
+    assert backoff["backoffSeconds"] == 60
+    assert backoff["nextAttemptAt"] == retry_at
+    assert backoff["retryAfter"] == retry_at
+    health = json.loads((state_dir / "runtime-health.json").read_text())
+    slow = health["workers"]["slow"]
+    assert slow["inFlight"] is False
+    assert slow["workerPid"] is None
+    assert slow["workerPidAlive"] is False
+    assert slow["lastExitCode"] == 1
+
+
+def test_slow_worker_retries_stale_owner_when_persisted_retry_elapsed(monkeypatch, tmp_path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    now = time.time()
+    operation_id = "26274-1787947635379277000"
+    runtime_health_path = state_dir / "runtime-health.json"
+    runtime_health_path.write_text(
+        json.dumps(
+            {
+                "workers": {
+                    "slow": {
+                        "inFlight": True,
+                        "workerPid": 26274,
+                        "workerPidAlive": True,
+                        "attemptStartedAt": now - 1200,
+                        "lastSuccessAt": now - 1800,
+                        "lastExitCode": 1,
+                        "consecutiveFailures": 4,
+                    }
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runtime_health_path.chmod(0o600)
+    (state_dir / "slow-worker-backoff.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": "slow_backoff_v1",
+                "failureCount": 4,
+                "backoffSeconds": 960,
+                "nextAttemptAt": now - 60,
+                "retryAfter": now - 60,
+                "attemptStartedAt": "2026-08-28T20:07:15.379278Z",
+                "inFlight": True,
+                "operationId": operation_id,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
+    monkeypatch.setattr(
+        "oss_pr_radar.local_publication.pid_probe",
+        lambda *_args, **_kwargs: {"alive": False, "versionMatched": False, "error": "ESRCH"},
+    )
+    calls = []
+    observed_backoff = {}
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "reproduction-probe":
+            observed_backoff.update(
+                json.loads((state_dir / "slow-worker-backoff.json").read_text(encoding="utf-8"))
+            )
+            return {"ok": True, "errors": []}
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "unavailable": [], "quarantined": [], "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [],
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "ignored": [],
+                "errors": [],
+            }
+        if operation == "independent-review-run":
+            return {"ok": True, "updated": [], "errors": []}
+        if operation == "title-reconcile":
+            return {"ok": True, "renamed": [], "errors": []}
+        if operation == "cleanup-reconcile":
+            return {"ok": True, "archived": [], "errors": []}
+        if operation == "publication-run":
+            return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+        if operation == "sync":
+            return {"ok": True, "verified": 0, "inserted": 0, "superseded": 0}
+        if operation == "list":
+            return {"ok": True, "pending": []}
+        if operation == "publication-feedback-list":
+            return {"ok": True, "candidates": [], "unresolved": [], "reconciled": []}
+        if operation == "recovery-list":
+            return {"ok": True, "recoverable": []}
+        raise AssertionError(operation)
+
+    result = slow_advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert calls[0] == "reproduction-probe"
+    assert observed_backoff["inFlight"] is True
+    assert observed_backoff["failureCount"] == 5
+    assert observed_backoff["backoffSeconds"] == 1920
+    backoff = json.loads((state_dir / "slow-worker-backoff.json").read_text())
+    assert backoff["failureCount"] == 0
+    operations = [
+        json.loads(line)
+        for line in (state_dir / "runtime-operations" / "operations.ndjson")
+        .read_text()
+        .splitlines()
+    ]
+    assert [item["status"] for item in operations if item["operation"] == "slow-cycle"] == [
+        "failure",
+        "started",
+        "success",
+    ]
+    health = json.loads((state_dir / "runtime-health.json").read_text())
+    assert health["workers"]["slow"]["lastExitCode"] == 0
+    assert health["workers"]["slow"]["consecutiveFailures"] == 0
+
+
 def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(monkeypatch, tmp_path):
     observed = {}
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
 
     def runner(_root: Path, operation: str):
         if operation == "reproduction-probe":
@@ -1249,10 +1733,70 @@ def test_slow_worker_marks_runtime_inflight_and_clears_it_on_success(monkeypatch
     assert slow["workerPidAlive"] is False
 
 
+def test_slow_worker_does_not_back_off_for_persisted_task_evidence_block(monkeypatch, tmp_path):
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
+    ingestion_count = 0
+
+    def runner(_root: Path, operation: str):
+        nonlocal ingestion_count
+        if operation == "reproduction-probe":
+            return {"ok": True, "errors": []}
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "unavailable": [], "errors": []}
+        if operation == "ingest-results":
+            ingestion_count += 1
+            return {
+                "ok": True,
+                "ingested": [],
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "workBlocked": [
+                    {
+                        "key": "a/b#1",
+                        "reason": "VALIDATION_PARENT_BINDING_INVALID",
+                        "alreadyRecorded": ingestion_count > 1,
+                    }
+                ],
+                "errors": [],
+            }
+        if operation == "independent-review-run":
+            return {"ok": True, "updated": [], "errors": []}
+        if operation == "title-reconcile":
+            return {"ok": True, "renamed": [], "deferred": [], "errors": []}
+        if operation == "cleanup-reconcile":
+            return {"ok": True, "archived": [], "errors": []}
+        if operation == "publication-run":
+            return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+        if operation == "sync":
+            return {"ok": True, "verified": 0, "inserted": 0, "superseded": 0}
+        if operation == "list":
+            return {"ok": True, "pending": []}
+        if operation == "publication-feedback-list":
+            return {"ok": True, "candidates": [], "unresolved": [], "reconciled": []}
+        if operation == "recovery-list":
+            return {"ok": True, "recoverable": []}
+        raise AssertionError(operation)
+
+    first = slow_advance_once(tmp_path, runner=runner)
+    second = slow_advance_once(tmp_path, runner=runner)
+
+    assert first["ok"] is True, first
+    assert first["activity"] is True
+    assert first["workBlocked"][0]["alreadyRecorded"] is False
+    assert second["ok"] is True, second
+    assert second["activity"] is False
+    assert second["workBlocked"][0]["alreadyRecorded"] is True
+    assert ingestion_count == 2
+    backoff = json.loads((tmp_path / "state" / "slow-worker-backoff.json").read_text())
+    assert backoff["failureCount"] == 0
+    assert backoff["backoffSeconds"] == 0
+    health = json.loads((tmp_path / "state" / "runtime-health.json").read_text())
+    assert health["workers"]["slow"]["lastExitCode"] == 0
+    assert health["workers"]["slow"]["consecutiveFailures"] == 0
+
+
 def test_slow_worker_marks_terminal_missing_worktree_skip_as_success(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
     calls = []
 
     def runner(_root: Path, operation: str):
@@ -1325,9 +1869,7 @@ def test_slow_worker_lock_busy_does_not_manufacture_success_health(monkeypatch, 
 
 
 def test_slow_worker_persists_exception_failure_before_restart(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
     calls = []
 
     def failing_runner(_root: Path, operation: str):
@@ -1356,9 +1898,7 @@ def test_slow_worker_persists_exception_failure_before_restart(monkeypatch, tmp_
 
 
 def test_slow_worker_crash_leaves_restart_backoff(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
 
     def interrupted_runner(_root: Path, _operation: str):
         raise KeyboardInterrupt()
@@ -1382,9 +1922,7 @@ def test_slow_worker_crash_leaves_restart_backoff(monkeypatch, tmp_path):
 
 
 def test_blocked_slow_worker_does_not_block_fast_receipt_registration(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
     slow_started = threading.Event()
     release_slow = threading.Event()
     slow_calls = []
@@ -1409,6 +1947,14 @@ def test_blocked_slow_worker_does_not_block_fast_receipt_registration(monkeypatc
         "publicationKind": "PR_CREATE",
     }
     with ledger.connect() as connection:
+        # The publication gate now requires an explicit request-to-intent
+        # binding.  Make this concurrency fixture represent the post-dispatch
+        # state that a real publication preflight receives.
+        connection.execute(
+            "UPDATE intents SET status='COMPLETED',thread_id=?,project_id=?,worktree_path=? "
+            "WHERE intent_id='intent-1'",
+            ("thread-1", "project-1", str(worktree)),
+        )
         connection.execute(
             "UPDATE publication_requests SET commit_sha=?,branch=?,worktree_path=?,request_json=? WHERE request_id='request-1'",
             (head_sha, branch, str(worktree), json.dumps(request_payload, sort_keys=True)),
@@ -1468,16 +2014,21 @@ def test_worker_specs_are_separate_and_use_expected_intervals(tmp_path):
     fast = launch_agent_spec(tmp_path / "radar", interval_seconds=20, home=home)
     slow = slow_launch_agent_spec(tmp_path / "radar", home=home)
     queue = queue_import_launch_agent_spec(tmp_path / "radar", home=home)
+    watchdog = scheduler_watchdog_launch_agent_spec(tmp_path / "radar", home=home)
 
     assert fast["Label"] != slow["Label"]
     assert slow["StartInterval"] == 60
     assert queue["StartInterval"] == 300
+    assert watchdog["StartInterval"] == 300
     assert "ProcessType" not in slow
     assert "LowPriorityIO" not in slow
     assert "ProcessType" not in queue
     assert "LowPriorityIO" not in queue
+    assert "ProcessType" not in watchdog
+    assert "LowPriorityIO" not in watchdog
     assert slow["ProgramArguments"][-2:] == ["--root", str((tmp_path / "radar").resolve())]
     assert "queue_importer.py" in queue["ProgramArguments"][-3]
+    assert "scheduler_watchdog.py" in watchdog["ProgramArguments"][-3]
     assert worker_log_paths(fast["Label"], home=home) == (
         Path(fast["StandardOutPath"]),
         Path(fast["StandardErrorPath"]),
@@ -1490,8 +2041,177 @@ def test_worker_specs_are_separate_and_use_expected_intervals(tmp_path):
         Path(queue["StandardOutPath"]),
         Path(queue["StandardErrorPath"]),
     )
+    assert worker_log_paths(watchdog["Label"], home=home) == (
+        Path(watchdog["StandardOutPath"]),
+        Path(watchdog["StandardErrorPath"]),
+    )
     assert Path(slow["StandardOutPath"]).name == "local-publication-slow.log"
     assert Path(queue["StandardOutPath"]).name == "queue-importer.log"
+    assert Path(watchdog["StandardOutPath"]).name == "scheduler-watchdog.log"
+
+
+def test_workers_pin_system_proxy_inside_hermetic_launch_environment(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_publication.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        local_publication.urllib.request,
+        "getproxies_macosx_sysconf",
+        lambda: {
+            "http": "http://127.0.0.1:7897",
+            "https": "http://127.0.0.1:7897",
+        },
+        raising=False,
+    )
+    home = tmp_path / "home"
+    specs = (
+        launch_agent_spec(tmp_path / "radar", interval_seconds=20, home=home),
+        slow_launch_agent_spec(tmp_path / "radar", home=home),
+        queue_import_launch_agent_spec(tmp_path / "radar", home=home),
+        scheduler_watchdog_launch_agent_spec(tmp_path / "radar", home=home),
+    )
+    expected = [
+        f"HOME={home}",
+        f"USER={home.name}",
+        f"LOGNAME={home.name}",
+        "LANG=en_US.UTF-8",
+        f"PATH={local_publication.SERVICE_PATH}",
+        "HTTP_PROXY=http://127.0.0.1:7897",
+        "http_proxy=http://127.0.0.1:7897",
+        "HTTPS_PROXY=http://127.0.0.1:7897",
+        "https_proxy=http://127.0.0.1:7897",
+        f"NO_PROXY={local_publication.SERVICE_NO_PROXY}",
+        f"no_proxy={local_publication.SERVICE_NO_PROXY}",
+    ]
+
+    for spec in specs:
+        arguments = spec["ProgramArguments"]
+        assert arguments[:2] == ["/usr/bin/env", "-i"]
+        assert arguments[2 : 2 + len(expected)] == expected
+        script_index = next(
+            index for index, argument in enumerate(arguments) if str(argument).endswith(".py")
+        )
+        assert all(arguments.index(item) < script_index for item in expected)
+
+
+def test_worker_specs_sample_system_proxy_once(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_publication.sys, "platform", "darwin")
+    calls = []
+
+    def system_proxies():
+        calls.append(True)
+        return {"http": "http://127.0.0.1:7897", "https": "http://127.0.0.1:7897"}
+
+    monkeypatch.setattr(
+        local_publication.urllib.request,
+        "getproxies_macosx_sysconf",
+        system_proxies,
+        raising=False,
+    )
+    code_root = tmp_path / "release"
+    runtime_root = tmp_path / "runtime"
+    monkeypatch.setattr(
+        local_publication,
+        "active_release_evidence",
+        lambda _root: {"valid": True, "path": str(code_root.resolve())},
+    )
+
+    specs = worker_specs(code_root, home=tmp_path / "home", runtime_root=runtime_root)
+
+    assert len(calls) == 1
+    environments = [
+        tuple(argument for argument in spec["ProgramArguments"] if "PROXY=" in argument)
+        for spec in specs
+    ]
+    assert len(set(environments)) == 1
+    assert environments[0] == (
+        "HTTP_PROXY=http://127.0.0.1:7897",
+        "HTTPS_PROXY=http://127.0.0.1:7897",
+        f"NO_PROXY={local_publication.SERVICE_NO_PROXY}",
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "http://user:secret@proxy.example:8080",
+        "http://proxy.example:bad-port",
+        "http://proxy.example:8080/path",
+        "http://proxy.example:8080?token=secret",
+        "http://proxy.example:8080#fragment",
+        "http://exa mple.com:8080",
+        " http://proxy.example:8080",
+        "http://proxy.example:8080 ",
+        "http://proxy.example:8080\t",
+        "http://proxy.example:8080\n",
+        "http://proxy.example:0",
+        "socks5h://proxy.example:1080",
+    ],
+)
+def test_service_proxy_rejects_unsafe_or_unsupported_values(value):
+    assert local_publication._validated_service_proxy(value) is None
+
+
+def test_service_proxy_environment_fails_closed_for_unsafe_http(monkeypatch):
+    monkeypatch.setattr(local_publication.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        local_publication.urllib.request,
+        "getproxies_macosx_sysconf",
+        lambda: {
+            "http": "http://user:secret@proxy.example:8080",
+            "https": "http://proxy.example:8443",
+            "socks": "http://127.0.0.1:1080",
+        },
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError, match="system proxy configuration is invalid"):
+        local_publication._system_service_proxy_environment()
+
+
+def test_system_proxy_discovery_fails_closed_on_darwin(monkeypatch):
+    monkeypatch.setattr(local_publication.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        local_publication.urllib.request,
+        "getproxies_macosx_sysconf",
+        lambda: (_ for _ in ()).throw(OSError("sensitive detail")),
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError, match="system proxy discovery failed") as error:
+        local_publication._system_service_proxy_environment()
+
+    assert "sensitive detail" not in str(error.value)
+
+
+def test_non_darwin_service_spec_does_not_probe_macos_proxy(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_publication.sys, "platform", "linux")
+    monkeypatch.setattr(
+        local_publication.urllib.request,
+        "getproxies_macosx_sysconf",
+        lambda: (_ for _ in ()).throw(AssertionError("must not be called")),
+        raising=False,
+    )
+
+    root = tmp_path / "radar"
+    home = tmp_path / "home"
+    specs = (
+        launch_agent_spec(root, interval_seconds=20, home=home),
+        slow_launch_agent_spec(root, home=home),
+        queue_import_launch_agent_spec(root, home=home),
+        scheduler_watchdog_launch_agent_spec(root, home=home),
+    )
+
+    for spec in specs:
+        arguments = spec["ProgramArguments"]
+        assert arguments[:7] == [
+            "/usr/bin/env",
+            "-i",
+            f"HOME={home}",
+            f"USER={home.name}",
+            f"LOGNAME={home.name}",
+            "LANG=en_US.UTF-8",
+            f"PATH={local_publication.SERVICE_PATH}",
+        ]
+        assert not any("PROXY=" in argument for argument in arguments)
 
 
 def test_due_cloud_queue_sync_imports_and_lists_pending_work(tmp_path):
@@ -1567,6 +2287,100 @@ def test_synced_actionable_pr_followup_is_exposed_to_the_serial_drain(tmp_path):
     assert calls.index("pr-followup-list") < calls.index("drain-once")
 
 
+def test_unresolved_pr_followup_delivery_does_not_fail_queue_sync(tmp_path):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "sync":
+            return {
+                "ok": True,
+                "verified": 1,
+                "inserted": 0,
+                "prFollowup": {"status": "imported"},
+            }
+        if operation == "list":
+            return {"ok": True, "pending": []}
+        if operation == "pr-followup-list":
+            return {
+                "ok": True,
+                "candidates": [],
+                "unresolved": [{"key": "a/b#1", "commitReady": False}],
+                "blocked": [],
+            }
+        raise AssertionError(operation)
+
+    result = sync_cloud_queue_if_due(
+        tmp_path,
+        runner=runner,
+        interval_seconds=300,
+        now=1_000,
+    )
+
+    assert calls == ["sync", "list", "pr-followup-list"]
+    assert result["ok"] is True
+    assert result["errors"] == []
+    assert result["prFollowupUnresolved"] == [{"key": "a/b#1", "commitReady": False}]
+
+
+def test_blocked_pr_followup_list_remains_a_queue_sync_failure(tmp_path):
+    def runner(_root: Path, operation: str):
+        if operation == "sync":
+            return {
+                "ok": True,
+                "verified": 1,
+                "inserted": 0,
+                "prFollowup": {"status": "imported"},
+            }
+        if operation == "list":
+            return {"ok": True, "pending": []}
+        if operation == "pr-followup-list":
+            return {
+                "ok": False,
+                "candidates": [],
+                "unresolved": [],
+                "blocked": [{"key": "a/b#1", "reason": "thread_missing"}],
+            }
+        raise AssertionError(operation)
+
+    result = sync_cloud_queue_if_due(
+        tmp_path,
+        runner=runner,
+        interval_seconds=300,
+        now=1_000,
+    )
+
+    assert result["ok"] is False
+    assert result["errors"] == [{"error": "PR follow-up list blocked: 1"}]
+    assert result["prFollowupBlocked"] == [{"key": "a/b#1", "reason": "thread_missing"}]
+
+
+def test_unknown_failed_pr_followup_list_fails_closed(tmp_path):
+    def runner(_root: Path, operation: str):
+        if operation == "sync":
+            return {
+                "ok": True,
+                "verified": 1,
+                "inserted": 0,
+                "prFollowup": {"status": "imported"},
+            }
+        if operation == "list":
+            return {"ok": True, "pending": []}
+        if operation == "pr-followup-list":
+            return {"ok": False}
+        raise AssertionError(operation)
+
+    result = sync_cloud_queue_if_due(
+        tmp_path,
+        runner=runner,
+        interval_seconds=300,
+        now=1_000,
+    )
+
+    assert result["ok"] is False
+    assert result["errors"] == [{"error": "PR follow-up list failed"}]
+
+
 def test_replayed_pr_followup_without_a_candidate_does_not_retrigger_drain(tmp_path):
     calls = []
 
@@ -1611,9 +2425,7 @@ def test_replayed_pr_followup_without_a_candidate_does_not_retrigger_drain(tmp_p
 def test_slow_cycle_polls_cloud_pr_followups_every_five_minutes(monkeypatch, tmp_path):
     observed = []
 
-    monkeypatch.setattr(
-        "oss_pr_radar.local_publication.disk_snapshot", lambda _root: {"level": "ok"}
-    )
+    monkeypatch.setattr("oss_pr_radar.local_publication.disk_snapshot", _ok_disk_snapshot)
 
     def sync(_root, *, runner, interval_seconds, now=None):
         observed.append(interval_seconds)
@@ -1728,6 +2540,7 @@ def test_compact_result_keeps_counts_and_omits_large_payloads():
         "workBlocked": 0,
         "reviewsUpdated": 1,
         "titlesRenamed": 0,
+        "titlesDeferred": 0,
         "threadsArchived": 0,
         "published": 0,
         "publicationFeedbackPending": 0,
