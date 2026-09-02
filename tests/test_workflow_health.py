@@ -21,6 +21,33 @@ SPEC.loader.exec_module(MODULE)
 NOW = datetime(2026, 8, 4, 2, tzinfo=UTC)
 
 
+_BUSINESS_JOB_NAMES = (
+    "watch",
+    "pr-followup",
+    "scan",
+    "build-state",
+    "persist-pending",
+    "notify",
+    "persist-receipt",
+)
+
+
+def _chain_jobs(*, canary_only: bool = False, failed: set[str] | None = None) -> list[dict]:
+    names = ("schedule-canary",) if canary_only else _BUSINESS_JOB_NAMES
+    failed = failed or set()
+    jobs = [
+        {
+            "name": name,
+            "status": "completed",
+            "conclusion": "failure" if name in failed else "success",
+        }
+        for name in names
+    ]
+    if not canary_only:
+        jobs.append({"name": "full-chain-proof", "status": "completed", "conclusion": "success"})
+    return jobs
+
+
 def _healthy_managed_followup(_path):
     return {
         "assessed": True,
@@ -60,6 +87,200 @@ def test_recent_successful_schedule_is_healthy():
     assert result["githubNaturalScheduleHealthy"] is True
     assert result["naturalScheduleHealthy"] is True
     assert result["naturalScheduleCoverage"]["assessed"] is False
+
+
+def test_explicit_empty_natural_proof_set_rejects_fresh_canary():
+    result = MODULE.health(
+        [
+            {
+                "id": 101,
+                "event": "schedule",
+                "status": "completed",
+                "conclusion": "success",
+                "created_at": "2026-08-04T01:15:00Z",
+                "updated_at": "2026-08-04T01:30:00Z",
+                "html_url": "https://github.com/a/b/actions/runs/101",
+            }
+        ],
+        now=NOW,
+        natural_full_chain_run_ids=set(),
+    )
+
+    assert result["naturalScheduleCanaryHealthy"] is True
+    assert result["healthy"] is False
+    assert "NATURAL_SCHEDULE_FULL_CHAIN_MISSING" in result["issues"]
+    assert result["naturalScheduleCoverage"]["successfulRuns"] == 0
+    assert result["naturalScheduleFullChain"]["provenRunIds"] == []
+
+
+def test_explicit_natural_full_chain_proof_keeps_schedule_healthy():
+    run = {
+        "id": 102,
+        "event": "schedule",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-04T01:15:00Z",
+        "updated_at": "2026-08-04T01:30:00Z",
+        "html_url": "https://github.com/a/b/actions/runs/102",
+        "jobs": _chain_jobs(),
+    }
+    result = MODULE.health(
+        [run],
+        now=NOW,
+        natural_full_chain_run_ids={"102"},
+    )
+
+    assert result["healthy"] is True
+    assert result["naturalScheduleFullChain"]["latestRunProven"] is True
+    assert result["naturalScheduleFullChain"]["provenRunIds"] == ["102"]
+
+
+def test_natural_full_chain_collector_excludes_active_and_failed_runs(monkeypatch):
+    runs = [
+        {
+            "id": 103,
+            "event": "schedule",
+            "status": "in_progress",
+            "conclusion": None,
+            "created_at": "2026-08-04T01:15:00Z",
+            "updated_at": "2026-08-04T01:15:00Z",
+        },
+        {
+            "id": 104,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-08-04T00:15:00Z",
+            "updated_at": "2026-08-04T00:30:00Z",
+        },
+        {
+            "id": 105,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-08-04T00:45:00Z",
+            "updated_at": "2026-08-04T01:00:00Z",
+        },
+    ]
+
+    def fake_json(path):
+        run_id = int(path.split("/runs/")[1].split("/")[0])
+        return {"jobs": _chain_jobs(failed={"scan"}) if run_id == 105 else _chain_jobs()}
+
+    monkeypatch.setattr(MODULE, "github_json", fake_json)
+    proven = MODULE.collect_natural_full_chain_run_ids(
+        "a/b",
+        runs,
+        now=NOW,
+        window_hours=6,
+    )
+
+    assert proven == {"104"}
+
+
+def test_mixed_newer_manual_run_does_not_hide_proven_older_natural_run():
+    natural = {
+        "id": 106,
+        "event": "schedule",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-04T01:15:00Z",
+        "updated_at": "2026-08-04T01:20:00Z",
+        "html_url": "https://github.com/a/b/actions/runs/106",
+        "jobs": _chain_jobs(),
+    }
+    manual = {
+        "id": 107,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-04T01:45:00Z",
+        "updated_at": "2026-08-04T01:50:00Z",
+        "html_url": "https://github.com/a/b/actions/runs/107",
+    }
+    result = MODULE.effective_scan_freshness(
+        [manual, natural],
+        now=NOW,
+        natural_full_chain_run_ids={"106"},
+        watchdog_run_ids=set(),
+    )
+
+    assert result["fresh"] is True
+    assert result["latestEffectiveUrl"].endswith("/106")
+
+
+def test_main_collects_natural_proofs_even_when_newer_manual_is_latest(monkeypatch, capsys):
+    now = datetime.now(UTC)
+    natural = {
+        "id": 108,
+        "event": "schedule",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": (now - timedelta(minutes=20)).isoformat(),
+        "updated_at": (now - timedelta(minutes=15)).isoformat(),
+        "html_url": "https://github.com/a/b/actions/runs/108",
+    }
+    manual = {
+        "id": 109,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": (now - timedelta(minutes=5)).isoformat(),
+        "updated_at": (now - timedelta(minutes=1)).isoformat(),
+        "html_url": "https://github.com/a/b/actions/runs/109",
+    }
+    calls = []
+    monkeypatch.setattr(MODULE, "runs", lambda _repo: [manual, natural])
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(MODULE, "proven_watchdog_run_ids", lambda _root: frozenset())
+    monkeypatch.setattr(MODULE, "collect_natural_full_chain_run_ids",
+                        lambda *args, **kwargs: calls.append((args, kwargs)) or {"108"})
+    monkeypatch.setattr(
+        MODULE,
+        "workflow_component_health",
+        lambda *_args: {
+            "assessed": True,
+            "healthy": True,
+            "issues": [],
+            "scanSucceeded": True,
+            "runEvent": "workflow_dispatch",
+            "runId": 109,
+            "runUpdatedAt": manual["updated_at"],
+        },
+    )
+    monkeypatch.setattr(MODULE, "github_actions_external_blocker", lambda *_args: None)
+    monkeypatch.setattr(MODULE, "runtime_managed_followup_coverage", _healthy_managed_followup)
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime"],
+    )
+
+    assert MODULE.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert calls and calls[0][0][1] == [manual, natural]
+    assert result["naturalScheduleFullChain"]["provenRunIds"] == ["108"]
+
+
+def test_natural_jobs_api_error_keeps_effective_scan_stale(monkeypatch):
+    run = {
+        "id": 110,
+        "event": "schedule",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": (NOW - timedelta(minutes=10)).isoformat(),
+        "updated_at": (NOW - timedelta(minutes=5)).isoformat(),
+    }
+    monkeypatch.setattr(MODULE, "github_json", lambda _path: (_ for _ in ()).throw(RuntimeError("API")))
+    proven = MODULE.collect_natural_full_chain_run_ids("a/b", [run], now=NOW, window_hours=6)
+    effective = MODULE.effective_scan_freshness(
+        [run],
+        now=NOW,
+        natural_full_chain_run_ids=proven,
+        watchdog_run_ids=set(),
+    )
+    assert proven == set()
+    assert effective["fresh"] is False
 
 
 def test_sparse_natural_schedule_coverage_cannot_be_hidden_by_a_fresh_canary():
@@ -509,6 +730,7 @@ def test_component_health_checks_each_required_job_below_green_run(monkeypatch):
                 "jobs": [
                     {"name": name, "conclusion": "success"}
                     for name in (
+                        "watch",
                         "scan",
                         "pr-followup",
                         "build-state",
@@ -568,6 +790,7 @@ def test_component_health_uses_logically_newest_run_not_latest_rerun_update(monk
                 "jobs": [
                     {"name": name, "conclusion": "success"}
                     for name in (
+                        "watch",
                         "scan",
                         "pr-followup",
                         "build-state",
@@ -589,7 +812,9 @@ def test_component_health_uses_logically_newest_run_not_latest_rerun_update(monk
     assert result["issues"] == []
 
 
-def test_component_health_ignores_schedule_canary_after_cancelled_dispatch(monkeypatch):
+def test_component_health_marks_schedule_canary_missing_full_chain_after_cancelled_dispatch(
+    monkeypatch,
+):
     workflow_runs = [
         {
             "id": 8,
@@ -613,17 +838,21 @@ def test_component_health_ignores_schedule_canary_after_cancelled_dispatch(monke
     monkeypatch.setattr(
         MODULE,
         "github_json",
-        lambda path: pytest.fail(f"schedule canary jobs must not be assessed: {path}"),
+        lambda path: (
+            {"jobs": _chain_jobs(canary_only=True)}
+            if path == "repos/a/b/actions/runs/7/jobs?per_page=100"
+            else pytest.fail(path)
+        ),
     )
 
     result = MODULE.workflow_component_health("a/b", workflow_runs)
 
-    assert result == {
-        "assessed": False,
-        "healthy": True,
-        "issues": [],
-        "scanSucceeded": None,
-    }
+    assert result["assessed"] is True
+    assert result["healthy"] is False
+    assert result["runId"] == 7
+    assert result["fullChainProven"] is False
+    assert "NATURAL_SCHEDULE_FULL_CHAIN_MISSING" in result["issues"]
+    assert result["naturalFullChainRunIds"] == []
 
 
 def test_component_health_cancelled_run_does_not_hide_previous_failure(monkeypatch):
@@ -654,6 +883,7 @@ def test_component_health_cancelled_run_does_not_hide_previous_failure(monkeypat
             {
                 "jobs": [
                     {"name": "scan", "conclusion": "failure"},
+                    {"name": "watch", "conclusion": "success"},
                     {"name": "pr-followup", "conclusion": "success"},
                     {"name": "build-state", "conclusion": "success"},
                     {"name": "persist-pending", "conclusion": "success"},
@@ -719,6 +949,7 @@ def test_component_health_exposes_followup_failure_without_discarding_fresh_scan
         }
     ]
     conclusions = {
+        "watch": "success",
         "scan": "success",
         "pr-followup": "failure",
         "build-state": "success",
@@ -1051,8 +1282,12 @@ def test_dispatch_blocker_does_not_poison_natural_canary_health(monkeypatch, cap
 
     assert MODULE.main() == 2
     result = json.loads(capsys.readouterr().out)
-    assert result["githubNaturalScheduleHealthy"] is True
-    assert result["githubNaturalScheduleIssues"] == []
+    # The trigger canary is fresh, but main() supplies an explicit empty
+    # proof set after the jobs observation, so the aggregate natural health
+    # remains red instead of masking a canary-only run.
+    assert result["naturalScheduleCanaryHealthy"] is True
+    assert result["githubNaturalScheduleHealthy"] is False
+    assert "NATURAL_SCHEDULE_FULL_CHAIN_MISSING" in result["githubNaturalScheduleIssues"]
     assert result["operationalHealthy"] is False
     assert "GITHUB_ACTIONS_BILLING_BLOCKED" in result["operationalIssues"]
 
@@ -1178,7 +1413,9 @@ def test_notify_surfaces_a_stale_full_scan_even_when_canary_is_fresh(monkeypatch
 
     assert MODULE.main() == 2
     result = json.loads(capsys.readouterr().out)
-    assert result["githubNaturalScheduleHealthy"] is True
+    assert result["naturalScheduleCanaryHealthy"] is True
+    assert result["githubNaturalScheduleHealthy"] is False
+    assert "NATURAL_SCHEDULE_FULL_CHAIN_MISSING" in result["githubNaturalScheduleIssues"]
     assert result["effectiveScan"]["fresh"] is False
     assert "EFFECTIVE_SCAN_STALE" in result["operationalIssues"]
     assert len(sent) == 1

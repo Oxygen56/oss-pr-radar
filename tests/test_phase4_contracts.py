@@ -15,7 +15,7 @@ from oss_pr_radar.managed_lifecycle import ManagedLedger
 ROOT = Path(__file__).parents[1]
 
 
-def test_natural_schedule_is_canary_only_and_full_chain_is_dispatch_only():
+def test_natural_schedule_runs_full_chain_and_terminal_proof_is_fail_closed():
     workflow = (ROOT / ".github/workflows/radar.yml").read_text(encoding="utf-8")
     canary = workflow.split("\n  schedule-canary:\n", 1)[1].split("\n  watch:\n", 1)[0]
     assert "if: github.event_name == 'schedule'" in canary
@@ -29,19 +29,49 @@ def test_natural_schedule_is_canary_only_and_full_chain_is_dispatch_only():
     ):
         assert forbidden not in canary
 
-    jobs = (
-        ("watch", "pr-followup"),
-        ("pr-followup", "scan"),
-        ("scan", "build-state"),
-        ("build-state", "persist-pending"),
-        ("persist-pending", "notify"),
-        ("notify", "persist-receipt"),
-        ("persist-receipt", None),
-    )
-    for job, next_job in jobs:
+    # The business chain is now trigger-agnostic; schedule runs must execute
+    # it instead of stopping at the canary. The terminal proof job verifies
+    # every required result and remains present even when an upstream fails.
+    for job in (
+        "watch",
+        "pr-followup",
+        "scan",
+        "build-state",
+        "persist-pending",
+        "notify",
+        "persist-receipt",
+    ):
         start = workflow.index(f"\n  {job}:\n")
-        end = workflow.index(f"\n  {next_job}:\n", start) if next_job else len(workflow)
-        assert "github.event_name == 'workflow_dispatch'" in workflow[start:end]
+        next_positions = [
+            workflow.find(f"\n  {candidate}:\n", start + 1)
+            for candidate in (
+                "watch",
+                "pr-followup",
+                "scan",
+                "build-state",
+                "persist-pending",
+                "notify",
+                "persist-receipt",
+                "full-chain-proof",
+            )
+        ]
+        end = min(position for position in next_positions if position >= 0)
+        assert "github.event_name == 'workflow_dispatch'" not in workflow[start:end]
+
+    proof = workflow.split("\n  full-chain-proof:\n", 1)[1]
+    assert "needs:" in proof
+    for job in (
+        "watch",
+        "pr-followup",
+        "scan",
+        "build-state",
+        "persist-pending",
+        "notify",
+        "persist-receipt",
+    ):
+        assert job in proof
+    assert "if: always()" in proof
+    assert 'test "$result" = success' in proof
 
 
 def test_full_workflow_uses_only_the_versioned_war_room_actionable_path():

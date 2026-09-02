@@ -1,15 +1,18 @@
 """Independent, slot-idempotent fallback for the hourly Radar workflow.
 
-GitHub's native ``schedule`` event remains the natural-schedule health signal.
-This worker only protects the business scan cadence: after a bounded grace
-period it dispatches at most once for an uncovered hourly slot.  A durable
-claim is committed before the external request, so a timeout or process crash
-can be reconciled without issuing the same fallback twice.
+GitHub's native ``schedule`` event is the preferred full-chain path.  The
+worker verifies the terminal proof job (and the required business jobs) before
+counting a completed natural run; a canary-only historical run cannot suppress
+the fallback.  After a bounded grace period it dispatches at most once for an
+uncovered hourly slot.  A durable claim is committed before the external
+request, so a timeout or process crash can be reconciled without issuing the
+same fallback twice.
 """
 
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 import stat
@@ -42,7 +45,26 @@ NATURAL_SCHEDULE_CADENCE_HOURS = 1.0
 LEGACY_TIME_PRECISION = timedelta(seconds=2)
 LEGACY_ATTRIBUTION_WINDOW = timedelta(seconds=30)
 
+# ``schedule-canary`` is intentionally not part of this set.  The proof job
+# starts on every current workflow invocation, while the remaining jobs prove
+# that the business/state chain was actually materialized and completed.  A
+# historical canary-only run therefore cannot masquerade as a full scan.
+FULL_CHAIN_PROOF_JOB = "full-chain-proof"
+BUSINESS_CHAIN_JOBS = frozenset(
+    {
+        "watch",
+        "pr-followup",
+        "scan",
+        "build-state",
+        "persist-pending",
+        "notify",
+        "persist-receipt",
+    }
+)
+FULL_CHAIN_JOBS = BUSINESS_CHAIN_JOBS | {FULL_CHAIN_PROOF_JOB}
+
 RunLister = Callable[[str, str], list[dict[str, Any]]]
+JobsLister = Callable[[str, int], list[dict[str, Any]]]
 DispatchReceipt = dict[str, Any]
 DispatchRunner = Callable[
     [str, str, str, float, int | None],
@@ -94,10 +116,87 @@ def _run_time(run: dict[str, Any]) -> datetime | None:
         return None
 
 
-def _run_covers_slot(run: dict[str, Any], slot: datetime, *, ref: str) -> bool:
-    # event=schedule is a trigger canary only.  It never proves that the
-    # workflow_dispatch business scan for this slot ran.
-    if run.get("event") != "workflow_dispatch":
+def normalize_job_conclusions(jobs: Any) -> dict[str, str]:
+    """Normalize the small part of the Actions jobs response we need.
+
+    GitHub returns both ``status`` and ``conclusion``.  A running job has no
+    conclusion yet, so retaining the status lets the watchdog distinguish an
+    active chain from a completed chain with a skipped/missing dependency.
+    """
+
+    if not isinstance(jobs, list):
+        return {}
+    result: dict[str, str] = {}
+    for raw_job in jobs:
+        if not isinstance(raw_job, dict) or not raw_job.get("name"):
+            continue
+        name = str(raw_job["name"])
+        value = str(raw_job.get("conclusion") or raw_job.get("status") or "unknown")
+        if name in result and result[name] != value:
+            # Duplicate job names are ambiguous (for example, one matrix
+            # copy succeeded while another was skipped).  Keep a sentinel so
+            # every consumer fails closed instead of letting a later item
+            # overwrite an earlier failure.
+            result[name] = "__duplicate_non_deterministic__"
+        elif name in result:
+            result[name] = "__duplicate_non_deterministic__"
+        else:
+            result[name] = value
+    return result
+
+
+def full_chain_evidence(
+    run: dict[str, Any],
+    jobs: Any = None,
+) -> bool | None:
+    """Return whether a run is proven to be the current full workflow chain.
+
+    ``workflow_dispatch`` must materialize all business/state jobs and its
+    exact run ID is still required by the durable watchdog claim.  For
+    ``schedule`` we additionally require the terminal proof job.  Completion
+    requires every required job to succeed.
+
+    ``None`` means no evidence was supplied and is intentionally not proof of
+    a completed natural chain.  The production watchdog annotates API
+    observations with an explicit value before making a dispatch decision.
+    """
+
+    event = run.get("event")
+    if event not in {"schedule", "workflow_dispatch"}:
+        return False
+
+    # Only the namespaced marker written by this cycle is trusted.  Generic
+    # user/run fields are attacker-controlled metadata and must not override
+    # a jobs response supplied by the caller.
+    if jobs is None:
+        value = run.get("_fullChainProven")
+        if isinstance(value, bool):
+            return value
+        jobs = run.get("jobs")
+    if jobs is None:
+        return None
+    conclusions = normalize_job_conclusions(jobs)
+    required = FULL_CHAIN_JOBS if event == "schedule" else BUSINESS_CHAIN_JOBS
+    if event == "schedule" and FULL_CHAIN_PROOF_JOB not in conclusions:
+        return False
+    if str(run.get("status") or "") in ACTIVE_RUN_STATUSES:
+        # Active native runs are handled by the transient wait path.  Do not
+        # cache a positive completion proof that could be reused after the
+        # same run transitions to a partial/failed terminal state.
+        return None
+    return required <= conclusions.keys() and all(
+        conclusions[name] == "success" for name in required
+    )
+
+
+def _run_covers_slot(
+    run: dict[str, Any],
+    slot: datetime,
+    *,
+    ref: str,
+    full_chain: bool | None = None,
+) -> bool:
+    if run.get("event") not in {"schedule", "workflow_dispatch"}:
         return False
     if run.get("head_branch") != ref:
         return False
@@ -106,6 +205,19 @@ def _run_covers_slot(run: dict[str, Any], slot: datetime, *, ref: str) -> bool:
         return False
     status = str(run.get("status") or "")
     conclusion = str(run.get("conclusion") or "")
+    if run.get("event") == "schedule":
+        evidence = full_chain
+        if evidence is None:
+            evidence = full_chain_evidence(run)
+        if status in ACTIVE_RUN_STATUSES:
+            return False
+        if evidence is not True:
+            return False
+    # A watchdog dispatch receipt is already an exact, durable invocation
+    # proof.  If this cycle additionally fetched jobs, honor a negative
+    # result; otherwise retain compatibility with legacy run-list snapshots.
+    elif run.get("_fullChainProven") is False:
+        return False
     return status in ACTIVE_RUN_STATUSES or (status == "completed" and conclusion == "success")
 
 
@@ -148,12 +260,25 @@ def _entry_run_order_key(entry: dict[str, Any]) -> tuple[datetime, int] | None:
     return created, int(encoded_run_id)
 
 
-def _full_run(run: dict[str, Any], *, ref: str) -> bool:
-    return (
-        run.get("event") == "workflow_dispatch"
-        and run.get("head_branch") == ref
-        and _run_order_key(run) is not None
-    )
+def _full_run(
+    run: dict[str, Any],
+    *,
+    ref: str,
+    full_chain: bool | None = None,
+) -> bool:
+    if run.get("event") not in {"schedule", "workflow_dispatch"}:
+        return False
+    if run.get("head_branch") != ref or _run_order_key(run) is None:
+        return False
+    if run.get("event") == "schedule":
+        evidence = full_chain
+        if evidence is None:
+            evidence = full_chain_evidence(run)
+        if evidence is not True:
+            return False
+    elif run.get("_fullChainProven") is False:
+        return False
+    return True
 
 
 def _latest_full_run(runs: list[dict[str, Any]], *, ref: str) -> dict[str, Any] | None:
@@ -175,6 +300,31 @@ def _covering_run(
         run
         for run in runs
         if _run_id(run) not in excluded_run_ids and _run_covers_slot(run, slot, ref=ref)
+    ]
+    return max(candidates, key=lambda item: _run_time(item) or slot, default=None)
+
+
+def _active_natural_run(
+    runs: list[dict[str, Any]],
+    slot: datetime,
+    *,
+    ref: str,
+) -> dict[str, Any] | None:
+    """Find an in-flight native run for the eligible slot.
+
+    This is deliberately separate from ``_covering_run``: active native runs
+    are transient observations and must never be persisted as watchdog exact
+    claims (which are reserved for workflow_dispatch receipts).
+    """
+
+    candidates = [
+        run
+        for run in runs
+        if run.get("event") == "schedule"
+        and run.get("head_branch") == ref
+        and _run_time(run) is not None
+        and slot <= (_run_time(run) or slot) < slot + timedelta(hours=1)
+        and str(run.get("status") or "") in ACTIVE_RUN_STATUSES
     ]
     return max(candidates, key=lambda item: _run_time(item) or slot, default=None)
 
@@ -351,7 +501,9 @@ def _bind_run(
     if run_attempt is not None:
         entry["runAttempt"] = run_attempt
     if state == "COVERED":
-        entry["coverageKind"] = "fallback"
+        entry["coverageKind"] = (
+            "natural" if run.get("event") == "schedule" else "fallback"
+        )
         entry["coveredAt"] = _iso_z(observed_at)
         entry.pop("failedAt", None)
     elif state == "FAILED":
@@ -409,6 +561,15 @@ def _reconcile_exact_claims(
                 entry["reconcileCount"] = int(entry.get("reconcileCount") or 0) + 1
                 slots[key] = entry
                 reconciled.append(_reconciled_summary(key, entry))
+            continue
+        if run.get("event") != "workflow_dispatch":
+            # A prior buggy release could have persisted an in-flight native
+            # run as an exact claim.  It is not a valid watchdog receipt; drop
+            # only that transient projection so the normal active/terminal
+            # natural path below can decide without loosening exact-run
+            # validation for manual dispatches.
+            if state in EXACT_TRACKING_STATES | RETRY_TRACKING_STATES | LEGACY_CLAIM_STATES:
+                del slots[key]
             continue
         _validate_exact_run(run, ref=ref)
         _remove_unclaimed_run_projection(slots, owner_key=key, run_id=run_id)
@@ -667,7 +828,10 @@ def _result_for_reconciled(
         "githubNaturalScheduleHealthy": natural_healthy,
     }
     if primary["state"] == "COVERED":
-        result["coverageKind"] = "fallback"
+        run = primary.get("run") if isinstance(primary.get("run"), dict) else {}
+        result["coverageKind"] = (
+            "natural" if run.get("event") == "schedule" else "fallback"
+        )
     elif primary["state"] == "SUPERSEDED":
         result["supersededByRun"] = primary.get("supersededByRun")
     if int(primary.get("rerunAttempts") or 0):
@@ -718,14 +882,54 @@ def _result_for_existing_claim(
     if int(entry.get("rerunAttempts") or 0):
         result["rerunAttempts"] = int(entry["rerunAttempts"])
     if state == "COVERED":
-        result["coverageKind"] = "fallback"
+        run = entry.get("run") if isinstance(entry.get("run"), dict) else {}
+        result["coverageKind"] = str(
+            entry.get("coverageKind")
+            or ("natural" if run.get("event") == "schedule" else "fallback")
+        )
     elif state == "SUPERSEDED":
         result["supersededByRun"] = entry.get("supersededByRun")
     return result
 
 
-def _latest_natural(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
-    scheduled = [run for run in runs if run.get("event") == "schedule" and _run_time(run)]
+def _result_for_natural_wait(
+    run: dict[str, Any],
+    *,
+    slot: datetime,
+    natural_healthy: bool,
+) -> dict[str, Any]:
+    """Return a transient in-flight natural observation.
+
+    Native schedule runs are not durable watchdog claims.  Persisting one as
+    ``RUNNING`` would make the next reconciliation route it through the exact
+    dispatch validator and either fail or block the fallback forever.  The
+    run is therefore reported for this cycle only; a later completed
+    observation is bound as natural coverage, while a failed/partial run
+    naturally falls through to fallback.
+    """
+
+    return {
+        "ok": True,
+        "action": "natural_active",
+        "slotAt": _iso_z(slot),
+        "run": _run_summary(run),
+        "coverageKind": "natural",
+        "githubNaturalScheduleHealthy": natural_healthy,
+    }
+
+
+def _latest_natural(
+    runs: list[dict[str, Any]],
+    *,
+    ref: str | None = None,
+) -> dict[str, Any] | None:
+    scheduled = [
+        run
+        for run in runs
+        if run.get("event") == "schedule"
+        and _run_time(run)
+        and (ref is None or run.get("head_branch") == ref)
+    ]
     return max(
         scheduled,
         key=lambda item: _run_time(item) or datetime.min.replace(tzinfo=UTC),
@@ -753,6 +957,10 @@ def _natural_schedule_health(
     )
     created = _run_time(run) if run else None
     fresh = bool(created and now - timedelta(hours=freshness_hours) <= created <= now)
+    # This tuple intentionally remains the trigger-canary contract: callers
+    # that need full-chain health must consult ``full_chain_evidence``
+    # separately.  A canary can be fresh/successful while its business graph
+    # was skipped, and that distinction is surfaced in the state below.
     return successful, fresh, successful and fresh, freshness_hours
 
 
@@ -821,6 +1029,135 @@ def _default_list_runs(repo: str, workflow: str) -> list[dict[str, Any]]:
     if not isinstance(value, dict) or not isinstance(value.get("workflow_runs"), list):
         raise RuntimeError("GitHub workflow run response is invalid")
     return [item for item in value["workflow_runs"] if isinstance(item, dict)]
+
+
+def _default_list_jobs(repo: str, run_id: int) -> list[dict[str, Any]]:
+    value = GitHubClient().api(
+        f"repos/{repo}/actions/runs/{run_id}/jobs",
+        params={"per_page": 100},
+    )
+    if not isinstance(value, dict) or not isinstance(value.get("jobs"), list):
+        raise RuntimeError("GitHub workflow jobs response is invalid")
+    return [item for item in value["jobs"] if isinstance(item, dict)]
+
+
+def _invoke_prepare_runs(
+    prepare_runs: Callable[..., list[dict[str, Any]]] | None,
+    raw_runs: list[dict[str, Any]],
+    *,
+    force_refresh: bool = False,
+) -> list[dict[str, Any]]:
+    """Call a preparation callback while retaining its old one-arg shape."""
+
+    if prepare_runs is None:
+        return raw_runs
+    if force_refresh:
+        try:
+            parameters = inspect.signature(prepare_runs).parameters.values()
+        except (TypeError, ValueError):
+            parameters = ()
+        supports_keyword = any(
+            parameter.name == "force_refresh"
+            or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+        if supports_keyword:
+            return prepare_runs(raw_runs, force_refresh=True)
+    return prepare_runs(raw_runs)
+
+
+def _annotate_schedule_runs(
+    repo: str,
+    runs: list[dict[str, Any]],
+    *,
+    ref: str,
+    current: datetime,
+    slot: datetime,
+    list_jobs: JobsLister | None,
+    job_cache: dict[tuple[str, str, str, str, str], tuple[bool | None, str]],
+) -> list[dict[str, Any]]:
+    """Attach one-cycle full-chain evidence to relevant native runs.
+
+    The run-list endpoint does not expose skipped jobs.  Querying every old
+    run would be needlessly expensive, so the watchdog proves the latest
+    native run and any run that could cover the eligible slot.  The cache is
+    shared with the lock-bound recheck, closing the duplicate-dispatch race
+    without multiplying API calls.
+    """
+
+    if list_jobs is None:
+        return runs
+    scheduled = [
+        run
+        for run in runs
+        if run.get("event") == "schedule"
+        and run.get("head_branch") == ref
+        and _run_time(run)
+    ]
+    if not scheduled:
+        return runs
+    latest = max(scheduled, key=lambda item: _run_time(item) or current)
+    selected_ids = {_run_id(latest)}
+    selected_ids.update(
+        _run_id(run)
+        for run in scheduled
+        if _run_time(run) is not None
+        and slot <= (_run_time(run) or slot) < slot + timedelta(hours=1)
+    )
+    selected_ids.discard(None)
+    annotated: list[dict[str, Any]] = []
+    for raw_run in runs:
+        run = dict(raw_run)
+        run_id = _run_id(run)
+        if run.get("event") != "schedule":
+            annotated.append(run)
+            continue
+        embedded_jobs = run.get("jobs")
+        if embedded_jobs is not None:
+            # Embedded jobs are already authoritative; do not discard them
+            # merely because this run falls outside the bounded API query.
+            run["_fullChainProven"] = full_chain_evidence(run, embedded_jobs)
+            run["_fullChainEvidenceSource"] = "embedded_jobs"
+            run["_fullChainEvidenceRequired"] = True
+            annotated.append(run)
+            continue
+        if run_id not in selected_ids:
+            # This run may still be present in the list response and must not
+            # silently participate in ``_full_run``/supersession as if it had
+            # the new proof job.  It is deliberately marked unproven until a
+            # bounded jobs lookup covers it in a later cycle.
+            run["_fullChainProven"] = False
+            run["_fullChainEvidenceSource"] = "not_queried"
+            run["_fullChainEvidenceRequired"] = True
+            annotated.append(run)
+            continue
+        # Tests and callers may provide an embedded jobs response.  It is
+        # already authoritative and avoids an unnecessary network request.
+        cache_key = (
+            run_id or "",
+            str(run.get("status") or ""),
+            str(run.get("conclusion") or ""),
+            str(run.get("run_attempt") or ""),
+            str(run.get("updated_at") or ""),
+        )
+        if cache_key in job_cache:
+            evidence, source = job_cache[cache_key]
+        else:
+            try:
+                evidence = full_chain_evidence(run, list_jobs(repo, int(run_id)))
+                source = "jobs_api"
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                # Preserve an explicit unknown result.  Active native runs
+                # still wait; completed runs fail closed and can be retried
+                # by the next health/watchdog cycle after API recovery.
+                evidence = None
+                source = f"jobs_api_error:{type(exc).__name__}"
+            job_cache[cache_key] = (evidence, source)
+        run["_fullChainProven"] = evidence
+        run["_fullChainEvidenceSource"] = source
+        run["_fullChainEvidenceRequired"] = True
+        annotated.append(run)
+    return annotated
 
 
 def _dispatch_receipt_value(
@@ -1071,6 +1408,7 @@ def _retry_failed_claim(
     effect_guard: EffectGuardFactory,
     authorization_check: AuthorizationCheck,
     dispatch_gate: DispatchGate,
+    prepare_runs: Callable[..., list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Write-ahead claim one same-run full-workflow recovery attempt."""
 
@@ -1090,7 +1428,11 @@ def _retry_failed_claim(
 
         # Close the race with a user-initiated rerun before committing the
         # recovery effect. The exact run ID, not timestamps, owns the claim.
-        refreshed = list_runs(repo, workflow)
+        refreshed = _invoke_prepare_runs(
+            prepare_runs,
+            list_runs(repo, workflow),
+            force_refresh=True,
+        )
         _reconcile_claims(slots, refreshed, ref=ref, observed_at=current)
         current_entry = slots.get(claim_key)
         current_entry = dict(current_entry) if isinstance(current_entry, dict) else None
@@ -1212,6 +1554,7 @@ def watchdog_cycle(
     grace_minutes: int = 13,
     now: datetime | None = None,
     list_runs: RunLister = _default_list_runs,
+    list_jobs: JobsLister | None = None,
     dispatch: DispatchRunner = _default_dispatch,
     rerun_failed_jobs: FailedJobRerunner = _default_rerun_failed_jobs,
     effect_guard: EffectGuardFactory = outbound_effect_guard,
@@ -1226,13 +1569,38 @@ def watchdog_cycle(
     slot_at = _iso_z(slot)
     claim_key = fallback_key(repo, workflow, slot)
     lock_path = root / "state" / WATCHDOG_LOCK
+    if list_jobs is None and list_runs is _default_list_runs:
+        list_jobs = _default_list_jobs
+    job_cache: dict[tuple[str, str, str, str, str], tuple[bool | None, str]] = {}
+
+    def prepare_runs(
+        raw_runs: list[dict[str, Any]],
+        *,
+        force_refresh: bool = False,
+    ) -> list[dict[str, Any]]:
+        if force_refresh:
+            # The jobs endpoint can settle after the workflow-run metadata
+            # does (and a run may go from active to terminal between the two
+            # reads).  Never let the shared pre-lock observation suppress a
+            # fallback after the outbound-effect lock is acquired.
+            job_cache.clear()
+        return _annotate_schedule_runs(
+            repo,
+            raw_runs,
+            ref=ref,
+            current=current,
+            slot=slot,
+            list_jobs=list_jobs,
+            job_cache=job_cache,
+        )
+
     try:
         lock_context = exclusive_lock(lock_path, blocking=False)
         with lock_context:
             state = _strict_state(root)
             slots = dict(state.get("slots") or {})
-            runs = list_runs(repo, workflow)
-            natural = _latest_natural(runs)
+            runs = prepare_runs(list_runs(repo, workflow))
+            natural = _latest_natural(runs, ref=ref)
             natural_success, natural_fresh, natural_healthy, freshness_hours = (
                 _natural_schedule_health(
                     natural,
@@ -1240,6 +1608,9 @@ def watchdog_cycle(
                     window_hours=window_hours,
                 )
             )
+            natural_full_chain = full_chain_evidence(natural) if natural else None
+            natural_canary_healthy = natural_healthy
+            natural_healthy = natural_canary_healthy and natural_full_chain is True
             state.update(
                 {
                     "repo": repo,
@@ -1256,7 +1627,21 @@ def watchdog_cycle(
                         "latestRunFresh": natural_fresh,
                         "freshnessWindowHours": freshness_hours,
                         "freshnessCutoffAt": _iso_z(current - timedelta(hours=freshness_hours)),
+                        "healthy": natural_canary_healthy,
+                        "fullChainHealthy": natural_healthy,
+                        "fullChainProven": natural_full_chain,
+                        "fullChainEvidenceSource": (
+                            natural.get("_fullChainEvidenceSource") if natural else None
+                        ),
+                        "sourceEvent": "schedule",
+                    },
+                    "naturalScheduleFullChain": {
                         "healthy": natural_healthy,
+                        "proven": natural_full_chain is True,
+                        "evidence": natural_full_chain,
+                        "evidenceSource": (
+                            natural.get("_fullChainEvidenceSource") if natural else None
+                        ),
                         "sourceEvent": "schedule",
                     },
                 }
@@ -1288,6 +1673,7 @@ def watchdog_cycle(
                         current=current,
                         natural_healthy=natural_healthy,
                         list_runs=list_runs,
+                        prepare_runs=prepare_runs,
                         rerun_failed_jobs=rerun_failed_jobs,
                         effect_guard=effect_guard,
                         authorization_check=authorization_check,
@@ -1314,6 +1700,7 @@ def watchdog_cycle(
                                 current=current,
                                 natural_healthy=natural_healthy,
                                 list_runs=list_runs,
+                                prepare_runs=prepare_runs,
                                 rerun_failed_jobs=rerun_failed_jobs,
                                 effect_guard=effect_guard,
                                 authorization_check=authorization_check,
@@ -1352,6 +1739,7 @@ def watchdog_cycle(
                         current=current,
                         natural_healthy=natural_healthy,
                         list_runs=list_runs,
+                        prepare_runs=prepare_runs,
                         rerun_failed_jobs=rerun_failed_jobs,
                         effect_guard=effect_guard,
                         authorization_check=authorization_check,
@@ -1386,6 +1774,7 @@ def watchdog_cycle(
                             current=current,
                             natural_healthy=natural_healthy,
                             list_runs=list_runs,
+                            prepare_runs=prepare_runs,
                             rerun_failed_jobs=rerun_failed_jobs,
                             effect_guard=effect_guard,
                             authorization_check=authorization_check,
@@ -1396,6 +1785,13 @@ def watchdog_cycle(
                     natural_healthy=natural_healthy,
                 )
 
+            active_natural = _active_natural_run(runs, slot, ref=ref)
+            if active_natural is not None:
+                return _result_for_natural_wait(
+                    active_natural,
+                    slot=slot,
+                    natural_healthy=natural_healthy,
+                )
             covered = _covering_run(
                 runs,
                 slot,
@@ -1403,6 +1799,15 @@ def watchdog_cycle(
                 excluded_run_ids=_assigned_run_ids(slots, except_key=claim_key),
             )
             if covered is not None:
+                if (
+                    covered.get("event") == "schedule"
+                    and str(covered.get("status") or "") in ACTIVE_RUN_STATUSES
+                ):
+                    return _result_for_natural_wait(
+                        covered,
+                        slot=slot,
+                        natural_healthy=natural_healthy,
+                    )
                 entry = {
                     "fallbackKey": claim_key,
                     "slotAt": slot_at,
@@ -1433,6 +1838,7 @@ def watchdog_cycle(
                         current=current,
                         natural_healthy=natural_healthy,
                         list_runs=list_runs,
+                        prepare_runs=prepare_runs,
                         rerun_failed_jobs=rerun_failed_jobs,
                         effect_guard=effect_guard,
                         authorization_check=authorization_check,
@@ -1462,7 +1868,10 @@ def watchdog_cycle(
                     }
                 # Close the race with a natural run or the controller after
                 # obtaining the shared outbound-effect lock.
-                refreshed = list_runs(repo, workflow)
+                refreshed = prepare_runs(
+                    list_runs(repo, workflow),
+                    force_refresh=True,
+                )
                 reconciled = _reconcile_claims(
                     slots,
                     refreshed,
@@ -1496,6 +1905,13 @@ def watchdog_cycle(
                             natural_healthy=natural_healthy,
                             covered_action="covered_after_lock",
                         )
+                active_natural = _active_natural_run(refreshed, slot, ref=ref)
+                if active_natural is not None:
+                    return _result_for_natural_wait(
+                        active_natural,
+                        slot=slot,
+                        natural_healthy=natural_healthy,
+                    )
                 covered = _covering_run(
                     refreshed,
                     slot,
@@ -1503,6 +1919,15 @@ def watchdog_cycle(
                     excluded_run_ids=_assigned_run_ids(slots, except_key=claim_key),
                 )
                 if covered is not None:
+                    if (
+                        covered.get("event") == "schedule"
+                        and str(covered.get("status") or "") in ACTIVE_RUN_STATUSES
+                    ):
+                        return _result_for_natural_wait(
+                            covered,
+                            slot=slot,
+                            natural_healthy=natural_healthy,
+                        )
                     entry = {
                         "fallbackKey": claim_key,
                         "slotAt": slot_at,

@@ -27,7 +27,6 @@ jobs:
         run: echo "Natural schedule canary observed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   watch:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -71,7 +70,6 @@ jobs:
           retention-days: 14
 
   pr-followup:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -130,7 +128,6 @@ jobs:
 
   scan:
     needs: watch
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -217,7 +214,6 @@ jobs:
   build-state:
     needs: [scan, pr-followup]
     if: >-
-      github.event_name == 'workflow_dispatch' &&
       always() && needs.scan.result == 'success' &&
       (needs.pr-followup.result == 'success' || needs.pr-followup.result == 'failure')
     runs-on: ubuntu-latest
@@ -288,9 +284,7 @@ jobs:
 
   persist-pending:
     needs: build-state
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      always() && needs.build-state.result == 'success'
+    if: always() && needs.build-state.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -312,9 +306,7 @@ jobs:
 
   notify:
     needs: persist-pending
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      always() && needs.persist-pending.result == 'success'
+    if: always() && needs.persist-pending.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -360,7 +352,6 @@ jobs:
   persist-receipt:
     needs: notify
     if: >-
-      github.event_name == 'workflow_dispatch' &&
       always() &&
       (needs.notify.result == 'success' || needs.notify.result == 'failure')
     runs-on: ubuntu-latest
@@ -407,3 +398,36 @@ jobs:
           PYTHONPATH=src python scripts/export_managed_snapshot.py
       - name: Commit receipt checkpoint
         run: python scripts/state_branch.py publish
+
+  # A successful run-level conclusion is not enough to prove that a
+  # schedule-triggered canary materialized the business chain: GitHub marks
+  # an all-skipped graph as successful too.  This terminal job is the durable
+  # marker consumed by the watchdog and health checker, and is intentionally
+  # gated on every critical job succeeding.
+  full-chain-proof:
+    needs:
+      [watch, pr-followup, scan, build-state, persist-pending, notify, persist-receipt]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    env:
+      WATCH_RESULT: ${{ needs.watch.result }}
+      PR_FOLLOWUP_RESULT: ${{ needs.pr-followup.result }}
+      SCAN_RESULT: ${{ needs.scan.result }}
+      BUILD_STATE_RESULT: ${{ needs.build-state.result }}
+      PERSIST_PENDING_RESULT: ${{ needs.persist-pending.result }}
+      NOTIFY_RESULT: ${{ needs.notify.result }}
+      PERSIST_RECEIPT_RESULT: ${{ needs.persist-receipt.result }}
+    steps:
+      - name: Record complete full-chain proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          for result in \
+            "$WATCH_RESULT" "$PR_FOLLOWUP_RESULT" "$SCAN_RESULT" \
+            "$BUILD_STATE_RESULT" "$PERSIST_PENDING_RESULT" "$NOTIFY_RESULT" \
+            "$PERSIST_RECEIPT_RESULT"; do
+            test "$result" = success
+          done
+          echo "OSS PR Radar full chain completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"

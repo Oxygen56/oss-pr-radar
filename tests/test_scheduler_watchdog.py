@@ -10,17 +10,33 @@ from pathlib import Path
 import pytest
 
 from oss_pr_radar.scheduler_watchdog import (
+    BUSINESS_CHAIN_JOBS,
+    FULL_CHAIN_JOBS,
     WATCHDOG_SCHEMA,
     _default_dispatch,
     _default_rerun_failed_jobs,
     eligible_slot,
     fallback_key,
+    full_chain_evidence,
     proven_watchdog_run_ids,
     watchdog_cycle,
 )
 
 NOW = datetime(2026, 8, 31, 3, 31, tzinfo=UTC)
 SLOT = datetime(2026, 8, 31, 3, 17, tzinfo=UTC)
+
+
+def _jobs(*, canary_only: bool = False, failed: set[str] | None = None) -> list[dict]:
+    names = {"schedule-canary"} if canary_only else set(FULL_CHAIN_JOBS)
+    failed = failed or set()
+    return [
+        {
+            "name": name,
+            "status": "completed",
+            "conclusion": "failure" if name in failed else "success",
+        }
+        for name in sorted(names)
+    ]
 
 
 def _root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -62,8 +78,9 @@ def _run(
     conclusion: str | None = "success",
     head_branch: str | None = "main",
     run_attempt: int = 1,
+    jobs: list[dict] | None = None,
 ) -> dict:
-    return {
+    result = {
         "id": run_id,
         "event": event,
         "created_at": created_at,
@@ -74,6 +91,9 @@ def _run(
         "run_attempt": run_attempt,
         "html_url": f"https://github.com/Oxygen56/oss-pr-radar/actions/runs/{run_id}",
     }
+    if jobs is not None:
+        result["jobs"] = jobs
+    return result
 
 
 def _receipt(run_id: int) -> dict:
@@ -94,7 +114,7 @@ def test_eligible_slot_waits_thirteen_minutes_and_recovers_latest_slot_after_sle
     )
 
 
-def test_natural_run_is_recorded_only_as_canary_and_does_not_suppress_fallback(
+def test_natural_full_chain_covers_slot_without_fallback(
     tmp_path, monkeypatch
 ):
     root = _root(tmp_path, monkeypatch)
@@ -102,20 +122,46 @@ def test_natural_run_is_recorded_only_as_canary_and_does_not_suppress_fallback(
     result = _watchdog(
         root,
         now=NOW,
-        list_runs=lambda _repo, _workflow: [_run(event="schedule", run_id=7)],
+        list_runs=lambda _repo, _workflow: [
+            _run(event="schedule", run_id=7, jobs=_jobs())
+        ],
         dispatch=lambda *args: dispatched.append(args),
         effect_guard=_guard,
     )
 
-    assert result["action"] == "fallback_requested"
+    assert result["action"] == "covered"
+    assert result["coverageKind"] == "natural"
     assert result["githubNaturalScheduleHealthy"] is True
-    assert len(dispatched) == 1
+    assert dispatched == []
     state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
     assert state["naturalScheduleCanary"]["latestRunSuccessful"] is True
     assert state["naturalScheduleCanary"]["latestRunFresh"] is True
     assert state["naturalScheduleCanary"]["freshnessWindowHours"] == 2.0
     assert state["naturalScheduleCanary"]["healthy"] is True
+    assert state["naturalScheduleCanary"]["fullChainHealthy"] is True
     assert state["naturalScheduleCanary"]["latestRun"]["event"] == "schedule"
+
+
+def test_canary_only_schedule_falls_back_and_is_not_full_chain_healthy(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    dispatched = []
+    result = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [
+            _run(event="schedule", run_id=6, jobs=_jobs(canary_only=True))
+        ],
+        dispatch=lambda *args: dispatched.append(args),
+        effect_guard=_guard,
+    )
+
+    assert result["action"] == "fallback_requested"
+    assert result["githubNaturalScheduleHealthy"] is False
+    assert len(dispatched) == 1
+    state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
+    assert state["naturalScheduleCanary"]["healthy"] is True
+    assert state["naturalScheduleCanary"]["fullChainHealthy"] is False
+    assert state["naturalScheduleFullChain"]["proven"] is False
 
 
 def test_stale_successful_natural_run_is_unhealthy_and_does_not_suppress_fallback(
@@ -157,6 +203,7 @@ def test_larger_scan_window_widens_natural_canary_freshness_tolerance(tmp_path, 
                 event="schedule",
                 run_id=71,
                 created_at="2026-08-31T01:01:00Z",
+                jobs=_jobs(),
             )
         ],
         dispatch=lambda *_args: None,
@@ -189,7 +236,7 @@ def test_fresh_successful_dispatch_only_run_never_marks_natural_schedule_healthy
     assert state["naturalScheduleCanary"]["healthy"] is False
 
 
-def test_active_natural_canary_does_not_suppress_fallback(tmp_path, monkeypatch):
+def test_active_natural_run_is_transient_wait_and_does_not_claim_slot(tmp_path, monkeypatch):
     root = _root(tmp_path, monkeypatch)
     dispatched = []
     result = _watchdog(
@@ -207,11 +254,177 @@ def test_active_natural_canary_does_not_suppress_fallback(tmp_path, monkeypatch)
         effect_guard=_guard,
     )
 
-    assert result["action"] == "fallback_requested"
+    assert result["action"] == "natural_active"
     assert result["githubNaturalScheduleHealthy"] is False
-    assert dispatched == [True]
+    assert dispatched == []
+    # The transient wait is intentionally not persisted: native schedule runs
+    # are never exact watchdog claims and therefore cannot poison the next
+    # reconciliation cycle.
+    assert not (root / "state" / "scheduler-watchdog.json").exists()
+
+
+def test_active_natural_run_then_full_chain_success_is_covered_without_dispatch(
+    tmp_path, monkeypatch
+):
+    root = _root(tmp_path, monkeypatch)
+    active = _run(
+        event="schedule",
+        run_id=81,
+        status="in_progress",
+        conclusion=None,
+    )
+    first = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [active],
+        dispatch=lambda *_args: pytest.fail("active native run must not dispatch"),
+        effect_guard=_guard,
+    )
+    completed = active | {
+        "status": "completed",
+        "conclusion": "success",
+        "updated_at": "2026-08-31T03:35:00Z",
+        "jobs": _jobs(),
+    }
+    second = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [completed],
+        dispatch=lambda *_args: pytest.fail("proven native run must cover slot"),
+        effect_guard=_guard,
+    )
+
+    assert first["action"] == "natural_active"
+    assert second["action"] == "covered"
+    assert second["coverageKind"] == "natural"
     state = json.loads((root / "state" / "scheduler-watchdog.json").read_text())
-    assert state["naturalScheduleCanary"]["latestRunSuccessful"] is False
+    assert state["slots"][second["fallbackKey"]]["coverageKind"] == "natural"
+
+
+def test_active_natural_run_then_partial_terminal_run_falls_back(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    active = _run(
+        event="schedule",
+        run_id=82,
+        status="in_progress",
+        conclusion=None,
+    )
+    first = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [active],
+        dispatch=lambda *_args: pytest.fail("active native run must not dispatch"),
+        effect_guard=_guard,
+    )
+    partial = active | {
+        "status": "completed",
+        "conclusion": "success",
+        "updated_at": "2026-08-31T03:35:00Z",
+        "jobs": _jobs(failed={"scan"}),
+    }
+    dispatched = []
+    second = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [partial],
+        dispatch=lambda *args: dispatched.append(args),
+        effect_guard=_guard,
+    )
+
+    assert first["action"] == "natural_active"
+    assert second["action"] == "fallback_requested"
+    assert len(dispatched) == 1
+
+
+def test_full_chain_evidence_fails_closed_for_missing_or_duplicate_jobs():
+    completed_schedule = _run(event="schedule", run_id=83)
+    assert full_chain_evidence(completed_schedule, _jobs(canary_only=True)) is False
+    missing = _jobs()
+    missing.pop()
+    assert full_chain_evidence(completed_schedule, missing) is False
+    duplicate = _jobs()
+    duplicate.append({"name": "scan", "status": "completed", "conclusion": "success"})
+    assert full_chain_evidence(completed_schedule, duplicate) is False
+
+
+def test_full_chain_evidence_accepts_business_dispatch_jobs_but_not_natural_without_proof():
+    dispatch = _run(event="workflow_dispatch", run_id=84)
+    assert full_chain_evidence(dispatch, [
+        {"name": name, "conclusion": "success"} for name in sorted(BUSINESS_CHAIN_JOBS)
+    ]) is True
+    natural = _run(event="schedule", run_id=85)
+    assert full_chain_evidence(natural, _jobs(canary_only=True)) is False
+
+
+def test_schedule_jobs_api_error_fails_closed_and_requests_fallback(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    queried = []
+    dispatched = []
+
+    def list_jobs(repo, run_id):
+        queried.append((repo, run_id))
+        raise RuntimeError("jobs endpoint unavailable")
+
+    result = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [_run(event="schedule", run_id=86)],
+        list_jobs=list_jobs,
+        dispatch=lambda *args: dispatched.append(args),
+        effect_guard=_guard,
+    )
+
+    assert result["action"] == "fallback_requested"
+    assert queried
+    assert all(run_id == 86 for _repo, run_id in queried)
+    assert len(dispatched) == 1
+
+
+def test_embedded_schedule_jobs_are_authoritative_without_jobs_api(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    result = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [
+            _run(event="schedule", run_id=87, jobs=_jobs())
+        ],
+        list_jobs=lambda *_args: pytest.fail("embedded jobs must not be queried"),
+        dispatch=lambda *_args: pytest.fail("embedded full proof covers slot"),
+        effect_guard=_guard,
+    )
+
+    assert result["action"] == "covered"
+    assert result["coverageKind"] == "natural"
+
+
+def test_lock_recheck_refreshes_same_run_jobs_evidence(tmp_path, monkeypatch):
+    root = _root(tmp_path, monkeypatch)
+    run = _run(event="schedule", run_id=88)
+    responses = [run, run]
+    job_responses = [_jobs(canary_only=True), _jobs()]
+    queried = []
+    dispatched = []
+
+    def list_jobs(repo, run_id):
+        queried.append((repo, run_id))
+        return job_responses.pop(0)
+
+    result = _watchdog(
+        root,
+        now=NOW,
+        list_runs=lambda _repo, _workflow: [responses.pop(0)],
+        list_jobs=list_jobs,
+        dispatch=lambda *args: dispatched.append(args),
+        effect_guard=_guard,
+    )
+
+    # The first observation is a canary-only graph; the lock-bound refresh
+    # sees the same run metadata but newly completed business jobs and must
+    # cover the slot instead of dispatching a duplicate fallback.
+    assert result["action"] == "covered_after_lock"
+    assert result["coverageKind"] == "natural"
+    assert dispatched == []
+    assert len(queried) == 2
 
 
 def test_publication_pause_does_not_consume_fallback_key(tmp_path, monkeypatch):
@@ -1438,7 +1651,14 @@ def test_late_natural_run_cannot_replace_fallback_evidence_or_trigger_again(tmp_
     responses = [
         [],
         [],
-        [_run(event="schedule", run_id=10, created_at="2026-08-31T03:49:00Z")],
+        [
+            _run(
+                event="schedule",
+                run_id=10,
+                created_at="2026-08-31T03:49:00Z",
+                jobs=_jobs(),
+            )
+        ],
     ]
 
     first = _watchdog(
