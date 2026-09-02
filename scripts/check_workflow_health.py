@@ -276,10 +276,18 @@ def health(
     *,
     now: datetime | None = None,
     coverage_window_hours: int = 12,
+    natural_full_chain_run_ids: set[int] | None = None,
 ) -> dict:
     current = (now or datetime.now(UTC)).astimezone(UTC)
+    proven_ids = natural_full_chain_run_ids or set()
     scheduled = [item for item in workflow_runs if item.get("event") == "schedule"]
-    successful = [item for item in scheduled if item.get("conclusion") == "success"]
+    successful = [
+        item
+        for item in scheduled
+        if item.get("conclusion") == "success"
+        and str(item.get("id", "")).isdigit()
+        and int(item["id"]) in proven_ids
+    ]
     issues: list[str] = []
     coverage_warnings: list[str] = []
     latest_schedule = scheduled[0] if scheduled else None
@@ -290,6 +298,10 @@ def health(
         issues.append("NATURAL_SCHEDULE_STALE")
     if not latest_success:
         issues.append("NO_SUCCESSFUL_SCHEDULE_RUN")
+        if latest_schedule and latest_schedule.get("conclusion") == "success":
+            issues.append("NATURAL_SCHEDULE_FULL_CHAIN_UNPROVEN")
+    elif latest_schedule and latest_schedule.get("conclusion") != "success":
+        issues.append("NATURAL_SCHEDULE_RUN_FAILED")
     elif parse_time(latest_success["updated_at"]) < current - timedelta(hours=4):
         issues.append("SUCCESSFUL_SCHEDULE_STALE")
     if sum(item.get("conclusion") == "failure" for item in scheduled[:3]) >= 2:
@@ -333,6 +345,7 @@ def health(
         "naturalScheduleWarnings": coverage_warnings,
         "latestScheduleUrl": latest_schedule.get("html_url") if latest_schedule else None,
         "latestSuccessUrl": latest_success.get("html_url") if latest_success else None,
+        "provenNaturalRunIds": sorted(proven_ids),
         "naturalScheduleCoverage": {
             "assessed": coverage_assessed,
             "windowHours": window_hours,
@@ -568,8 +581,20 @@ def main() -> int:
             )
             return 2
     workflow_runs = runs(args.repo)
-    result = health(workflow_runs, coverage_window_hours=args.coverage_window_hours)
     component_health = workflow_component_health(args.repo, workflow_runs)
+    proven_natural_run_ids = {
+        int(component_health["runId"])
+        if component_health.get("runEvent") == _NATURAL_EVENT
+        and component_health.get("naturalFullChainProven") is True
+        and str(component_health.get("runId", "")).isdigit()
+        else -1
+    }
+    proven_natural_run_ids.discard(-1)
+    result = health(
+        workflow_runs,
+        coverage_window_hours=args.coverage_window_hours,
+        natural_full_chain_run_ids=proven_natural_run_ids,
+    )
     result["componentHealth"] = component_health
     external_blocker = github_actions_external_blocker(args.repo, workflow_runs)
     result["githubActionsExternalBlocker"] = external_blocker
@@ -602,6 +627,7 @@ def main() -> int:
     scan_health_issues = [] if effective["fresh"] else ["EFFECTIVE_SCAN_STALE"]
     result["operationalHealthy"] = bool(
         effective["fresh"]
+        and result["githubNaturalScheduleHealthy"]
         and component_health.get("healthy") is True
         and managed_coverage.get("healthy") is True
         and external_blocker is None

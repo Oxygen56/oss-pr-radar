@@ -46,6 +46,7 @@ def test_recent_successful_schedule_is_healthy():
     result = MODULE.health(
         [
             {
+                "id": 1,
                 "event": "schedule",
                 "conclusion": "success",
                 "created_at": "2026-08-04T01:15:00Z",
@@ -54,6 +55,7 @@ def test_recent_successful_schedule_is_healthy():
             }
         ],
         now=NOW,
+        natural_full_chain_run_ids={1},
     )
     assert result["healthy"] is True
     assert result["githubNaturalScheduleHealthy"] is True
@@ -64,6 +66,7 @@ def test_recent_successful_schedule_is_healthy():
 def test_sparse_natural_schedule_coverage_is_reported_without_hiding_freshness():
     runs = [
         {
+            "id": offset,
             "event": "schedule",
             "conclusion": "success",
             "created_at": (NOW - timedelta(hours=offset)).isoformat(),
@@ -82,7 +85,12 @@ def test_sparse_natural_schedule_coverage_is_reported_without_hiding_freshness()
         }
     )
 
-    result = MODULE.health(runs, now=NOW, coverage_window_hours=24)
+    result = MODULE.health(
+        runs,
+        now=NOW,
+        coverage_window_hours=24,
+        natural_full_chain_run_ids={offset for offset in range(1, 25, 3)},
+    )
 
     assert result["githubNaturalScheduleHealthy"] is True
     assert result["issues"] == []
@@ -103,6 +111,30 @@ def test_sparse_natural_schedule_coverage_is_reported_without_hiding_freshness()
             "NATURAL_SCHEDULE_GAP_EXCESSIVE",
         ],
     }
+
+
+def test_latest_failed_natural_schedule_is_not_masked_by_prior_success():
+    runs = [
+        {
+            "id": 2,
+            "event": "schedule",
+            "conclusion": "failure",
+            "created_at": "2026-08-04T01:50:00Z",
+            "updated_at": "2026-08-04T01:55:00Z",
+        },
+        {
+            "id": 1,
+            "event": "schedule",
+            "conclusion": "success",
+            "created_at": "2026-08-04T01:15:00Z",
+            "updated_at": "2026-08-04T01:30:00Z",
+        },
+    ]
+
+    result = MODULE.health(runs, now=NOW, natural_full_chain_run_ids={1})
+
+    assert result["healthy"] is False
+    assert "NATURAL_SCHEDULE_RUN_FAILED" in result["issues"]
 
 
 def _managed_followup_ledger(
@@ -841,8 +873,8 @@ def test_dispatch_blocker_does_not_poison_natural_canary_health(monkeypatch, cap
 
     assert MODULE.main() == 2
     result = json.loads(capsys.readouterr().out)
-    assert result["githubNaturalScheduleHealthy"] is True
-    assert result["githubNaturalScheduleIssues"] == []
+    assert result["githubNaturalScheduleHealthy"] is False
+    assert "NATURAL_SCHEDULE_FULL_CHAIN_UNPROVEN" in result["githubNaturalScheduleIssues"]
     assert result["operationalHealthy"] is False
     assert "GITHUB_ACTIONS_BILLING_BLOCKED" in result["operationalIssues"]
 
@@ -968,7 +1000,8 @@ def test_notify_surfaces_a_stale_full_scan_even_when_canary_is_fresh(monkeypatch
 
     assert MODULE.main() == 2
     result = json.loads(capsys.readouterr().out)
-    assert result["githubNaturalScheduleHealthy"] is True
+    assert result["githubNaturalScheduleHealthy"] is False
+    assert "NATURAL_SCHEDULE_FULL_CHAIN_UNPROVEN" in result["githubNaturalScheduleIssues"]
     assert result["effectiveScan"]["fresh"] is False
     assert "EFFECTIVE_SCAN_STALE" in result["operationalIssues"]
     assert len(sent) == 1
