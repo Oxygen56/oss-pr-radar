@@ -233,8 +233,11 @@ def test_main_collects_natural_proofs_even_when_newer_manual_is_latest(monkeypat
     monkeypatch.setattr(MODULE, "runs", lambda _repo: [manual, natural])
     monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(MODULE, "proven_watchdog_run_ids", lambda _root: frozenset())
-    monkeypatch.setattr(MODULE, "collect_natural_full_chain_run_ids",
-                        lambda *args, **kwargs: calls.append((args, kwargs)) or {"108"})
+    monkeypatch.setattr(
+        MODULE,
+        "collect_natural_full_chain_run_ids",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or {"108"},
+    )
     monkeypatch.setattr(
         MODULE,
         "workflow_component_health",
@@ -271,7 +274,9 @@ def test_natural_jobs_api_error_keeps_effective_scan_stale(monkeypatch):
         "created_at": (NOW - timedelta(minutes=10)).isoformat(),
         "updated_at": (NOW - timedelta(minutes=5)).isoformat(),
     }
-    monkeypatch.setattr(MODULE, "github_json", lambda _path: (_ for _ in ()).throw(RuntimeError("API")))
+    monkeypatch.setattr(
+        MODULE, "github_json", lambda _path: (_ for _ in ()).throw(RuntimeError("API"))
+    )
     proven = MODULE.collect_natural_full_chain_run_ids("a/b", [run], now=NOW, window_hours=6)
     effective = MODULE.effective_scan_freshness(
         [run],

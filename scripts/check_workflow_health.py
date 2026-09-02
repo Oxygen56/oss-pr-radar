@@ -177,9 +177,7 @@ def workflow_component_health(repo: str, workflow_runs: list[dict]) -> dict:
         full_chain_evidence(latest, jobs) if latest.get("event") == "schedule" else True
     )
     natural_full_chain_ids = (
-        [str(run_id)]
-        if latest.get("event") == "schedule" and full_chain_proven is True
-        else []
+        [str(run_id)] if latest.get("event") == "schedule" and full_chain_proven is True else []
     )
     if latest.get("event") == "schedule" and full_chain_proven is not True:
         # A successful aggregate schedule run with only ``schedule-canary``
@@ -747,19 +745,14 @@ def effective_scan_freshness(
         else {str(value) for value in natural_full_chain_run_ids}
     )
     proven_watchdog_ids = (
-        None
-        if watchdog_run_ids is None
-        else {str(value) for value in watchdog_run_ids}
+        None if watchdog_run_ids is None else {str(value) for value in watchdog_run_ids}
     )
     relevant = [
         item
         for item in workflow_runs
         if (
             item.get("event") == _FULL_SCAN_EVENT
-            and (
-                proven_watchdog_ids is None
-                or str(item.get("id")) in proven_watchdog_ids
-            )
+            and (proven_watchdog_ids is None or str(item.get("id")) in proven_watchdog_ids)
         )
         or (
             item.get("event") == "schedule"
@@ -776,10 +769,7 @@ def effective_scan_freshness(
         and (
             (
                 item.get("event") == _FULL_SCAN_EVENT
-                and (
-                    proven_watchdog_ids is None
-                    or str(item.get("id")) in proven_watchdog_ids
-                )
+                and (proven_watchdog_ids is None or str(item.get("id")) in proven_watchdog_ids)
             )
             or item.get("event") == "schedule"
         )
@@ -800,7 +790,9 @@ def effective_scan_freshness(
     component_success_fresh = False
     component_url = None
     component_run_id = (
-        str(component_health.get("runId")) if component_health and component_health.get("runId") else None
+        str(component_health.get("runId"))
+        if component_health and component_health.get("runId")
+        else None
     )
     component_dispatch_proven = (
         component_health is None

@@ -501,9 +501,7 @@ def _bind_run(
     if run_attempt is not None:
         entry["runAttempt"] = run_attempt
     if state == "COVERED":
-        entry["coverageKind"] = (
-            "natural" if run.get("event") == "schedule" else "fallback"
-        )
+        entry["coverageKind"] = "natural" if run.get("event") == "schedule" else "fallback"
         entry["coveredAt"] = _iso_z(observed_at)
         entry.pop("failedAt", None)
     elif state == "FAILED":
@@ -829,9 +827,7 @@ def _result_for_reconciled(
     }
     if primary["state"] == "COVERED":
         run = primary.get("run") if isinstance(primary.get("run"), dict) else {}
-        result["coverageKind"] = (
-            "natural" if run.get("event") == "schedule" else "fallback"
-        )
+        result["coverageKind"] = "natural" if run.get("event") == "schedule" else "fallback"
     elif primary["state"] == "SUPERSEDED":
         result["supersededByRun"] = primary.get("supersededByRun")
     if int(primary.get("rerunAttempts") or 0):
@@ -1057,8 +1053,7 @@ def _invoke_prepare_runs(
         except (TypeError, ValueError):
             parameters = ()
         supports_keyword = any(
-            parameter.name == "force_refresh"
-            or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            parameter.name == "force_refresh" or parameter.kind is inspect.Parameter.VAR_KEYWORD
             for parameter in parameters
         )
         if supports_keyword:
@@ -1090,9 +1085,7 @@ def _annotate_schedule_runs(
     scheduled = [
         run
         for run in runs
-        if run.get("event") == "schedule"
-        and run.get("head_branch") == ref
-        and _run_time(run)
+        if run.get("event") == "schedule" and run.get("head_branch") == ref and _run_time(run)
     ]
     if not scheduled:
         return runs

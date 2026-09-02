@@ -114,17 +114,13 @@ def test_eligible_slot_waits_thirteen_minutes_and_recovers_latest_slot_after_sle
     )
 
 
-def test_natural_full_chain_covers_slot_without_fallback(
-    tmp_path, monkeypatch
-):
+def test_natural_full_chain_covers_slot_without_fallback(tmp_path, monkeypatch):
     root = _root(tmp_path, monkeypatch)
     dispatched = []
     result = _watchdog(
         root,
         now=NOW,
-        list_runs=lambda _repo, _workflow: [
-            _run(event="schedule", run_id=7, jobs=_jobs())
-        ],
+        list_runs=lambda _repo, _workflow: [_run(event="schedule", run_id=7, jobs=_jobs())],
         dispatch=lambda *args: dispatched.append(args),
         effect_guard=_guard,
     )
@@ -349,9 +345,13 @@ def test_full_chain_evidence_fails_closed_for_missing_or_duplicate_jobs():
 
 def test_full_chain_evidence_accepts_business_dispatch_jobs_but_not_natural_without_proof():
     dispatch = _run(event="workflow_dispatch", run_id=84)
-    assert full_chain_evidence(dispatch, [
-        {"name": name, "conclusion": "success"} for name in sorted(BUSINESS_CHAIN_JOBS)
-    ]) is True
+    assert (
+        full_chain_evidence(
+            dispatch,
+            [{"name": name, "conclusion": "success"} for name in sorted(BUSINESS_CHAIN_JOBS)],
+        )
+        is True
+    )
     natural = _run(event="schedule", run_id=85)
     assert full_chain_evidence(natural, _jobs(canary_only=True)) is False
 
@@ -385,9 +385,7 @@ def test_embedded_schedule_jobs_are_authoritative_without_jobs_api(tmp_path, mon
     result = _watchdog(
         root,
         now=NOW,
-        list_runs=lambda _repo, _workflow: [
-            _run(event="schedule", run_id=87, jobs=_jobs())
-        ],
+        list_runs=lambda _repo, _workflow: [_run(event="schedule", run_id=87, jobs=_jobs())],
         list_jobs=lambda *_args: pytest.fail("embedded jobs must not be queried"),
         dispatch=lambda *_args: pytest.fail("embedded full proof covers slot"),
         effect_guard=_guard,
