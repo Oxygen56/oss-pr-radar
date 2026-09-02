@@ -462,6 +462,24 @@ def test_component_health_rejects_natural_run_with_skipped_business_job(monkeypa
     assert result["issues"] == ["NATURAL_FULL_CHAIN_DEGRADED"]
 
 
+def test_proven_natural_ids_cover_only_jobs_api_verified_runs(monkeypatch):
+    workflow_runs = [
+        {"id": 21, "event": "schedule", "status": "completed", "conclusion": "success"},
+        {"id": 20, "event": "schedule", "status": "completed", "conclusion": "success"},
+    ]
+
+    def fake_json(path):
+        if "/21/" in path:
+            names = (*MODULE._NATURAL_REQUIRED_JOBS, MODULE._FULL_CHAIN_PROOF_JOB)
+        else:
+            names = ("schedule-canary",)
+        return {"jobs": [{"name": name, "conclusion": "success"} for name in names]}
+
+    monkeypatch.setattr(MODULE, "github_json", fake_json)
+
+    assert MODULE.proven_natural_schedule_run_ids("a/b", workflow_runs) == {21}
+
+
 def test_component_health_ignores_schedule_canary_after_cancelled_dispatch(monkeypatch):
     workflow_runs = [
         {
@@ -710,6 +728,31 @@ def test_recent_manual_success_keeps_effective_scan_fresh():
     )
     assert result["fresh"] is True
     assert result["recentSuccess"] is True
+
+
+def test_unproven_natural_component_does_not_keep_effective_scan_fresh():
+    natural = {
+        "event": "schedule",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": (NOW - timedelta(minutes=5)).isoformat(),
+        "updated_at": (NOW - timedelta(minutes=4)).isoformat(),
+        "html_url": "https://github.com/a/b/actions/runs/canary",
+    }
+    result = MODULE.effective_scan_freshness(
+        [natural],
+        now=NOW,
+        component_health={
+            "assessed": True,
+            "scanSucceeded": True,
+            "runEvent": "schedule",
+            "naturalFullChainProven": False,
+            "runUpdatedAt": natural["updated_at"],
+        },
+    )
+
+    assert result["fresh"] is False
+    assert result["recentScanJobSuccess"] is False
 
 
 def test_late_schedule_canary_does_not_mask_a_stale_full_scan():

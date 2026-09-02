@@ -104,6 +104,27 @@ def _natural_chain_issues(conclusions: dict[str, str]) -> list[str]:
     return issues
 
 
+def proven_natural_schedule_run_ids(repo: str, workflow_runs: list[dict]) -> set[int]:
+    """Find successful schedule runs whose Jobs API proves the complete chain."""
+
+    proven: set[int] = set()
+    for item in workflow_runs:
+        if (
+            item.get("event") != _NATURAL_EVENT
+            or item.get("status") != "completed"
+            or item.get("conclusion") != "success"
+            or not str(item.get("id", "")).isdigit()
+        ):
+            continue
+        try:
+            jobs = _run_jobs(repo, int(item["id"]))
+        except (RuntimeError, TypeError, ValueError):
+            continue
+        if jobs is not None and not _natural_chain_issues(_job_conclusions(jobs)):
+            proven.add(int(item["id"]))
+    return proven
+
+
 def workflow_component_health(repo: str, workflow_runs: list[dict]) -> dict:
     """Assess the latest completed full chain below its aggregate conclusion.
 
@@ -489,7 +510,7 @@ def effective_scan_freshness(
     active_grace: timedelta = timedelta(minutes=50),
     component_health: dict | None = None,
 ) -> dict:
-    """Assess only full workflow-dispatch scans; schedule runs are canaries."""
+    """Assess manual scans or a Jobs-API-proven natural full-chain scan."""
 
     current = (now or datetime.now(UTC)).astimezone(UTC)
     relevant = [item for item in workflow_runs if item.get("event") == _FULL_SCAN_EVENT]
@@ -516,7 +537,16 @@ def effective_scan_freshness(
     )
     component_success_fresh = False
     component_url = None
-    if component_health and component_health.get("scanSucceeded") is True:
+    component_is_proven = bool(
+        component_health
+        and component_health.get("assessed") is True
+        and component_health.get("scanSucceeded") is True
+        and (
+            component_health.get("runEvent") != _NATURAL_EVENT
+            or component_health.get("naturalFullChainProven") is True
+        )
+    )
+    if component_is_proven:
         component_updated_at = component_health.get("runUpdatedAt")
         if component_updated_at:
             component_success_fresh = parse_time(str(component_updated_at)) >= current - max_age
@@ -582,20 +612,25 @@ def main() -> int:
             return 2
     workflow_runs = runs(args.repo)
     component_health = workflow_component_health(args.repo, workflow_runs)
-    proven_natural_run_ids = {
-        int(component_health["runId"])
-        if component_health.get("runEvent") == _NATURAL_EVENT
+    proven_natural_run_ids: set[int] = set()
+    # The component check already queried the selected run.  Only perform the
+    # wider historical proof scan for a real API-backed result; this keeps
+    # compatibility fixtures that stub component health deterministic.
+    if component_health.get("jobs") is not None:
+        proven_natural_run_ids = proven_natural_schedule_run_ids(args.repo, workflow_runs)
+    if (
+        component_health.get("runEvent") == _NATURAL_EVENT
         and component_health.get("naturalFullChainProven") is True
         and str(component_health.get("runId", "")).isdigit()
-        else -1
-    }
-    proven_natural_run_ids.discard(-1)
+    ):
+        proven_natural_run_ids.add(int(component_health["runId"]))
     result = health(
         workflow_runs,
         coverage_window_hours=args.coverage_window_hours,
         natural_full_chain_run_ids=proven_natural_run_ids,
     )
     result["componentHealth"] = component_health
+    result["provenNaturalRunIds"] = sorted(proven_natural_run_ids)
     external_blocker = github_actions_external_blocker(args.repo, workflow_runs)
     result["githubActionsExternalBlocker"] = external_blocker
     managed_coverage = (
@@ -645,6 +680,7 @@ def main() -> int:
     )
     if args.notify and (
         not effective["fresh"]
+        or not result["githubNaturalScheduleHealthy"]
         or component_health.get("healthy") is not True
         or managed_coverage.get("healthy") is not True
         or external_blocker is not None
