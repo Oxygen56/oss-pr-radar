@@ -60,6 +60,11 @@ def _natural_full_chain_proven(
 
     if run.get("event") != "schedule":
         return False
+    # A proof ID is only a terminal proof. Active runs are reported through
+    # the separate in-flight path and must never be promoted to completed
+    # coverage by a stale/hand-written ID set.
+    if run.get("status") != "completed" or run.get("conclusion") != "success":
+        return False
     run_id = _run_id(run)
     if proven_run_ids is not None:
         return run_id is not None and run_id in {str(value) for value in proven_run_ids}
