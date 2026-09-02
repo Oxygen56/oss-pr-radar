@@ -64,6 +64,12 @@ MANAGED_REPLAY_REPLACEMENT_CREATED_EVENT = "MANAGED_REPLAY_REPLACEMENT_CREATED"
 PR_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
 ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
 PROBE_RECEIPT_VOLATILE_FIELDS = frozenset({"observedAt", "expiresAt", "receiptDigest", "signature"})
+# Publication may only be authorized for an intent that is still part of the
+# live task lifecycle.  Historical/superseded intents remain in the ledger for
+# auditability, but must never receive a new grant or recovery action.
+_PUBLICATION_ACTIVE_INTENT_STATUSES = frozenset(
+    {"PENDING", "LEASED", "CREATING", "DISPATCHED", "COMPLETED"}
+)
 # These events use a result/wake digest as their historical dedupe key.  A
 # digest is not an immutable task identity: two intent generations for one
 # issue can legitimately produce the same digest.  Keep the old key for
@@ -577,7 +583,36 @@ def _intent_bound_audit_rows(
         (opportunity_key,),
     ).fetchall()
     prefix = f"{intent_id}:"
-    bound = [row for row in rows if str(row["dedupe_key"] or "").startswith(prefix)]
+    bound: list[sqlite3.Row] = []
+    for row in rows:
+        dedupe_bound = str(row["dedupe_key"] or "").startswith(prefix)
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            payload = None
+        if isinstance(payload, dict):
+            has_explicit_identity = any(
+                payload.get(field) not in (None, "")
+                for field in ("intentId", "taskId", "threadId", "worktreePath")
+            )
+            if has_explicit_identity:
+                # A digest/prefix is only a hint once an event carries an
+                # identity payload. Resolve it against the exact intent and
+                # reject malformed or foreign rows even when their dedupe key
+                # happens to use this generation's prefix.
+                binding = _resolve_event_intent_binding(
+                    connection,
+                    opportunity_key=opportunity_key,
+                    payload=payload,
+                )
+                if binding is None or str(binding["intent_id"] or "") != str(intent_id):
+                    continue
+                bound.append(row)
+                continue
+        if dedupe_bound:
+            # Legacy snapshots had no identity fields; their canonical writer
+            # encoded the generation in the dedupe prefix.
+            bound.append(row)
     if bound:
         return bound
     intent_count = connection.execute(
@@ -925,11 +960,20 @@ def _publication_authorization_is_current_or_terminal(
 ) -> bool:
     """Accept freshness only before an exact request crosses publication."""
 
-    return _publication_has_irreversible_terminal_evidence(
+    if _publication_has_irreversible_terminal_evidence(
         connection,
         request_id=request_id,
         opportunity_key=opportunity_key,
-    ) or _publication_probe_valid_json(request_json, evidence)
+    ):
+        return True
+    if not _publication_request_intent_is_active(
+        connection,
+        request_id=request_id,
+        opportunity_key=opportunity_key,
+        request_json=request_json,
+    ):
+        return False
+    return _publication_probe_valid_json(request_json, evidence)
 
 
 def _resolve_publication_request_binding(
@@ -989,6 +1033,97 @@ def _resolve_publication_request_binding(
     if binding is None:
         raise LedgerError("publication request intent binding is stale or ambiguous")
     return binding, payload
+
+
+def _publication_request_intent_is_active(
+    connection: sqlite3.Connection,
+    *,
+    request_id: str,
+    opportunity_key: str,
+    request_json: str | None = None,
+    request_row: sqlite3.Row | None = None,
+) -> bool:
+    """Return whether a request still belongs to an active task generation.
+
+    Publication requests historically had no intent foreign key, so the
+    immutable identity in ``request_json`` (plus the denormalized columns) is
+    resolved before checking the intent status.  A legacy request with no
+    identity can only use the compatibility fallback when this opportunity has
+    exactly one intent; once generations coexist, ambiguity fails closed.
+    """
+
+    row = request_row
+    if row is None:
+        row = connection.execute(
+            "SELECT * FROM publication_requests WHERE request_id=? AND opportunity_key=?",
+            (request_id, opportunity_key),
+        ).fetchone()
+    if row is None:
+        return False
+    raw = request_json if request_json is not None else row["request_json"]
+    try:
+        payload = json.loads(str(raw or "{}"))
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    explicit_identity = any(
+        payload.get(field) not in (None, "")
+        for field in ("intentId", "taskId", "threadId", "worktreePath")
+    )
+    try:
+        binding, _ = _resolve_publication_request_binding(connection, row)
+    except LedgerError:
+        binding = None
+    if binding is not None:
+        return str(binding["status"] or "") in _PUBLICATION_ACTIVE_INTENT_STATUSES
+    if explicit_identity:
+        return False
+
+    # Compatibility for pre-intent publication rows.  Do not guess from the
+    # newest row: a singleton opportunity is the only unambiguous legacy case.
+    intents = connection.execute(
+        "SELECT status FROM intents WHERE opportunity_key=?",
+        (opportunity_key,),
+    ).fetchall()
+    if not intents:
+        # Some pre-intent databases retain a publication row before the
+        # intent table was backfilled.  Preserve that single-generation
+        # compatibility case; as soon as any intent exists, ambiguity is
+        # fail-closed below.
+        return str(row["status"] or "") in {"PENDING", "GRANTED"}
+    return len(intents) == 1 and str(intents[0]["status"] or "") in (
+        _PUBLICATION_ACTIVE_INTENT_STATUSES
+    )
+
+
+def _reopen_active_publication_requests_after_quarantine_clear(
+    connection: sqlite3.Connection,
+    *,
+    opportunity_key: str,
+    now: str,
+) -> None:
+    """Reopen only current-generation requests after a quarantine is cleared."""
+
+    rows = connection.execute(
+        """SELECT * FROM publication_requests
+           WHERE opportunity_key=? AND status='BLOCKED'
+             AND reason='BLOCKED_REPRODUCTION_REQUIRED'""",
+        (opportunity_key,),
+    ).fetchall()
+    for row in rows:
+        if _publication_request_intent_is_active(
+            connection,
+            request_id=str(row["request_id"]),
+            opportunity_key=opportunity_key,
+            request_row=row,
+        ):
+            connection.execute(
+                """UPDATE publication_requests
+                   SET status='PENDING',reason='TASK_QUARANTINE_CLEARED',updated_at=?
+                   WHERE request_id=? AND status='BLOCKED'""",
+                (now, row["request_id"]),
+            )
 
 
 RECOVERABLE_CONTEXT_STAGES = {
@@ -3346,7 +3481,7 @@ class RadarLedger:
 
         with self.transaction() as connection:
             row = connection.execute(
-                """SELECT o.issue_url,i.thread_id,i.worktree_path,i.payload_json
+                """SELECT o.issue_url,i.opportunity_key,i.thread_id,i.worktree_path,i.payload_json
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    WHERE i.intent_id=? AND o.issue_url=? AND i.thread_id=?""",
                 (intent_id, issue_url, thread_id),
@@ -3372,28 +3507,23 @@ class RadarLedger:
             )
             if not expected_digest:
                 return False
-            all_rows = connection.execute(
-                """SELECT payload_json,dedupe_key,id FROM events
-                   WHERE opportunity_key=(
-                     SELECT opportunity_key FROM intents WHERE intent_id=?
-                   ) AND event_type IN ('AUDIT_PASS','AUDIT_SNAPSHOT')
-                   ORDER BY id DESC""",
-                (intent_id,),
-            ).fetchall()
-            for audit_row in all_rows:
+            # A matching receipt digest is not sufficient to identify the
+            # task generation. Restrict the canonical lookup to audit rows
+            # proven to belong to this exact intent first.
+            bound_rows = _intent_bound_audit_rows(
+                connection,
+                str(row["opportunity_key"]),
+                intent_id,
+            )
+            for audit_row in bound_rows:
                 audit_payload = json.loads(audit_row["payload_json"])
                 receipt = _live_audit_probe_receipt(audit_payload)
                 if receipt is None or str(receipt.get("receiptDigest") or "") != expected_digest:
                     continue
                 _audited_probe_code_paths(payload, audit_payload, issue_url)
                 return False
-            rows = [
-                audit_row
-                for audit_row in all_rows
-                if str(audit_row["dedupe_key"] or "").startswith(f"{intent_id}:")
-            ]
             compatible: list[tuple[sqlite3.Row, dict[str, Any], str]] = []
-            for audit_row in rows:
+            for audit_row in bound_rows:
                 audit_payload = json.loads(audit_row["payload_json"])
                 receipt = _live_audit_probe_receipt(audit_payload)
                 if receipt is None:
@@ -7173,14 +7303,14 @@ class RadarLedger:
                 f"""SELECT o.key,i.intent_id,i.thread_id,i.worktree_path,
                           b.payload_json,b.created_at
                    FROM opportunities o
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND i.status IN ('DISPATCHED','COMPLETED')
                    JOIN events d ON d.id=(
                      SELECT MAX(d2.id) FROM events d2
                      WHERE d2.opportunity_key=o.key
                        AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                       AND {_intent_event_binding_clause("i", "d2")}
                    )
-                   JOIN intents i ON i.opportunity_key=o.key
-                     AND {_intent_event_binding_clause("i", "d")}
-                     AND i.status IN ('DISPATCHED','COMPLETED')
                    JOIN events b ON b.id=(
                      SELECT MAX(b2.id) FROM events b2
                      WHERE b2.opportunity_key=o.key
@@ -7533,13 +7663,13 @@ class RadarLedger:
                 f"""SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,i.worktree_path,
                           d.payload_json,d.created_at
                    FROM opportunities o
+                   JOIN intents i ON i.opportunity_key=o.key
                    JOIN events d ON d.id=(
                      SELECT MAX(d2.id) FROM events d2
                      WHERE d2.opportunity_key=o.key
                        AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                       AND {_intent_event_binding_clause("i", "d2")}
                    )
-                   JOIN intents i ON i.opportunity_key=o.key
-                     AND {_intent_event_binding_clause("i", "d")}
                    WHERE o.stage IN (
                      'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
                    )
@@ -9421,7 +9551,10 @@ class RadarLedger:
         if not expected_base_sha or selected_base != expected_base_sha:
             raise LedgerError("task audit selected base does not match the result context")
         expected_receipt_digest = str(payload.get("probeReceiptDigest") or "")
-        candidates = all_audit_rows if expected_receipt_digest else bound_audit_rows
+        # A receipt digest is content identity, not task identity: two intent
+        # generations can legitimately produce the same digest. Never let a
+        # matching digest from another generation authorize this task's paths.
+        candidates = bound_audit_rows
         for audit_row in candidates:
             audit_payload = json.loads(audit_row["payload_json"])
             live_audit = audit_payload.get("liveAudit")
@@ -10599,6 +10732,8 @@ class RadarLedger:
             if len(matches) != 1:
                 raise LedgerError("publication task binding is stale or ambiguous")
             row = matches[0]
+            if str(row["status"] or "") not in _PUBLICATION_ACTIVE_INTENT_STATUSES:
+                raise LedgerError("publication task intent is inactive")
             previous_publication = connection.execute(
                 """SELECT p.pr_url,r.commit_sha,r.branch
                    FROM publication_requests r
@@ -11660,6 +11795,21 @@ class RadarLedger:
                    )
                    ORDER BY r.created_at"""
             ).fetchall()
+            eligible_rows: list[sqlite3.Row] = []
+            for row in rows:
+                terminal = _publication_has_irreversible_terminal_evidence(
+                    connection,
+                    request_id=str(row["request_id"]),
+                    opportunity_key=str(row["opportunity_key"]),
+                )
+                if terminal or _publication_request_intent_is_active(
+                    connection,
+                    request_id=str(row["request_id"]),
+                    opportunity_key=str(row["opportunity_key"]),
+                    request_row=row,
+                ):
+                    eligible_rows.append(row)
+            rows = eligible_rows
         items = []
         for row in rows:
             item = dict(row) | {"request": json.loads(row["request_json"])}
@@ -11788,12 +11938,10 @@ class RadarLedger:
             )
             if cleared != 1:
                 raise LedgerError("exact task quarantine was not cleared")
-            connection.execute(
-                """UPDATE publication_requests
-                   SET status='PENDING',reason='TASK_QUARANTINE_CLEARED',updated_at=?
-                   WHERE opportunity_key=? AND status='BLOCKED'
-                     AND reason='BLOCKED_REPRODUCTION_REQUIRED'""",
-                (now, key),
+            _reopen_active_publication_requests_after_quarantine_clear(
+                connection,
+                opportunity_key=key,
+                now=now,
             )
             self._event(
                 connection,
@@ -11930,12 +12078,10 @@ class RadarLedger:
             if cleared != 1:
                 raise LedgerError("exact task quarantine member was not cleared")
             if active_quarantine(connection, opportunity_key=key) is None:
-                connection.execute(
-                    """UPDATE publication_requests
-                       SET status='PENDING',reason='TASK_QUARANTINE_CLEARED',updated_at=?
-                       WHERE opportunity_key=? AND status='BLOCKED'
-                         AND reason='BLOCKED_REPRODUCTION_REQUIRED'""",
-                    (now, key),
+                _reopen_active_publication_requests_after_quarantine_clear(
+                    connection,
+                    opportunity_key=key,
+                    now=now,
                 )
             self._event(
                 connection,
@@ -12364,12 +12510,10 @@ class RadarLedger:
             # A quarantine blocks existing requests before the result is
             # ingested.  Revalidation deliberately reopens them as PENDING;
             # any prior GRANTED authorization must be reacquired.
-            connection.execute(
-                """UPDATE publication_requests
-                   SET status='PENDING',reason='TASK_QUARANTINE_CLEARED',updated_at=?
-                   WHERE opportunity_key=? AND status='BLOCKED'
-                     AND reason='BLOCKED_REPRODUCTION_REQUIRED'""",
-                (now, key),
+            _reopen_active_publication_requests_after_quarantine_clear(
+                connection,
+                opportunity_key=key,
+                now=now,
             )
             self._event(
                 connection,
@@ -12888,7 +13032,7 @@ class RadarLedger:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             row = connection.execute(
-                "SELECT opportunity_key,status,reason FROM publication_requests WHERE request_id=?",
+                "SELECT * FROM publication_requests WHERE request_id=?",
                 (request_id,),
             ).fetchone()
             if row is None:
@@ -12897,6 +13041,13 @@ class RadarLedger:
                 raise LedgerError("publication request is not blocked")
             if row["reason"] != expected_reason:
                 raise LedgerError("publication block reason changed")
+            if not _publication_request_intent_is_active(
+                connection,
+                request_id=request_id,
+                opportunity_key=str(row["opportunity_key"]),
+                request_row=row,
+            ):
+                raise LedgerError("publication request intent is inactive")
             require_quarantine_clear(
                 connection,
                 opportunity_key=str(row["opportunity_key"]),
@@ -12942,6 +13093,24 @@ class RadarLedger:
                 opportunity_key=str(request["opportunity_key"]),
                 operation="publication grant",
             )
+            if not _publication_request_intent_is_active(
+                connection,
+                request_id=request_id,
+                opportunity_key=str(request["opportunity_key"]),
+                request_row=request,
+            ):
+                connection.execute(
+                    "UPDATE publication_permits SET status='BLOCKED',updated_at=? "
+                    "WHERE request_id=? AND status<>'CONSUMED'",
+                    (now, request_id),
+                )
+                connection.execute(
+                    "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? "
+                    "WHERE request_id=?",
+                    ("BLOCKED_TASK_INTENT_INACTIVE", now, request_id),
+                )
+                connection.commit()
+                raise LedgerError("publication request intent is inactive")
             request_payload = json.loads(request["request_json"])
             if not _publication_probe_valid(request_payload, evidence):
                 connection.execute(
@@ -13116,7 +13285,7 @@ class RadarLedger:
             if permit is None:
                 return None
             request_row = connection.execute(
-                "SELECT opportunity_key,request_json FROM publication_requests WHERE request_id=?",
+                "SELECT * FROM publication_requests WHERE request_id=?",
                 (permit["request_id"],),
             ).fetchone()
             if request_row is not None:
@@ -13220,17 +13389,33 @@ class RadarLedger:
                 if existing is not None:
                     return dict(existing) | {"created": False}
                 raise LedgerError("publication effect cannot be created after terminal publication")
-            if authorization is None or not _publication_probe_valid_json(
-                authorization["request_json"]
+            intent_active = bool(
+                authorization is not None
+                and _publication_request_intent_is_active(
+                    connection,
+                    request_id=str(authorization["request_id"]),
+                    opportunity_key=str(authorization["opportunity_key"]),
+                    request_json=str(authorization["request_json"]),
+                )
+            )
+            if (
+                authorization is None
+                or not intent_active
+                or not _publication_probe_valid_json(authorization["request_json"])
             ):
                 if authorization is not None:
+                    reason = (
+                        "BLOCKED_TASK_INTENT_INACTIVE"
+                        if not intent_active
+                        else "BLOCKED_REPRODUCTION_REQUIRED"
+                    )
                     connection.execute(
                         "UPDATE publication_permits SET status='BLOCKED',updated_at=? WHERE permit_id=?",
                         (now, permit_id),
                     )
                     connection.execute(
                         "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? WHERE request_id=?",
-                        ("BLOCKED_REPRODUCTION_REQUIRED", now, authorization["request_id"]),
+                        (reason, now, authorization["request_id"]),
                     )
                 blocked = True
             else:
@@ -13266,7 +13451,11 @@ class RadarLedger:
                     "created": True,
                 }
         if blocked:
-            raise LedgerError("publication effect blocked: authenticated reproduction is required")
+            raise LedgerError(
+                "publication effect blocked: task intent is inactive"
+                if authorization is not None and not intent_active
+                else "publication effect blocked: authenticated reproduction is required"
+            )
         raise LedgerError("publication effect could not be created")
 
     def resolve_publication_preflight(
@@ -13379,6 +13568,27 @@ class RadarLedger:
                 opportunity_key=str(row["opportunity_key"]),
                 operation="publication preflight recovery",
             )
+            request_row = connection.execute(
+                "SELECT * FROM publication_requests WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            if request_row is None or not _publication_request_intent_is_active(
+                connection,
+                request_id=request_id,
+                opportunity_key=str(row["opportunity_key"]),
+                request_row=request_row,
+            ):
+                connection.execute(
+                    "UPDATE publication_permits SET status='BLOCKED',updated_at=? "
+                    "WHERE permit_id=? AND status<>'CONSUMED'",
+                    (now, row["permit_id"]),
+                )
+                connection.execute(
+                    "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? "
+                    "WHERE request_id=? AND status<>'CONSUMED'",
+                    ("BLOCKED_TASK_INTENT_INACTIVE", now, request_id),
+                )
+                return False
             try:
                 failure = json.loads(row["result_json"])
             except json.JSONDecodeError:
@@ -13442,18 +13652,28 @@ class RadarLedger:
             if row is None:
                 return None
             request_row = connection.execute(
-                "SELECT opportunity_key,request_json FROM publication_requests WHERE request_id=?",
+                "SELECT * FROM publication_requests WHERE request_id=?",
                 (request_id,),
             ).fetchone()
             if request_row is None:
                 return None
-            if request_row is None or not _publication_probe_valid_json(
-                request_row["request_json"]
-            ):
+            intent_active = _publication_request_intent_is_active(
+                connection,
+                request_id=request_id,
+                opportunity_key=str(request_row["opportunity_key"]),
+                request_row=request_row,
+            )
+            probe_valid = _publication_probe_valid_json(request_row["request_json"])
+            if not intent_active or not probe_valid:
+                reason = (
+                    "BLOCKED_TASK_INTENT_INACTIVE"
+                    if not intent_active
+                    else "BLOCKED_REPRODUCTION_REQUIRED"
+                )
                 connection.execute(
                     "UPDATE publication_effects SET status='BLOCKED',result_json=?,updated_at=? WHERE effect_id=?",
                     (
-                        canonical_json({"ok": False, "reason": "BLOCKED_REPRODUCTION_REQUIRED"}),
+                        canonical_json({"ok": False, "reason": reason}),
                         now,
                         row["effect_id"],
                     ),
@@ -13464,7 +13684,7 @@ class RadarLedger:
                 )
                 connection.execute(
                     "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? WHERE request_id=?",
-                    ("BLOCKED_REPRODUCTION_REQUIRED", now, request_id),
+                    (reason, now, request_id),
                 )
                 return None
             require_quarantine_clear(
@@ -13547,7 +13767,7 @@ class RadarLedger:
             if effect is None or permit is None or effect["permit_id"] != permit_id:
                 raise LedgerError("publication retry binding mismatch")
             request_row = connection.execute(
-                "SELECT opportunity_key,request_json FROM publication_requests WHERE request_id=?",
+                "SELECT * FROM publication_requests WHERE request_id=?",
                 (permit["request_id"],),
             ).fetchone()
             if request_row is None:
@@ -13557,20 +13777,32 @@ class RadarLedger:
                 opportunity_key=str(request_row["opportunity_key"]),
                 operation="publication effect retry",
             )
-            if request_row is None or not _publication_probe_valid_json(
-                request_row["request_json"], evidence
-            ):
+            intent_active = _publication_request_intent_is_active(
+                connection,
+                request_id=str(permit["request_id"]),
+                opportunity_key=str(request_row["opportunity_key"]),
+                request_row=request_row,
+            )
+            probe_valid = _publication_probe_valid_json(request_row["request_json"], evidence)
+            if not intent_active or not probe_valid:
+                reason = (
+                    "BLOCKED_TASK_INTENT_INACTIVE"
+                    if not intent_active
+                    else "BLOCKED_REPRODUCTION_REQUIRED"
+                )
                 connection.execute(
                     "UPDATE publication_permits SET status='BLOCKED',updated_at=? WHERE permit_id=?",
                     (now, permit_id),
                 )
                 connection.execute(
                     "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? WHERE request_id=?",
-                    ("BLOCKED_REPRODUCTION_REQUIRED", now, permit["request_id"]),
+                    (reason, now, permit["request_id"]),
                 )
                 connection.commit()
                 raise LedgerError(
-                    "publication retry blocked: authenticated reproduction is required"
+                    "publication retry blocked: task intent is inactive"
+                    if not intent_active
+                    else "publication retry blocked: authenticated reproduction is required"
                 )
             if effect["status"] != "RECONCILE_REQUIRED":
                 raise LedgerError("publication effect is not awaiting reconciliation")
@@ -13643,6 +13875,23 @@ class RadarLedger:
                 (request_id,),
             ).fetchone()
             if request_row is None or request_row["status"] == "CONSUMED":
+                return None
+            if not _publication_request_intent_is_active(
+                connection,
+                request_id=request_id,
+                opportunity_key=str(request_row["opportunity_key"]),
+                request_row=request_row,
+            ):
+                connection.execute(
+                    "UPDATE publication_permits SET status='BLOCKED',updated_at=? "
+                    "WHERE request_id=? AND status<>'CONSUMED'",
+                    (now, request_id),
+                )
+                connection.execute(
+                    "UPDATE publication_requests SET status='BLOCKED',reason=?,updated_at=? "
+                    "WHERE request_id=? AND status<>'CONSUMED'",
+                    ("BLOCKED_TASK_INTENT_INACTIVE", now, request_id),
+                )
                 return None
             require_quarantine_clear(
                 connection,
@@ -13878,17 +14127,61 @@ class RadarLedger:
                     previous["thread_id"] if previous is not None else None,
                     previous["worktree_path"] if previous is not None else None,
                 )
+
+                def previous_event_is_bound(
+                    event_type: str,
+                    dedupe_key: str,
+                    *,
+                    _previous=previous,
+                    _previous_identity=previous_identity,
+                    _key=key,
+                ) -> bool:
+                    """Match a prior wake event to the exact stored intent.
+
+                    Wake digests are content-derived and therefore not task
+                    identities.  Looking them up by opportunity alone lets a
+                    replay from an older intent generation close the newer
+                    generation's follow-up.  Resolve the event payload first
+                    and require the binding columns on ``previous`` to agree.
+                    An incomplete legacy row is deliberately treated as
+                    unresolved instead of guessed from recency.
+                    """
+
+                    if _previous is None or not all(_previous_identity):
+                        return False
+                    rows = connection.execute(
+                        """SELECT payload_json FROM events
+                           WHERE opportunity_key=? AND event_type=?
+                             AND dedupe_key=?""",
+                        (_key, event_type, dedupe_key),
+                    ).fetchall()
+                    for event_row in rows:
+                        try:
+                            event_payload = json.loads(event_row["payload_json"] or "{}")
+                        except (TypeError, json.JSONDecodeError):
+                            continue
+                        event_binding = _resolve_event_intent_binding(
+                            connection,
+                            opportunity_key=_key,
+                            payload=event_payload,
+                        )
+                        if (
+                            event_binding is not None
+                            and str(event_binding["intent_id"] or "") == str(_previous_identity[0])
+                            and str(event_binding["thread_id"] or "") == str(_previous_identity[1])
+                            and event_binding["worktree_path"] is not None
+                            and _resolved_path_equal(
+                                str(event_binding["worktree_path"]),
+                                str(_previous_identity[2]),
+                            )
+                        ):
+                            return True
+                    return False
+
                 previous_wake_active = False
                 if previous is not None and previous["wake_digest"]:
-                    previous_wake_active = (
-                        connection.execute(
-                            """SELECT 1 FROM events
-                               WHERE opportunity_key=?
-                                 AND event_type='PR_FOLLOWUP_RESULT_INGESTED'
-                                 AND dedupe_key=? LIMIT 1""",
-                            (key, previous["wake_digest"]),
-                        ).fetchone()
-                        is None
+                    previous_wake_active = not previous_event_is_bound(
+                        "PR_FOLLOWUP_RESULT_INGESTED", str(previous["wake_digest"])
                     )
                 if previous_wake_active and all(previous_identity):
                     # Keep an in-flight wake attached to the task that created
@@ -13948,20 +14241,20 @@ class RadarLedger:
                     required = False
                 preserved_resolution_scope = False
                 if required and previous is not None:
-                    authorized_wake_completed = connection.execute(
-                        """SELECT 1 FROM events
-                           WHERE opportunity_key=?
-                             AND event_type='PR_FOLLOWUP_RESULT_INGESTED'
-                             AND dedupe_key=? LIMIT 1""",
-                        (key, str(previous["wake_digest"] or "")),
-                    ).fetchone()
-                    authorized_wake_reserved = connection.execute(
-                        """SELECT 1 FROM events
-                           WHERE opportunity_key=?
-                             AND event_type='PR_FOLLOWUP_RESERVED'
-                             AND dedupe_key=? LIMIT 1""",
-                        (key, str(previous["wake_digest"] or "")),
-                    ).fetchone()
+                    authorized_wake_completed = (
+                        object()
+                        if previous_event_is_bound(
+                            "PR_FOLLOWUP_RESULT_INGESTED", str(previous["wake_digest"] or "")
+                        )
+                        else None
+                    )
+                    authorized_wake_reserved = (
+                        object()
+                        if previous_event_is_bound(
+                            "PR_FOLLOWUP_RESERVED", str(previous["wake_digest"] or "")
+                        )
+                        else None
+                    )
                     previous_evidence = json.loads(previous["evidence_json"])
                     previous_receipt = (
                         previous_evidence.get("mergeResolutionScopeReceipt")

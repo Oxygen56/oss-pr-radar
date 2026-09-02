@@ -2539,6 +2539,81 @@ def test_audited_probe_paths_reject_receipt_bound_to_another_intent(tmp_path):
         )
 
 
+def test_audited_probe_paths_same_digest_still_requires_exact_intent_binding(tmp_path):
+    """A foreign audit row cannot satisfy an identical receipt digest."""
+
+    base_sha = "a" * 40
+    receipt = repository_path_receipt(base_sha, ["src/shared.py"])
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            probeReceiptDigest=receipt["receiptDigest"],
+            codePaths=["src/controller.py"],
+            preTaskEvidence={
+                "baseSha": base_sha,
+                "codePathsPlan": ["src/controller.py"],
+            },
+        )
+    )
+    store.claim("intent-1", "worker-1")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker-1",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree-1",
+    )
+    second_intent = intent(
+        intentId="intent-2",
+        decisionDigest="decision-2",
+        selectedBaseSha=base_sha,
+        probeReceiptDigest=receipt["receiptDigest"],
+        codePaths=["src/shared.py"],
+        preTaskEvidence={"baseSha": base_sha, "codePathsPlan": ["src/shared.py"]},
+    )
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES (?,?,?,'DISPATCHED',?,?,?,?,?,?,?)""",
+            (
+                "intent-2",
+                "a/b#1",
+                "decision-2",
+                second_intent["issuedAt"],
+                second_intent["expiresAt"],
+                "thread-2",
+                "repo-project",
+                "/tmp/worktree-2",
+                json.dumps(second_intent, sort_keys=True),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+    store.record_audit_snapshot(
+        "a/b#1",
+        evidence={
+            "liveAudit": {
+                "evidence": {
+                    "issue": {"state": "open"},
+                    "repoProbeReceipt": receipt,
+                }
+            }
+        },
+        dedupe_key="intent-2:shared-receipt",
+    )
+
+    with pytest.raises(LedgerError, match="digest is unavailable"):
+        store.audited_probe_code_paths(
+            intent_id="intent-1",
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            worktree_path="/tmp/worktree-1",
+            expected_base_sha=base_sha,
+        )
+
+
 def test_live_audit_binding_reuses_canonical_receipt_across_timestamp_refresh(tmp_path):
     base_sha = "a" * 40
     first_receipt = repository_path_receipt(base_sha, ["src/runtime.py"])
@@ -8211,6 +8286,7 @@ def test_publication_drift_rearm_stays_with_source_intent_after_rollover(tmp_pat
         issuedAt=iso_z(datetime.now(UTC) + timedelta(seconds=1)),
         expiresAt=iso_z(datetime.now(UTC) + timedelta(hours=2)),
     )
+
     with store.connect() as connection:
         connection.execute(
             """INSERT INTO intents
@@ -8252,6 +8328,111 @@ def test_publication_drift_rearm_stays_with_source_intent_after_rollover(tmp_pat
             (key,),
         ).fetchone()
     assert rearm["count"] == 1
+
+
+def test_pr_followup_import_ignores_foreign_same_wake_result_after_rollover(tmp_path):
+    """A result from the replacement intent must not close the old wake."""
+
+    store = RadarLedger(tmp_path / "followup-foreign-result.sqlite3")
+    key = _make_pr_followup_candidate(store)
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE pr_followups SET wake_digest=? WHERE opportunity_key=?",
+            ("w" * 64, key),
+        )
+
+    _insert_rollover_intent(
+        store,
+        key=key,
+        intent_id="intent-new",
+        thread_id="thread-new",
+        worktree_path="/tmp/worktree-new",
+        result_receipt_digest="new-result",
+        status="COMPLETED",
+    )
+    with store.connect() as connection:
+        now = iso_z(datetime.now(UTC))
+        request_payload = {
+            "intentId": "intent-new",
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "threadId": "thread-new",
+            "worktreePath": "/tmp/worktree-new",
+        }
+        connection.execute(
+            """INSERT INTO publication_requests
+               (request_id,opportunity_key,thread_id,commit_sha,branch,worktree_path,
+                evidence_digest,status,request_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,'CONSUMED',?,?,?)""",
+            (
+                "request-new",
+                key,
+                "thread-new",
+                "c" * 40,
+                "fix/new",
+                "/tmp/worktree-new",
+                "evidence-new",
+                json.dumps(request_payload, sort_keys=True),
+                now,
+                now,
+            ),
+        )
+        connection.execute(
+            """INSERT INTO publication_permits
+               (permit_id,request_id,issue_url,commit_sha,branch,status,expires_at,pr_url,
+                evidence_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,'CONSUMED',?,?,'{}',?,?)""",
+            (
+                "permit-new",
+                "request-new",
+                "https://github.com/a/b/issues/1",
+                "c" * 40,
+                "fix/new",
+                iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                "https://github.com/a/b/pull/9",
+                now,
+                now,
+            ),
+        )
+        # Deliberately attribute the shared wake digest to the replacement
+        # intent.  A digest alone is not an immutable task identity.
+        store._event(
+            connection,
+            key,
+            "PR_FOLLOWUP_RESULT_INGESTED",
+            "w" * 64,
+            {
+                "intentId": "intent-new",
+                "threadId": "thread-new",
+                "worktreePath": "/tmp/worktree-new",
+                "wakeDigest": "w" * 64,
+            },
+            now,
+        )
+
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": iso_z(datetime.now(UTC) + timedelta(minutes=1)),
+            "items": [
+                {
+                    "url": "https://github.com/a/b/pull/9",
+                    "headSha": "b" * 40,
+                    "actionDigest": "action-new",
+                    "taskActionDigest": "task-action-new",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["current branch check failed"],
+                    "evidence": {"actionableCheckNames": ["Ruff"]},
+                    "checkedAt": iso_z(datetime.now(UTC) + timedelta(minutes=1)),
+                }
+            ],
+        }
+    )
+    with store.connect() as connection:
+        followup = connection.execute(
+            "SELECT intent_id,thread_id,worktree_path FROM pr_followups WHERE opportunity_key=?",
+            (key,),
+        ).fetchone()
+    assert tuple(followup) == ("intent-1", "thread-1", "/tmp/worktree")
 
 
 def test_legacy_publication_drift_rearm_accepts_unique_thread_worktree_binding(
@@ -9665,6 +9846,67 @@ def test_post_push_confirmation_recovers_legacy_head_drift_failure(tmp_path):
     assert store.publication_request(request_id)["status"] == "BLOCKED"
     assert store.publication_request(request_id)["reason"] == "BLOCKED_REPRODUCTION_REQUIRED"
     assert store.publication_work_items() == []
+
+
+def test_publication_request_cannot_reauthorize_superseded_intent(tmp_path):
+    store, args = publication_request_fixture(tmp_path)
+    request = store.create_publication_request(**args)
+    with store.connect() as connection:
+        connection.execute("UPDATE intents SET status='SUPERSEDED' WHERE intent_id='intent-1'")
+    _insert_rollover_intent(
+        store,
+        key="a/b#1",
+        intent_id="intent-2",
+        thread_id="thread-2",
+        worktree_path="/tmp/replacement-worktree",
+        status="DISPATCHED",
+    )
+
+    # The old request remains in the submit-ready opportunity row, but its
+    # immutable intent generation is no longer active.
+    assert store.publication_work_items() == []
+    with pytest.raises(LedgerError, match="publication task intent is inactive"):
+        store.create_publication_request(**args)
+    with pytest.raises(LedgerError, match="publication request intent is inactive"):
+        store.grant_publication_request(
+            request["request_id"],
+            issue_url=args["issue_url"],
+            commit_sha=args["commit_sha"],
+            branch=args["branch"],
+            evidence={"verified": True},
+        )
+    stale = store.publication_request(request["request_id"])
+    assert stale["status"] == "BLOCKED"
+    assert stale["reason"] == "BLOCKED_TASK_INTENT_INACTIVE"
+    with pytest.raises(LedgerError, match="publication request intent is inactive"):
+        store.retry_blocked_publication_request(
+            request["request_id"], expected_reason="BLOCKED_TASK_INTENT_INACTIVE"
+        )
+
+    # Clearing a task quarantine must not bulk-reopen the superseded request
+    # merely because it shares the opportunity key with the replacement.
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE publication_requests SET status='BLOCKED',reason='BLOCKED_REPRODUCTION_REQUIRED' "
+            "WHERE request_id=?",
+            (request["request_id"],),
+        )
+        from oss_pr_radar.task_quarantine import record
+
+        record(
+            connection,
+            opportunity_key="a/b#1",
+            reason="STALE_INTENT_RECHECK",
+            dedupe_key="stale-intent",
+            payload={"test": True},
+            created_at=iso_z(datetime.now(UTC)),
+        )
+    store.clear_task_quarantine(
+        "a/b#1",
+        reason="STALE_INTENT_RECHECK",
+        evidence={"revalidated": True},
+    )
+    assert store.publication_request(request["request_id"])["status"] == "BLOCKED"
 
 
 def test_interrupted_push_effect_can_retry_after_confirmed_noop(tmp_path):
@@ -12960,9 +13202,38 @@ def test_validation_followup_rollover_is_bound_to_current_intent(tmp_path):
         result_digest="new-result",
         missing=["independent_review_passed"],
     )
+    store.record_validation_prefetch_blocked(
+        key="a/b#1",
+        thread_id="shared-thread",
+        worktree_path="/tmp/validation-new",
+        intent_id="intent-2",
+        result_digest="new-result",
+        dependency_failures=[{"name": "pytest", "reason": "missing"}],
+    )
+    # A late delivery from the superseded generation must not hide the
+    # deferred result (or its prefetch blocker) for the replacement intent.
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "TASK_RESULT_VALIDATION_DEFERRED",
+            "old-result-late",
+            {
+                "intentId": "intent-1",
+                "threadId": "shared-thread",
+                "worktreePath": "/tmp/validation-old",
+                "resultDigest": "old-result-late",
+                "missing": ["relevant_tests_green"],
+            },
+            iso_z(datetime.now(UTC) + timedelta(minutes=1)),
+        )
 
     candidates = store.validation_followup_candidates()
     assert [(item["intentId"], item["worktreePath"]) for item in candidates] == [
+        ("intent-2", "/tmp/validation-new")
+    ]
+    blocked = store.validation_prefetch_blocked()
+    assert [(item["intentId"], item["worktreePath"]) for item in blocked] == [
         ("intent-2", "/tmp/validation-new")
     ]
     with pytest.raises(LedgerError):
