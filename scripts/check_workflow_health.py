@@ -116,9 +116,7 @@ def _job_conclusions(jobs: list[dict]) -> dict[str, str]:
         name: (
             "success"
             if all(conclusion == "success" for conclusion in conclusions)
-            else next(
-                conclusion for conclusion in conclusions if conclusion != "success"
-            )
+            else next(conclusion for conclusion in conclusions if conclusion != "success")
         )
         for name, conclusions in grouped.items()
     }
@@ -144,7 +142,9 @@ def _natural_chain_issues(conclusions: dict[str, str]) -> list[str]:
     """Require every business job and the terminal proof job to finish successfully."""
 
     issues: list[str] = []
-    missing = [name for name in (*_NATURAL_REQUIRED_JOBS, _FULL_CHAIN_PROOF_JOB) if name not in conclusions]
+    missing = [
+        name for name in (*_NATURAL_REQUIRED_JOBS, _FULL_CHAIN_PROOF_JOB) if name not in conclusions
+    ]
     if missing:
         issues.append("NATURAL_FULL_CHAIN_PROOF_MISSING")
     failed = [
@@ -267,9 +267,8 @@ def workflow_component_health(
             # A schedule-canary-only run is not a failed scan and must not hide
             # an older manual scan; it is simply not usable as scan evidence.
             if natural_issues:
-                if (
-                    "NATURAL_FULL_CHAIN_PROOF_MISSING" in natural_issues
-                    and not any(name in conclusions for name in _NATURAL_REQUIRED_JOBS)
+                if "NATURAL_FULL_CHAIN_PROOF_MISSING" in natural_issues and not any(
+                    name in conclusions for name in _NATURAL_REQUIRED_JOBS
                 ):
                     continue
                 return {
@@ -392,7 +391,11 @@ def health(
     proof_required = natural_full_chain_run_ids is not None
     proven_ids = set(natural_full_chain_run_ids or ())
     scheduled = _ordered_runs(
-        [item for item in workflow_runs if isinstance(item, dict) and item.get("event") == "schedule"]
+        [
+            item
+            for item in workflow_runs
+            if isinstance(item, dict) and item.get("event") == "schedule"
+        ]
     )
     successful = [
         item
@@ -400,10 +403,7 @@ def health(
         if item.get("conclusion") == "success"
         and (
             not proof_required
-            or (
-                str(item.get("id", "")).isdigit()
-                and int(item["id"]) in proven_ids
-            )
+            or (str(item.get("id", "")).isdigit() and int(item["id"]) in proven_ids)
         )
     ]
     issues: list[str] = []

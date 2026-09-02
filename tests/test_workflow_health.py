@@ -657,11 +657,11 @@ def test_component_health_ignores_schedule_canary_after_cancelled_dispatch(monke
     monkeypatch.setattr(
         MODULE,
         "github_json",
-        lambda path: {
-            "jobs": [{"name": "schedule-canary", "conclusion": "success"}]
-        }
-        if path.endswith("/jobs?per_page=100")
-        else pytest.fail(path),
+        lambda path: (
+            {"jobs": [{"name": "schedule-canary", "conclusion": "success"}]}
+            if path.endswith("/jobs?per_page=100")
+            else pytest.fail(path)
+        ),
     )
 
     result = MODULE.workflow_component_health("a/b", workflow_runs)
