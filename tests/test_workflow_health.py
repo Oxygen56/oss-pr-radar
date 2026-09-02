@@ -128,12 +128,68 @@ def test_latest_failed_natural_schedule_is_not_masked_by_prior_success():
             "conclusion": "success",
             "created_at": "2026-08-04T01:15:00Z",
             "updated_at": "2026-08-04T01:30:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/1",
         },
     ]
 
     result = MODULE.health(runs, now=NOW, natural_full_chain_run_ids={1})
 
     assert result["healthy"] is False
+    assert "NATURAL_SCHEDULE_RUN_FAILED" in result["issues"]
+
+
+def test_latest_unproven_natural_success_is_not_masked_by_prior_proven_success():
+    runs = [
+        {
+            "id": 1,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-08-04T01:15:00Z",
+            "updated_at": "2026-08-04T01:30:00Z",
+        },
+        {
+            "id": 2,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-08-04T01:50:00Z",
+            "updated_at": "2026-08-04T01:55:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/2",
+        },
+    ]
+
+    result = MODULE.health(runs, now=NOW, natural_full_chain_run_ids={1})
+
+    assert result["healthy"] is False
+    assert "NATURAL_SCHEDULE_FULL_CHAIN_UNPROVEN" in result["issues"]
+
+
+def test_health_orders_schedule_rows_by_creation_time_before_selecting_latest():
+    runs = [
+        {
+            "id": 1,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-08-04T01:15:00Z",
+            "updated_at": "2026-08-04T01:30:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/1",
+        },
+        {
+            "id": 2,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "failure",
+            "created_at": "2026-08-04T01:50:00Z",
+            "updated_at": "2026-08-04T01:55:00Z",
+            "html_url": "https://github.com/a/b/actions/runs/2",
+        },
+    ]
+
+    result = MODULE.health(runs, now=NOW, natural_full_chain_run_ids={1})
+
+    assert result["latestScheduleUrl"].endswith("/2")
     assert "NATURAL_SCHEDULE_RUN_FAILED" in result["issues"]
 
 
@@ -394,6 +450,7 @@ def test_component_health_checks_each_required_job_below_green_run(monkeypatch):
                 "jobs": [
                     {"name": name, "conclusion": "success"}
                     for name in (
+                        "watch",
                         "scan",
                         "pr-followup",
                         "build-state",
@@ -438,6 +495,57 @@ def test_component_health_requires_full_chain_proof_for_natural_run(monkeypatch)
     assert result["scanSucceeded"] is True
 
 
+def test_component_health_requires_watch_for_manual_fallback(monkeypatch):
+    manual = {
+        "id": 13,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-04T01:20:00Z",
+        "updated_at": "2026-08-04T01:30:00Z",
+    }
+    jobs = [
+        {"name": name, "conclusion": "success"}
+        for name in (
+            "scan",
+            "pr-followup",
+            "build-state",
+            "persist-pending",
+            "notify",
+            "persist-receipt",
+        )
+    ]
+    monkeypatch.setattr(MODULE, "github_json", lambda _path: {"jobs": jobs})
+
+    result = MODULE.workflow_component_health("a/b", [manual])
+
+    assert result["healthy"] is False
+    assert result["issues"] == ["WATCH_DEGRADED"]
+
+
+def test_duplicate_job_name_cannot_hide_a_failure(monkeypatch):
+    natural = {
+        "id": 14,
+        "event": "schedule",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-04T01:20:00Z",
+        "updated_at": "2026-08-04T01:30:00Z",
+    }
+    jobs = [
+        {"name": name, "conclusion": "success"}
+        for name in (*MODULE._NATURAL_REQUIRED_JOBS, MODULE._FULL_CHAIN_PROOF_JOB)
+    ]
+    jobs.append({"name": "scan", "conclusion": "failure"})
+    monkeypatch.setattr(MODULE, "github_json", lambda _path: {"jobs": jobs})
+
+    result = MODULE.workflow_component_health("a/b", [natural])
+
+    assert result["healthy"] is False
+    assert result["jobs"]["scan"] == "failure"
+    assert result["naturalFullChainProven"] is False
+
+
 def test_component_health_rejects_natural_run_with_skipped_business_job(monkeypatch):
     natural = {
         "id": 12,
@@ -478,6 +586,51 @@ def test_proven_natural_ids_cover_only_jobs_api_verified_runs(monkeypatch):
     monkeypatch.setattr(MODULE, "github_json", fake_json)
 
     assert MODULE.proven_natural_schedule_run_ids("a/b", workflow_runs) == {21}
+
+
+def test_proven_natural_ids_bound_jobs_queries_to_window_and_reuse_cache(monkeypatch):
+    workflow_runs = [
+        {
+            "id": number,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": (NOW - timedelta(minutes=30 * number)).isoformat(),
+            "updated_at": (NOW - timedelta(minutes=30 * number - 5)).isoformat(),
+        }
+        for number in range(30)
+    ]
+    calls = []
+    jobs = [
+        {"name": name, "conclusion": "success"}
+        for name in (*MODULE._NATURAL_REQUIRED_JOBS, MODULE._FULL_CHAIN_PROOF_JOB)
+    ]
+
+    def fake_json(path):
+        calls.append(path)
+        return {"jobs": jobs}
+
+    monkeypatch.setattr(MODULE, "github_json", fake_json)
+    cache = {}
+
+    first = MODULE.proven_natural_schedule_run_ids(
+        "a/b",
+        workflow_runs,
+        cache,
+        now=NOW,
+        coverage_window_hours=6,
+    )
+    second = MODULE.proven_natural_schedule_run_ids(
+        "a/b",
+        workflow_runs,
+        cache,
+        now=NOW,
+        coverage_window_hours=6,
+    )
+
+    assert first == second
+    assert len(calls) <= 6
+    assert len(calls) == len(cache)
 
 
 def test_component_health_ignores_schedule_canary_after_cancelled_dispatch(monkeypatch):
@@ -549,6 +702,7 @@ def test_component_health_cancelled_run_does_not_hide_previous_failure(monkeypat
             {
                 "jobs": [
                     {"name": "scan", "conclusion": "failure"},
+                    {"name": "watch", "conclusion": "success"},
                     {"name": "pr-followup", "conclusion": "success"},
                     {"name": "build-state", "conclusion": "success"},
                     {"name": "persist-pending", "conclusion": "success"},
@@ -615,6 +769,7 @@ def test_component_health_exposes_followup_failure_without_discarding_fresh_scan
     ]
     conclusions = {
         "scan": "success",
+        "watch": "success",
         "pr-followup": "failure",
         "build-state": "success",
         "persist-pending": "success",

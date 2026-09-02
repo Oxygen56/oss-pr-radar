@@ -33,8 +33,13 @@ _NATURAL_REQUIRED_JOBS = (
     "persist-receipt",
 )
 _FULL_CHAIN_PROOF_JOB = "full-chain-proof"
+# Manual dispatch is still a supported fallback, but it must execute the
+# complete business chain too.  In particular, a green scan without watch is
+# not a usable run because scan consumes watch's artifact.
+_MANUAL_REQUIRED_JOBS = _NATURAL_REQUIRED_JOBS
 _STATE_JOBS = {"build-state", "persist-pending", "persist-receipt"}
 _MANAGED_FOLLOWUP_MAX_AGE = timedelta(minutes=150)
+_UTC_MIN = datetime.min.replace(tzinfo=UTC)
 
 
 def github_json(path: str) -> object:
@@ -71,20 +76,68 @@ def runs(repo: str) -> list[dict]:
     return value.get("workflow_runs") or []
 
 
-def _run_jobs(repo: str, run_id: int) -> list[dict] | None:
+def _run_jobs(
+    repo: str,
+    run_id: int,
+    jobs_cache: dict[int, list[dict] | None] | None = None,
+) -> list[dict] | None:
     """Return the jobs for a run, or ``None`` when the API response is unusable."""
 
-    value = github_json(f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100")
+    if jobs_cache is not None and run_id in jobs_cache:
+        return jobs_cache[run_id]
+
+    try:
+        value = github_json(f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100")
+    except (RuntimeError, TypeError, ValueError):
+        # Cache an unavailable response too.  A transient failure must not be
+        # retried once per historical run by the same health invocation.
+        if jobs_cache is not None:
+            jobs_cache[run_id] = None
+        raise
     jobs = value.get("jobs") if isinstance(value, dict) else None
-    return jobs if isinstance(jobs, list) else None
+    result = jobs if isinstance(jobs, list) else None
+    if jobs_cache is not None:
+        jobs_cache[run_id] = result
+    return result
 
 
 def _job_conclusions(jobs: list[dict]) -> dict[str, str]:
+    # A rerun/matrix can expose the same display name more than once.  Never
+    # let a later successful entry overwrite an earlier failure; a chain is
+    # healthy only when every occurrence of a required job succeeded.
+    grouped: dict[str, list[str]] = {}
+    for job in jobs:
+        if not isinstance(job, dict) or not job.get("name"):
+            continue
+        name = str(job["name"])
+        conclusion = str(job.get("conclusion") or job.get("status") or "unknown")
+        grouped.setdefault(name, []).append(conclusion)
     return {
-        str(job.get("name")): str(job.get("conclusion") or job.get("status") or "unknown")
-        for job in jobs
-        if isinstance(job, dict) and job.get("name")
+        name: (
+            "success"
+            if all(conclusion == "success" for conclusion in conclusions)
+            else next(
+                conclusion for conclusion in conclusions if conclusion != "success"
+            )
+        )
+        for name, conclusions in grouped.items()
     }
+
+
+def _run_time(item: dict, *, field: str = "created_at") -> datetime:
+    """Parse a run timestamp without allowing one malformed row to abort health."""
+
+    value = item.get(field) or item.get("updated_at") or item.get("created_at")
+    if not value:
+        return _UTC_MIN
+    try:
+        return parse_time(str(value))
+    except (TypeError, ValueError):
+        return _UTC_MIN
+
+
+def _ordered_runs(items: list[dict], *, field: str = "created_at") -> list[dict]:
+    return sorted(items, key=lambda item: _run_time(item, field=field), reverse=True)
 
 
 def _natural_chain_issues(conclusions: dict[str, str]) -> list[str]:
@@ -104,20 +157,47 @@ def _natural_chain_issues(conclusions: dict[str, str]) -> list[str]:
     return issues
 
 
-def proven_natural_schedule_run_ids(repo: str, workflow_runs: list[dict]) -> set[int]:
+def proven_natural_schedule_run_ids(
+    repo: str,
+    workflow_runs: list[dict],
+    jobs_cache: dict[int, list[dict] | None] | None = None,
+    *,
+    now: datetime | None = None,
+    coverage_window_hours: int = 12,
+) -> set[int]:
     """Find successful schedule runs whose Jobs API proves the complete chain."""
 
-    proven: set[int] = set()
-    for item in workflow_runs:
-        if (
-            item.get("event") != _NATURAL_EVENT
-            or item.get("status") != "completed"
-            or item.get("conclusion") != "success"
-            or not str(item.get("id", "")).isdigit()
-        ):
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    window_hours = max(6, min(int(coverage_window_hours), 24))
+    # Health only consumes proof for the rolling coverage window and the
+    # four-hour freshness check.  The window is deliberately bounded so a
+    # long history of old canary runs cannot trigger one Jobs API request each.
+    cutoff = current - timedelta(hours=max(window_hours, 4))
+    candidates = []
+    for item in _ordered_runs(
+        [
+            item
+            for item in workflow_runs
+            if isinstance(item, dict)
+            and item.get("event") == _NATURAL_EVENT
+            and item.get("status") == "completed"
+            and item.get("conclusion") == "success"
+            and str(item.get("id", "")).isdigit()
+        ]
+    ):
+        # Real GitHub rows always have created_at.  Keep timestamp-less test or
+        # degraded rows eligible, but cap them below so they cannot reintroduce
+        # the old 100-request scan storm.
+        item_time = _run_time(item)
+        if item_time != _UTC_MIN and item_time < cutoff:
             continue
+        candidates.append(item)
+    candidates = candidates[: max(6, window_hours)]
+
+    proven: set[int] = set()
+    for item in candidates:
         try:
-            jobs = _run_jobs(repo, int(item["id"]))
+            jobs = _run_jobs(repo, int(item["id"]), jobs_cache)
         except (RuntimeError, TypeError, ValueError):
             continue
         if jobs is not None and not _natural_chain_issues(_job_conclusions(jobs)):
@@ -125,7 +205,11 @@ def proven_natural_schedule_run_ids(repo: str, workflow_runs: list[dict]) -> set
     return proven
 
 
-def workflow_component_health(repo: str, workflow_runs: list[dict]) -> dict:
+def workflow_component_health(
+    repo: str,
+    workflow_runs: list[dict],
+    jobs_cache: dict[int, list[dict] | None] | None = None,
+) -> dict:
     """Assess the latest completed full chain below its aggregate conclusion.
 
     A scheduled run is only evidence of a real scan when the Jobs API shows all
@@ -143,11 +227,7 @@ def workflow_component_health(repo: str, workflow_runs: list[dict]) -> dict:
         and item.get("id")
         and (item.get("updated_at") or item.get("created_at"))
     ]
-    ordered = sorted(
-        completed,
-        key=lambda item: parse_time(str(item.get("updated_at") or item.get("created_at"))),
-        reverse=True,
-    )
+    ordered = _ordered_runs(completed, field="updated_at")
     if not ordered:
         return {
             "assessed": False,
@@ -165,7 +245,7 @@ def workflow_component_health(repo: str, workflow_runs: list[dict]) -> dict:
             "runUpdatedAt": latest.get("updated_at") or latest.get("created_at"),
         }
         try:
-            jobs = _run_jobs(repo, run_id)
+            jobs = _run_jobs(repo, run_id, jobs_cache)
         except (RuntimeError, TypeError, ValueError) as exc:
             return {
                 **base,
@@ -210,14 +290,17 @@ def workflow_component_health(repo: str, workflow_runs: list[dict]) -> dict:
             }
         issues: list[str] = []
         scan_succeeded = conclusions.get("scan") == "success"
-        if not scan_succeeded:
-            issues.append("SCAN_JOB_DEGRADED")
-        if conclusions.get("pr-followup") != "success":
-            issues.append("PR_FOLLOWUP_DEGRADED")
-        if any(conclusions.get(name) != "success" for name in _STATE_JOBS):
-            issues.append("STATE_PERSISTENCE_DEGRADED")
-        if conclusions.get("notify") != "success":
-            issues.append("NOTIFICATION_DEGRADED")
+        if any(conclusions.get(name) != "success" for name in _MANUAL_REQUIRED_JOBS):
+            if conclusions.get("watch") != "success":
+                issues.append("WATCH_DEGRADED")
+            if not scan_succeeded:
+                issues.append("SCAN_JOB_DEGRADED")
+            if conclusions.get("pr-followup") != "success":
+                issues.append("PR_FOLLOWUP_DEGRADED")
+            if any(conclusions.get(name) != "success" for name in _STATE_JOBS):
+                issues.append("STATE_PERSISTENCE_DEGRADED")
+            if conclusions.get("notify") != "success":
+                issues.append("NOTIFICATION_DEGRADED")
         return {
             **base,
             "healthy": not issues,
@@ -235,10 +318,14 @@ def workflow_component_health(repo: str, workflow_runs: list[dict]) -> dict:
 
 
 def github_actions_external_blocker(repo: str, workflow_runs: list[dict]) -> dict | None:
+    ordered = _ordered_runs(
+        [item for item in workflow_runs if isinstance(item, dict)],
+        field="updated_at",
+    )
     latest_success_at = max(
         (
-            parse_time(str(item.get("updated_at") or item.get("created_at")))
-            for item in workflow_runs
+            _run_time(item, field="updated_at")
+            for item in ordered
             if item.get("event") == _FULL_SCAN_EVENT
             and item.get("conclusion") == "success"
             and (item.get("updated_at") or item.get("created_at"))
@@ -248,15 +335,14 @@ def github_actions_external_blocker(repo: str, workflow_runs: list[dict]) -> dic
     failed = next(
         (
             item
-            for item in workflow_runs
+            for item in ordered
             if item.get("event") == _FULL_SCAN_EVENT
             and item.get("conclusion") == "failure"
             and item.get("id")
             and (
                 latest_success_at is None
                 or not (item.get("updated_at") or item.get("created_at"))
-                or parse_time(str(item.get("updated_at") or item.get("created_at")))
-                > latest_success_at
+                or _run_time(item, field="updated_at") > latest_success_at
             )
         ),
         None,
@@ -300,14 +386,25 @@ def health(
     natural_full_chain_run_ids: set[int] | None = None,
 ) -> dict:
     current = (now or datetime.now(UTC)).astimezone(UTC)
-    proven_ids = natural_full_chain_run_ids or set()
-    scheduled = [item for item in workflow_runs if item.get("event") == "schedule"]
+    # ``None`` is retained as a compatibility mode for callers that used this
+    # pure function before Jobs-API proof existed.  The production entrypoint
+    # always passes an explicit set (possibly empty), which is fail-closed.
+    proof_required = natural_full_chain_run_ids is not None
+    proven_ids = set(natural_full_chain_run_ids or ())
+    scheduled = _ordered_runs(
+        [item for item in workflow_runs if isinstance(item, dict) and item.get("event") == "schedule"]
+    )
     successful = [
         item
         for item in scheduled
         if item.get("conclusion") == "success"
-        and str(item.get("id", "")).isdigit()
-        and int(item["id"]) in proven_ids
+        and (
+            not proof_required
+            or (
+                str(item.get("id", "")).isdigit()
+                and int(item["id"]) in proven_ids
+            )
+        )
     ]
     issues: list[str] = []
     coverage_warnings: list[str] = []
@@ -315,15 +412,30 @@ def health(
     latest_success = successful[0] if successful else None
     if not latest_schedule:
         issues.append("NO_NATURAL_SCHEDULE_RUN")
-    elif parse_time(latest_schedule["created_at"]) < current - timedelta(hours=2, minutes=30):
+    elif _run_time(latest_schedule) == _UTC_MIN or _run_time(latest_schedule) < current - timedelta(
+        hours=2, minutes=30
+    ):
         issues.append("NATURAL_SCHEDULE_STALE")
+    latest_is_proven = bool(
+        latest_schedule
+        and latest_schedule.get("conclusion") == "success"
+        and (
+            not proof_required
+            or (
+                str(latest_schedule.get("id", "")).isdigit()
+                and int(latest_schedule["id"]) in proven_ids
+            )
+        )
+    )
+    if latest_schedule and latest_schedule.get("conclusion") == "success" and not latest_is_proven:
+        issues.append("NATURAL_SCHEDULE_FULL_CHAIN_UNPROVEN")
     if not latest_success:
         issues.append("NO_SUCCESSFUL_SCHEDULE_RUN")
-        if latest_schedule and latest_schedule.get("conclusion") == "success":
-            issues.append("NATURAL_SCHEDULE_FULL_CHAIN_UNPROVEN")
     elif latest_schedule and latest_schedule.get("conclusion") != "success":
         issues.append("NATURAL_SCHEDULE_RUN_FAILED")
-    elif parse_time(latest_success["updated_at"]) < current - timedelta(hours=4):
+    elif _run_time(latest_success, field="updated_at") == _UTC_MIN or _run_time(
+        latest_success, field="updated_at"
+    ) < current - timedelta(hours=4):
         issues.append("SUCCESSFUL_SCHEDULE_STALE")
     if sum(item.get("conclusion") == "failure" for item in scheduled[:3]) >= 2:
         issues.append("REPEATED_SCHEDULE_FAILURE")
@@ -331,12 +443,16 @@ def health(
     window_hours = max(6, min(int(coverage_window_hours), 24))
     coverage_window = timedelta(hours=window_hours)
     window_start = current - coverage_window
-    run_times = [parse_time(item["created_at"]) for item in workflow_runs if item.get("created_at")]
+    run_times = [
+        _run_time(item)
+        for item in workflow_runs
+        if isinstance(item, dict) and _run_time(item) != _UTC_MIN
+    ]
     coverage_assessed = bool(run_times and min(run_times) <= window_start)
     successful_times = sorted(
-        parse_time(item["created_at"])
+        _run_time(item)
         for item in successful
-        if item.get("created_at") and parse_time(item["created_at"]) >= window_start
+        if _run_time(item) != _UTC_MIN and _run_time(item) >= window_start
     )
     expected_runs = window_hours
     minimum_runs = max(3, window_hours // 2)
@@ -366,7 +482,7 @@ def health(
         "naturalScheduleWarnings": coverage_warnings,
         "latestScheduleUrl": latest_schedule.get("html_url") if latest_schedule else None,
         "latestSuccessUrl": latest_success.get("html_url") if latest_success else None,
-        "provenNaturalRunIds": sorted(proven_ids),
+        "provenNaturalRunIds": sorted(proven_ids) if proof_required else None,
         "naturalScheduleCoverage": {
             "assessed": coverage_assessed,
             "windowHours": window_hours,
@@ -513,27 +629,33 @@ def effective_scan_freshness(
     """Assess manual scans or a Jobs-API-proven natural full-chain scan."""
 
     current = (now or datetime.now(UTC)).astimezone(UTC)
-    relevant = [item for item in workflow_runs if item.get("event") == _FULL_SCAN_EVENT]
+    relevant = [
+        item
+        for item in workflow_runs
+        if isinstance(item, dict) and item.get("event") == _FULL_SCAN_EVENT
+    ]
     successful = [item for item in relevant if item.get("conclusion") == "success"]
     active = [
         item
         for item in relevant
         if item.get("status") in {"queued", "in_progress", "waiting", "requested", "pending"}
         and item.get("created_at")
-        and parse_time(item["created_at"]) >= current - active_grace
+        and _run_time(item) >= current - active_grace
     ]
     latest_success = max(
         successful,
-        key=lambda item: parse_time(item["updated_at"]),
+        key=lambda item: _run_time(item, field="updated_at"),
         default=None,
     )
     latest_active = max(
         active,
-        key=lambda item: parse_time(item["created_at"]),
+        key=lambda item: _run_time(item),
         default=None,
     )
     success_fresh = bool(
-        latest_success and parse_time(latest_success["updated_at"]) >= current - max_age
+        latest_success
+        and _run_time(latest_success, field="updated_at") != _UTC_MIN
+        and _run_time(latest_success, field="updated_at") >= current - max_age
     )
     component_success_fresh = False
     component_url = None
@@ -549,7 +671,10 @@ def effective_scan_freshness(
     if component_is_proven:
         component_updated_at = component_health.get("runUpdatedAt")
         if component_updated_at:
-            component_success_fresh = parse_time(str(component_updated_at)) >= current - max_age
+            try:
+                component_success_fresh = parse_time(str(component_updated_at)) >= current - max_age
+            except (TypeError, ValueError):
+                component_success_fresh = False
             component_url = component_health.get("runUrl")
     return {
         "fresh": success_fresh or component_success_fresh or latest_active is not None,
@@ -610,14 +735,22 @@ def main() -> int:
                 )
             )
             return 2
+    checked_at = datetime.now(UTC)
     workflow_runs = runs(args.repo)
-    component_health = workflow_component_health(args.repo, workflow_runs)
+    jobs_cache: dict[int, list[dict] | None] = {}
+    component_health = workflow_component_health(args.repo, workflow_runs, jobs_cache)
     proven_natural_run_ids: set[int] = set()
     # The component check already queried the selected run.  Only perform the
     # wider historical proof scan for a real API-backed result; this keeps
     # compatibility fixtures that stub component health deterministic.
     if component_health.get("jobs") is not None:
-        proven_natural_run_ids = proven_natural_schedule_run_ids(args.repo, workflow_runs)
+        proven_natural_run_ids = proven_natural_schedule_run_ids(
+            args.repo,
+            workflow_runs,
+            jobs_cache,
+            now=checked_at,
+            coverage_window_hours=args.coverage_window_hours,
+        )
     if (
         component_health.get("runEvent") == _NATURAL_EVENT
         and component_health.get("naturalFullChainProven") is True
@@ -626,6 +759,7 @@ def main() -> int:
         proven_natural_run_ids.add(int(component_health["runId"]))
     result = health(
         workflow_runs,
+        now=checked_at,
         coverage_window_hours=args.coverage_window_hours,
         natural_full_chain_run_ids=proven_natural_run_ids,
     )
