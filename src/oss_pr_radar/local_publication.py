@@ -134,6 +134,27 @@ def _merge_unique_records(*groups: list[Any]) -> list[Any]:
     return merged
 
 
+def _new_resolution_scope_authorizations(*groups: list[Any]) -> list[Any]:
+    """Keep only newly recorded resolution-scope authorizations.
+
+    The bridge returns an authorization record on every ingest pass while a
+    durable receipt is being observed.  A record marked ``alreadyRecorded``
+    is informational and must not wake the serial drain again; an omitted
+    marker is treated as new for compatibility with older bridge payloads.
+    """
+
+    return _merge_unique_records(
+        *[
+            [
+                item
+                for item in group
+                if isinstance(item, dict) and item.get("alreadyRecorded") is not True
+            ]
+            for group in groups
+        ]
+    )
+
+
 def _has_rebind_recovery(*groups: list[Any]) -> bool:
     """Return whether result ingestion produced an actionable PR rebind.
 
@@ -1172,6 +1193,10 @@ def advance_once(
     ingestion_quarantined = list(ingestion.get("quarantined") or [])
     ingestion_quarantined_already_recorded = list(ingestion.get("quarantinedAlreadyRecorded") or [])
     ingestion_work_blocked = list(ingestion.get("workBlocked") or [])
+    ingestion_resolution_scope_authorized = list(ingestion.get("resolutionScopeAuthorized") or [])
+    new_resolution_scope_authorized = _new_resolution_scope_authorizations(
+        ingestion_resolution_scope_authorized
+    )
     ingestion_errors = list(ingestion.get("errors") or [])
     if ingestion.get("ok") is not True or ingestion_errors:
         return {
@@ -1184,6 +1209,7 @@ def advance_once(
             "validationDeferred": _merge_unique_records(
                 list(ingestion.get("validationDeferred") or [])
             ),
+            "resolutionScopeAuthorized": new_resolution_scope_authorized,
             "workBlocked": ingestion_work_blocked,
             "published": [],
             "contextsSynced": [],
@@ -1238,6 +1264,7 @@ def advance_once(
             "validationDeferred": _merge_unique_records(
                 list(ingestion.get("validationDeferred") or [])
             ),
+            "resolutionScopeAuthorized": new_resolution_scope_authorized,
             "workBlocked": _merge_unique_records(ingestion_work_blocked, review_work_blocked),
             "independentReview": independent_review,
             "published": [],
@@ -1268,6 +1295,9 @@ def advance_once(
         post_review_ingestion.get("quarantinedAlreadyRecorded") or []
     )
     post_review_work_blocked = list(post_review_ingestion.get("workBlocked") or [])
+    post_review_resolution_scope_authorized = list(
+        post_review_ingestion.get("resolutionScopeAuthorized") or []
+    )
     if post_review_ingestion.get("ok") is not True or post_review_errors:
         return {
             "ok": False,
@@ -1283,6 +1313,10 @@ def advance_once(
             "validationDeferred": _merge_unique_records(
                 list(ingestion.get("validationDeferred") or []),
                 list(post_review_ingestion.get("validationDeferred") or []),
+            ),
+            "resolutionScopeAuthorized": _new_resolution_scope_authorizations(
+                ingestion_resolution_scope_authorized,
+                post_review_resolution_scope_authorized,
             ),
             "workBlocked": _merge_unique_records(
                 ingestion_work_blocked,
@@ -1343,6 +1377,10 @@ def advance_once(
         list(ingestion.get("validationDeferred") or []),
         list(post_review_ingestion.get("validationDeferred") or []),
     )
+    new_resolution_scope_authorized = _new_resolution_scope_authorizations(
+        ingestion_resolution_scope_authorized,
+        post_review_resolution_scope_authorized,
+    )
     work_blocked = _merge_unique_records(
         ingestion_work_blocked,
         review_work_blocked,
@@ -1376,6 +1414,7 @@ def advance_once(
     recoverable = list(recovery.get("recoverable") or []) if recovery.get("ok") is True else []
     should_drain = bool(
         ingested
+        or new_resolution_scope_authorized
         or validation_deferred
         or archived
         or published
@@ -1403,6 +1442,7 @@ def advance_once(
     non_quarantine_blocked = any(item.get("reason") != "ACTIVE_TASK_QUARANTINE" for item in blocked)
     activity = bool(
         ingested
+        or new_resolution_scope_authorized
         or requests
         or renamed
         or titles_deferred
@@ -1435,6 +1475,7 @@ def advance_once(
         "resultsIngested": ingested,
         "publicationRequests": requests,
         "validationDeferred": validation_deferred,
+        "resolutionScopeAuthorized": new_resolution_scope_authorized,
         "workBlocked": work_blocked,
         "independentReview": independent_review,
         "titlesRenamed": renamed,

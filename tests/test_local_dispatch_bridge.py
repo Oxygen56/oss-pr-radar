@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import fcntl
+import gc
 import hashlib
 import importlib.util
 import json
@@ -4215,6 +4216,244 @@ def test_managed_workspace_context_is_mirrored_for_github_project_bootstrap(monk
     assert local["taskProjectRoot"] == str(project_root.resolve())
     assert local["bootstrapContextPath"] == str(bootstrap_path)
     assert local["worktreePath"] == str(worktree.resolve())
+
+
+def test_managed_private_context_wins_over_a_foreign_shared_singleton(monkeypatch, tmp_path):
+    """A singleton bootstrap from another intent must not hide a private task."""
+
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    private_raw = context_path.read_bytes()
+    private_context = json.loads(private_raw)
+    foreign = dict(private_context)
+    foreign.update(
+        {
+            "intentId": "intent-foreign",
+            "threadId": "thread-foreign",
+            "worktreePath": str(tmp_path / "foreign-worktree"),
+        }
+    )
+    foreign["contextDigest"] = MODULE._task_context_digest(foreign, None)
+    shared_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    MODULE._atomic_json(shared_path, foreign)
+    foreign_raw = shared_path.read_bytes()
+
+    recovered = RadarLedger(tmp_path / "recovered.sqlite3")
+    result = MODULE.recover_shared_task_contexts(recovered)
+
+    assert result["errors"] == []
+    assert result["privateErrors"] == []
+    assert result["verified"] == 1
+    assert result["restored"][0]["key"] == "a/b#1"
+    assert (
+        recovered.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")[
+            "intentId"
+        ]
+        == "intent-1"
+    )
+    assert result["collisions"][0]["reason"] == "SHARED_CONTEXT_PRIVATE_COLLISION"
+    assert shared_path.read_bytes() == foreign_raw
+    assert context_path.read_bytes() == private_raw
+
+
+def test_authenticated_private_context_wins_over_a_stale_same_binding_singleton(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    shared_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    stale_shared_raw = shared_path.read_bytes()
+
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    assert context_path.read_bytes() != stale_shared_raw
+    assert shared_path.read_bytes() == stale_shared_raw
+
+    result = MODULE.recover_shared_task_contexts(store)
+
+    assert result["errors"] == []
+    assert result["verified"] == 1
+    assert result["restored"][0]["stage"] == "FIX_READY"
+    assert result["collisions"][0]["reason"] == "SHARED_CONTEXT_SPLIT_MIRROR"
+    assert shared_path.read_bytes() == stale_shared_raw
+
+
+def test_historical_private_context_does_not_supersede_a_newer_pending_intent(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    MODULE.shared_context_path("https://github.com/a/b/issues/1").unlink()
+    newer_at = iso_z(datetime.now(UTC) + timedelta(minutes=5))
+    with store.connect() as connection:
+        old = connection.execute("SELECT * FROM intents WHERE intent_id='intent-1'").fetchone()
+        values = dict(old)
+        values.update(
+            {
+                "intent_id": "intent-2",
+                "intent_digest": "newer-intent",
+                "status": "PENDING",
+                "thread_id": "thread-2",
+                "worktree_path": str(tmp_path / "newer-worktree"),
+                "updated_at": newer_at,
+            }
+        )
+        columns = tuple(values)
+        connection.execute(
+            f"INSERT INTO intents ({','.join(columns)}) VALUES "
+            f"({','.join('?' for _column in columns)})",
+            tuple(values[column] for column in columns),
+        )
+        connection.execute(
+            "UPDATE opportunities SET stage='QUALIFIED',updated_at=? WHERE key='a/b#1'",
+            (newer_at,),
+        )
+
+    result = MODULE.recover_shared_task_contexts(store)
+
+    assert result["errors"] == []
+    assert result["verified"] == 0
+    assert any(
+        item["reason"] == "PRIVATE_CONTEXT_SUPERSEDED_BY_ACTIVE_INTENT"
+        for item in result["collisions"]
+    )
+    with store.connect() as connection:
+        assert (
+            connection.execute("SELECT status FROM intents WHERE intent_id='intent-2'").fetchone()[
+                0
+            ]
+            == "PENDING"
+        )
+        assert (
+            connection.execute("SELECT stage FROM opportunities WHERE key='a/b#1'").fetchone()[0]
+            == "QUALIFIED"
+        )
+
+
+def test_malformed_private_context_blocks_shared_fallback(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context_path.write_text("{not-json", encoding="utf-8")
+
+    result = MODULE.recover_shared_task_contexts(store)
+
+    assert result["verified"] == 0
+    assert result["privateErrors"]
+    assert result["errors"][0]["source"] == "private"
+
+
+def test_write_task_context_does_not_rewrite_identical_mirrors(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    shared_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    local_mtime = context_path.stat().st_mtime_ns
+    shared_mtime = shared_path.stat().st_mtime_ns
+    local_raw = context_path.read_bytes()
+    shared_raw = shared_path.read_bytes()
+
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+
+    assert context_path.read_bytes() == local_raw
+    assert shared_path.read_bytes() == shared_raw
+    assert context_path.stat().st_mtime_ns == local_mtime
+    assert shared_path.stat().st_mtime_ns == shared_mtime
+
+
+def test_write_task_context_preserves_a_foreign_shared_singleton(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    foreign = dict(context)
+    foreign.update(
+        {
+            "intentId": "intent-foreign",
+            "threadId": "thread-foreign",
+            "worktreePath": str(tmp_path / "foreign-worktree"),
+        }
+    )
+    foreign["contextDigest"] = MODULE._task_context_digest(foreign, None)
+    shared_path = MODULE.shared_context_path("https://github.com/a/b/issues/1")
+    MODULE._atomic_json(shared_path, foreign)
+    foreign_raw = shared_path.read_bytes()
+
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+
+    assert shared_path.read_bytes() == foreign_raw
+    assert MODULE.write_task_context.last_collision["reason"] == (
+        "SHARED_CONTEXT_SINGLETON_CONFLICT"
+    )
 
 
 def test_shared_context_recovery_rebuilds_a_lost_local_ledger(monkeypatch, tmp_path):
@@ -10229,7 +10468,11 @@ def test_task_turn_delivery_reconciles_a_materialized_turn_without_resending(mon
     )
 
     assert result["reconciled"] is True
-    assert store.committed == {"thread_id": "thread-1", "wake_digest": "a" * 64}
+    assert store.committed == {
+        "thread_id": "thread-1",
+        "wake_digest": "a" * 64,
+        "worktree_path": str(worktree),
+    }
 
 
 def test_task_turn_delivery_never_restarts_a_live_worker(monkeypatch, tmp_path):
@@ -19067,6 +19310,170 @@ def test_implementation_followup_reserve_repairs_context_before_delivery(tmp_pat
     assert refreshed["probeLevel"] == "REPRODUCED_VALIDATED"
     assert refreshed["childMayEditFiles"] is True
     assert refreshed["resultDigest"] == candidate["resultDigest"]
+
+
+def test_implementation_followup_reserve_forwards_exact_identity(monkeypatch, tmp_path):
+    candidate = {
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "threadId": "shared-implementation-thread",
+        "intentId": "intent-one",
+        "worktreePath": str(tmp_path / "implementation-one"),
+        "resultDigest": "a" * 64,
+    }
+    observed: dict[str, Any] = {}
+    context_path = tmp_path / "task-context.json"
+    context_path.write_text(
+        json.dumps(
+            {
+                "taskStage": "IMPLEMENTATION_READY",
+                "probeLevel": MODULE.REPRODUCED_VALIDATED,
+                "childMayEditFiles": True,
+                "resultDigest": candidate["resultDigest"],
+                "reproductionReceipt": {"receiptDigest": "receipt"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class Store:
+        path = tmp_path / "ledger.sqlite3"
+
+        def implementation_followup_candidates(self):
+            return [candidate]
+
+        def active_task_quarantine(self, _key):
+            return None
+
+        def reserve_implementation_followup(self, **kwargs):
+            observed.update(kwargs)
+            return candidate | kwargs
+
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: Store())
+    monkeypatch.setattr(MODULE, "write_task_context", lambda *_args, **_kwargs: context_path)
+
+    result = MODULE.implementation_followup_reserve(
+        SimpleNamespace(
+            ledger=tmp_path / "ledger.sqlite3",
+            thread_id=candidate["threadId"],
+            result_digest=candidate["resultDigest"],
+            intent_id=candidate["intentId"],
+            worktree_path=candidate["worktreePath"],
+        )
+    )
+
+    assert result["intentId"] == candidate["intentId"]
+    assert observed == {
+        "thread_id": candidate["threadId"],
+        "result_digest": candidate["resultDigest"],
+        "intent_id": candidate["intentId"],
+        "worktree_path": candidate["worktreePath"],
+    }
+
+
+def test_implementation_context_repair_ignores_foreign_sent_event(tmp_path):
+    """A newer same-thread result from another intent cannot authorize repair."""
+
+    store, worktree, _result_path = _controller_commit_result(tmp_path)
+    managed = ManagedLedger(store.path, ensure_schema=True)
+    provenance = json.loads(managed.read_task("intent-1")["provenance_json"])
+    result_digest = str(provenance["probeReceipt"]["resultDigest"])
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=result_digest,
+        stage="IMPLEMENTATION_READY",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+    store.reserve_implementation_followup(thread_id="thread-1", result_digest=result_digest)
+    store.commit_implementation_followup(thread_id="thread-1", result_digest=result_digest)
+    with store.connect() as connection:
+        valid_sent = connection.execute(
+            """SELECT id FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                 AND json_extract(payload_json,'$.intentId')='intent-1'"""
+        ).fetchone()
+        assert valid_sent is not None
+        connection.execute(
+            """INSERT INTO intents
+               (intent_id,opportunity_key,intent_digest,status,issued_at,expires_at,
+                thread_id,project_id,worktree_path,payload_json,updated_at)
+               VALUES ('intent-foreign','a/b#1','foreign-digest','DISPATCHED',?,?,?,?,?,?,?)""",
+            (
+                iso_z(datetime.now(UTC)),
+                iso_z(datetime.now(UTC) + timedelta(hours=1)),
+                "thread-1",
+                "github",
+                "/tmp/foreign-implementation-worktree",
+                json.dumps({"intentId": "intent-foreign"}),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+        connection.execute(
+            """INSERT INTO events
+               (opportunity_key,event_type,dedupe_key,payload_json,created_at)
+               VALUES ('a/b#1','IMPLEMENTATION_FOLLOWUP_SENT','foreign-attempt',?,?)""",
+            (
+                json.dumps(
+                    {
+                        "intentId": "intent-foreign",
+                        "threadId": "thread-1",
+                        "worktreePath": "/tmp/foreign-implementation-worktree",
+                        "resultDigest": result_digest,
+                        "attemptDigest": "foreign-attempt",
+                    }
+                ),
+                iso_z(datetime.now(UTC)),
+            ),
+        )
+
+    assert (
+        store.record_implementation_context_repair(
+            key="a/b#1",
+            task_id="intent-1",
+            thread_id="thread-1",
+            worktree_path=str(worktree),
+            result_digest=result_digest,
+            context_digest="context-digest",
+        )
+        is True
+    )
+    with store.connect() as connection:
+        repair = connection.execute(
+            """SELECT json_extract(payload_json,'$.priorSentEventId')
+               FROM events
+               WHERE opportunity_key='a/b#1'
+                 AND event_type='IMPLEMENTATION_CONTEXT_REPAIRED'"""
+        ).fetchone()
+    assert repair is not None
+    assert int(repair[0]) == int(valid_sent[0])
+
+
+def test_implementation_task_turn_commit_forwards_exact_identity(tmp_path):
+    observed: dict[str, Any] = {}
+
+    class Store:
+        def commit_implementation_followup(self, **kwargs):
+            observed.update(kwargs)
+
+    MODULE._commit_task_turn_delivery(
+        Store(),
+        delivery_kind="implementation-followup",
+        thread_id="shared-implementation-thread",
+        delivery_token="a" * 64,
+        candidate={
+            "intentId": "intent-one",
+            "worktreePath": str(tmp_path / "implementation-one"),
+        },
+    )
+
+    assert observed == {
+        "thread_id": "shared-implementation-thread",
+        "result_digest": "a" * 64,
+        "intent_id": "intent-one",
+        "worktree_path": str(tmp_path / "implementation-one"),
+    }
 
 
 def test_implementation_followup_without_result_uses_bounded_recovery(tmp_path):
@@ -28237,6 +28644,50 @@ def test_every_bridge_operation_requires_authorization_before_dispatch(
     result = json.loads(capsys.readouterr().out)
     assert result["ok"] is False
     assert "authorization" in result["error"]
+
+
+def test_authorization_status_is_read_only_without_authorization(monkeypatch, tmp_path, capsys):
+    from test_stage7 import _runtime
+
+    runtime = _runtime(tmp_path)
+    ledger_path = runtime / "state" / "radar_ledger.sqlite3"
+    RadarLedger(ledger_path).enqueue(
+        {
+            "intentId": "intent-pending",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "issueUpdatedAt": iso_z(datetime.now(UTC)),
+            "policyDigest": "policy",
+            "title": "Pending task",
+            "mode": "canary",
+            "score": 1,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(datetime.now(UTC)),
+            "expiresAt": iso_z(datetime.now(UTC) + timedelta(hours=1)),
+        }
+    )
+    # Finish any transient SQLite writer cleanup before taking the baseline;
+    # the status command itself must not be responsible for that checkpoint.
+    gc.collect()
+    before = ledger_path.read_bytes()
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["local_dispatch_bridge.py", "authorization-status", "--runtime-root", str(runtime)],
+    )
+
+    assert MODULE.main() == 0
+    result = json.loads(capsys.readouterr().out)
+
+    assert result["ok"] is True
+    assert result["readOnly"] is True
+    assert result["authorization"] == {"present": False, "state": "MISSING"}
+    assert result["blockedReason"] == "OPERATIONAL_AUTHORIZATION_MISSING"
+    assert result["pending"]["pendingIntents"] == 1
+    assert ledger_path.read_bytes() == before
 
 
 def test_bridge_rejects_wrong_release_binding_before_authorization(monkeypatch, tmp_path, capsys):

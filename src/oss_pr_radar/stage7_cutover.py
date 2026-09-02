@@ -14,7 +14,7 @@ from typing import Any
 
 from .managed_lifecycle import MANAGED_SCHEMA_VERSION
 from .managed_security import sign_current, verify_current
-from .operational_auth import revoke_operational_authorization
+from .operational_auth import revoke_operational_authorization, worker_staging_transaction_lock
 from .release_binding import bind_runtime, runtime_root_digest
 from .runtime_audit import LEGACY_LABELS, WORKER_LABELS, collect_snapshot, launchctl_print
 from .stage6_rehearsal import (
@@ -693,55 +693,63 @@ def prepare(
 
 
 def activate(runtime_root: Path, manifest_path: Path) -> dict[str, Any]:
-    binding = bind_runtime(runtime_root)
     runtime_root = runtime_root.resolve()
     state = runtime_root / "state"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     _verify(manifest)
     if manifest.get("phase") != "PREPARED":
         raise ValueError("cutover manifest is not prepared")
-    if manifest.get("release", {}).get("releaseId") != binding.release_id:
-        raise RuntimeError("cutover manifest is bound to a different release")
     relative = _relative_state_path(state, str(manifest["target"]))
     target = state / relative
     if not target.is_file() or _sha(target) != manifest.get("targetSha256"):
         raise RuntimeError("prepared ledger bytes changed")
     _validate_file_inventory(manifest, include_target=True)
-    revoke_operational_authorization(runtime_root)
-    pointer = state / POINTER_NAME
-    temporary = state / f".{POINTER_NAME}.{os.getpid()}.tmp"
-    temporary.unlink(missing_ok=True)
-    temporary.symlink_to(Path(VERSIONS_DIR) / target.name)
-    temporary.replace(pointer)
-    _fsync_directory(state)
-    activated = {**manifest, "phase": "ACTIVATED"}
-    _write(
-        manifest_path,
-        _sign(
-            {
-                key: value
-                for key, value in activated.items()
-                if key not in {"manifestDigest", "keyId", "signature"}
-            }
-        ),
-    )
+    with worker_staging_transaction_lock(runtime_root):
+        # Re-bind after acquiring the transaction lock.  A deployment may
+        # have switched ``current-release`` while this operation was waiting;
+        # never revoke credentials or move a ledger under a stale release
+        # identity.
+        binding = bind_runtime(runtime_root)
+        if manifest.get("release", {}).get("releaseId") != binding.release_id:
+            raise RuntimeError("cutover manifest is bound to a different release")
+        # Re-check signed inputs after waiting for the lock.  A concurrent
+        # deployment may have changed a ledger while this operation waited;
+        # never revoke credentials or move the pointer using stale bytes.
+        if not target.is_file() or _sha(target) != manifest.get("targetSha256"):
+            raise RuntimeError("prepared ledger bytes changed")
+        _validate_file_inventory(manifest, include_target=True)
+        # Keep revocation and the pointer/manifest commit in one transaction
+        # window.  A concurrent staging/activation operation cannot issue a
+        # fresh credential against the old ledger between these steps.
+        revoke_operational_authorization(runtime_root, _lock_held=True)
+        pointer = state / POINTER_NAME
+        temporary = state / f".{POINTER_NAME}.{os.getpid()}.tmp"
+        temporary.unlink(missing_ok=True)
+        temporary.symlink_to(Path(VERSIONS_DIR) / target.name)
+        temporary.replace(pointer)
+        _fsync_directory(state)
+        activated = {**manifest, "phase": "ACTIVATED"}
+        _write(
+            manifest_path,
+            _sign(
+                {
+                    key: value
+                    for key, value in activated.items()
+                    if key not in {"manifestDigest", "keyId", "signature"}
+                }
+            ),
+        )
     return {"ok": True, "phase": "ACTIVATED", "pointer": str(pointer), "target": str(target)}
 
 
 def rollback(runtime_root: Path, manifest_path: Path) -> dict[str, Any]:
-    binding = bind_runtime(runtime_root)
     runtime_root = runtime_root.resolve()
     state = runtime_root / "state"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     _verify(manifest)
     if manifest.get("phase") != "ACTIVATED":
         raise ValueError("only an activated cutover can be rolled back")
-    if manifest.get("release", {}).get("releaseId") != binding.release_id:
-        raise RuntimeError("cutover manifest is bound to a different release")
     _validate_file_inventory(manifest, include_target=False)
-    nonce = str(manifest.get("nonce") or "")
-    _, nonce_state = _rollback_nonce_state(state)
-    current, _ = _pointer_target(state)
     previous = manifest.get("previousTarget")
     if not previous:
         raise RuntimeError("no retained previous ledger pointer is available")
@@ -749,20 +757,61 @@ def rollback(runtime_root: Path, manifest_path: Path) -> dict[str, Any]:
     previous_path = state / previous_relative
     if not previous_path.is_file() or _sha(previous_path) != manifest.get("previousTargetSha256"):
         raise RuntimeError("retained previous ledger is unavailable or changed")
-    revoke_operational_authorization(runtime_root)
-    in_progress = (
-        nonce_state.get("inProgress") if isinstance(nonce_state.get("inProgress"), dict) else {}
-    )
-    marker = in_progress.get(nonce)
-    expected_marker = {
-        "manifestPath": str(manifest_path.resolve()),
-        "manifestDigest": str(manifest.get("manifestDigest") or ""),
-    }
-    if nonce in nonce_state["nonces"]:
-        completed = (
-            nonce_state.get("completed") if isinstance(nonce_state.get("completed"), dict) else {}
+    nonce = str(manifest.get("nonce") or "")
+    with worker_staging_transaction_lock(runtime_root):
+        binding = bind_runtime(runtime_root)
+        if manifest.get("release", {}).get("releaseId") != binding.release_id:
+            raise RuntimeError("cutover manifest is bound to a different release")
+        # Re-check the retained ledger and signed inventory after acquiring
+        # the lock so a concurrent release/pointer update cannot race the
+        # rollback decision.
+        _validate_file_inventory(manifest, include_target=False)
+        if not previous_path.is_file() or _sha(previous_path) != manifest.get(
+            "previousTargetSha256"
+        ):
+            raise RuntimeError("retained previous ledger is unavailable or changed")
+        # The authorization revocation, nonce journal, and pointer switch are
+        # one exclusive transaction.  This prevents a concurrent worker
+        # staging pass from racing a rollback and re-authorizing the old
+        # pointer in the gap.
+        revoke_operational_authorization(runtime_root, _lock_held=True)
+        _, nonce_state = _rollback_nonce_state(state)
+        current, _ = _pointer_target(state)
+        in_progress = (
+            nonce_state.get("inProgress") if isinstance(nonce_state.get("inProgress"), dict) else {}
         )
-        if current == previous and completed.get(nonce) == expected_marker:
+        marker = in_progress.get(nonce)
+        expected_marker = {
+            "manifestPath": str(manifest_path.resolve()),
+            "manifestDigest": str(manifest.get("manifestDigest") or ""),
+        }
+        if nonce in nonce_state["nonces"]:
+            completed = (
+                nonce_state.get("completed")
+                if isinstance(nonce_state.get("completed"), dict)
+                else {}
+            )
+            if current == previous and completed.get(nonce) == expected_marker:
+                rolled = {**manifest, "phase": "ROLLED_BACK"}
+                _write(
+                    manifest_path,
+                    _sign(
+                        {
+                            key: value
+                            for key, value in rolled.items()
+                            if key not in {"manifestDigest", "keyId", "signature"}
+                        }
+                    ),
+                )
+                return {
+                    "ok": True,
+                    "phase": "ROLLED_BACK",
+                    "pointer": str(state / POINTER_NAME),
+                    "target": str(previous_path),
+                }
+            raise RuntimeError("rollback nonce has already been consumed")
+        if current == previous and marker == expected_marker:
+            _finish_rollback_nonce(state, nonce)
             rolled = {**manifest, "phase": "ROLLED_BACK"}
             _write(
                 manifest_path,
@@ -780,8 +829,19 @@ def rollback(runtime_root: Path, manifest_path: Path) -> dict[str, Any]:
                 "pointer": str(state / POINTER_NAME),
                 "target": str(previous_path),
             }
-        raise RuntimeError("rollback nonce has already been consumed")
-    if current == previous and marker == expected_marker:
+        if current != manifest.get("target"):
+            raise RuntimeError("current pointer is not the cutover target")
+        _begin_rollback_nonce(
+            state,
+            nonce,
+            manifest_path=manifest_path,
+            digest=str(manifest.get("manifestDigest") or ""),
+        )
+        temporary = state / f".{POINTER_NAME}.{os.getpid()}.tmp"
+        temporary.unlink(missing_ok=True)
+        temporary.symlink_to(previous_relative)
+        temporary.replace(state / POINTER_NAME)
+        _fsync_directory(state)
         _finish_rollback_nonce(state, nonce)
         rolled = {**manifest, "phase": "ROLLED_BACK"}
         _write(
@@ -800,37 +860,6 @@ def rollback(runtime_root: Path, manifest_path: Path) -> dict[str, Any]:
             "pointer": str(state / POINTER_NAME),
             "target": str(previous_path),
         }
-    if current != manifest.get("target"):
-        raise RuntimeError("current pointer is not the cutover target")
-    _begin_rollback_nonce(
-        state,
-        nonce,
-        manifest_path=manifest_path,
-        digest=str(manifest.get("manifestDigest") or ""),
-    )
-    temporary = state / f".{POINTER_NAME}.{os.getpid()}.tmp"
-    temporary.unlink(missing_ok=True)
-    temporary.symlink_to(previous_relative)
-    temporary.replace(state / POINTER_NAME)
-    _fsync_directory(state)
-    _finish_rollback_nonce(state, nonce)
-    rolled = {**manifest, "phase": "ROLLED_BACK"}
-    _write(
-        manifest_path,
-        _sign(
-            {
-                key: value
-                for key, value in rolled.items()
-                if key not in {"manifestDigest", "keyId", "signature"}
-            }
-        ),
-    )
-    return {
-        "ok": True,
-        "phase": "ROLLED_BACK",
-        "pointer": str(state / POINTER_NAME),
-        "target": str(previous_path),
-    }
 
 
 def _git_value(repo: Path, *arguments: str) -> str:

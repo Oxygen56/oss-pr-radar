@@ -19,6 +19,7 @@ from oss_pr_radar.controller import (
     run_locked_controller_cycle,
     write_controller_report,
 )
+from oss_pr_radar.ledger import RadarLedger
 from oss_pr_radar.managed_lifecycle import ManagedLedger, migrate_schema
 
 pytestmark = pytest.mark.usefixtures("current_signing_key")
@@ -645,6 +646,52 @@ def test_controller_cycle_lock_suppresses_overlap(tmp_path):
 
     assert result["busy"] is True
     assert result["summary"]["action"] == "controller_already_running"
+
+
+def test_controller_missing_authorization_reports_pending_without_running_stages(tmp_path):
+    from test_stage7 import _runtime
+
+    runtime = _runtime(tmp_path)
+    RadarLedger(runtime / "state" / "radar_ledger.sqlite3").enqueue(
+        {
+            "intentId": "intent-pending",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "issueUpdatedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "policyDigest": "policy",
+            "title": "Pending task",
+            "mode": "canary",
+            "score": 1,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "expiresAt": (datetime.now(UTC) + timedelta(hours=1))
+            .isoformat()
+            .replace("+00:00", "Z"),
+        }
+    )
+    calls: list[str] = []
+
+    def runner(_root, stage, _argv, _allowed, _timeout):
+        calls.append(stage)
+        return healthy_response(stage)
+
+    result = run_locked_controller_cycle(
+        runtime,
+        runner=runner,
+        notify=False,
+        report_on_complete=True,
+    )
+
+    assert result["ok"] is False
+    assert result["blocked"] == "operational authorization required"
+    assert result["recoveryStatus"]["ok"] is True
+    assert result["recoveryStatus"]["readOnly"] is True
+    assert result["recoveryStatus"]["blockedReason"] == "OPERATIONAL_AUTHORIZATION_MISSING"
+    assert result["recoveryStatus"]["pending"]["pendingIntents"] == 1
+    assert calls == []
 
 
 def test_controller_rejects_stale_fixed_release_before_reusing_marker(tmp_path):

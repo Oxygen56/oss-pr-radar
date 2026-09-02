@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -1168,6 +1169,11 @@ def test_existing_receipt_never_allows_conflicting_worker_replacement(
     )
     monkeypatch.setattr(
         INSTALL,
+        "stage_workers",
+        lambda *_args, **_kwargs: pytest.fail("invalid receipt must fail before plist staging"),
+    )
+    monkeypatch.setattr(
+        INSTALL,
         "consume_worker_staging_authorization",
         lambda *_args, **_kwargs: pytest.fail("conflicting files must fail before receipt read"),
     )
@@ -1175,8 +1181,103 @@ def test_existing_receipt_never_allows_conflicting_worker_replacement(
 
     assert INSTALL.main() == 1
     result = json.loads(capsys.readouterr().out)
-    assert "conflicting staged worker configuration" in result["error"]
+    assert "existing staged worker receipt cannot be validated" in result["error"]
     assert all(plist_path(home, label).read_bytes() == raw for label, raw in before.items())
+
+
+def test_expired_existing_receipt_rejects_before_touching_plists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An expired receipt must fail before a partial worker set is rewritten."""
+
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "installer-receipt-expiry-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "installer-current")
+    from oss_pr_radar.managed_security import sign_current
+    from oss_pr_radar.operational_auth import (
+        STAGED_WORKER_RECEIPT_CONTEXT,
+        STAGED_WORKER_RECEIPT_SCHEMA,
+    )
+
+    runtime = tmp_path / "runtime"
+    (runtime / "state").mkdir(parents=True)
+    home = tmp_path / "home"
+    current = specs(tmp_path)
+    previous = _previous_release_specs(tmp_path)
+    _write_staged_plists(home, previous[:2])
+    before = {
+        str(spec["Label"]): (
+            plist_path(home, str(spec["Label"])).read_bytes(),
+            plist_path(home, str(spec["Label"])).stat().st_mtime_ns,
+        )
+        for spec in previous[:2]
+    }
+    now = datetime.now(UTC)
+    receipt_unsigned = {
+        "schema": STAGED_WORKER_RECEIPT_SCHEMA,
+        "scope": "stage_worker_configs",
+        "state": "CONSUMED",
+        "stagingIssuedAt": (now - timedelta(minutes=4)).isoformat().replace("+00:00", "Z"),
+        "stagingExpiresAt": (now - timedelta(seconds=1)).isoformat().replace("+00:00", "Z"),
+        "stagedAt": (now - timedelta(minutes=3)).isoformat().replace("+00:00", "Z"),
+        "workers": [
+            {
+                "observedAt": (now - timedelta(minutes=3, seconds=30))
+                .isoformat()
+                .replace("+00:00", "Z")
+            }
+        ],
+    }
+    receipt_path = INSTALL.staged_worker_receipt_path(runtime)
+    receipt_path.write_text(
+        json.dumps(
+            {
+                **receipt_unsigned,
+                **sign_current(receipt_unsigned, context=STAGED_WORKER_RECEIPT_CONTEXT),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    receipt_path.chmod(0o600)
+    receipt_before = receipt_path.read_bytes()
+    domain = f"gui/{os.getuid()}"
+    monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
+    monkeypatch.setattr(
+        INSTALL,
+        "active_release_evidence",
+        lambda _root: {
+            "valid": True,
+            "path": str(tmp_path / "release"),
+            "releaseId": "r2",
+        },
+    )
+    monkeypatch.setattr(INSTALL, "worker_specs", lambda *_args, **_kwargs: current)
+    monkeypatch.setattr(INSTALL, "launchctl", FakeLaunchctl(domain, set()))
+    monkeypatch.setattr(
+        INSTALL,
+        "stage_workers",
+        lambda *_args, **_kwargs: pytest.fail(
+            "expired receipt must be rejected before plist writes"
+        ),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["installer", "--runtime-root", str(runtime), "--stage"],
+    )
+
+    assert INSTALL.main() == 1
+    result = json.loads(capsys.readouterr().out)
+    assert "expired" in result["error"]
+    assert {
+        str(spec["Label"]): (
+            plist_path(home, str(spec["Label"])).read_bytes(),
+            plist_path(home, str(spec["Label"])).stat().st_mtime_ns,
+        )
+        for spec in previous[:2]
+    } == before
+    assert not any(plist_path(home, str(spec["Label"])).exists() for spec in current[2:])
+    assert receipt_path.read_bytes() == receipt_before
 
 
 def test_authorized_previous_release_replacement_rolls_back_if_receipt_fails(
@@ -1504,6 +1605,21 @@ def test_two_complete_stage_transactions_have_one_receipt_and_one_write(
     monkeypatch.setattr(
         INSTALL, "require_worker_staging_authorization", lambda *_args, **_kwargs: None
     )
+    # This test isolates the transaction lock.  The mocked consumer writes a
+    # deliberately minimal receipt, so bypass the independent receipt-schema
+    # checks that are covered by the malformed/expired receipt tests above.
+    monkeypatch.setattr(
+        INSTALL,
+        "_read_staged_receipt",
+        lambda _root: {
+            "schema": "receipt",
+            "scope": "stage_worker_configs",
+            "state": "CONSUMED",
+            "workerSpecDigest": INSTALL.worker_spec_digest(worker_specs),
+        },
+    )
+    monkeypatch.setattr(INSTALL, "_validate_receipt_staging_window", lambda _receipt: None)
+    monkeypatch.setattr(INSTALL, "verify_staged_worker_receipt", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(INSTALL, "consume_worker_staging_authorization", consume)
     monkeypatch.setattr(INSTALL.Path, "home", classmethod(lambda _cls: home))
     monkeypatch.setattr(sys, "argv", ["installer", "--runtime-root", str(runtime), "--stage"])

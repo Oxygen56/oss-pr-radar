@@ -30,6 +30,8 @@ FIXED_WORKER_LABELS = (
 from oss_pr_radar.launch_config import parse_launchctl_config  # noqa: E402
 from oss_pr_radar.local_publication import SLOW_WORK_LOCK, worker_specs  # noqa: E402
 from oss_pr_radar.operational_auth import (  # noqa: E402
+    _read_staged_receipt,
+    _validate_receipt_staging_window,
     authorization_path,
     consume_worker_staging_authorization,
     finalize_operational_authorization,
@@ -37,6 +39,7 @@ from oss_pr_radar.operational_auth import (  # noqa: E402
     require_worker_staging_authorization,
     revoke_operational_authorization,
     staged_worker_receipt_path,
+    verify_staged_worker_receipt,
     worker_spec_digest,
     worker_staging_transaction_lock,
 )
@@ -794,8 +797,9 @@ def main() -> int:
                 raise RuntimeError("--stage refuses to modify an already authorized runtime")
             with worker_staging_transaction_lock(runtime_root):
                 receipt_path = staged_worker_receipt_path(runtime_root)
+                receipt_preexisting = receipt_path.exists() or receipt_path.is_symlink()
                 replace_complete_unloaded = False
-                if not receipt_path.exists():
+                if not receipt_preexisting:
                     require_worker_staging_authorization(
                         runtime_root, specs=specs, home=home, _lock_held=True
                     )
@@ -803,6 +807,50 @@ def main() -> int:
                     # replace a complete unloaded trio from the prior release.
                     # Receipt recovery must validate its existing files first.
                     replace_complete_unloaded = True
+                else:
+                    # Validate a signed existing receipt's time window before
+                    # touching any plist.  In particular, an expired receipt
+                    # must not let a partial worker set be rewritten before
+                    # consume rejects it.
+                    try:
+                        existing_receipt = _read_staged_receipt(runtime_root)
+                    except Exception as exc:
+                        # A receipt is a durable claim over the on-disk
+                        # workers.  If it cannot be read or authenticated
+                        # (including JSON/OSError failures), fail closed
+                        # before touching any plist; never treat it as an
+                        # invitation to stage a replacement set.
+                        raise RuntimeError(
+                            "existing staged worker receipt cannot be validated"
+                        ) from exc
+                    if existing_receipt is not None:
+                        _validate_receipt_staging_window(existing_receipt)
+                        # A structurally valid receipt is a durable claim over
+                        # the exact plist bytes.  Re-check that claim before
+                        # staging so a stale/partial worker set cannot be
+                        # rewritten and only then fail during consume.
+                        records = _staging_records(specs, home=home, domain=domain)
+                        specs_by_label = {str(spec["Label"]): spec for spec in specs}
+                        reports = [
+                            {
+                                "label": record["label"],
+                                "loaded": record["loaded"],
+                                "actualConfigMatch": _config_matches(
+                                    Path(str(record["plistPath"])),
+                                    specs_by_label[str(record["label"])],
+                                ),
+                            }
+                            for record in records
+                        ]
+                        if not verify_staged_worker_receipt(
+                            runtime_root,
+                            specs=specs,
+                            worker_reports=reports,
+                            home=home,
+                        ):
+                            raise RuntimeError(
+                                "existing staged worker receipt does not match current worker files"
+                            )
                 initial = _snapshot_workers(specs, home=home, domain=domain)
                 changed = False
                 try:
@@ -823,7 +871,11 @@ def main() -> int:
                     # The signed receipt is the durable commit point. Before
                     # it exists, restore both newly created files and any
                     # complete unloaded prior-release trio replaced here.
-                    if changed and not receipt_path.exists():
+                    # A receipt that was already present before this stage is
+                    # not a commit produced by the failed attempt.  Restore
+                    # every plist in that case as well (notably when an
+                    # expired receipt is discovered only during consume).
+                    if changed and (receipt_preexisting or not receipt_path.exists()):
                         rollback_errors = _rollback(
                             initial,
                             [snapshot.service for snapshot in initial],

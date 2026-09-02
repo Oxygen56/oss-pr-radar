@@ -325,6 +325,11 @@ def request_publication(
     request = store.create_publication_request(
         issue_url=issue_url,
         thread_id=thread_id,
+        intent_id=(
+            str(evidence.get("taskId") or evidence.get("intentId"))
+            if evidence.get("taskId") or evidence.get("intentId")
+            else None
+        ),
         commit_sha=snapshot["commitSha"],
         branch=snapshot["branch"],
         worktree_path=str(worktree),

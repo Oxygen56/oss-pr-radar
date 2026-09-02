@@ -253,6 +253,53 @@ def test_implementation_context_is_synced_before_followup_drain(tmp_path):
     assert result["drain"]["action"] == "implementation_followup_dispatched"
 
 
+@pytest.mark.parametrize(
+    ("already_recorded", "expected_drain", "expected_activity", "expected_authorizations"),
+    [
+        (False, True, True, 1),
+        (True, False, False, 0),
+    ],
+)
+def test_new_resolution_scope_authorization_triggers_same_cycle_drain(
+    tmp_path,
+    already_recorded,
+    expected_drain,
+    expected_activity,
+    expected_authorizations,
+):
+    calls = []
+
+    def runner(_root: Path, operation: str):
+        calls.append(operation)
+        if operation == "context-recover":
+            return {"ok": True, "verified": 0, "errors": []}
+        if operation == "ingest-results":
+            return {
+                "ok": True,
+                "ingested": [],
+                "publicationRequests": [],
+                "validationDeferred": [],
+                "resolutionScopeAuthorized": [
+                    {
+                        "key": "a/b#1",
+                        "replacementWakeDigest": "w" * 64,
+                        "alreadyRecorded": already_recorded,
+                    }
+                ],
+                "errors": [],
+            }
+        if operation == "drain-once":
+            return {"ok": True, "action": "pr_followup_dispatched", "key": "a/b#1"}
+        return {"ok": True, "published": [], "pending": [], "blocked": [], "errors": []}
+
+    result = advance_once(tmp_path, runner=runner)
+
+    assert result["ok"] is True
+    assert result["activity"] is expected_activity
+    assert len(result["resolutionScopeAuthorized"]) == expected_authorizations
+    assert calls.count("drain-once") == int(expected_drain)
+
+
 def test_advance_once_keeps_legacy_task_quarantine_out_of_global_errors(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "oss_pr_radar.local_publication.sync_cloud_queue_if_due",

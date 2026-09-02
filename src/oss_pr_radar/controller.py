@@ -17,7 +17,10 @@ from typing import Any
 
 from .managed_adapter import GitHubAbsenceQueries, ManagedAdapter
 from .managed_snapshot import export_snapshot, import_snapshot
-from .operational_auth import require_operational_authorization
+from .operational_auth import (
+    read_operational_authorization_status,
+    require_operational_authorization,
+)
 from .release_binding import bind_runtime, runtime_ledger_path, runtime_python
 from .runtime import read_disk_pressure_gate_health
 
@@ -749,7 +752,7 @@ def run_locked_controller_cycle(
                     notify=notify,
                     project_id=project_id,
                 )
-            except RuntimeError as exc:
+            except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
                 if not report_on_complete:
                     raise
                 error = str(exc)[:400]
@@ -764,6 +767,19 @@ def run_locked_controller_cycle(
                     "blocked": blocked,
                     "error": error,
                 }
+                if blocked == "operational authorization required":
+                    # Keep the hard authorization gate.  The read-only
+                    # snapshot makes the recovery path observable and proves
+                    # that pending work remains queued while authorization is
+                    # repaired; it never claims, dispatches, or mutates it.
+                    try:
+                        result["recoveryStatus"] = read_operational_authorization_status(root)
+                    except (OSError, RuntimeError, ValueError, sqlite3.Error) as status_exc:
+                        result["recoveryStatus"] = {
+                            "ok": False,
+                            "readOnly": True,
+                            "error": f"{type(status_exc).__name__}:{str(status_exc)[:240]}",
+                        }
         if report_on_complete:
             result = {
                 **result,
@@ -1031,6 +1047,31 @@ def compact_controller_result(
     startup_blocker = _safe_startup_blocker(result)
     if startup_blocker is not None:
         compact["startupBlocker"] = startup_blocker
+    recovery_status = result.get("recoveryStatus")
+    if isinstance(recovery_status, dict) and recovery_status.get("readOnly") is True:
+        # Keep the recovery hint useful without exposing signed-record paths,
+        # release internals, or the raw startup exception in the compact
+        # heartbeat payload.
+        pending = recovery_status.get("pending")
+        pending = pending if isinstance(pending, dict) else {}
+        compact["recoveryStatus"] = {
+            "readOnly": True,
+            "blockedReason": str(recovery_status.get("blockedReason") or ""),
+            "authorizationState": str(
+                (recovery_status.get("authorization") or {}).get("state") or "MISSING"
+            ),
+            "pending": {
+                key: pending[key]
+                for key in (
+                    "pendingIntents",
+                    "pendingPublicationRequests",
+                    "activeLeases",
+                    "unresolvedFollowups",
+                    "taskResultIngestions",
+                )
+                if isinstance(pending.get(key), int)
+            },
+        }
     if report_path is not None:
         compact["reportPath"] = str(report_path)
     return compact

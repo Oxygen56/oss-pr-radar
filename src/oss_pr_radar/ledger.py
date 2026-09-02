@@ -64,6 +64,447 @@ MANAGED_REPLAY_REPLACEMENT_CREATED_EVENT = "MANAGED_REPLAY_REPLACEMENT_CREATED"
 PR_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)$")
 ISSUE_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/issues/(\d+)$")
 PROBE_RECEIPT_VOLATILE_FIELDS = frozenset({"observedAt", "expiresAt", "receiptDigest", "signature"})
+# These events use a result/wake digest as their historical dedupe key.  A
+# digest is not an immutable task identity: two intent generations for one
+# issue can legitimately produce the same digest.  Keep the old key for
+# compatibility, but reject a conflicting identity instead of silently
+# dropping the newer event through INSERT OR IGNORE.
+_IDENTITY_GUARDED_EVENT_TYPES = frozenset(
+    {
+        "TASK_RESULT_INGESTED",
+        "PUBLISHED_TASK_RESULT_BACKFILLED",
+        "TASK_RESULT_VALIDATION_DEFERRED",
+        "VALIDATION_PREFETCH_BLOCKED",
+        "VALIDATION_FOLLOWUP_NO_PROGRESS",
+        "VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED",
+        "VALIDATION_FOLLOWUP_RESERVED",
+        "VALIDATION_FOLLOWUP_RESERVATION_CANCELLED",
+        "VALIDATION_FOLLOWUP_DELIVERY_ABANDONED",
+        "PR_FOLLOWUP_RESULT_INGESTED",
+        "PR_FOLLOWUP_RESERVED",
+        "PR_FOLLOWUP_PREPARATION_BOUND",
+        "PR_FOLLOWUP_SENT",
+        "PR_FOLLOWUP_DELIVERY_ABANDONED",
+        "VALIDATION_FOLLOWUP_SENT",
+    }
+)
+
+
+def _resolve_exact_intent_binding(
+    connection: sqlite3.Connection,
+    *,
+    opportunity_key: str,
+    intent_id: str | None = None,
+    thread_id: str | None = None,
+    worktree_path: str | None = None,
+) -> sqlite3.Row | None:
+    """Resolve one task binding without guessing from the newest intent.
+
+    A single opportunity can have several historical intents.  Lifecycle
+    records must therefore carry an exact identity (or be left unresolved),
+    rather than silently borrowing whichever intent was updated most recently.
+    When no intent id is available we only accept a unique thread/worktree
+    match; ambiguity is deliberately fail-closed.
+    """
+
+    key = str(opportunity_key or "")
+    requested_intent = str(intent_id or "")
+    requested_thread = str(thread_id or "")
+    requested_worktree = str(worktree_path or "")
+    if not key:
+        return None
+    path_values: tuple[str, ...] = ()
+    if requested_worktree:
+        try:
+            resolved = str(Path(requested_worktree).resolve())
+        except (OSError, RuntimeError):
+            resolved = requested_worktree
+        path_values = tuple(dict.fromkeys((requested_worktree, resolved)))
+    if requested_intent:
+        # An explicit intent id is already a globally unique binding within
+        # an opportunity.  Thread/worktree are optional corroborating fields;
+        # when supplied they must agree, but their absence must not make the
+        # resolver silently fall back to a different historical intent.
+        clauses = ["opportunity_key=?", "intent_id=?"]
+        params: list[str] = [key, requested_intent]
+        if requested_thread:
+            clauses.append("thread_id=?")
+            params.append(requested_thread)
+        if path_values:
+            placeholders = ",".join("?" for _ in path_values)
+            clauses.append(f"worktree_path IN ({placeholders})")
+            params.extend(path_values)
+        rows = connection.execute(
+            f"SELECT * FROM intents WHERE {' AND '.join(clauses)} "
+            "ORDER BY updated_at DESC,intent_id DESC",
+            tuple(params),
+        ).fetchall()
+        if len(rows) != 1:
+            return None
+        row = rows[0]
+        # A pre-dispatch lifecycle event may be authorized by its immutable
+        # intent id before the app-server has materialized a thread/worktree.
+        # If the caller supplied either corroborating field, the SQL selector
+        # above already required it to match; otherwise retain the incomplete
+        # row and let callers that need a runnable task enforce completeness.
+        if requested_thread and row["thread_id"] is None:
+            return None
+        if requested_worktree and row["worktree_path"] is None:
+            return None
+        return row
+
+    # Without an explicit immutable id, a thread and a concrete worktree are
+    # both required and must identify exactly one historical intent.
+    if not requested_thread:
+        return None
+    clauses = ["opportunity_key=?", "thread_id IS NOT NULL", "thread_id=?"]
+    params = [key, requested_thread]
+    if path_values:
+        placeholders = ",".join("?" for _ in path_values)
+        clauses.append(f"worktree_path IN ({placeholders})")
+        params.extend(path_values)
+    else:
+        clauses.append("worktree_path IS NOT NULL")
+    rows = connection.execute(
+        f"SELECT * FROM intents WHERE {' AND '.join(clauses)} ORDER BY updated_at DESC,intent_id DESC",
+        tuple(params),
+    ).fetchall()
+    return rows[0] if len(rows) == 1 else None
+
+
+def _pr_followup_binding_columns_present(connection: sqlite3.Connection) -> bool:
+    """Return whether this connection sees the additive follow-up binding schema."""
+
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(pr_followups)")}
+    return {"intent_id", "thread_id", "worktree_path"}.issubset(columns)
+
+
+def _intent_event_binding_clause(intent_alias: str, event_alias: str) -> str:
+    """Build a fail-closed SQL predicate for an intent/event identity pair.
+
+    Lifecycle events created before identity fields were added contain only a
+    thread id (or, occasionally, no binding at all).  Such legacy events are
+    usable only when that thread maps to one and only one intent/worktree.
+    New events carry ``intentId`` and can be matched exactly.  Invalid JSON is
+    never interpreted as a legacy empty payload.
+    """
+
+    payload = f"{event_alias}.payload_json"
+    valid_payload = f"json_valid({payload})=1"
+    json_object = f"CASE WHEN {valid_payload} THEN {payload} ELSE '{{}}' END"
+    thread_expr = f"json_extract({json_object},'$.threadId')"
+    intent_id_expr = f"json_extract({json_object},'$.intentId')"
+    task_expr = f"json_extract({json_object},'$.taskId')"
+    intent_expr = f"COALESCE({intent_id_expr},{task_expr})"
+    worktree_expr = f"json_extract({json_object},'$.worktreePath')"
+    intent_id_type = f"json_type({json_object},'$.intentId')"
+    task_id_type = f"json_type({json_object},'$.taskId')"
+    thread_type = f"json_type({json_object},'$.threadId')"
+    worktree_type = f"json_type({json_object},'$.worktreePath')"
+    # Keep SQL's permissive SQLite coercions from disagreeing with the
+    # Python resolver.  A present identity field is either a non-empty JSON
+    # string or an explicit null; numbers, arrays, objects, and empty strings
+    # are malformed and must never participate in a binding comparison.
+    identity_shape = f"""
+        AND (
+          {intent_id_type} IS NULL OR {intent_id_type}='null'
+          OR ({intent_id_type}='text' AND {intent_id_expr}<>'')
+        )
+        AND (
+          {task_id_type} IS NULL OR {task_id_type}='null'
+          OR ({task_id_type}='text' AND {task_expr}<>'')
+        )
+        AND (
+          {thread_type} IS NULL OR {thread_type}='null'
+          OR ({thread_type}='text' AND {thread_expr}<>'')
+        )
+        AND (
+          {worktree_type} IS NULL OR {worktree_type}='null'
+          OR ({worktree_type}='text' AND {worktree_expr}<>'')
+        )
+    """
+    # Keep the explicit-id branch authoritative.  The fallback branch is
+    # deliberately unique on the exact legacy identity available in the
+    # payload; if two historical intents share it, no row is returned.
+    return f"""
+        {valid_payload}
+        {identity_shape}
+        AND NOT (
+          COALESCE({intent_id_type}='text',0)
+          AND COALESCE({task_id_type}='text',0)
+          AND COALESCE({intent_id_expr}<>{task_expr},0)
+        )
+        AND {intent_alias}.thread_id IS NOT NULL
+        AND {intent_alias}.worktree_path IS NOT NULL
+        AND (
+          -- An explicit immutable id is authoritative.  Older result and
+          -- recovery payloads may carry only taskId/intentId, so absent
+          -- thread/worktree fields are accepted and corroborated only when
+          -- they are actually present.
+          (
+            {intent_expr} IS NOT NULL
+            AND {intent_alias}.intent_id={intent_expr}
+            AND ({thread_expr} IS NULL OR {intent_alias}.thread_id={thread_expr})
+            AND ({worktree_expr} IS NULL OR {intent_alias}.worktree_path={worktree_expr})
+          )
+          OR (
+            -- Legacy events without an immutable id must still provide a
+            -- thread and resolve uniquely; ambiguous history fails closed.
+            {intent_expr} IS NULL
+            AND {thread_expr} IS NOT NULL
+            AND {intent_alias}.thread_id={thread_expr}
+            AND (
+              (
+                {worktree_expr} IS NOT NULL
+                AND {intent_alias}.worktree_path={worktree_expr}
+                AND NOT EXISTS (
+                  SELECT 1 FROM intents other
+                  WHERE other.opportunity_key={intent_alias}.opportunity_key
+                    AND other.intent_id<>{intent_alias}.intent_id
+                    AND other.thread_id={intent_alias}.thread_id
+                    AND other.worktree_path={intent_alias}.worktree_path
+                )
+              )
+              OR (
+                {worktree_expr} IS NULL
+                AND NOT EXISTS (
+                  SELECT 1 FROM intents other
+                  WHERE other.opportunity_key={intent_alias}.opportunity_key
+                    AND other.intent_id<>{intent_alias}.intent_id
+                    AND other.thread_id={intent_alias}.thread_id
+                    AND other.worktree_path IS NOT NULL
+                )
+              )
+            )
+          )
+        )
+    """
+
+
+def _legacy_unique_unbound_event_clause(intent_alias: str, event_alias: str) -> str:
+    """Match an old event with no identity only for a singleton task.
+
+    A few pre-identity result events contain just a digest/stage.  They can
+    safely retire an implementation recovery only when the opportunity has
+    exactly one intent with a complete binding.  This compatibility predicate
+    is intentionally separate from ``_intent_event_binding_clause`` so that
+    validation and publication paths remain fail-closed for unbound results.
+    """
+
+    payload = f"{event_alias}.payload_json"
+    valid_payload = f"json_valid({payload})=1"
+    return f"""
+        {valid_payload}
+        AND json_extract(CASE WHEN {valid_payload} THEN {payload} ELSE '{{}}' END,'$.intentId') IS NULL
+        AND json_extract(CASE WHEN {valid_payload} THEN {payload} ELSE '{{}}' END,'$.taskId') IS NULL
+        AND json_extract(CASE WHEN {valid_payload} THEN {payload} ELSE '{{}}' END,'$.threadId') IS NULL
+        AND json_extract(CASE WHEN {valid_payload} THEN {payload} ELSE '{{}}' END,'$.worktreePath') IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM intents other
+          WHERE other.opportunity_key={intent_alias}.opportunity_key
+            AND other.intent_id<>{intent_alias}.intent_id
+            AND other.thread_id IS NOT NULL
+            AND other.worktree_path IS NOT NULL
+        )
+    """
+
+
+def _resolved_path_equal(left: str, right: str) -> bool:
+    """Compare worktree paths while tolerating the legacy relative spelling."""
+
+    if left == right:
+        return True
+    try:
+        return Path(left).resolve() == Path(right).resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
+def _implementation_followup_event_matches_identity(
+    connection: sqlite3.Connection,
+    *,
+    opportunity_key: str,
+    row: sqlite3.Row,
+    candidate: dict[str, Any],
+    result_digest: str,
+    attempt_digest: str | None = None,
+) -> bool:
+    """Validate one implementation event against its immutable task binding."""
+
+    try:
+        payload = json.loads(row["payload_json"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    binding = _resolve_event_intent_binding(
+        connection,
+        opportunity_key=opportunity_key,
+        payload=payload,
+    )
+    expected_intent = str(candidate.get("intentId") or candidate.get("intent_id") or "")
+    expected_thread = str(candidate.get("threadId") or candidate.get("thread_id") or "")
+    expected_worktree = str(candidate.get("worktreePath") or candidate.get("worktree_path") or "")
+    if (
+        binding is None
+        or not expected_intent
+        or not expected_thread
+        or not expected_worktree
+        or str(binding["intent_id"] or "") != expected_intent
+        or str(binding["thread_id"] or "") != expected_thread
+        or binding["worktree_path"] is None
+        or not _resolved_path_equal(str(binding["worktree_path"]), expected_worktree)
+    ):
+        return False
+    if payload.get("resultDigest") is not None and payload.get("resultDigest") != result_digest:
+        return False
+    if payload.get("issueUrl") is not None and payload.get("issueUrl") != candidate.get("issueUrl"):
+        return False
+    if attempt_digest is not None:
+        if str(row["dedupe_key"] or "") != attempt_digest:
+            return False
+        if (
+            payload.get("attemptDigest") is not None
+            and payload.get("attemptDigest") != attempt_digest
+        ):
+            return False
+    return True
+
+
+def _resolve_event_intent_binding(
+    connection: sqlite3.Connection,
+    *,
+    opportunity_key: str,
+    payload: Any,
+) -> sqlite3.Row | None:
+    """Resolve an event payload to one immutable intent, or fail closed.
+
+    Current implementation/continuation events carry ``intentId`` (older
+    result events use the equivalent ``taskId``), plus optional thread and
+    worktree fields.  Legacy rows may omit those fields; they are accepted
+    only when the available identity selects exactly one intent.  A payload
+    with malformed types or conflicting aliases is never guessed.
+    """
+
+    if not isinstance(payload, dict):
+        return None
+    identity_values: list[str] = []
+    for field in ("intentId", "taskId"):
+        if field not in payload or payload[field] is None:
+            continue
+        value = payload[field]
+        if not isinstance(value, str) or not value:
+            return None
+        identity_values.append(value)
+    if identity_values and any(value != identity_values[0] for value in identity_values[1:]):
+        return None
+    explicit_id = identity_values[0] if identity_values else None
+
+    supplied_thread: str | None = None
+    if "threadId" in payload and payload["threadId"] is not None:
+        value = payload["threadId"]
+        if not isinstance(value, str) or not value:
+            return None
+        supplied_thread = value
+    supplied_worktree: str | None = None
+    if "worktreePath" in payload and payload["worktreePath"] is not None:
+        value = payload["worktreePath"]
+        if not isinstance(value, str) or not value:
+            return None
+        supplied_worktree = value
+
+    if explicit_id is not None:
+        row = connection.execute(
+            "SELECT * FROM intents WHERE opportunity_key=? AND intent_id=?",
+            (opportunity_key, explicit_id),
+        ).fetchone()
+        if row is None or row["thread_id"] is None or row["worktree_path"] is None:
+            return None
+        if supplied_thread is not None and row["thread_id"] != supplied_thread:
+            return None
+        if supplied_worktree is not None and not _resolved_path_equal(
+            str(row["worktree_path"]), supplied_worktree
+        ):
+            return None
+        return row
+
+    rows = connection.execute(
+        """SELECT * FROM intents
+           WHERE opportunity_key=? AND thread_id IS NOT NULL AND worktree_path IS NOT NULL""",
+        (opportunity_key,),
+    ).fetchall()
+    matches: list[sqlite3.Row] = []
+    for row in rows:
+        if supplied_thread is not None and row["thread_id"] != supplied_thread:
+            continue
+        if supplied_worktree is not None and not _resolved_path_equal(
+            str(row["worktree_path"]), supplied_worktree
+        ):
+            continue
+        matches.append(row)
+    return matches[0] if len(matches) == 1 else None
+
+
+def _event_identity_projection(payload: Any) -> tuple[str | None, str | None, str | None]:
+    """Extract the comparable identity fields from an event payload.
+
+    ``intentId`` and the legacy ``taskId`` are aliases for the same immutable
+    task id.  ``None`` means that a legacy payload did not carry that field;
+    malformed present values are rejected so SQLite cannot coerce them into a
+    false match.  Worktree paths are compared with the same resolver used by
+    the rest of the ledger to tolerate the old relative spelling.
+    """
+
+    if not isinstance(payload, dict):
+        raise LedgerError("event binding payload is invalid")
+    task_ids: list[str] = []
+    for field in ("intentId", "taskId"):
+        if field not in payload or payload[field] is None:
+            continue
+        value = payload[field]
+        if not isinstance(value, str) or not value:
+            raise LedgerError("event binding payload is invalid")
+        task_ids.append(value)
+    if task_ids and any(value != task_ids[0] for value in task_ids[1:]):
+        raise LedgerError("event binding payload identity mismatch")
+    thread_id: str | None = None
+    if "threadId" in payload and payload["threadId"] is not None:
+        value = payload["threadId"]
+        if not isinstance(value, str) or not value:
+            raise LedgerError("event binding payload is invalid")
+        thread_id = value
+    worktree_path: str | None = None
+    if "worktreePath" in payload and payload["worktreePath"] is not None:
+        value = payload["worktreePath"]
+        if not isinstance(value, str) or not value:
+            raise LedgerError("event binding payload is invalid")
+        worktree_path = value
+    return (task_ids[0] if task_ids else None, thread_id, worktree_path)
+
+
+def _event_identity_conflicts(existing_payload: Any, incoming_payload: Any) -> bool:
+    """Return whether two same-key task events identify different tasks.
+
+    Missing identity fields are retained as a compatibility path for legacy
+    rows.  Whenever both rows provide a field, however, disagreement is a
+    hard conflict; silently ignoring the incoming row would make a newer
+    intent look completed by an older event.
+    """
+
+    existing = _event_identity_projection(existing_payload)
+    incoming = _event_identity_projection(incoming_payload)
+    existing_task, existing_thread, existing_worktree = existing
+    incoming_task, incoming_thread, incoming_worktree = incoming
+    if existing_task is not None and incoming_task is not None:
+        if existing_task != incoming_task:
+            return True
+    if existing_thread is not None and incoming_thread is not None:
+        if existing_thread != incoming_thread:
+            return True
+    if existing_worktree is not None and incoming_worktree is not None:
+        if not _resolved_path_equal(existing_worktree, incoming_worktree):
+            return True
+    return False
 
 
 def _live_audit_probe_receipt(audit_payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -491,6 +932,65 @@ def _publication_authorization_is_current_or_terminal(
     ) or _publication_probe_valid_json(request_json, evidence)
 
 
+def _resolve_publication_request_binding(
+    connection: sqlite3.Connection,
+    request: sqlite3.Row,
+) -> tuple[sqlite3.Row, dict[str, Any]]:
+    """Resolve the immutable intent behind one publication request.
+
+    Publication tables predate the explicit intent column, so the request
+    JSON and the denormalized thread/worktree columns are both checked.  A
+    malformed or disagreeing identity is rejected instead of allowing a
+    request for one historical intent to complete another intent on the same
+    opportunity.
+    """
+
+    try:
+        payload = json.loads(str(request["request_json"] or "{}"))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise LedgerError("publication request identity is invalid") from exc
+    if not isinstance(payload, dict):
+        raise LedgerError("publication request identity is invalid")
+
+    def optional_text(field: str) -> str | None:
+        value = payload.get(field)
+        if value in (None, ""):
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise LedgerError(f"publication request {field} identity is invalid")
+        return value
+
+    intent_value = optional_text("intentId")
+    task_value = optional_text("taskId")
+    if intent_value and task_value and intent_value != task_value:
+        raise LedgerError("publication request intent identity disagrees")
+    intent_id = intent_value or task_value
+    payload_thread = optional_text("threadId")
+    payload_worktree = optional_text("worktreePath")
+    row_thread = str(request["thread_id"] or "") or None
+    row_worktree = str(request["worktree_path"] or "") or None
+    if payload_thread and row_thread and payload_thread != row_thread:
+        raise LedgerError("publication request thread identity disagrees")
+    if (
+        payload_worktree
+        and row_worktree
+        and not _resolved_path_equal(payload_worktree, row_worktree)
+    ):
+        raise LedgerError("publication request worktree identity disagrees")
+    thread_id = payload_thread or row_thread
+    worktree_path = payload_worktree or row_worktree
+    binding = _resolve_exact_intent_binding(
+        connection,
+        opportunity_key=str(request["opportunity_key"]),
+        intent_id=intent_id,
+        thread_id=thread_id,
+        worktree_path=worktree_path,
+    )
+    if binding is None:
+        raise LedgerError("publication request intent binding is stale or ambiguous")
+    return binding, payload
+
+
 RECOVERABLE_CONTEXT_STAGES = {
     "AUDIT_PASS",
     "VALIDATION_PENDING",
@@ -528,7 +1028,7 @@ RECOVERED_TITLE_STATE = {
     "CLOSED": "PR_OPEN",
 }
 
-_EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE = """
+_EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE = f"""
     i.status='DISPATCHED'
     AND i.thread_id IS NOT NULL
     AND EXISTS (
@@ -540,19 +1040,27 @@ _EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE = """
        AND recovery.dedupe_key=exhausted.dedupe_key
       WHERE exhausted.opportunity_key=i.opportunity_key
         AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
-        AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+        AND {_intent_event_binding_clause("i", "exhausted")}
+        AND {_intent_event_binding_clause("i", "recovery")}
+        AND json_extract(
+              CASE WHEN json_valid(recovery.payload_json)=1
+                   THEN recovery.payload_json ELSE '{{}}' END,
+              '$.threadId'
+            )=i.thread_id
         AND recovery.id>(
           SELECT COALESCE(MAX(dispatched.id),0)
           FROM events dispatched
           WHERE dispatched.opportunity_key=i.opportunity_key
             AND dispatched.event_type='DISPATCHED'
             AND dispatched.dedupe_key=i.thread_id
+            AND {_intent_event_binding_clause("i", "dispatched")}
         )
         AND NOT EXISTS (
           SELECT 1
           FROM events later
           WHERE later.opportunity_key=exhausted.opportunity_key
             AND later.id>exhausted.id
+            AND {_intent_event_binding_clause("i", "later")}
             AND (
               later.event_type IN (
                 'TASK_RESULT_INGESTED',
@@ -571,15 +1079,29 @@ _EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE = """
               )
               OR (
                 later.event_type='THREAD_RECOVERY_RESERVED'
-                AND json_extract(later.payload_json,'$.threadId')=i.thread_id
                 AND json_extract(
-                      later.payload_json,'$.rearmedFromExhausted.exhaustedNonce'
+                      CASE WHEN json_valid(later.payload_json)=1
+                           THEN later.payload_json ELSE '{{}}' END,
+                      '$.threadId'
+                    )=i.thread_id
+                AND json_extract(
+                      CASE WHEN json_valid(later.payload_json)=1
+                           THEN later.payload_json ELSE '{{}}' END,
+                      '$.rearmedFromExhausted.exhaustedNonce'
                     )=exhausted.dedupe_key
               )
               OR (
                 later.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
-                AND json_extract(later.payload_json,'$.threadId')=i.thread_id
-                AND json_extract(later.payload_json,'$.recoveryNonce')=
+                AND json_extract(
+                      CASE WHEN json_valid(later.payload_json)=1
+                           THEN later.payload_json ELSE '{{}}' END,
+                      '$.threadId'
+                    )=i.thread_id
+                AND json_extract(
+                      CASE WHEN json_valid(later.payload_json)=1
+                           THEN later.payload_json ELSE '{{}}' END,
+                      '$.recoveryNonce'
+                    )=
                     exhausted.dedupe_key
               )
             )
@@ -839,6 +1361,110 @@ class RadarLedger:
         finally:
             connection.close()
 
+    def _backfill_pr_followup_bindings(self, connection: sqlite3.Connection) -> None:
+        """Backfill follow-up task identity from an exact durable source.
+
+        Older ledgers keyed follow-ups only by opportunity.  A consumed
+        publication request (or, for legacy rows, its reservation event) is the
+        only safe source for the task/thread/worktree binding.  Ambiguous rows
+        remain unbound and are intentionally hidden by candidate queries until
+        a later exact observation repairs them.
+        """
+
+        rows = connection.execute(
+            """SELECT * FROM pr_followups
+               WHERE intent_id IS NULL OR thread_id IS NULL OR worktree_path IS NULL"""
+        ).fetchall()
+        for followup in rows:
+            key = str(followup["opportunity_key"])
+            binding: sqlite3.Row | None = None
+            publication = connection.execute(
+                """SELECT r.thread_id,r.worktree_path,r.request_json
+                   FROM publication_requests r
+                   JOIN publication_permits p ON p.request_id=r.request_id
+                   WHERE r.opportunity_key=? AND p.pr_url=?
+                     AND (
+                       p.status='CONSUMED'
+                       OR (
+                         p.status='BLOCKED'
+                         AND r.reason='BLOCKED_REPRODUCTION_REQUIRED'
+                         AND json_valid(r.request_json)=1
+                         AND json_extract(r.request_json,'$.recoveredFromTaskContext')=1
+                       )
+                     )
+                   ORDER BY p.updated_at DESC,r.updated_at DESC,
+                            r.created_at DESC,r.request_id DESC LIMIT 1""",
+                (key, followup["pr_url"]),
+            ).fetchone()
+            if publication is not None:
+                try:
+                    request_payload = json.loads(str(publication["request_json"] or "{}"))
+                except (TypeError, json.JSONDecodeError):
+                    request_payload = {}
+                if not isinstance(request_payload, dict):
+                    request_payload = {}
+                binding = _resolve_exact_intent_binding(
+                    connection,
+                    opportunity_key=key,
+                    intent_id=str(request_payload.get("intentId") or "") or None,
+                    thread_id=str(publication["thread_id"] or "") or None,
+                    worktree_path=str(publication["worktree_path"] or "") or None,
+                )
+            if binding is None and followup["wake_digest"]:
+                event_rows = connection.execute(
+                    """SELECT event_type,payload_json FROM events
+                       WHERE opportunity_key=? AND dedupe_key=?
+                         AND event_type IN (
+                           'PR_FOLLOWUP_PREPARATION_BOUND','PR_FOLLOWUP_RESERVED'
+                         )
+                       ORDER BY CASE event_type
+                                  WHEN 'PR_FOLLOWUP_PREPARATION_BOUND' THEN 0 ELSE 1
+                                END,id DESC""",
+                    (key, followup["wake_digest"]),
+                ).fetchall()
+                for event in event_rows:
+                    try:
+                        payload = json.loads(str(event["payload_json"] or "{}"))
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(payload, dict):
+                        continue
+                    binding = _resolve_exact_intent_binding(
+                        connection,
+                        opportunity_key=key,
+                        intent_id=str(payload.get("intentId") or "") or None,
+                        thread_id=str(payload.get("threadId") or "") or None,
+                        worktree_path=str(payload.get("worktreePath") or "") or None,
+                    )
+                    if binding is not None:
+                        break
+            if binding is None:
+                continue
+            existing_identity = (
+                followup["intent_id"],
+                followup["thread_id"],
+                followup["worktree_path"],
+            )
+            resolved_identity = (
+                str(binding["intent_id"]),
+                str(binding["thread_id"]),
+                str(binding["worktree_path"]),
+            )
+            if any(
+                current is not None and str(current) != expected
+                for current, expected in zip(existing_identity, resolved_identity, strict=True)
+            ):
+                # A partially populated row that disagrees with its source is
+                # not repaired by inference; candidate selection will fail
+                # closed and a fresh exact import can replace it safely.
+                continue
+            connection.execute(
+                """UPDATE pr_followups
+                   SET intent_id=?,thread_id=?,worktree_path=?
+                   WHERE opportunity_key=?""",
+                (*resolved_identity, key),
+            )
+
     def _initialize(self) -> None:
         with self.connect() as connection:
             connection.executescript(
@@ -965,6 +1591,9 @@ class RadarLedger:
                     followup_required INTEGER NOT NULL,
                     checked_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
+                    intent_id TEXT,
+                    thread_id TEXT,
+                    worktree_path TEXT,
                     FOREIGN KEY(opportunity_key) REFERENCES opportunities(key)
                 );
                 """
@@ -986,6 +1615,20 @@ class RadarLedger:
                 connection.execute("ALTER TABLE intents ADD COLUMN client_thread_id TEXT")
             if "creation_started_at" not in columns:
                 connection.execute("ALTER TABLE intents ADD COLUMN creation_started_at TEXT")
+            followup_columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(pr_followups)")
+            }
+            for name in ("intent_id", "thread_id", "worktree_path"):
+                if name not in followup_columns:
+                    connection.execute(f"ALTER TABLE pr_followups ADD COLUMN {name} TEXT")
+            # Create this only after the additive columns exist.  Placing the
+            # index in the CREATE-TABLE script makes opening a pre-fix ledger
+            # fail before the migration can add those columns.
+            connection.execute(
+                """CREATE INDEX IF NOT EXISTS pr_followups_binding
+                   ON pr_followups(opportunity_key,intent_id,thread_id,wake_digest)"""
+            )
+            self._backfill_pr_followup_bindings(connection)
             now = iso_z(datetime.now(UTC))
             stale_leases = connection.execute(
                 """SELECT key FROM opportunities o
@@ -1098,12 +1741,18 @@ class RadarLedger:
                      AND i.thread_id=r.thread_id
                      AND i.worktree_path=r.worktree_path
                      AND i.status IN ('DISPATCHED','COMPLETED')
-                     AND i.intent_id=(
-                       SELECT i2.intent_id FROM intents i2
-                       WHERE i2.opportunity_key=r.opportunity_key
-                         AND i2.thread_id IS NOT NULL
-                         AND i2.worktree_path IS NOT NULL
-                       ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
+                     AND (
+                       json_extract(r.request_json,'$.intentId')=i.intent_id
+                       OR (
+                         json_extract(r.request_json,'$.intentId') IS NULL
+                         AND NOT EXISTS (
+                           SELECT 1 FROM intents other
+                           WHERE other.opportunity_key=i.opportunity_key
+                             AND other.intent_id<>i.intent_id
+                             AND other.thread_id=i.thread_id
+                             AND other.worktree_path=i.worktree_path
+                         )
+                       )
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events barrier
@@ -1469,7 +2118,12 @@ class RadarLedger:
         if stage not in RECOVERABLE_CONTEXT_STAGES:
             if stage != "DISPATCHED":
                 raise LedgerError("task context lifecycle stage is not recoverable")
-            current = self.task_context(issue_url=issue_url, thread_id=thread_id)
+            current = self.task_context(
+                issue_url=issue_url,
+                thread_id=thread_id,
+                intent_id=intent_id,
+                worktree_path=worktree_path,
+            )
             immutable_binding = {
                 "key": key,
                 "intentId": intent_id,
@@ -3149,7 +3803,7 @@ class RadarLedger:
     def title_bindings(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.title,o.stage,i.thread_id,i.title_time,
+                f"""SELECT o.key,o.title,o.stage,i.intent_id,i.thread_id,i.worktree_path,i.title_time,
                           i.title_synced_state,
                           CASE
                             WHEN o.stage='AUDIT_NO_GO' THEN 'AUDIT_NO_GO'
@@ -3168,11 +3822,15 @@ class RadarLedger:
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    WHERE i.thread_id IS NOT NULL
                      AND i.status IN ('DISPATCHED','COMPLETED','REJECTED')
+                     AND i.rowid=(
+                       SELECT MAX(current.rowid) FROM intents current
+                       WHERE current.opportunity_key=o.key
+                     )
                      AND COALESCE((
                        SELECT lifecycle.event_type FROM events lifecycle
                        WHERE lifecycle.opportunity_key=o.key
                          AND lifecycle.event_type IN ('THREAD_ARCHIVED','THREAD_RESTORED')
-                         AND json_extract(lifecycle.payload_json,'$.threadId')=i.thread_id
+                         AND {_intent_event_binding_clause("i", "lifecycle")}
                        ORDER BY lifecycle.id DESC LIMIT 1
                      ),'THREAD_RESTORED')<>'THREAD_ARCHIVED'
                    ORDER BY o.updated_at"""
@@ -3183,7 +3841,9 @@ class RadarLedger:
                 {
                     "key": row["key"],
                     "title": row["title"],
+                    "intentId": row["intent_id"],
                     "threadId": row["thread_id"],
+                    "worktreePath": row["worktree_path"],
                     "titleTime": row["title_time"],
                     "titleState": row["desired_state"],
                     "titleSyncedState": row["title_synced_state"],
@@ -3191,7 +3851,9 @@ class RadarLedger:
                         canonical_json(
                             {
                                 "key": row["key"],
+                                "intentId": row["intent_id"],
                                 "threadId": row["thread_id"],
+                                "worktreePath": row["worktree_path"],
                                 "title": row["title"],
                                 "titleTime": row["title_time"],
                                 "titleState": row["desired_state"],
@@ -3210,10 +3872,8 @@ class RadarLedger:
     def invalidate_title_sync(
         self, *, thread_id: str, state: str, actual_title_digest: str
     ) -> bool:
-        binding = next(
-            (item for item in self.title_bindings() if item["threadId"] == thread_id),
-            None,
-        )
+        bindings = [item for item in self.title_bindings() if item["threadId"] == thread_id]
+        binding = bindings[0] if len(bindings) == 1 else None
         if (
             binding is None
             or binding["titleState"] != state
@@ -3224,8 +3884,8 @@ class RadarLedger:
         with self.transaction() as connection:
             updated = connection.execute(
                 """UPDATE intents SET title_synced_state=NULL,updated_at=?
-                   WHERE thread_id=? AND title_synced_state=?""",
-                (now, thread_id, state),
+                   WHERE intent_id=? AND thread_id=? AND title_synced_state=?""",
+                (now, binding["intentId"], thread_id, state),
             ).rowcount
             if updated:
                 self._event(
@@ -3234,7 +3894,9 @@ class RadarLedger:
                     "THREAD_TITLE_DRIFTED",
                     f"{thread_id}:{state}:{actual_title_digest}",
                     {
+                        "intentId": binding["intentId"],
                         "threadId": thread_id,
+                        "worktreePath": binding.get("worktreePath"),
                         "titleState": state,
                         "actualTitleDigest": actual_title_digest,
                     },
@@ -3242,24 +3904,46 @@ class RadarLedger:
                 )
         return bool(updated)
 
-    def commit_title(self, *, thread_id: str, state: str, nonce: str) -> None:
-        candidates = {item["threadId"]: item for item in self.title_candidates()}
-        candidate = candidates.get(thread_id)
+    def commit_title(
+        self,
+        *,
+        thread_id: str,
+        state: str,
+        nonce: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
+    ) -> None:
+        candidates = [item for item in self.title_candidates() if item["threadId"] == thread_id]
+        if intent_id:
+            candidates = [item for item in candidates if item.get("intentId") == intent_id]
+        if worktree_path:
+            candidates = [
+                item
+                for item in candidates
+                if item.get("worktreePath")
+                and _resolved_path_equal(str(item["worktreePath"]), str(worktree_path))
+            ]
+        candidate = candidates[0] if len(candidates) == 1 else None
         if not candidate or candidate["titleState"] != state or candidate["titleNonce"] != nonce:
             raise LedgerError("title authorization is stale or invalid")
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             connection.execute(
                 """UPDATE intents SET title_synced_state=?,updated_at=?
-                   WHERE thread_id=?""",
-                (state, now, thread_id),
+                   WHERE intent_id=? AND thread_id=?""",
+                (state, now, candidate["intentId"], thread_id),
             )
             self._event(
                 connection,
                 candidate["key"],
                 "THREAD_TITLE_SYNCED",
                 f"{thread_id}:{state}",
-                {"threadId": thread_id, "titleState": state},
+                {
+                    "intentId": candidate["intentId"],
+                    "threadId": thread_id,
+                    "worktreePath": candidate.get("worktreePath"),
+                    "titleState": state,
+                },
                 now,
             )
 
@@ -3268,8 +3952,8 @@ class RadarLedger:
 
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.title,o.stage,o.updated_at,o.issue_url,
-                          i.thread_id,i.worktree_path,i.title_time,
+                f"""SELECT o.key,o.title,o.stage,o.updated_at,o.issue_url,
+                          i.intent_id,i.thread_id,i.worktree_path,i.title_time,
                           lifecycle.id AS lifecycle_event_id,
                           lifecycle.event_type AS lifecycle_state
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
@@ -3277,7 +3961,7 @@ class RadarLedger:
                      SELECT lifecycle.id FROM events lifecycle
                      WHERE lifecycle.opportunity_key=o.key
                        AND lifecycle.event_type IN ('THREAD_ARCHIVED','THREAD_RESTORED')
-                       AND json_extract(lifecycle.payload_json,'$.threadId')=i.thread_id
+                       AND {_intent_event_binding_clause("i", "lifecycle")}
                      ORDER BY lifecycle.id DESC LIMIT 1
                    )
                    WHERE o.stage<>'AUDIT_NO_GO'
@@ -3294,14 +3978,16 @@ class RadarLedger:
                 "key": row["key"],
                 "title": row["title"],
                 "stage": row["stage"],
+                "intentId": row["intent_id"],
                 "issueUrl": row["issue_url"],
                 "threadId": row["thread_id"],
                 "worktreePath": row["worktree_path"],
                 "titleTime": row["title_time"],
                 "lifecycleState": row["lifecycle_state"],
                 "restoreNonce": sha256_text(
-                    f"{row['key']}|{row['thread_id']}|{row['stage']}|"
-                    f"{row['updated_at']}|{row['lifecycle_event_id'] or 'physical-drift'}"
+                    f"{row['key']}|{row['intent_id']}|{row['thread_id']}|"
+                    f"{row['worktree_path']}|{row['stage']}|{row['updated_at']}|"
+                    f"{row['lifecycle_event_id'] or 'physical-drift'}"
                 ),
             }
             for row in rows
@@ -3316,9 +4002,27 @@ class RadarLedger:
             if item["lifecycleState"] == "THREAD_ARCHIVED"
         ]
 
-    def commit_restore(self, *, thread_id: str, nonce: str) -> None:
-        candidates = {item["threadId"]: item for item in self.restorable_task_bindings()}
-        candidate = candidates.get(thread_id)
+    def commit_restore(
+        self,
+        *,
+        thread_id: str,
+        nonce: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
+    ) -> None:
+        candidates = [
+            item for item in self.restorable_task_bindings() if item["threadId"] == thread_id
+        ]
+        if intent_id:
+            candidates = [item for item in candidates if item.get("intentId") == intent_id]
+        if worktree_path:
+            candidates = [
+                item
+                for item in candidates
+                if item.get("worktreePath")
+                and _resolved_path_equal(str(item["worktreePath"]), str(worktree_path))
+            ]
+        candidate = candidates[0] if len(candidates) == 1 else None
         if not candidate or candidate["restoreNonce"] != nonce:
             raise LedgerError("restore authorization is stale or invalid")
         now = iso_z(datetime.now(UTC))
@@ -3328,7 +4032,12 @@ class RadarLedger:
                 candidate["key"],
                 "THREAD_RESTORED",
                 nonce,
-                {"threadId": thread_id, "restoreNonce": nonce},
+                {
+                    "intentId": candidate.get("intentId"),
+                    "threadId": thread_id,
+                    "worktreePath": candidate.get("worktreePath"),
+                    "restoreNonce": nonce,
+                },
                 now,
             )
 
@@ -3366,9 +4075,19 @@ class RadarLedger:
         evidence: dict[str, Any] | None = None,
         reason: str | None = None,
         dedupe_key: str | None = None,
+        intent_id: str | None = None,
+        thread_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> None:
         if stage not in STAGES:
             raise ValueError(f"unsupported lifecycle stage: {stage}")
+        # Lifecycle stages are global per opportunity, but their side effects
+        # belong to one immutable task intent.  Do not infer that intent from
+        # recency: explicit identity is resolved exactly, while legacy calls
+        # are accepted only when there is at most one historical intent.
+        intent_id = str(intent_id or "") or None
+        thread_id = str(thread_id or "") or None
+        worktree_path = str(worktree_path or "") or None
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             row = connection.execute(
@@ -3376,6 +4095,116 @@ class RadarLedger:
             ).fetchone()
             if row is None:
                 raise LedgerError("opportunity not found")
+            binding_row: sqlite3.Row | None = None
+            if intent_id or thread_id or worktree_path:
+                binding_row = _resolve_exact_intent_binding(
+                    connection,
+                    opportunity_key=key,
+                    intent_id=intent_id,
+                    thread_id=thread_id,
+                    worktree_path=worktree_path,
+                )
+                if binding_row is None:
+                    raise LedgerError("stage identity is stale or ambiguous")
+            else:
+                intent_rows = connection.execute(
+                    "SELECT * FROM intents WHERE opportunity_key=? "
+                    "ORDER BY updated_at DESC,intent_id DESC",
+                    (key,),
+                ).fetchall()
+                if len(intent_rows) > 1:
+                    raise LedgerError("stage identity is required for multiple intents")
+                # Keep the legacy event shape for a sole unbound caller.  The
+                # caller may still opt into an exact identity; absence of an
+                # identity is safe here because there is no competing intent.
+
+            # The opportunity stage is a projection for the current intent.
+            # A delayed result from an older generation may still be useful
+            # evidence, but it must never move that projection backwards (or
+            # close a replacement task).  Keep a durable diagnostic event and
+            # leave all lifecycle state untouched when the explicit binding is
+            # no longer the newest intent for this opportunity.
+            if binding_row is not None:
+                current_row = connection.execute(
+                    """SELECT intent_id FROM intents
+                       WHERE opportunity_key=?
+                       ORDER BY rowid DESC LIMIT 1""",
+                    (key,),
+                ).fetchone()
+                repeated_issue_no_go = False
+                if stage == "AUDIT_NO_GO" and reason:
+                    repeated_issue_no_go = (
+                        connection.execute(
+                            """SELECT 1 FROM events
+                               WHERE opportunity_key=? AND event_type='AUDIT_NO_GO'
+                                 AND json_extract(payload_json,'$.reason')=?
+                               LIMIT 1""",
+                            (key, reason),
+                        ).fetchone()
+                        is not None
+                    )
+                if (
+                    current_row is not None
+                    and str(current_row["intent_id"]) != str(binding_row["intent_id"])
+                    and not repeated_issue_no_go
+                ):
+                    stale_payload = {
+                        "requestedStage": stage,
+                        "reason": reason,
+                        "sourceDedupeKey": dedupe_key,
+                        "intentId": str(binding_row["intent_id"]),
+                        "threadId": binding_row["thread_id"],
+                        "worktreePath": binding_row["worktree_path"],
+                        "currentIntentId": str(current_row["intent_id"]),
+                    }
+                    self._event(
+                        connection,
+                        key,
+                        "STALE_STAGE_IGNORED",
+                        sha256_json(
+                            {
+                                "sourceDedupeKey": dedupe_key,
+                                **stale_payload,
+                                "stage": stage,
+                            }
+                        ),
+                        stale_payload,
+                        now,
+                    )
+                    return
+
+            def event_payload(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+                value = dict(payload or {})
+                if binding_row is None:
+                    return value
+                identity = {
+                    "intentId": str(binding_row["intent_id"]),
+                    "threadId": (
+                        str(binding_row["thread_id"])
+                        if binding_row["thread_id"] is not None
+                        else None
+                    ),
+                    "worktreePath": (
+                        str(binding_row["worktree_path"])
+                        if binding_row["worktree_path"] is not None
+                        else None
+                    ),
+                }
+                for field, expected in identity.items():
+                    supplied = value.get(field)
+                    if supplied is None:
+                        continue
+                    agrees = (
+                        _resolved_path_equal(str(supplied), expected)
+                        if field == "worktreePath"
+                        else str(supplied) == expected
+                    )
+                    if not agrees:
+                        raise LedgerError(f"stage evidence {field} does not match intent binding")
+                value.update(identity)
+                return value
+
+            stage_evidence = event_payload(evidence or {"reason": reason})
             if (
                 dedupe_key
                 and connection.execute(
@@ -3394,10 +4223,41 @@ class RadarLedger:
             ambiguous_publication = None
             if stage == "AUDIT_NO_GO":
                 publication_rows = connection.execute(
-                    """SELECT request_id,status,permit_id FROM publication_requests
+                    """SELECT request_id,status,permit_id,thread_id,worktree_path,request_json
+                       FROM publication_requests
                        WHERE opportunity_key=? ORDER BY created_at""",
                     (key,),
                 ).fetchall()
+                if binding_row is not None:
+                    matched_publications: list[sqlite3.Row] = []
+                    for publication in publication_rows:
+                        try:
+                            request_payload = json.loads(publication["request_json"] or "{}")
+                        except (TypeError, json.JSONDecodeError):
+                            continue
+                        if not isinstance(request_payload, dict):
+                            continue
+                        request_intent = request_payload.get("intentId") or request_payload.get(
+                            "taskId"
+                        )
+                        request_thread = request_payload.get("threadId") or publication["thread_id"]
+                        request_worktree = (
+                            request_payload.get("worktreePath") or publication["worktree_path"]
+                        )
+                        if request_intent and str(request_intent) != str(binding_row["intent_id"]):
+                            continue
+                        if request_thread and str(request_thread) != str(binding_row["thread_id"]):
+                            continue
+                        if request_worktree and not _resolved_path_equal(
+                            str(request_worktree), str(binding_row["worktree_path"])
+                        ):
+                            continue
+                        # Legacy requests with no identity cannot be safely
+                        # revoked by a task-bound stage event.
+                        if not request_intent and not request_thread and not request_worktree:
+                            continue
+                        matched_publications.append(publication)
+                    publication_rows = matched_publications
                 irreversible_publication = next(
                     (
                         publication
@@ -3448,9 +4308,10 @@ class RadarLedger:
                     {
                         "preservedStage": row["stage"],
                         "reason": reason,
-                        "evidence": evidence or {},
+                        "evidence": stage_evidence,
                         "publicationRequestId": irreversible_publication["request_id"],
                         "publicationBoundary": "IRREVERSIBLE_RECEIPT",
+                        **event_payload(),
                     },
                     now,
                 )
@@ -3471,13 +4332,14 @@ class RadarLedger:
                     {
                         "preservedStage": row["stage"],
                         "reason": reason,
-                        "evidence": evidence or {},
+                        "evidence": stage_evidence,
                         "publicationRequestId": ambiguous_publication["requestId"],
                         "publicationBoundary": "IN_FLIGHT_OR_UNCERTAIN",
                         "effectId": effect["effectId"],
                         "effectAction": effect["action"],
                         "effectStatus": effect["status"],
                         "creationAttempted": effect["creationAttempted"],
+                        **event_payload(),
                     },
                     now,
                 )
@@ -3497,7 +4359,8 @@ class RadarLedger:
                         "preservedStage": row["stage"],
                         "requestedStage": stage,
                         "reason": reason,
-                        "evidence": evidence or {},
+                        "evidence": stage_evidence,
+                        **event_payload(),
                     },
                     now,
                 )
@@ -3532,10 +4395,29 @@ class RadarLedger:
                 key,
                 stage,
                 dedupe_key or f"{stage}:{now}",
-                evidence or {"reason": reason},
+                stage_evidence,
                 now,
             )
-            if stage == "AUDIT_NO_GO":
+            if binding_row is not None:
+                if stage == "AUDIT_NO_GO":
+                    connection.execute(
+                        "UPDATE intents SET status='REJECTED',updated_at=? WHERE intent_id=?",
+                        (now, binding_row["intent_id"]),
+                    )
+                elif stage in {
+                    "VALIDATION_PENDING",
+                    "FIX_READY",
+                    "PR_OPEN",
+                    "CI_GREEN",
+                    "MAINTAINER_ACCEPTED",
+                    "MERGED",
+                    "CLOSED",
+                }:
+                    connection.execute(
+                        "UPDATE intents SET status='COMPLETED',updated_at=? WHERE intent_id=?",
+                        (now, binding_row["intent_id"]),
+                    )
+            elif stage == "AUDIT_NO_GO":
                 connection.execute(
                     "UPDATE intents SET status='REJECTED',updated_at=? WHERE opportunity_key=?",
                     (now, key),
@@ -4051,10 +4933,11 @@ class RadarLedger:
         event_filter = (
             ""
             if exclude_intent_id is None
-            else """AND NOT EXISTS (
+            else f"""AND NOT EXISTS (
                      SELECT 1 FROM intents excluded
                      WHERE excluded.intent_id=?
                        AND excluded.opportunity_key=r.opportunity_key
+                       AND ({_intent_event_binding_clause("excluded", "r")})
                    )"""
         )
         params: list[Any] = [now]
@@ -4071,6 +4954,8 @@ class RadarLedger:
                        AND NOT ({_EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE})
                      UNION
                      SELECT r.opportunity_key FROM events r
+                     JOIN intents i ON i.opportunity_key=r.opportunity_key
+                       AND {_intent_event_binding_clause("i", "r")}
                      WHERE r.event_type='PR_FOLLOWUP_RESERVED'
                        {event_filter}
                        AND NOT EXISTS (
@@ -4083,6 +4968,7 @@ class RadarLedger:
                          WHERE completed.opportunity_key=r.opportunity_key
                            AND completed.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
                            AND completed.dedupe_key=r.dedupe_key
+                           AND {_intent_event_binding_clause("i", "completed")}
                            AND completed.id>r.id
                        )
                        AND NOT EXISTS (
@@ -4093,9 +4979,19 @@ class RadarLedger:
                           AND recovery.dedupe_key=exhausted.dedupe_key
                          WHERE exhausted.opportunity_key=r.opportunity_key
                            AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
-                           AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                           AND {_intent_event_binding_clause("i", "exhausted")}
+                           AND {_intent_event_binding_clause("i", "recovery")}
+                           AND json_extract(
+                                 CASE WHEN json_valid(recovery.payload_json)=1
+                                      THEN recovery.payload_json ELSE '{{}}' END,
+                                 '$.recoveryKind'
+                               )=
                                'PR_FOLLOWUP_RESULT'
-                           AND json_extract(recovery.payload_json,'$.followupDigest')=
+                           AND json_extract(
+                                 CASE WHEN json_valid(recovery.payload_json)=1
+                                      THEN recovery.payload_json ELSE '{{}}' END,
+                                 '$.followupDigest'
+                               )=
                                r.dedupe_key
                        )
                        AND NOT EXISTS (
@@ -4103,17 +4999,25 @@ class RadarLedger:
                          WHERE result.opportunity_key=r.opportunity_key
                            AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
                            AND result.dedupe_key=r.dedupe_key
+                           AND {_intent_event_binding_clause("i", "result")}
                        )
                        AND NOT EXISTS (
                          SELECT 1 FROM events abandoned
                          WHERE abandoned.opportunity_key=r.opportunity_key
                            AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
-                           AND json_extract(abandoned.payload_json,'$.wakeDigest')=r.dedupe_key
+                           AND {_intent_event_binding_clause("i", "abandoned")}
+                           AND json_extract(
+                                 CASE WHEN json_valid(abandoned.payload_json)=1
+                                      THEN abandoned.payload_json ELSE '{{}}' END,
+                                 '$.wakeDigest'
+                               )=r.dedupe_key
                            AND abandoned.id>r.id
                        )
                      UNION
                      SELECT r.opportunity_key FROM events r
                      JOIN opportunities o ON o.key=r.opportunity_key
+                     JOIN intents i ON i.opportunity_key=r.opportunity_key
+                       AND {_intent_event_binding_clause("i", "r")}
                      WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
                        AND o.stage IN (
                          'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
@@ -4132,13 +5036,34 @@ class RadarLedger:
                           AND recovery.dedupe_key=exhausted.dedupe_key
                          WHERE exhausted.opportunity_key=r.opportunity_key
                            AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
-                           AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                           AND {_intent_event_binding_clause("i", "exhausted")}
+                           AND {_intent_event_binding_clause("i", "recovery")}
+                           AND json_extract(
+                                 CASE WHEN json_valid(recovery.payload_json)=1
+                                      THEN recovery.payload_json ELSE '{{}}' END,
+                                 '$.recoveryKind'
+                               )=
                                'VALIDATION_FOLLOWUP_RESULT'
-                           AND json_extract(recovery.payload_json,'$.followupDigest')=
-                               json_extract(r.payload_json,'$.resultDigest')
+                           AND json_extract(
+                                 CASE WHEN json_valid(recovery.payload_json)=1
+                                      THEN recovery.payload_json ELSE '{{}}' END,
+                                 '$.followupDigest'
+                               )=json_extract(
+                                 CASE WHEN json_valid(r.payload_json)=1
+                                      THEN r.payload_json ELSE '{{}}' END,
+                                 '$.resultDigest'
+                               )
                        )
-                       AND json_extract(r.payload_json,'$.resultDigest')=(
-                         SELECT json_extract(d.payload_json,'$.resultDigest')
+                       AND json_extract(
+                             CASE WHEN json_valid(r.payload_json)=1
+                                  THEN r.payload_json ELSE '{{}}' END,
+                             '$.resultDigest'
+                           )=(
+                         SELECT json_extract(
+                                  CASE WHEN json_valid(d.payload_json)=1
+                                       THEN d.payload_json ELSE '{{}}' END,
+                                  '$.resultDigest'
+                                )
                          FROM events d
                          WHERE d.opportunity_key=r.opportunity_key
                            AND d.event_type='TASK_RESULT_VALIDATION_DEFERRED'
@@ -4148,17 +5073,37 @@ class RadarLedger:
                          SELECT 1 FROM events abandoned
                          WHERE abandoned.opportunity_key=r.opportunity_key
                            AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
-                           AND json_extract(abandoned.payload_json,'$.resultDigest')=
-                               json_extract(r.payload_json,'$.resultDigest')
-                           AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
+                           AND {_intent_event_binding_clause("i", "abandoned")}
+                           AND json_extract(
+                                 CASE WHEN json_valid(abandoned.payload_json)=1
+                                      THEN abandoned.payload_json ELSE '{{}}' END,
+                                 '$.resultDigest'
+                               )=json_extract(
+                                 CASE WHEN json_valid(r.payload_json)=1
+                                      THEN r.payload_json ELSE '{{}}' END,
+                                 '$.resultDigest'
+                               )
+                           AND json_extract(
+                                 CASE WHEN json_valid(abandoned.payload_json)=1
+                                      THEN abandoned.payload_json ELSE '{{}}' END,
+                                 '$.reservedAt'
+                               )=r.created_at
                            AND abandoned.id>r.id
                        )
                        AND NOT EXISTS (
                          SELECT 1 FROM events cancelled
                          WHERE cancelled.opportunity_key=r.opportunity_key
                            AND cancelled.event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
-                           AND json_extract(cancelled.payload_json,'$.reservationDigest')=
-                               json_extract(r.payload_json,'$.reservationDigest')
+                           AND {_intent_event_binding_clause("i", "cancelled")}
+                           AND json_extract(
+                                 CASE WHEN json_valid(cancelled.payload_json)=1
+                                      THEN cancelled.payload_json ELSE '{{}}' END,
+                                 '$.reservationDigest'
+                               )=json_extract(
+                                 CASE WHEN json_valid(r.payload_json)=1
+                                      THEN r.payload_json ELSE '{{}}' END,
+                                 '$.reservationDigest'
+                               )
                            AND cancelled.id>r.id
                        )
                    )""",
@@ -4193,7 +5138,10 @@ class RadarLedger:
                     JOIN events recovery ON recovery.opportunity_key=exhausted.opportunity_key
                       AND recovery.event_type='THREAD_RECOVERY_RESERVED'
                       AND recovery.dedupe_key=exhausted.dedupe_key
-                    WHERE {_EXHAUSTED_DISPATCHED_RECOVERY_PREDICATE}
+                    WHERE i.status='DISPATCHED'
+                      AND i.thread_id IS NOT NULL
+                      AND {_intent_event_binding_clause("i", "exhausted")}
+                      AND {_intent_event_binding_clause("i", "recovery")}
                       AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
                       AND recovery.id>(
                         SELECT COALESCE(MAX(dispatched.id),0)
@@ -4201,12 +5149,14 @@ class RadarLedger:
                         WHERE dispatched.opportunity_key=i.opportunity_key
                           AND dispatched.event_type='DISPATCHED'
                           AND dispatched.dedupe_key=i.thread_id
+                          AND {_intent_event_binding_clause("i", "dispatched")}
                       )
                       AND NOT EXISTS (
                         SELECT 1
                         FROM events later
                         WHERE later.opportunity_key=exhausted.opportunity_key
                           AND later.id>exhausted.id
+                          AND {_intent_event_binding_clause("i", "later")}
                           AND (
                             later.event_type IN (
                               'TASK_RESULT_INGESTED',
@@ -4225,23 +5175,44 @@ class RadarLedger:
                             )
                             OR (
                               later.event_type='THREAD_RECOVERY_RESERVED'
-                              AND json_extract(later.payload_json,'$.threadId')=i.thread_id
                               AND json_extract(
-                                    later.payload_json,
+                                    CASE WHEN json_valid(later.payload_json)=1
+                                         THEN later.payload_json ELSE '{{}}' END,
+                                    '$.threadId'
+                                  )=i.thread_id
+                              AND json_extract(
+                                    CASE WHEN json_valid(later.payload_json)=1
+                                         THEN later.payload_json ELSE '{{}}' END,
                                     '$.rearmedFromExhausted.exhaustedNonce'
                                   )=exhausted.dedupe_key
                             )
                             OR (
                               later.event_type=
                                   'THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED'
-                              AND json_extract(later.payload_json,'$.threadId')=i.thread_id
-                              AND json_extract(later.payload_json,'$.recoveryNonce')=
+                              AND json_extract(
+                                    CASE WHEN json_valid(later.payload_json)=1
+                                         THEN later.payload_json ELSE '{{}}' END,
+                                    '$.threadId'
+                                  )=i.thread_id
+                              AND json_extract(
+                                    CASE WHEN json_valid(later.payload_json)=1
+                                         THEN later.payload_json ELSE '{{}}' END,
+                                    '$.recoveryNonce'
+                                  )=
                                   exhausted.dedupe_key
                             )
                             OR (
                               later.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
-                              AND json_extract(later.payload_json,'$.threadId')=i.thread_id
-                              AND json_extract(later.payload_json,'$.recoveryNonce')=
+                              AND json_extract(
+                                    CASE WHEN json_valid(later.payload_json)=1
+                                         THEN later.payload_json ELSE '{{}}' END,
+                                    '$.threadId'
+                                  )=i.thread_id
+                              AND json_extract(
+                                    CASE WHEN json_valid(later.payload_json)=1
+                                         THEN later.payload_json ELSE '{{}}' END,
+                                    '$.recoveryNonce'
+                                  )=
                                   exhausted.dedupe_key
                             )
                           )
@@ -4287,17 +5258,18 @@ class RadarLedger:
         )
         with self.connect() as connection:
             dispatched_rows = connection.execute(
-                """SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
+                f"""SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
                           i.worktree_path,d.created_at AS dispatched_at,
                           (SELECT MAX(abandoned.created_at) FROM events abandoned
                            WHERE abandoned.opportunity_key=o.key
                              AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
-                             AND json_extract(abandoned.payload_json,'$.threadId')=i.thread_id
+                             AND {_intent_event_binding_clause("i", "abandoned")}
                           ) AS recovery_epoch
                    FROM opportunities o
                    JOIN intents i ON i.opportunity_key=o.key
                    JOIN events d ON d.opportunity_key=o.key
                      AND d.event_type='DISPATCHED' AND d.dedupe_key=i.thread_id
+                     AND {_intent_event_binding_clause("i", "d")}
                    WHERE i.status='DISPATCHED' AND i.thread_id IS NOT NULL
                      AND d.created_at<=?
                      AND NOT EXISTS (
@@ -4313,8 +5285,13 @@ class RadarLedger:
                         AND recovery.dedupe_key=exhausted.dedupe_key
                        WHERE exhausted.opportunity_key=o.key
                          AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
-                         AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
-                         AND json_extract(recovery.payload_json,'$.recoveryKind')='DISPATCHED_TASK'
+                         AND {_intent_event_binding_clause("i", "exhausted")}
+                         AND {_intent_event_binding_clause("i", "recovery")}
+                         AND json_extract(
+                               CASE WHEN json_valid(recovery.payload_json)=1
+                                    THEN recovery.payload_json ELSE '{{}}' END,
+                               '$.recoveryKind'
+                             )='DISPATCHED_TASK'
                          AND recovery.created_at>=d.created_at
                      ))
                      AND NOT EXISTS (
@@ -4329,49 +5306,61 @@ class RadarLedger:
                            'VALIDATION_FOLLOWUP_SENT',
                            'PR_FOLLOWUP_SENT'
                          )
+                         AND {_intent_event_binding_clause("i", "advanced")}
+                     )
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events malformed_advanced
+                       WHERE malformed_advanced.opportunity_key=o.key
+                         AND malformed_advanced.id>d.id
+                         AND malformed_advanced.event_type IN (
+                           'TASK_RESULT_INGESTED',
+                           'PUBLISHED_TASK_RESULT_BACKFILLED',
+                           'PR_FOLLOWUP_RESULT_INGESTED',
+                           'IMPLEMENTATION_FOLLOWUP_SENT',
+                           'VALIDATION_FOLLOWUP_SENT',
+                           'PR_FOLLOWUP_SENT'
+                         )
+                         AND json_valid(malformed_advanced.payload_json)<>1
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events e
                        WHERE e.opportunity_key=o.key
                          AND (
                            (e.event_type='THREAD_RECOVERY_RESERVED'
-                            AND json_extract(e.payload_json,'$.threadId')=i.thread_id
+                            AND {_intent_event_binding_clause("i", "e")}
                             AND e.created_at>=d.created_at
                             AND NOT EXISTS (
                               SELECT 1 FROM events abandoned
-                              WHERE abandoned.opportunity_key=e.opportunity_key
-                                AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
-                                AND json_extract(
-                                      abandoned.payload_json,'$.reservationDigest'
-                                    )=e.dedupe_key
+                           WHERE abandoned.opportunity_key=e.opportunity_key
+                             AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                             AND {_intent_event_binding_clause("i", "abandoned")}
+                             AND json_extract(
+                                   abandoned.payload_json,'$.reservationDigest'
+                                 )=e.dedupe_key
                                 AND abandoned.id>e.id
                             ))
                            OR
                            (e.event_type='TASK_RESULT_VALIDATION_DEFERRED'
-                            AND json_extract(e.payload_json,'$.threadId')=i.thread_id)
+                            AND {_intent_event_binding_clause("i", "e")})
                          )
                      )
                    ORDER BY d.created_at""",
                 (cutoff, int(include_exhausted_dispatched)),
             ).fetchall()
             followup_rows = connection.execute(
-                """SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
+                f"""SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
                           i.worktree_path,s.created_at AS dispatched_at,
                           s.dedupe_key AS followup_digest,
                           (SELECT MAX(abandoned.created_at) FROM events abandoned
                            WHERE abandoned.opportunity_key=o.key
                              AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
-                             AND json_extract(abandoned.payload_json,'$.threadId')=i.thread_id
+                             AND {_intent_event_binding_clause("i", "abandoned")}
                           ) AS recovery_epoch
                    FROM opportunities o
-                   JOIN intents i ON i.intent_id=(
-                     SELECT i2.intent_id FROM intents i2
-                     WHERE i2.opportunity_key=o.key
-                       AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
-                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                   )
                    JOIN events s ON s.opportunity_key=o.key
                      AND s.event_type='PR_FOLLOWUP_SENT'
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND {_intent_event_binding_clause("i", "s")}
                    WHERE o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
                      AND s.created_at<=?
                      AND NOT EXISTS (
@@ -4386,7 +5375,9 @@ class RadarLedger:
                         AND recovery.event_type='THREAD_RECOVERY_RESERVED'
                         AND recovery.dedupe_key=exhausted.dedupe_key
                        WHERE exhausted.opportunity_key=o.key
-                         AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                       AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                         AND {_intent_event_binding_clause("i", "exhausted")}
+                         AND {_intent_event_binding_clause("i", "recovery")}
                          AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
                          AND json_extract(recovery.payload_json,'$.recoveryKind')=
                              'PR_FOLLOWUP_RESULT'
@@ -4397,17 +5388,20 @@ class RadarLedger:
                        WHERE result.opportunity_key=o.key
                          AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
                          AND result.dedupe_key=s.dedupe_key
+                         AND {_intent_event_binding_clause("i", "result")}
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events recovery
                          WHERE recovery.opportunity_key=o.key
                            AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                           AND {_intent_event_binding_clause("i", "recovery")}
                            AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
                            AND recovery.created_at>=s.created_at
                            AND NOT EXISTS (
                            SELECT 1 FROM events abandoned
                            WHERE abandoned.opportunity_key=recovery.opportunity_key
                              AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                             AND {_intent_event_binding_clause("i", "abandoned")}
                              AND json_extract(
                                    abandoned.payload_json,'$.reservationDigest'
                                  )=recovery.dedupe_key
@@ -4418,21 +5412,15 @@ class RadarLedger:
                 (cutoff,),
             ).fetchall()
             validation_rows = connection.execute(
-                """SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
+                f"""SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
                           i.worktree_path,s.created_at AS dispatched_at,
                           s.dedupe_key AS followup_digest,
                           (SELECT MAX(abandoned.created_at) FROM events abandoned
                            WHERE abandoned.opportunity_key=o.key
                              AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
-                             AND json_extract(abandoned.payload_json,'$.threadId')=i.thread_id
+                             AND {_intent_event_binding_clause("i", "abandoned")}
                           ) AS recovery_epoch
                    FROM opportunities o
-                   JOIN intents i ON i.intent_id=(
-                     SELECT i2.intent_id FROM intents i2
-                     WHERE i2.opportunity_key=o.key
-                       AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
-                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                   )
                    JOIN events d ON d.id=(
                      SELECT MAX(d2.id) FROM events d2
                      WHERE d2.opportunity_key=o.key
@@ -4443,10 +5431,13 @@ class RadarLedger:
                      AND s.dedupe_key=d.dedupe_key
                      AND json_extract(s.payload_json,'$.threadId')=
                          json_extract(d.payload_json,'$.threadId')
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND {_intent_event_binding_clause("i", "d")}
                    WHERE o.stage IN (
                      'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
                    ) AND s.created_at<=?
                      AND json_extract(d.payload_json,'$.threadId')=i.thread_id
+                     AND {_intent_event_binding_clause("i", "s")}
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
                        WHERE quarantine.opportunity_key=o.key
@@ -4460,6 +5451,8 @@ class RadarLedger:
                         AND recovery.dedupe_key=exhausted.dedupe_key
                        WHERE exhausted.opportunity_key=o.key
                          AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                         AND {_intent_event_binding_clause("i", "exhausted")}
+                         AND {_intent_event_binding_clause("i", "recovery")}
                          AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
                          AND json_extract(recovery.payload_json,'$.recoveryKind')=
                              'VALIDATION_FOLLOWUP_RESULT'
@@ -4472,18 +5465,20 @@ class RadarLedger:
                            'TASK_RESULT_INGESTED','PUBLISHED_TASK_RESULT_BACKFILLED'
                          )
                          AND result.id>s.id
-                         AND json_extract(result.payload_json,'$.threadId')=i.thread_id
+                         AND {_intent_event_binding_clause("i", "result")}
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events recovery
                          WHERE recovery.opportunity_key=o.key
                            AND recovery.event_type='THREAD_RECOVERY_RESERVED'
+                           AND {_intent_event_binding_clause("i", "recovery")}
                            AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
                            AND recovery.created_at>=s.created_at
                            AND NOT EXISTS (
                            SELECT 1 FROM events abandoned
                            WHERE abandoned.opportunity_key=recovery.opportunity_key
                              AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                             AND {_intent_event_binding_clause("i", "abandoned")}
                              AND json_extract(
                                    abandoned.payload_json,'$.reservationDigest'
                                  )=recovery.dedupe_key
@@ -4494,30 +5489,25 @@ class RadarLedger:
                 (cutoff,),
             ).fetchall()
             implementation_rows = connection.execute(
-                """SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
+                f"""SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,
                           i.worktree_path,s.created_at AS dispatched_at,
                           s.dedupe_key AS followup_digest,
                           (SELECT MAX(abandoned.created_at) FROM events abandoned
                            WHERE abandoned.opportunity_key=o.key
                              AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
-                             AND json_extract(abandoned.payload_json,'$.threadId')=i.thread_id
+                             AND {_intent_event_binding_clause("i", "abandoned")}
                           ) AS recovery_epoch
                    FROM opportunities o
-                   JOIN intents i ON i.intent_id=(
-                     SELECT i2.intent_id FROM intents i2
-                     WHERE i2.opportunity_key=o.key
-                       AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
-                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                   )
                    JOIN events s ON s.opportunity_key=o.key
                      AND s.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
-                     AND s.id=(
-                       SELECT MAX(s2.id) FROM events s2
-                       WHERE s2.opportunity_key=o.key
-                         AND s2.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
-                     )
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND {_intent_event_binding_clause("i", "s")}
                    WHERE i.status='DISPATCHED' AND s.created_at<=?
-                     AND i.thread_id=json_extract(s.payload_json,'$.threadId')
+                     AND i.thread_id=json_extract(
+                           CASE WHEN json_valid(s.payload_json)=1
+                                THEN s.payload_json ELSE '{{}}' END,
+                           '$.threadId'
+                         )
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
                        WHERE quarantine.opportunity_key=o.key
@@ -4531,17 +5521,40 @@ class RadarLedger:
                         AND recovery.dedupe_key=exhausted.dedupe_key
                        WHERE exhausted.opportunity_key=o.key
                          AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
-                         AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
-                         AND json_extract(recovery.payload_json,'$.recoveryKind')=
+                         AND {_intent_event_binding_clause("i", "exhausted")}
+                         AND {_intent_event_binding_clause("i", "recovery")}
+                         AND json_extract(
+                               CASE WHEN json_valid(recovery.payload_json)=1
+                                    THEN recovery.payload_json ELSE '{{}}' END,
+                               '$.threadId'
+                             )=i.thread_id
+                         AND json_extract(
+                               CASE WHEN json_valid(recovery.payload_json)=1
+                                    THEN recovery.payload_json ELSE '{{}}' END,
+                               '$.recoveryKind'
+                             )=
                              'IMPLEMENTATION_FOLLOWUP_RESULT'
-                         AND json_extract(recovery.payload_json,'$.followupDigest')=s.dedupe_key
+                         AND json_extract(
+                               CASE WHEN json_valid(recovery.payload_json)=1
+                                    THEN recovery.payload_json ELSE '{{}}' END,
+                               '$.followupDigest'
+                             )=s.dedupe_key
                          AND NOT EXISTS (
                            SELECT 1 FROM events rearmed
                            WHERE rearmed.opportunity_key=exhausted.opportunity_key
                              AND rearmed.event_type=
                                  'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
-                             AND json_extract(rearmed.payload_json,'$.threadId')=i.thread_id
-                             AND json_extract(rearmed.payload_json,'$.recoveryNonce')=
+                             AND {_intent_event_binding_clause("i", "rearmed")}
+                             AND json_extract(
+                                   CASE WHEN json_valid(rearmed.payload_json)=1
+                                        THEN rearmed.payload_json ELSE '{{}}' END,
+                                   '$.threadId'
+                                 )=i.thread_id
+                             AND json_extract(
+                                   CASE WHEN json_valid(rearmed.payload_json)=1
+                                        THEN rearmed.payload_json ELSE '{{}}' END,
+                                   '$.recoveryNonce'
+                                 )=
                                  exhausted.dedupe_key
                              AND rearmed.id>exhausted.id
                          )
@@ -4551,19 +5564,31 @@ class RadarLedger:
                        WHERE result.opportunity_key=o.key
                          AND result.event_type='TASK_RESULT_INGESTED'
                          AND result.id>s.id
-                     )
+                         AND (
+                           {_intent_event_binding_clause("i", "result")}
+                           OR {_legacy_unique_unbound_event_clause("i", "result")}
+                         )
+                       )
                      AND NOT EXISTS (
                        SELECT 1 FROM events recovery
                        WHERE recovery.opportunity_key=o.key
                          AND recovery.event_type='THREAD_RECOVERY_RESERVED'
-                         AND json_extract(recovery.payload_json,'$.threadId')=i.thread_id
+                         AND {_intent_event_binding_clause("i", "recovery")}
+                         AND json_extract(
+                               CASE WHEN json_valid(recovery.payload_json)=1
+                                    THEN recovery.payload_json ELSE '{{}}' END,
+                               '$.threadId'
+                             )=i.thread_id
                          AND recovery.created_at>=s.created_at
                          AND NOT EXISTS (
                            SELECT 1 FROM events abandoned
                            WHERE abandoned.opportunity_key=recovery.opportunity_key
                              AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                             AND {_intent_event_binding_clause("i", "abandoned")}
                              AND json_extract(
-                                   abandoned.payload_json,'$.reservationDigest'
+                                   CASE WHEN json_valid(abandoned.payload_json)=1
+                                        THEN abandoned.payload_json ELSE '{{}}' END,
+                                   '$.reservationDigest'
                                  )=recovery.dedupe_key
                              AND abandoned.id>recovery.id
                          )
@@ -4572,11 +5597,12 @@ class RadarLedger:
                 (cutoff,),
             ).fetchall()
             implementation_rearm_rows = connection.execute(
-                """SELECT rearmed.id AS rearm_event_id,
+                f"""SELECT rearmed.id AS rearm_event_id,
                           exhausted.id AS exhausted_event_id,
                           exhausted.opportunity_key AS key,
                           exhausted.dedupe_key AS exhausted_nonce,
-                          recovery.payload_json AS recovery_payload_json
+                          recovery.payload_json AS recovery_payload_json,
+                          i.intent_id,i.thread_id,i.worktree_path
                    FROM events rearmed
                    JOIN events exhausted
                      ON exhausted.opportunity_key=rearmed.opportunity_key
@@ -4587,25 +5613,33 @@ class RadarLedger:
                      ON recovery.opportunity_key=exhausted.opportunity_key
                     AND recovery.event_type='THREAD_RECOVERY_RESERVED'
                     AND recovery.dedupe_key=exhausted.dedupe_key
+                   JOIN intents i ON i.opportunity_key=exhausted.opportunity_key
                    WHERE rearmed.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                     AND {_intent_event_binding_clause("i", "rearmed")}
+                     AND {_intent_event_binding_clause("i", "exhausted")}
+                     AND {_intent_event_binding_clause("i", "recovery")}
                      AND json_extract(recovery.payload_json,'$.recoveryKind')=
                          'IMPLEMENTATION_FOLLOWUP_RESULT'
                    ORDER BY rearmed.id"""
             ).fetchall()
             exhausted_dispatched_rows = (
                 connection.execute(
-                    """SELECT exhausted.id AS event_id,
+                    f"""SELECT exhausted.id AS event_id,
                               exhausted.opportunity_key AS key,
                               exhausted.dedupe_key AS exhausted_nonce,
                               exhausted.payload_json AS exhausted_payload_json,
                               recovery.payload_json AS recovery_payload_json,
-                              recovery.created_at AS recovery_created_at
+                              recovery.created_at AS recovery_created_at,
+                              i.intent_id,i.thread_id,i.worktree_path
                        FROM events exhausted
                        JOIN events recovery
-                         ON recovery.opportunity_key=exhausted.opportunity_key
+                        ON recovery.opportunity_key=exhausted.opportunity_key
                         AND recovery.event_type='THREAD_RECOVERY_RESERVED'
                         AND recovery.dedupe_key=exhausted.dedupe_key
+                       JOIN intents i ON i.opportunity_key=exhausted.opportunity_key
                        WHERE exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                         AND {_intent_event_binding_clause("i", "exhausted")}
+                         AND {_intent_event_binding_clause("i", "recovery")}
                          AND json_extract(recovery.payload_json,'$.recoveryKind')=
                              'DISPATCHED_TASK'
                        ORDER BY exhausted.id"""
@@ -4613,13 +5647,15 @@ class RadarLedger:
                 if include_exhausted_dispatched
                 else []
             )
-        implementation_rearms: dict[tuple[str, str, str], dict[str, Any]] = {}
+        implementation_rearms: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
         for rearm_row in implementation_rearm_rows:
             recovery_payload = json.loads(rearm_row["recovery_payload_json"])
             implementation_rearms[
                 (
                     str(rearm_row["key"]),
-                    str(recovery_payload.get("threadId") or ""),
+                    str(rearm_row["intent_id"] or recovery_payload.get("intentId") or ""),
+                    str(rearm_row["thread_id"] or recovery_payload.get("threadId") or ""),
+                    str(rearm_row["worktree_path"] or recovery_payload.get("worktreePath") or ""),
                     str(recovery_payload.get("followupDigest") or ""),
                 )
             ] = {
@@ -4627,7 +5663,7 @@ class RadarLedger:
                 "exhaustedEventId": int(rearm_row["exhausted_event_id"]),
                 "rearmEventId": int(rearm_row["rearm_event_id"]),
             }
-        exhausted_by_task: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        exhausted_by_task: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
         for exhausted_row in exhausted_dispatched_rows:
             recovery_payload = json.loads(exhausted_row["recovery_payload_json"])
             exhausted_payload = json.loads(exhausted_row["exhausted_payload_json"])
@@ -4643,11 +5679,15 @@ class RadarLedger:
             exhausted_by_task.setdefault(
                 (
                     str(exhausted_row["key"]),
-                    str(recovery_payload.get("threadId") or ""),
+                    str(exhausted_row["intent_id"] or recovery_payload.get("intentId") or ""),
+                    str(exhausted_row["thread_id"] or recovery_payload.get("threadId") or ""),
+                    str(
+                        exhausted_row["worktree_path"] or recovery_payload.get("worktreePath") or ""
+                    ),
                 ),
                 [],
             ).append(marker)
-        candidates: dict[str, dict[str, Any]] = {}
+        candidates: dict[tuple[str, str, str], dict[str, Any]] = {}
         for row, recovery_kind in (
             *((row, "DISPATCHED_TASK") for row in dispatched_rows),
             *((row, "PR_FOLLOWUP_RESULT") for row in followup_rows),
@@ -4684,45 +5724,63 @@ class RadarLedger:
             if recovery_kind == "DISPATCHED_TASK" and include_exhausted_dispatched:
                 candidate["exhaustedRecoveries"] = [
                     marker
-                    for marker in exhausted_by_task.get((str(row["key"]), thread_id), [])
+                    for marker in exhausted_by_task.get(
+                        (
+                            str(row["key"]),
+                            str(row["intent_id"]),
+                            thread_id,
+                            str(row["worktree_path"] or ""),
+                        ),
+                        [],
+                    )
                     if str(marker["recoveryCreatedAt"]) >= str(row["dispatched_at"])
                 ]
             if recovery_kind == "IMPLEMENTATION_FOLLOWUP_RESULT":
                 marker = implementation_rearms.get(
-                    (str(row["key"]), thread_id, str(followup_digest or ""))
+                    (
+                        str(row["key"]),
+                        str(row["intent_id"]),
+                        thread_id,
+                        str(row["worktree_path"] or ""),
+                        str(followup_digest or ""),
+                    )
                 )
                 if marker is not None:
                     candidate["rearmedFromExhausted"] = marker
-            previous = candidates.get(thread_id)
+            candidate_identity = (
+                str(row["intent_id"]),
+                thread_id,
+                str(row["worktree_path"] or ""),
+            )
+            previous = candidates.get(candidate_identity)
             if previous is None or candidate["dispatchedAt"] > previous["dispatchedAt"]:
-                candidates[thread_id] = candidate
+                candidates[candidate_identity] = candidate
         return sorted(candidates.values(), key=lambda item: item["dispatchedAt"])
 
     def unresolved_recoveries(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.issue_url,i.worktree_path,
+                f"""SELECT o.key,o.issue_url,i.intent_id,i.thread_id,i.worktree_path,
                           json_extract(r.payload_json,'$.threadId') AS thread_id,
                           r.dedupe_key AS reservation_digest,
                           r.payload_json,r.created_at
                    FROM opportunities o
-                   JOIN intents i ON i.intent_id=(
-                     SELECT i2.intent_id FROM intents i2
-                     WHERE i2.opportunity_key=o.key AND i2.thread_id IS NOT NULL
-                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                   )
                    JOIN events r ON r.opportunity_key=o.key
                      AND r.event_type='THREAD_RECOVERY_RESERVED'
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND {_intent_event_binding_clause("i", "r")}
                    WHERE NOT EXISTS (
                      SELECT 1 FROM events e
                      WHERE e.opportunity_key=o.key
                        AND e.event_type='THREAD_RECOVERY_SENT'
                        AND e.dedupe_key=r.dedupe_key
+                       AND {_intent_event_binding_clause("i", "e")}
                    )
                      AND NOT EXISTS (
                      SELECT 1 FROM events abandoned
                      WHERE abandoned.opportunity_key=o.key
                        AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                       AND {_intent_event_binding_clause("i", "abandoned")}
                        AND json_extract(
                              abandoned.payload_json,'$.reservationDigest'
                            )=r.dedupe_key
@@ -4735,6 +5793,7 @@ class RadarLedger:
                        AND result.event_type IN (
                          'TASK_RESULT_INGESTED','PR_FOLLOWUP_RESULT_INGESTED'
                        )
+                       AND {_intent_event_binding_clause("i", "result")}
                    )
                      AND NOT EXISTS (
                      SELECT 1 FROM events terminal
@@ -4748,6 +5807,7 @@ class RadarLedger:
             {
                 "key": row["key"],
                 "issueUrl": row["issue_url"],
+                "intentId": row["intent_id"],
                 "worktreePath": row["worktree_path"],
                 "threadId": row["thread_id"],
                 "reservationDigest": row["reservation_digest"],
@@ -4762,7 +5822,8 @@ class RadarLedger:
 
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,i.thread_id,r.dedupe_key AS reservation_digest,
+                f"""SELECT o.key,i.intent_id,i.thread_id,i.worktree_path,
+                          r.dedupe_key AS reservation_digest,
                           r.payload_json,s.created_at AS sent_at,
                           (SELECT COUNT(*) FROM events prior
                            JOIN events prior_recovery
@@ -4776,6 +5837,11 @@ class RadarLedger:
                              AND json_extract(prior.payload_json,'$.reason')=
                                  'TERMINAL_RECOVERY_TURN_INTERRUPTED'
                              AND prior.id<r.id
+                             AND {_intent_event_binding_clause("i", "prior_recovery")}
+                             AND (
+                               {_intent_event_binding_clause("i", "prior")}
+                               OR {_legacy_unique_unbound_event_clause("i", "prior")}
+                             )
                              AND json_extract(prior_recovery.payload_json,'$.threadId')=
                                  json_extract(r.payload_json,'$.threadId')
                              AND json_extract(prior_recovery.payload_json,'$.recoveryKind')=
@@ -4804,20 +5870,22 @@ class RadarLedger:
                              )
                           ) AS retry_count
                    FROM opportunities o
-                   JOIN intents i ON i.intent_id=(
-                     SELECT i2.intent_id FROM intents i2
-                     WHERE i2.opportunity_key=o.key AND i2.thread_id IS NOT NULL
-                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                   )
                    JOIN events r ON r.opportunity_key=o.key
                      AND r.event_type='THREAD_RECOVERY_RESERVED'
                    JOIN events s ON s.opportunity_key=o.key
                      AND s.event_type='THREAD_RECOVERY_SENT'
                      AND s.dedupe_key=r.dedupe_key
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND {_intent_event_binding_clause("i", "r")}
+                     AND (
+                       {_intent_event_binding_clause("i", "s")}
+                       OR {_legacy_unique_unbound_event_clause("i", "s")}
+                     )
                    WHERE NOT EXISTS (
                      SELECT 1 FROM events abandoned
                      WHERE abandoned.opportunity_key=o.key
                        AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                       AND {_intent_event_binding_clause("i", "abandoned")}
                        AND json_extract(
                              abandoned.payload_json,'$.reservationDigest'
                            )=r.dedupe_key
@@ -4830,6 +5898,7 @@ class RadarLedger:
                          AND result.event_type IN (
                            'TASK_RESULT_INGESTED','PR_FOLLOWUP_RESULT_INGESTED'
                          )
+                         AND {_intent_event_binding_clause("i", "result")}
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events terminal
@@ -4842,7 +5911,9 @@ class RadarLedger:
         return [
             {
                 "key": row["key"],
+                "intentId": row["intent_id"],
                 "threadId": row["thread_id"],
+                "worktreePath": row["worktree_path"],
                 "reservationDigest": row["reservation_digest"],
                 "reservation": json.loads(row["payload_json"]),
                 "sentAt": row["sent_at"],
@@ -4858,27 +5929,43 @@ class RadarLedger:
         nonce: str,
         recovery_prompt_version: str | None = None,
         recovery_prompt_digest: str | None = None,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> dict[str, Any]:
         # The bridge may authorize an immediate one-shot recovery after a
         # terminal desktop error, before the normal stale-task threshold.
         if (recovery_prompt_version is None) != (recovery_prompt_digest is None):
             raise LedgerError("recovery prompt binding is incomplete")
-        candidates = {
-            item["threadId"]: item
+        raw_candidates = [
+            item
             for item in self.recovery_candidates(
                 min_age_minutes=0,
                 include_exhausted_dispatched=recovery_prompt_version is not None,
             )
-        }
-        candidate = candidates.get(thread_id)
-        if candidate and recovery_prompt_version is not None:
-            candidate = bind_dispatched_recovery_prompt(
-                candidate,
-                prompt_version=recovery_prompt_version,
-                prompt_digest=str(recovery_prompt_digest),
+            if item["threadId"] == thread_id
+            and (not intent_id or str(item.get("intentId") or "") == str(intent_id))
+            and (
+                not worktree_path
+                or (
+                    item.get("worktreePath")
+                    and _resolved_path_equal(str(item["worktreePath"]), str(worktree_path))
+                )
             )
-        if not candidate or candidate["recoveryNonce"] != nonce:
+        ]
+        candidates: list[dict[str, Any]] = []
+        for item in raw_candidates:
+            candidate = item
+            if recovery_prompt_version is not None:
+                candidate = bind_dispatched_recovery_prompt(
+                    item,
+                    prompt_version=recovery_prompt_version,
+                    prompt_digest=str(recovery_prompt_digest),
+                )
+            if candidate is not None and candidate["recoveryNonce"] == nonce:
+                candidates.append(candidate)
+        if len(candidates) != 1:
             raise LedgerError("recovery authorization is stale or invalid")
+        candidate = candidates[0]
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             require_quarantine_clear(
@@ -4888,22 +5975,30 @@ class RadarLedger:
             )
             if candidate["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT":
                 eligible = connection.execute(
-                    """SELECT s.id
+                    f"""SELECT s.id
                        FROM events s
+                       JOIN intents i ON i.opportunity_key=s.opportunity_key
+                         AND i.intent_id=?
                        WHERE s.opportunity_key=?
                          AND s.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
                          AND s.dedupe_key=?
                          AND json_extract(s.payload_json,'$.threadId')=?
+                         AND {_intent_event_binding_clause("i", "s")}
                          AND s.id=(
                            SELECT MAX(latest.id) FROM events latest
                            WHERE latest.opportunity_key=s.opportunity_key
                              AND latest.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                             AND {_intent_event_binding_clause("i", "latest")}
                          )
                          AND NOT EXISTS (
                            SELECT 1 FROM events result
                            WHERE result.opportunity_key=s.opportunity_key
                              AND result.event_type='TASK_RESULT_INGESTED'
                              AND result.id>s.id
+                             AND (
+                               {_intent_event_binding_clause("i", "result")}
+                               OR {_legacy_unique_unbound_event_clause("i", "result")}
+                             )
                          )
                          AND NOT EXISTS (
                            SELECT 1 FROM events exhausted
@@ -4915,9 +6010,7 @@ class RadarLedger:
                            WHERE exhausted.opportunity_key=s.opportunity_key
                              AND exhausted.event_type=
                                  'THREAD_RECOVERY_RETRY_EXHAUSTED'
-                             AND json_extract(
-                                   prior_recovery.payload_json,'$.threadId'
-                                 )=?
+                            AND {_intent_event_binding_clause("i", "prior_recovery")}
                              AND json_extract(
                                    prior_recovery.payload_json,'$.recoveryKind'
                                  )='IMPLEMENTATION_FOLLOWUP_RESULT'
@@ -4929,9 +6022,7 @@ class RadarLedger:
                                WHERE rearmed.opportunity_key=exhausted.opportunity_key
                                  AND rearmed.event_type=
                                      'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
-                                 AND json_extract(
-                                       rearmed.payload_json,'$.threadId'
-                                     )=?
+                                 AND {_intent_event_binding_clause("i", "rearmed")}
                                  AND json_extract(
                                        rearmed.payload_json,'$.recoveryNonce'
                                      )=exhausted.dedupe_key
@@ -4940,22 +6031,23 @@ class RadarLedger:
                          )
                        LIMIT 1""",
                     (
+                        candidate["intentId"],
                         candidate["key"],
                         candidate.get("followupDigest"),
-                        thread_id,
-                        thread_id,
                         thread_id,
                     ),
                 ).fetchone()
                 if eligible is None:
                     raise LedgerError("recovery authorization is stale or invalid")
                 epoch_row = connection.execute(
-                    """SELECT MAX(abandoned.created_at) AS recovery_epoch
+                    f"""SELECT MAX(abandoned.created_at) AS recovery_epoch
                        FROM events abandoned
+                       JOIN intents i ON i.opportunity_key=abandoned.opportunity_key
+                         AND i.intent_id=?
                        WHERE abandoned.opportunity_key=?
                          AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
-                         AND json_extract(abandoned.payload_json,'$.threadId')=?""",
-                    (candidate["key"], thread_id),
+                         AND {_intent_event_binding_clause("i", "abandoned")}""",
+                    (candidate["intentId"], candidate["key"]),
                 ).fetchone()
                 current_epoch = str(epoch_row["recovery_epoch"] or "")
                 expected_nonce = sha256_text(
@@ -4967,7 +6059,7 @@ class RadarLedger:
                     raise LedgerError("recovery authorization is stale or invalid")
                 lineage = candidate.get("rearmedFromExhausted")
                 latest_rearm = connection.execute(
-                    """SELECT MAX(rearmed.id) AS rearm_event_id
+                    f"""SELECT MAX(rearmed.id) AS rearm_event_id
                        FROM events rearmed
                        JOIN events exhausted
                          ON exhausted.opportunity_key=rearmed.opportunity_key
@@ -4978,14 +6070,25 @@ class RadarLedger:
                          ON prior_recovery.opportunity_key=exhausted.opportunity_key
                         AND prior_recovery.event_type='THREAD_RECOVERY_RESERVED'
                         AND prior_recovery.dedupe_key=exhausted.dedupe_key
+                       JOIN intents i
+                         ON i.opportunity_key=rearmed.opportunity_key
+                        AND i.intent_id=?
                        WHERE rearmed.opportunity_key=?
                          AND rearmed.event_type=
                              'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                         AND {_intent_event_binding_clause("i", "rearmed")}
+                         AND {_intent_event_binding_clause("i", "exhausted")}
+                         AND {_intent_event_binding_clause("i", "prior_recovery")}
                          AND json_extract(rearmed.payload_json,'$.threadId')=?
                          AND json_extract(prior_recovery.payload_json,'$.recoveryKind')=
                              'IMPLEMENTATION_FOLLOWUP_RESULT'
                          AND json_extract(prior_recovery.payload_json,'$.followupDigest')=?""",
-                    (candidate["key"], thread_id, candidate.get("followupDigest")),
+                    (
+                        candidate["intentId"],
+                        candidate["key"],
+                        thread_id,
+                        candidate.get("followupDigest"),
+                    ),
                 ).fetchone()
                 latest_rearm_id = (
                     int(latest_rearm["rearm_event_id"])
@@ -4998,15 +6101,20 @@ class RadarLedger:
                     if latest_rearm_id != int(lineage.get("rearmEventId") or 0):
                         raise LedgerError("recovery authorization is stale or invalid")
                     exact_rearm = connection.execute(
-                        """SELECT 1 FROM events rearmed
+                        f"""SELECT 1 FROM events rearmed
                            JOIN events exhausted
                              ON exhausted.opportunity_key=rearmed.opportunity_key
                             AND exhausted.event_type=
                                 'THREAD_RECOVERY_RETRY_EXHAUSTED'
                             AND exhausted.dedupe_key=?
+                           JOIN intents i
+                             ON i.opportunity_key=rearmed.opportunity_key
+                            AND i.intent_id=?
                            WHERE rearmed.opportunity_key=?
                              AND rearmed.event_type=
                                  'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
+                             AND {_intent_event_binding_clause("i", "rearmed")}
+                             AND {_intent_event_binding_clause("i", "exhausted")}
                              AND rearmed.id=?
                              AND exhausted.id=?
                              AND json_extract(rearmed.payload_json,'$.threadId')=?
@@ -5014,6 +6122,7 @@ class RadarLedger:
                            LIMIT 1""",
                         (
                             lineage.get("exhaustedNonce"),
+                            candidate["intentId"],
                             candidate["key"],
                             lineage.get("rearmEventId"),
                             lineage.get("exhaustedEventId"),
@@ -5024,20 +6133,25 @@ class RadarLedger:
                     if exact_rearm is None:
                         raise LedgerError("recovery authorization is stale or invalid")
             existing = connection.execute(
-                """SELECT 1 FROM events reserved WHERE opportunity_key=?
-                   AND event_type='THREAD_RECOVERY_RESERVED'
-                   AND json_extract(payload_json,'$.threadId')=?
+                f"""SELECT 1 FROM events reserved
+                   JOIN intents i ON i.opportunity_key=reserved.opportunity_key
+                     AND i.intent_id=?
+                   WHERE reserved.opportunity_key=?
+                   AND reserved.event_type='THREAD_RECOVERY_RESERVED'
+                   AND json_extract(reserved.payload_json,'$.threadId')=?
                    AND reserved.created_at>=?
+                   AND {_intent_event_binding_clause("i", "reserved")}
                    AND NOT EXISTS (
                      SELECT 1 FROM events abandoned
-                     WHERE abandoned.opportunity_key=reserved.opportunity_key
-                       AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                       WHERE abandoned.opportunity_key=reserved.opportunity_key
+                         AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                         AND {_intent_event_binding_clause("i", "abandoned")}
                        AND json_extract(
                              abandoned.payload_json,'$.reservationDigest'
                            )=reserved.dedupe_key
                        AND abandoned.id>reserved.id
                    )""",
-                (candidate["key"], thread_id, candidate["dispatchedAt"]),
+                (candidate["intentId"], candidate["key"], thread_id, candidate["dispatchedAt"]),
             ).fetchone()
             if existing:
                 raise LedgerError("recovery is already reserved")
@@ -5048,7 +6162,9 @@ class RadarLedger:
                 "THREAD_RECOVERY_RESERVED",
                 nonce,
                 {
+                    "intentId": candidate["intentId"],
                     "threadId": thread_id,
+                    "worktreePath": candidate["worktreePath"],
                     "recoveryNonce": nonce,
                     "recoveryKind": candidate["recoveryKind"],
                     "followupDigest": candidate.get("followupDigest"),
@@ -5063,59 +6179,120 @@ class RadarLedger:
                 raise LedgerError("recovery authorization is stale or invalid")
         return candidate
 
-    def commit_recovery(self, *, thread_id: str, nonce: str) -> None:
+    def commit_recovery(
+        self,
+        *,
+        thread_id: str,
+        nonce: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
+    ) -> None:
         with self.transaction() as connection:
-            row = connection.execute(
-                """SELECT r.opportunity_key AS key,r.dedupe_key,r.payload_json
+            reservation_identity_clause = ""
+            reservation_params: list[Any] = [thread_id, nonce]
+            if intent_id:
+                reservation_identity_clause = " AND i.intent_id=?"
+                reservation_params.append(str(intent_id))
+            rows = connection.execute(
+                f"""SELECT r.opportunity_key AS key,r.dedupe_key,r.payload_json,
+                          i.intent_id,i.thread_id,i.worktree_path
                    FROM opportunities o
                    JOIN events r ON r.opportunity_key=o.key
                      AND r.event_type='THREAD_RECOVERY_RESERVED'
+                   JOIN intents i ON i.opportunity_key=r.opportunity_key
+                     AND {_intent_event_binding_clause("i", "r")}
                    WHERE json_extract(r.payload_json,'$.threadId')=?
                      AND json_extract(r.payload_json,'$.recoveryNonce')=?
+                     {reservation_identity_clause}
                      AND NOT EXISTS (
                        SELECT 1 FROM events sent
                        WHERE sent.opportunity_key=r.opportunity_key
                          AND sent.event_type='THREAD_RECOVERY_SENT'
                          AND sent.dedupe_key=r.dedupe_key
+                         AND {_intent_event_binding_clause("i", "sent")}
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=r.opportunity_key
                          AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                         AND {_intent_event_binding_clause("i", "abandoned")}
                          AND json_extract(
                                abandoned.payload_json,'$.reservationDigest'
                              )=r.dedupe_key
                          AND abandoned.id>r.id
                      )
-                   ORDER BY r.id DESC LIMIT 1""",
-                (thread_id, nonce),
-            ).fetchone()
+                   ORDER BY r.id DESC""",
+                tuple(reservation_params),
+            ).fetchall()
+            if worktree_path:
+                rows = [
+                    candidate_row
+                    for candidate_row in rows
+                    if candidate_row["worktree_path"]
+                    and _resolved_path_equal(
+                        str(candidate_row["worktree_path"]), str(worktree_path)
+                    )
+                ]
+            if len(rows) > 1:
+                raise LedgerError("recovery reservation is ambiguous")
+            row = rows[0] if rows else None
             if row is None:
-                sent = connection.execute(
-                    """SELECT 1 FROM events r JOIN events sent
+                sent_identity_clause = ""
+                sent_params: list[Any] = [thread_id, nonce]
+                if intent_id:
+                    sent_identity_clause = " AND i.intent_id=?"
+                    sent_params.append(str(intent_id))
+                sent_rows = connection.execute(
+                    f"""SELECT r.opportunity_key AS key,r.payload_json,
+                              i.intent_id,i.thread_id,i.worktree_path
+                       FROM events r
+                       JOIN events sent
                        ON sent.opportunity_key=r.opportunity_key
                       AND sent.event_type='THREAD_RECOVERY_SENT'
                       AND sent.dedupe_key=r.dedupe_key
+                       JOIN intents i ON i.opportunity_key=r.opportunity_key
+                         AND {_intent_event_binding_clause("i", "r")}
+                         AND {_intent_event_binding_clause("i", "sent")}
                        WHERE r.event_type='THREAD_RECOVERY_RESERVED'
                          AND json_extract(r.payload_json,'$.threadId')=?
                          AND json_extract(r.payload_json,'$.recoveryNonce')=?
-                       LIMIT 1""",
-                    (thread_id, nonce),
-                ).fetchone()
-                if sent:
+                         {sent_identity_clause}
+                       ORDER BY sent.id DESC""",
+                    tuple(sent_params),
+                ).fetchall()
+                if worktree_path:
+                    sent_rows = [
+                        candidate_row
+                        for candidate_row in sent_rows
+                        if candidate_row["worktree_path"]
+                        and _resolved_path_equal(
+                            str(candidate_row["worktree_path"]), str(worktree_path)
+                        )
+                    ]
+                if len(sent_rows) > 1:
+                    raise LedgerError("recovery reservation is ambiguous")
+                if sent_rows:
                     return
                 raise LedgerError("recovery reservation not found")
             payload = json.loads(row["payload_json"])
             if payload.get("recoveryNonce") != nonce:
                 raise LedgerError("recovery reservation nonce mismatch")
+            changes_before = connection.total_changes
             self._event(
                 connection,
                 row["key"],
                 "THREAD_RECOVERY_SENT",
                 row["dedupe_key"],
-                {"threadId": thread_id, "recoveryNonce": nonce},
+                {
+                    "intentId": row["intent_id"],
+                    "threadId": row["thread_id"],
+                    "worktreePath": row["worktree_path"],
+                    "recoveryNonce": nonce,
+                },
                 iso_z(datetime.now(UTC)),
             )
+            if connection.total_changes == changes_before:
+                raise LedgerError("recovery sent event binding collides with another task")
 
     def abandon_recovery_delivery(
         self,
@@ -5124,6 +6301,8 @@ class RadarLedger:
         nonce: str,
         reason: str,
         min_age_minutes: int = 5,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> None:
         """Retire a recovery reservation after proving delivery or result failure."""
 
@@ -5134,43 +6313,69 @@ class RadarLedger:
                 "TERMINAL_RECOVERY_TURN_INTERRUPTED",
                 "RECOVERY_RETRY_EXHAUSTED",
             }
-            row = connection.execute(
-                """SELECT r.id,r.opportunity_key AS key,r.dedupe_key,r.created_at
+            identity_clause = ""
+            reservation_params: list[Any] = [thread_id, nonce, nonce, int(allow_sent)]
+            if intent_id:
+                identity_clause = " AND i.intent_id=?"
+                reservation_params.append(str(intent_id))
+            rows = connection.execute(
+                f"""SELECT r.id,r.opportunity_key AS key,r.dedupe_key,r.created_at,
+                          r.payload_json,i.intent_id,i.thread_id,i.worktree_path
                    FROM events r
+                   JOIN intents i ON i.opportunity_key=r.opportunity_key
+                     AND {_intent_event_binding_clause("i", "r")}
                    WHERE r.event_type='THREAD_RECOVERY_RESERVED'
                      AND json_extract(r.payload_json,'$.threadId')=?
                      AND json_extract(r.payload_json,'$.recoveryNonce')=?
                      AND r.dedupe_key=?
+                     {identity_clause}
                      AND (? OR NOT EXISTS (
                        SELECT 1 FROM events sent
                        WHERE sent.opportunity_key=r.opportunity_key
                          AND sent.event_type='THREAD_RECOVERY_SENT'
                          AND sent.dedupe_key=r.dedupe_key
+                         AND {_intent_event_binding_clause("i", "sent")}
                      ))
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=r.opportunity_key
                          AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                         AND {_intent_event_binding_clause("i", "abandoned")}
                          AND json_extract(
                                abandoned.payload_json,'$.reservationDigest'
                              )=r.dedupe_key
                          AND abandoned.id>r.id
                      )
-                   ORDER BY r.id DESC LIMIT 1""",
-                (thread_id, nonce, nonce, int(allow_sent)),
-            ).fetchone()
+                   ORDER BY r.id DESC""",
+                tuple(reservation_params),
+            ).fetchall()
+            if worktree_path:
+                rows = [
+                    candidate_row
+                    for candidate_row in rows
+                    if candidate_row["worktree_path"]
+                    and _resolved_path_equal(
+                        str(candidate_row["worktree_path"]), str(worktree_path)
+                    )
+                ]
+            if len(rows) > 1:
+                raise LedgerError("recovery delivery is ambiguous")
+            row = rows[0] if rows else None
             if row is None:
                 raise LedgerError("recovery delivery is not abandonable")
             minimum_age = timedelta(minutes=max(0 if allow_sent else 1, min_age_minutes))
             if parse_time(row["created_at"]) + minimum_age > current:
                 raise LedgerError("recovery delivery is not old enough to abandon")
+            changes_before = connection.total_changes
             self._event(
                 connection,
                 row["key"],
                 "THREAD_RECOVERY_DELIVERY_ABANDONED",
                 sha256_text(f"{thread_id}|{row['dedupe_key']}|{row['created_at']}"),
                 {
-                    "threadId": thread_id,
+                    "intentId": row["intent_id"],
+                    "threadId": row["thread_id"],
+                    "worktreePath": row["worktree_path"],
                     "recoveryNonce": nonce,
                     "reservationDigest": row["dedupe_key"],
                     "reservedAt": row["created_at"],
@@ -5179,6 +6384,8 @@ class RadarLedger:
                 },
                 now,
             )
+            if connection.total_changes == changes_before:
+                raise LedgerError("recovery abandonment binding collides with another task")
 
     def exhaust_recovery(
         self,
@@ -5187,41 +6394,67 @@ class RadarLedger:
         nonce: str,
         terminal_error: dict[str, Any] | None = None,
         retry_count: int | None = None,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> None:
         """Release a repeatedly interrupted recovery and make the terminal state durable."""
 
         with self.transaction() as connection:
-            row = connection.execute(
-                """SELECT r.opportunity_key AS key,r.dedupe_key,r.payload_json,
-                          r.created_at
+            identity_clause = ""
+            reservation_params: list[Any] = [thread_id, nonce, nonce]
+            if intent_id:
+                identity_clause = " AND i.intent_id=?"
+                reservation_params.append(str(intent_id))
+            rows = connection.execute(
+                f"""SELECT r.opportunity_key AS key,r.dedupe_key,r.payload_json,
+                          r.created_at,i.intent_id,i.thread_id,i.worktree_path
                    FROM events r
+                   JOIN intents i ON i.opportunity_key=r.opportunity_key
+                     AND {_intent_event_binding_clause("i", "r")}
                    WHERE r.event_type='THREAD_RECOVERY_RESERVED'
                      AND json_extract(r.payload_json,'$.threadId')=?
                      AND json_extract(r.payload_json,'$.recoveryNonce')=?
                      AND r.dedupe_key=?
+                     {identity_clause}
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=r.opportunity_key
                          AND abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                         AND {_intent_event_binding_clause("i", "abandoned")}
                          AND json_extract(
                                abandoned.payload_json,'$.reservationDigest'
                              )=r.dedupe_key
                          AND abandoned.id>r.id
                      )
-                   ORDER BY r.id DESC LIMIT 1""",
-                (thread_id, nonce, nonce),
-            ).fetchone()
+                   ORDER BY r.id DESC""",
+                tuple(reservation_params),
+            ).fetchall()
+            if worktree_path:
+                rows = [
+                    candidate_row
+                    for candidate_row in rows
+                    if candidate_row["worktree_path"]
+                    and _resolved_path_equal(
+                        str(candidate_row["worktree_path"]), str(worktree_path)
+                    )
+                ]
+            if len(rows) > 1:
+                raise LedgerError("exhausted recovery reservation is ambiguous")
+            row = rows[0] if rows else None
             if row is None:
                 raise LedgerError("exhausted recovery reservation not found")
             reservation = json.loads(row["payload_json"])
             now = iso_z(datetime.now(UTC))
+            changes_before = connection.total_changes
             self._event(
                 connection,
                 row["key"],
                 "THREAD_RECOVERY_DELIVERY_ABANDONED",
                 sha256_text(f"{thread_id}|{row['dedupe_key']}|{row['created_at']}"),
                 {
-                    "threadId": thread_id,
+                    "intentId": row["intent_id"],
+                    "threadId": row["thread_id"],
+                    "worktreePath": row["worktree_path"],
                     "recoveryNonce": nonce,
                     "reservationDigest": row["dedupe_key"],
                     "reservedAt": row["created_at"],
@@ -5230,13 +6463,18 @@ class RadarLedger:
                 },
                 now,
             )
+            if connection.total_changes == changes_before:
+                raise LedgerError("recovery exhaustion abandonment collides with another task")
+            changes_before = connection.total_changes
             self._event(
                 connection,
                 row["key"],
                 "THREAD_RECOVERY_RETRY_EXHAUSTED",
                 nonce,
                 {
-                    "threadId": thread_id,
+                    "intentId": row["intent_id"],
+                    "threadId": row["thread_id"],
+                    "worktreePath": row["worktree_path"],
                     "recoveryNonce": nonce,
                     "recoveryKind": reservation.get("recoveryKind"),
                     "followupDigest": reservation.get("followupDigest"),
@@ -5249,25 +6487,42 @@ class RadarLedger:
                 },
                 now,
             )
+            if connection.total_changes == changes_before:
+                raise LedgerError("recovery exhaustion marker collides with another task")
             if reservation.get("recoveryKind") == "VALIDATION_FOLLOWUP_RESULT":
                 result_digest = str(reservation.get("followupDigest") or "")
-                deferred = connection.execute(
+                deferred_rows = connection.execute(
                     """SELECT payload_json FROM events
                        WHERE opportunity_key=?
                          AND event_type='TASK_RESULT_VALIDATION_DEFERRED'
                          AND json_extract(payload_json,'$.resultDigest')=?
-                       ORDER BY id DESC LIMIT 1""",
+                       ORDER BY id DESC""",
                     (row["key"], result_digest),
-                ).fetchone()
-                if deferred is not None:
-                    deferred_payload = json.loads(deferred["payload_json"])
+                ).fetchall()
+                deferred_payload = None
+                for deferred_row in deferred_rows:
+                    try:
+                        candidate_payload = json.loads(deferred_row["payload_json"] or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    bound = _resolve_event_intent_binding(
+                        connection,
+                        opportunity_key=str(row["key"]),
+                        payload=candidate_payload,
+                    )
+                    if bound is not None and str(bound["intent_id"]) == str(row["intent_id"]):
+                        deferred_payload = candidate_payload
+                        break
+                if deferred_payload is not None:
                     self._event(
                         connection,
                         row["key"],
                         "VALIDATION_FOLLOWUP_NO_PROGRESS",
                         result_digest,
                         {
+                            "intentId": row["intent_id"],
                             "threadId": thread_id,
+                            "worktreePath": row["worktree_path"],
                             "resultDigest": result_digest,
                             "previousResultDigest": result_digest,
                             "missing": list(deferred_payload.get("missing") or []),
@@ -5277,28 +6532,46 @@ class RadarLedger:
                     )
 
     def acknowledge_exhausted_recovery(
-        self, *, thread_id: str, nonce: str, reason: str
+        self,
+        *,
+        thread_id: str,
+        nonce: str,
+        reason: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> dict[str, Any]:
         """Park one reviewed implementation recovery without changing its task result."""
 
         if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", reason):
             raise LedgerError("recovery acknowledgement reason must be machine-readable")
         with self.transaction() as connection:
-            existing_ack = connection.execute(
-                """SELECT ack.payload_json,ack.created_at,o.key,o.issue_url,o.title,o.stage,
-                          i.worktree_path
+            existing_ack_rows = connection.execute(
+                f"""SELECT ack.payload_json,ack.created_at,o.key,o.issue_url,o.title,o.stage,
+                          i.intent_id,i.thread_id,i.worktree_path
                    FROM events ack
                    JOIN opportunities o ON o.key=ack.opportunity_key
                    JOIN intents i ON i.opportunity_key=ack.opportunity_key
-                    AND i.thread_id=?
+                    AND {_intent_event_binding_clause("i", "ack")}
                    WHERE ack.event_type=
                          'THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED'
                      AND ack.dedupe_key=?
                      AND json_extract(ack.payload_json,'$.threadId')=?
                      AND json_extract(ack.payload_json,'$.recoveryNonce')=?
-                   ORDER BY ack.id DESC LIMIT 1""",
-                (thread_id, nonce, thread_id, nonce),
-            ).fetchone()
+                   ORDER BY ack.id DESC""",
+                (nonce, thread_id, nonce),
+            ).fetchall()
+            existing_ack = None
+            for ack_row in existing_ack_rows:
+                if intent_id and ack_row["intent_id"] != intent_id:
+                    continue
+                if worktree_path and not _resolved_path_equal(
+                    str(ack_row["worktree_path"] or ""), str(worktree_path)
+                ):
+                    continue
+                if existing_ack is not None:
+                    # The same nonce must never resolve to two task bindings.
+                    raise LedgerError("exhausted recovery acknowledgement is ambiguous")
+                existing_ack = ack_row
             if existing_ack is not None:
                 existing_payload = json.loads(existing_ack["payload_json"])
                 if existing_payload.get("reason") != reason:
@@ -5319,12 +6592,13 @@ class RadarLedger:
                     "acknowledgedAt": existing_ack["created_at"],
                     "alreadyAcknowledged": True,
                 }
-            row = connection.execute(
-                """SELECT exhausted.id AS exhausted_id,
+            row_rows = connection.execute(
+                f"""SELECT exhausted.id AS exhausted_id,
                           exhausted.opportunity_key AS key,
                           exhausted.payload_json AS exhausted_payload,
                           recovery.payload_json AS recovery_payload,
-                          o.issue_url,o.title,o.stage,i.worktree_path
+                          followup.payload_json AS followup_payload,
+                          o.issue_url,o.title,o.stage,i.intent_id,i.thread_id,i.worktree_path
                    FROM events exhausted
                    JOIN events recovery
                      ON recovery.opportunity_key=exhausted.opportunity_key
@@ -5336,6 +6610,9 @@ class RadarLedger:
                     AND followup.dedupe_key=
                         json_extract(recovery.payload_json,'$.followupDigest')
                    JOIN intents i ON i.opportunity_key=exhausted.opportunity_key
+                    AND {_intent_event_binding_clause("i", "exhausted")}
+                    AND {_intent_event_binding_clause("i", "recovery")}
+                    AND {_intent_event_binding_clause("i", "followup")}
                    JOIN opportunities o ON o.key=exhausted.opportunity_key
                    WHERE exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
                      AND exhausted.dedupe_key=?
@@ -5347,6 +6624,7 @@ class RadarLedger:
                        SELECT MAX(latest.id) FROM events latest
                        WHERE latest.opportunity_key=exhausted.opportunity_key
                          AND latest.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                         AND {_intent_event_binding_clause("i", "latest")}
                      )
                      AND recovery.id>followup.id
                      AND i.thread_id=? AND i.status='DISPATCHED'
@@ -5354,13 +6632,15 @@ class RadarLedger:
                        SELECT COALESCE(MAX(dispatched.id),0)
                        FROM events dispatched
                        WHERE dispatched.opportunity_key=i.opportunity_key
-                         AND dispatched.event_type='DISPATCHED'
-                         AND dispatched.dedupe_key=i.thread_id
+                          AND dispatched.event_type='DISPATCHED'
+                          AND dispatched.dedupe_key=i.thread_id
+                          AND {_intent_event_binding_clause("i", "dispatched")}
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events later
                        WHERE later.opportunity_key=exhausted.opportunity_key
                          AND later.id>exhausted.id
+                         AND {_intent_event_binding_clause("i", "later")}
                          AND (
                            later.event_type IN (
                              'TASK_RESULT_INGESTED',
@@ -5400,11 +6680,21 @@ class RadarLedger:
                            )
                          )
                      )
-                   ORDER BY exhausted.id DESC LIMIT 1""",
+                   ORDER BY exhausted.id DESC""",
                 (nonce, thread_id, thread_id, thread_id),
-            ).fetchone()
-            if row is None:
+            ).fetchall()
+            matching_rows = []
+            for candidate_row in row_rows:
+                if intent_id and candidate_row["intent_id"] != intent_id:
+                    continue
+                if worktree_path and not _resolved_path_equal(
+                    str(candidate_row["worktree_path"] or ""), str(worktree_path)
+                ):
+                    continue
+                matching_rows.append(candidate_row)
+            if len(matching_rows) != 1:
                 raise LedgerError("active exhausted recovery not found")
+            row = matching_rows[0]
             exhausted = json.loads(row["exhausted_payload"])
             recovery = json.loads(row["recovery_payload"])
             now = iso_z(datetime.now(UTC))
@@ -5414,7 +6704,9 @@ class RadarLedger:
                 "THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED",
                 nonce,
                 {
+                    "intentId": recovery.get("intentId"),
                     "threadId": thread_id,
+                    "worktreePath": recovery.get("worktreePath"),
                     "recoveryNonce": nonce,
                     "reason": reason,
                     "recoveryKind": recovery.get("recoveryKind"),
@@ -5446,8 +6738,9 @@ class RadarLedger:
 
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.issue_url,o.title,o.stage,i.intent_id,i.thread_id,
-                          i.worktree_path,ack.payload_json,ack.created_at AS acknowledged_at,
+                f"""SELECT o.key,o.issue_url,o.title,o.stage,i.intent_id,i.thread_id,
+                          i.worktree_path,i.status AS intent_status,
+                          ack.payload_json,ack.created_at AS acknowledged_at,
                           exhausted.created_at AS exhausted_at
                    FROM events ack
                    JOIN events exhausted
@@ -5466,9 +6759,16 @@ class RadarLedger:
                         json_extract(recovery.payload_json,'$.followupDigest')
                    JOIN opportunities o ON o.key=ack.opportunity_key
                    JOIN intents i ON i.opportunity_key=ack.opportunity_key
-                    AND i.thread_id=json_extract(ack.payload_json,'$.threadId')
+                    AND {_intent_event_binding_clause("i", "ack")}
+                    AND {_intent_event_binding_clause("i", "exhausted")}
+                    AND {_intent_event_binding_clause("i", "recovery")}
+                    AND {_intent_event_binding_clause("i", "followup")}
                    WHERE ack.event_type=
                          'THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED'
+                     AND json_valid(ack.payload_json)=1
+                     AND json_valid(exhausted.payload_json)=1
+                     AND json_valid(recovery.payload_json)=1
+                     AND json_valid(followup.payload_json)=1
                      AND json_extract(recovery.payload_json,'$.recoveryKind')=
                          'IMPLEMENTATION_FOLLOWUP_RESULT'
                      AND json_extract(followup.payload_json,'$.threadId')=
@@ -5477,12 +6777,14 @@ class RadarLedger:
                        SELECT MAX(latest.id) FROM events latest
                        WHERE latest.opportunity_key=ack.opportunity_key
                          AND latest.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                         AND {_intent_event_binding_clause("i", "latest")}
                      )
                      AND recovery.id>followup.id
                      AND NOT EXISTS (
                        SELECT 1 FROM events later
                        WHERE later.opportunity_key=ack.opportunity_key
                          AND later.id>ack.id
+                         AND {_intent_event_binding_clause("i", "later")}
                          AND (
                            later.event_type IN (
                              'TASK_RESULT_INGESTED',
@@ -5501,10 +6803,9 @@ class RadarLedger:
                            )
                            OR (
                              later.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
-                             AND json_extract(later.payload_json,'$.threadId')=
-                                 json_extract(ack.payload_json,'$.threadId')
+                             AND json_extract(later.payload_json,'$.threadId')=i.thread_id
                              AND json_extract(later.payload_json,'$.recoveryNonce')=
-                                 json_extract(ack.payload_json,'$.recoveryNonce')
+                                 exhausted.dedupe_key
                            )
                          )
                      )
@@ -5531,36 +6832,68 @@ class RadarLedger:
                     "exhaustedAt": row["exhausted_at"],
                     "acknowledgedAt": row["acknowledged_at"],
                     "parked": True,
-                    "rearmable": True,
+                    "rearmable": row["intent_status"] == "DISPATCHED",
                     "occupiesTaskSlot": False,
                 }
             )
         return parked
 
     def rearm_acknowledged_recovery(
-        self, *, thread_id: str, nonce: str, reason: str
+        self,
+        *,
+        thread_id: str,
+        nonce: str,
+        reason: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> dict[str, Any]:
-        """Explicitly reopen one reviewed, parked implementation recovery."""
+        """Explicitly reopen one reviewed, parked implementation recovery.
+
+        A recovery nonce is scoped to the exact task intent.  Historical
+        intents may share an issue or even a Codex thread, so every lifecycle
+        event in this query is matched through the durable intent binding.
+        A parked recovery is rearmable only while its original intent remains
+        the active dispatched intent.  A later rollover marks the old intent
+        superseded; reopening it here would create a successful-looking event
+        that can never be scheduled (and could race the replacement task), so
+        that case fails closed.
+        """
 
         if not re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", reason):
             raise LedgerError("recovery rearm reason must be machine-readable")
         with self.transaction() as connection:
-            existing_rearm = connection.execute(
-                """SELECT rearmed.payload_json,rearmed.created_at,
-                          o.key,o.issue_url,o.title,o.stage,i.worktree_path
+            existing_rows = connection.execute(
+                f"""SELECT rearmed.payload_json,rearmed.created_at,
+                          o.key,o.issue_url,o.title,o.stage,
+                          i.intent_id,i.status AS intent_status,i.thread_id,i.worktree_path
                    FROM events rearmed
                    JOIN opportunities o ON o.key=rearmed.opportunity_key
                    JOIN intents i ON i.opportunity_key=rearmed.opportunity_key
-                    AND i.thread_id=?
                    WHERE rearmed.event_type=
                          'THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
                      AND rearmed.dedupe_key=?
+                     AND json_valid(rearmed.payload_json)=1
                      AND json_extract(rearmed.payload_json,'$.threadId')=?
                      AND json_extract(rearmed.payload_json,'$.recoveryNonce')=?
-                   ORDER BY rearmed.id DESC LIMIT 1""",
-                (thread_id, nonce, thread_id, nonce),
-            ).fetchone()
-            if existing_rearm is not None:
+                     AND {_intent_event_binding_clause("i", "rearmed")}
+                   ORDER BY rearmed.id DESC""",
+                (nonce, thread_id, nonce),
+            ).fetchall()
+            existing_matches = []
+            for existing_row in existing_rows:
+                if intent_id and str(existing_row["intent_id"]) != str(intent_id):
+                    continue
+                if worktree_path and not _resolved_path_equal(
+                    str(existing_row["worktree_path"] or ""), str(worktree_path)
+                ):
+                    continue
+                existing_matches.append(existing_row)
+            if len(existing_matches) > 1:
+                raise LedgerError("parked recovery rearm is ambiguous")
+            if existing_matches:
+                existing_rearm = existing_matches[0]
+                if existing_rearm["intent_status"] != "DISPATCHED":
+                    raise LedgerError("parked recovery intent is no longer active")
                 existing_payload = json.loads(existing_rearm["payload_json"])
                 if existing_payload.get("reason") != reason:
                     raise LedgerError("parked recovery was rearmed with another reason")
@@ -5569,7 +6902,8 @@ class RadarLedger:
                     "issueUrl": existing_rearm["issue_url"],
                     "title": existing_rearm["title"],
                     "stage": existing_rearm["stage"],
-                    "threadId": thread_id,
+                    "intentId": existing_rearm["intent_id"],
+                    "threadId": existing_rearm["thread_id"],
                     "worktreePath": existing_rearm["worktree_path"],
                     "recoveryNonce": nonce,
                     "recoveryKind": existing_payload.get("recoveryKind"),
@@ -5578,11 +6912,12 @@ class RadarLedger:
                     "rearmedAt": existing_rearm["created_at"],
                     "alreadyRearmed": True,
                 }
-            row = connection.execute(
-                """SELECT ack.id AS acknowledgement_event_id,
+            row_rows = connection.execute(
+                f"""SELECT ack.id AS acknowledgement_event_id,
                           exhausted.id AS exhausted_event_id,
                           ack.opportunity_key AS key,ack.payload_json,
-                          o.issue_url,o.title,o.stage,i.worktree_path
+                          o.issue_url,o.title,o.stage,
+                          i.intent_id,i.status AS intent_status,i.thread_id,i.worktree_path
                    FROM events ack
                    JOIN events exhausted
                      ON exhausted.opportunity_key=ack.opportunity_key
@@ -5599,24 +6934,33 @@ class RadarLedger:
                         json_extract(recovery.payload_json,'$.followupDigest')
                    JOIN opportunities o ON o.key=ack.opportunity_key
                    JOIN intents i ON i.opportunity_key=ack.opportunity_key
-                    AND i.thread_id=? AND i.status='DISPATCHED'
                    WHERE ack.event_type=
                          'THREAD_RECOVERY_RETRY_EXHAUSTED_ACKNOWLEDGED'
+                     AND json_valid(ack.payload_json)=1
+                     AND json_valid(exhausted.payload_json)=1
+                     AND json_valid(recovery.payload_json)=1
+                     AND json_valid(followup.payload_json)=1
                      AND json_extract(ack.payload_json,'$.threadId')=?
                      AND json_extract(ack.payload_json,'$.recoveryNonce')=?
                      AND json_extract(recovery.payload_json,'$.recoveryKind')=
                          'IMPLEMENTATION_FOLLOWUP_RESULT'
                      AND json_extract(followup.payload_json,'$.threadId')=?
+                     AND {_intent_event_binding_clause("i", "ack")}
+                     AND {_intent_event_binding_clause("i", "exhausted")}
+                     AND {_intent_event_binding_clause("i", "recovery")}
+                     AND {_intent_event_binding_clause("i", "followup")}
                      AND followup.id=(
                        SELECT MAX(latest.id) FROM events latest
                        WHERE latest.opportunity_key=ack.opportunity_key
                          AND latest.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                         AND {_intent_event_binding_clause("i", "latest")}
                      )
                      AND recovery.id>followup.id
                      AND NOT EXISTS (
                        SELECT 1 FROM events later
                        WHERE later.opportunity_key=ack.opportunity_key
                          AND later.id>ack.id
+                         AND {_intent_event_binding_clause("i", "later")}
                          AND (
                            later.event_type IN (
                              'TASK_RESULT_INGESTED',
@@ -5635,16 +6979,29 @@ class RadarLedger:
                            )
                            OR (
                              later.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED'
-                             AND json_extract(later.payload_json,'$.threadId')=?
-                             AND json_extract(later.payload_json,'$.recoveryNonce')=?
+                             AND json_extract(later.payload_json,'$.threadId')=i.thread_id
+                             AND json_extract(later.payload_json,'$.recoveryNonce')=
+                                 exhausted.dedupe_key
                            )
                          )
                      )
-                   ORDER BY ack.id DESC LIMIT 1""",
-                (nonce, thread_id, thread_id, nonce, thread_id, thread_id, nonce),
-            ).fetchone()
-            if row is None:
+                   ORDER BY ack.id DESC""",
+                (nonce, thread_id, nonce, thread_id),
+            ).fetchall()
+            matching_rows = []
+            for candidate_row in row_rows:
+                if intent_id and str(candidate_row["intent_id"]) != str(intent_id):
+                    continue
+                if worktree_path and not _resolved_path_equal(
+                    str(candidate_row["worktree_path"] or ""), str(worktree_path)
+                ):
+                    continue
+                matching_rows.append(candidate_row)
+            if len(matching_rows) != 1:
                 raise LedgerError("parked exhausted recovery not found")
+            row = matching_rows[0]
+            if row["intent_status"] != "DISPATCHED":
+                raise LedgerError("parked recovery intent is no longer active")
             acknowledged = json.loads(row["payload_json"])
             now = iso_z(datetime.now(UTC))
             self._event(
@@ -5653,7 +7010,12 @@ class RadarLedger:
                 "THREAD_RECOVERY_RETRY_EXHAUSTED_REARMED",
                 nonce,
                 {
-                    "threadId": thread_id,
+                    # Persist the resolved ledger identity even when the
+                    # acknowledgement came from a legacy payload without an
+                    # explicit intent id.
+                    "intentId": row["intent_id"],
+                    "threadId": row["thread_id"],
+                    "worktreePath": row["worktree_path"],
                     "recoveryNonce": nonce,
                     "reason": reason,
                     "recoveryKind": acknowledged.get("recoveryKind"),
@@ -5669,7 +7031,8 @@ class RadarLedger:
                 "issueUrl": row["issue_url"],
                 "title": row["title"],
                 "stage": row["stage"],
-                "threadId": thread_id,
+                "intentId": row["intent_id"],
+                "threadId": row["thread_id"],
                 "worktreePath": row["worktree_path"],
                 "recoveryNonce": nonce,
                 "recoveryKind": acknowledged.get("recoveryKind"),
@@ -5686,20 +7049,25 @@ class RadarLedger:
         result_digest: str,
         missing: list[str],
         progress_marker: str | None = None,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> None:
         """Record a substantive result that needs validation, not task recovery."""
 
         with self.transaction() as connection:
-            row = connection.execute(
-                """SELECT 1 FROM intents i
-                   WHERE i.opportunity_key=? AND i.thread_id=?
-                     AND i.status IN ('DISPATCHED','COMPLETED')""",
-                (key, thread_id),
-            ).fetchone()
-            if row is None:
+            binding = _resolve_exact_intent_binding(
+                connection,
+                opportunity_key=key,
+                intent_id=intent_id,
+                thread_id=thread_id,
+                worktree_path=worktree_path,
+            )
+            if binding is None or binding["status"] not in {"DISPATCHED", "COMPLETED"}:
                 raise LedgerError("validation-deferred task is not dispatched")
             payload: dict[str, Any] = {
+                "intentId": str(binding["intent_id"]),
                 "threadId": thread_id,
+                "worktreePath": str(binding["worktree_path"]),
                 "resultDigest": result_digest,
                 "missing": missing,
             }
@@ -5721,6 +7089,8 @@ class RadarLedger:
                 result_digest=result_digest,
                 missing=missing,
                 progress_marker=progress_marker,
+                intent_id=str(binding["intent_id"]),
+                worktree_path=str(binding["worktree_path"]),
             )
 
     def record_validation_prefetch_blocked(
@@ -5730,24 +7100,55 @@ class RadarLedger:
         thread_id: str,
         result_digest: str,
         dependency_failures: list[dict[str, Any]],
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> None:
         """Persist a failed deterministic prefetch so the scheduler does not retry forever."""
 
         with self.transaction() as connection:
-            row = connection.execute(
-                """SELECT 1 FROM opportunities o
-                   JOIN intents i ON i.opportunity_key=o.key
-                   JOIN events d ON d.opportunity_key=o.key
-                     AND d.event_type='TASK_RESULT_VALIDATION_DEFERRED'
-                     AND json_extract(d.payload_json,'$.resultDigest')=?
-                   WHERE o.key=? AND i.thread_id=?
-                     AND o.stage IN (
-                       'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
-                     )
-                   LIMIT 1""",
-                (result_digest, key, thread_id),
+            binding = _resolve_exact_intent_binding(
+                connection,
+                opportunity_key=key,
+                intent_id=intent_id,
+                thread_id=thread_id,
+                worktree_path=worktree_path,
+            )
+            latest = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                   ORDER BY id DESC LIMIT 1""",
+                (key,),
             ).fetchone()
-            if row is None:
+            deferred_payload: dict[str, Any] | None = None
+            if latest is not None:
+                try:
+                    parsed = json.loads(latest["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    parsed = None
+                if isinstance(parsed, dict):
+                    deferred_binding = _resolve_event_intent_binding(
+                        connection, opportunity_key=key, payload=parsed
+                    )
+                    if (
+                        deferred_binding is not None
+                        and binding is not None
+                        and deferred_binding["intent_id"] == binding["intent_id"]
+                        and parsed.get("threadId") == thread_id
+                        and parsed.get("resultDigest") == result_digest
+                    ):
+                        deferred_payload = parsed
+            stage = connection.execute(
+                "SELECT stage FROM opportunities WHERE key=?", (key,)
+            ).fetchone()
+            if (
+                binding is None
+                or binding["status"] not in {"DISPATCHED", "COMPLETED"}
+                or stage is None
+                or stage["stage"]
+                not in {"VALIDATION_PENDING", "PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED"}
+                or deferred_payload is None
+            ):
                 raise LedgerError("validation prefetch task is not current")
             self._event(
                 connection,
@@ -5755,7 +7156,9 @@ class RadarLedger:
                 "VALIDATION_PREFETCH_BLOCKED",
                 result_digest,
                 {
+                    "intentId": str(binding["intent_id"]),
                     "threadId": thread_id,
+                    "worktreePath": str(binding["worktree_path"]),
                     "resultDigest": result_digest,
                     "dependencyFailures": dependency_failures,
                 },
@@ -5767,17 +7170,22 @@ class RadarLedger:
 
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,b.payload_json,b.created_at
+                f"""SELECT o.key,i.intent_id,i.thread_id,i.worktree_path,
+                          b.payload_json,b.created_at
                    FROM opportunities o
                    JOIN events d ON d.id=(
                      SELECT MAX(d2.id) FROM events d2
                      WHERE d2.opportunity_key=o.key
                        AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                    )
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND {_intent_event_binding_clause("i", "d")}
+                     AND i.status IN ('DISPATCHED','COMPLETED')
                    JOIN events b ON b.id=(
                      SELECT MAX(b2.id) FROM events b2
                      WHERE b2.opportunity_key=o.key
                        AND b2.event_type='VALIDATION_PREFETCH_BLOCKED'
+                       AND {_intent_event_binding_clause("i", "b2")}
                        AND json_extract(b2.payload_json,'$.resultDigest')=
                            json_extract(d.payload_json,'$.resultDigest')
                    )
@@ -5791,7 +7199,9 @@ class RadarLedger:
             blocked.append(
                 {
                     "key": row["key"],
-                    "threadId": payload.get("threadId"),
+                    "intentId": row["intent_id"],
+                    "threadId": row["thread_id"] or payload.get("threadId"),
+                    "worktreePath": row["worktree_path"],
                     "resultDigest": payload.get("resultDigest"),
                     "dependencyFailures": list(payload.get("dependencyFailures") or []),
                     "blockedAt": row["created_at"],
@@ -5814,13 +7224,24 @@ class RadarLedger:
         result_digest: str,
         missing: list[str],
         progress_marker: str | None = None,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> bool:
         """Stop repeat continuations when a completed continuation changed no gap."""
 
         normalized_missing = self._normalized_validation_missing(missing)
         if not normalized_missing:
             return False
-        previous = connection.execute(
+        current_binding = _resolve_exact_intent_binding(
+            connection,
+            opportunity_key=key,
+            intent_id=intent_id,
+            thread_id=thread_id,
+            worktree_path=worktree_path,
+        )
+        if current_binding is None:
+            return False
+        previous_rows = connection.execute(
             """SELECT d.dedupe_key,d.payload_json
                FROM events d
                WHERE d.opportunity_key=?
@@ -5832,12 +7253,30 @@ class RadarLedger:
                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
                      AND s.dedupe_key=d.dedupe_key
                  )
-               ORDER BY d.id DESC LIMIT 1""",
+               ORDER BY d.id DESC""",
             (key, result_digest),
-        ).fetchone()
-        if previous is None:
+        ).fetchall()
+        previous = None
+        previous_payload: dict[str, Any] | None = None
+        for previous_row in previous_rows:
+            try:
+                parsed_previous = json.loads(previous_row["payload_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(parsed_previous, dict):
+                continue
+            previous_binding = _resolve_event_intent_binding(
+                connection, opportunity_key=key, payload=parsed_previous
+            )
+            if (
+                previous_binding is not None
+                and previous_binding["intent_id"] == current_binding["intent_id"]
+            ):
+                previous = previous_row
+                previous_payload = parsed_previous
+                break
+        if previous is None or previous_payload is None:
             return False
-        previous_payload = json.loads(previous["payload_json"])
         if (
             self._normalized_validation_missing(previous_payload.get("missing"))
             != normalized_missing
@@ -5853,7 +7292,9 @@ class RadarLedger:
             "VALIDATION_FOLLOWUP_NO_PROGRESS",
             result_digest,
             {
+                "intentId": str(current_binding["intent_id"]),
                 "threadId": thread_id,
+                "worktreePath": str(current_binding["worktree_path"]),
                 "resultDigest": result_digest,
                 "previousResultDigest": previous["dedupe_key"],
                 "missing": list(normalized_missing),
@@ -5870,13 +7311,16 @@ class RadarLedger:
         marked = 0
         with self.transaction() as connection:
             exhausted_rows = connection.execute(
-                """SELECT o.key,d.payload_json
+                f"""SELECT o.key,i.intent_id,i.thread_id,i.worktree_path,d.payload_json
                    FROM opportunities o
                    JOIN events d ON d.id=(
                      SELECT MAX(d2.id) FROM events d2
                      WHERE d2.opportunity_key=o.key
                        AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                    )
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND {_intent_event_binding_clause("i", "d")}
+                     AND i.status IN ('DISPATCHED','COMPLETED')
                    WHERE o.stage IN (
                      'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
                    )
@@ -5891,8 +7335,10 @@ class RadarLedger:
                          ON recovery.opportunity_key=exhausted.opportunity_key
                         AND recovery.event_type='THREAD_RECOVERY_RESERVED'
                         AND recovery.dedupe_key=exhausted.dedupe_key
-                       WHERE exhausted.opportunity_key=o.key
-                         AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                         WHERE exhausted.opportunity_key=o.key
+                           AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                         AND {_intent_event_binding_clause("i", "exhausted")}
+                         AND {_intent_event_binding_clause("i", "recovery")}
                          AND json_extract(recovery.payload_json,'$.recoveryKind')=
                              'VALIDATION_FOLLOWUP_RESULT'
                          AND json_extract(recovery.payload_json,'$.followupDigest')=
@@ -5902,6 +7348,7 @@ class RadarLedger:
                        SELECT 1 FROM events n
                        WHERE n.opportunity_key=o.key
                          AND n.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
+                         AND {_intent_event_binding_clause("i", "n")}
                          AND n.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
                      )"""
             ).fetchall()
@@ -5914,7 +7361,9 @@ class RadarLedger:
                     "VALIDATION_FOLLOWUP_NO_PROGRESS",
                     result_digest,
                     {
-                        "threadId": str(payload.get("threadId") or ""),
+                        "intentId": row["intent_id"],
+                        "threadId": row["thread_id"] or str(payload.get("threadId") or ""),
+                        "worktreePath": row["worktree_path"],
                         "resultDigest": result_digest,
                         "previousResultDigest": result_digest,
                         "missing": list(payload.get("missing") or []),
@@ -5924,13 +7373,16 @@ class RadarLedger:
                 )
                 marked += 1
             rows = connection.execute(
-                """SELECT o.key,d.payload_json
+                f"""SELECT o.key,i.intent_id,i.thread_id,i.worktree_path,d.payload_json
                    FROM opportunities o
                    JOIN events d ON d.id=(
                      SELECT MAX(d2.id) FROM events d2
                      WHERE d2.opportunity_key=o.key
                        AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                    )
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND {_intent_event_binding_clause("i", "d")}
+                     AND i.status IN ('DISPATCHED','COMPLETED')
                    WHERE o.stage IN (
                      'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
                    )
@@ -5943,6 +7395,7 @@ class RadarLedger:
                        SELECT 1 FROM events n
                        WHERE n.opportunity_key=o.key
                          AND n.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
+                         AND {_intent_event_binding_clause("i", "n")}
                          AND n.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
                      )"""
             ).fetchall()
@@ -5951,10 +7404,12 @@ class RadarLedger:
                 if self._mark_validation_no_progress(
                     connection,
                     key=row["key"],
-                    thread_id=str(payload.get("threadId") or ""),
+                    thread_id=row["thread_id"] or str(payload.get("threadId") or ""),
                     result_digest=str(payload.get("resultDigest") or ""),
                     missing=list(payload.get("missing") or []),
                     progress_marker=str(payload.get("progressMarker") or "") or None,
+                    intent_id=row["intent_id"],
+                    worktree_path=row["worktree_path"],
                 ):
                     marked += 1
         return marked
@@ -5966,48 +7421,81 @@ class RadarLedger:
         result_digest: str,
         review_marker: str,
         reason: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> bool:
         """Reopen one stalled result only when controller-owned evidence changes."""
 
         evidence_fingerprint = sha256_text(f"{review_marker}|{reason}")
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
-            row = connection.execute(
-                """SELECT n.id,n.payload_json
+            rows = connection.execute(
+                f"""SELECT n.id,n.payload_json,i.intent_id,i.thread_id,i.worktree_path
                    FROM opportunities o
                    JOIN events d ON d.id=(
                      SELECT MAX(d2.id) FROM events d2
                      WHERE d2.opportunity_key=o.key
                        AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                    )
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND {_intent_event_binding_clause("i", "d")}
+                     AND i.status IN ('DISPATCHED','COMPLETED')
                    JOIN events n ON n.opportunity_key=o.key
                      AND n.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
+                     AND {_intent_event_binding_clause("i", "n")}
                      AND n.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
                    WHERE o.key=?
                      AND json_extract(d.payload_json,'$.resultDigest')=?
                      AND NOT EXISTS (
                        SELECT 1 FROM events active_rearm
-                       WHERE active_rearm.opportunity_key=o.key
-                         AND active_rearm.event_type=
-                             'VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                         WHERE active_rearm.opportunity_key=o.key
+                           AND active_rearm.event_type=
+                               'VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                         AND {_intent_event_binding_clause("i", "active_rearm")}
                          AND json_extract(active_rearm.payload_json,'$.resultDigest')=
                              json_extract(d.payload_json,'$.resultDigest')
                          AND active_rearm.id>n.id
                      )
-                   ORDER BY n.id DESC LIMIT 1""",
+                   ORDER BY n.id DESC""",
                 (key, result_digest),
-            ).fetchone()
+            ).fetchall()
+            if intent_id:
+                rows = [row for row in rows if row["intent_id"] == intent_id]
+            if worktree_path:
+                rows = [
+                    row
+                    for row in rows
+                    if row["worktree_path"]
+                    and _resolved_path_equal(str(row["worktree_path"]), str(worktree_path))
+                ]
+            row = rows[0] if len(rows) == 1 else None
             if row is None:
                 return False
-            previous = connection.execute(
+            previous_rows = connection.execute(
                 """SELECT payload_json FROM events
                    WHERE opportunity_key=?
                      AND event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
-                   ORDER BY id DESC LIMIT 1""",
+                   ORDER BY id DESC""",
                 (key,),
-            ).fetchone()
-            if previous is not None:
-                previous_payload = json.loads(previous["payload_json"])
+            ).fetchall()
+            previous_payload: dict[str, Any] | None = None
+            for previous in previous_rows:
+                try:
+                    parsed_previous = json.loads(previous["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(parsed_previous, dict):
+                    continue
+                previous_binding = _resolve_event_intent_binding(
+                    connection, opportunity_key=key, payload=parsed_previous
+                )
+                if (
+                    previous_binding is not None
+                    and previous_binding["intent_id"] == row["intent_id"]
+                ):
+                    previous_payload = parsed_previous
+                    break
+            if previous_payload is not None:
                 previous_fingerprint = str(previous_payload.get("evidenceFingerprint") or "")
                 if not previous_fingerprint:
                     previous_fingerprint = sha256_text(
@@ -6017,7 +7505,7 @@ class RadarLedger:
                 if previous_fingerprint == evidence_fingerprint:
                     return False
             no_progress = json.loads(row["payload_json"])
-            thread_id = str(no_progress.get("threadId") or "")
+            thread_id = str(row["thread_id"] or no_progress.get("threadId") or "")
             dedupe_key = sha256_text(f"{row['id']}|{evidence_fingerprint}")
             self._event(
                 connection,
@@ -6025,7 +7513,9 @@ class RadarLedger:
                 "VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED",
                 dedupe_key,
                 {
+                    "intentId": row["intent_id"],
                     "threadId": thread_id,
+                    "worktreePath": row["worktree_path"],
                     "resultDigest": result_digest,
                     "reviewMarker": review_marker,
                     "reason": reason,
@@ -6040,7 +7530,7 @@ class RadarLedger:
 
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,i.worktree_path,
+                f"""SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,i.worktree_path,
                           d.payload_json,d.created_at
                    FROM opportunities o
                    JOIN events d ON d.id=(
@@ -6049,10 +7539,11 @@ class RadarLedger:
                        AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                    )
                    JOIN intents i ON i.opportunity_key=o.key
-                     AND i.thread_id=json_extract(d.payload_json,'$.threadId')
+                     AND {_intent_event_binding_clause("i", "d")}
                    WHERE o.stage IN (
                      'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
                    )
+                     AND i.status IN ('DISPATCHED','COMPLETED')
                      AND i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines quarantine
@@ -6062,12 +7553,14 @@ class RadarLedger:
                      AND NOT EXISTS (
                        SELECT 1 FROM events r WHERE r.opportunity_key=o.key
                          AND r.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                         AND {_intent_event_binding_clause("i", "r")}
                          AND json_extract(r.payload_json,'$.resultDigest')=
                              json_extract(d.payload_json,'$.resultDigest')
                          AND NOT EXISTS (
                            SELECT 1 FROM events abandoned
                            WHERE abandoned.opportunity_key=r.opportunity_key
                              AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
+                             AND {_intent_event_binding_clause("i", "abandoned")}
                              AND json_extract(abandoned.payload_json,'$.resultDigest')=
                                  json_extract(r.payload_json,'$.resultDigest')
                              AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
@@ -6077,6 +7570,7 @@ class RadarLedger:
                            SELECT 1 FROM events cancelled
                            WHERE cancelled.opportunity_key=r.opportunity_key
                              AND cancelled.event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                             AND {_intent_event_binding_clause("i", "cancelled")}
                              AND json_extract(cancelled.payload_json,'$.reservationDigest')=
                                  json_extract(r.payload_json,'$.reservationDigest')
                              AND cancelled.id>r.id
@@ -6086,6 +7580,7 @@ class RadarLedger:
                            WHERE rearmed.opportunity_key=r.opportunity_key
                              AND rearmed.event_type=
                                  'VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                             AND {_intent_event_binding_clause("i", "rearmed")}
                              AND json_extract(rearmed.payload_json,'$.resultDigest')=
                                  json_extract(d.payload_json,'$.resultDigest')
                              AND rearmed.id>r.id
@@ -6094,11 +7589,13 @@ class RadarLedger:
                      AND NOT EXISTS (
                        SELECT 1 FROM events n WHERE n.opportunity_key=o.key
                          AND n.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
+                         AND {_intent_event_binding_clause("i", "n")}
                          AND n.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
                          AND NOT EXISTS (
                            SELECT 1 FROM events rearmed
                            WHERE rearmed.opportunity_key=n.opportunity_key
                              AND rearmed.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                             AND {_intent_event_binding_clause("i", "rearmed")}
                              AND json_extract(rearmed.payload_json,'$.resultDigest')=
                                  json_extract(d.payload_json,'$.resultDigest')
                              AND rearmed.id>n.id
@@ -6129,7 +7626,7 @@ class RadarLedger:
 
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.issue_url,o.title,i.thread_id,i.worktree_path,
+                f"""SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,i.worktree_path,
                           d.payload_json,n.payload_json AS no_progress_json,n.created_at
                    FROM opportunities o
                    JOIN events d ON d.id=(
@@ -6137,11 +7634,13 @@ class RadarLedger:
                      WHERE d2.opportunity_key=o.key
                        AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                    )
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND {_intent_event_binding_clause("i", "d")}
+                     AND i.status IN ('DISPATCHED','COMPLETED')
                    JOIN events n ON n.opportunity_key=o.key
                      AND n.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
+                     AND {_intent_event_binding_clause("i", "n")}
                      AND n.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
-                   JOIN intents i ON i.opportunity_key=o.key
-                     AND i.thread_id=json_extract(d.payload_json,'$.threadId')
                    WHERE o.stage IN (
                      'VALIDATION_PENDING','PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED'
                    )
@@ -6154,6 +7653,7 @@ class RadarLedger:
                        SELECT 1 FROM events cancelled
                        WHERE cancelled.opportunity_key=o.key
                          AND cancelled.event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                         AND {_intent_event_binding_clause("i", "cancelled")}
                          AND json_extract(cancelled.payload_json,'$.resultDigest')=
                              json_extract(d.payload_json,'$.resultDigest')
                          AND cancelled.id>n.id
@@ -6162,6 +7662,7 @@ class RadarLedger:
                        SELECT 1 FROM events rearmed
                        WHERE rearmed.opportunity_key=n.opportunity_key
                          AND rearmed.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                         AND {_intent_event_binding_clause("i", "rearmed")}
                          AND json_extract(rearmed.payload_json,'$.resultDigest')=
                              json_extract(d.payload_json,'$.resultDigest')
                          AND rearmed.id>n.id
@@ -6177,6 +7678,7 @@ class RadarLedger:
                     "key": row["key"],
                     "issueUrl": row["issue_url"],
                     "title": row["title"],
+                    "intentId": row["intent_id"],
                     "threadId": row["thread_id"],
                     "worktreePath": row["worktree_path"],
                     "resultDigest": payload.get("resultDigest"),
@@ -6194,7 +7696,7 @@ class RadarLedger:
 
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.issue_url,o.title,i.thread_id,i.worktree_path,
+                f"""SELECT o.key,o.issue_url,o.title,i.intent_id,i.thread_id,i.worktree_path,
                           d.payload_json,q.reason,q.created_at
                    FROM opportunities o
                    JOIN events d ON d.id=(
@@ -6203,7 +7705,8 @@ class RadarLedger:
                        AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                    )
                    JOIN intents i ON i.opportunity_key=o.key
-                     AND i.thread_id=json_extract(d.payload_json,'$.threadId')
+                     AND {_intent_event_binding_clause("i", "d")}
+                     AND i.status IN ('DISPATCHED','COMPLETED')
                    JOIN task_quarantines q ON q.opportunity_key=o.key
                      AND q.status='ACTIVE'
                      AND q.quarantine_id=(
@@ -6222,6 +7725,7 @@ class RadarLedger:
                 "key": row["key"],
                 "issueUrl": row["issue_url"],
                 "title": row["title"],
+                "intentId": row["intent_id"],
                 "threadId": row["thread_id"],
                 "worktreePath": row["worktree_path"],
                 "resultDigest": json.loads(row["payload_json"]).get("resultDigest"),
@@ -6232,18 +7736,46 @@ class RadarLedger:
             for row in rows
         ]
 
-    def validation_followup_was_sent(self, *, thread_id: str) -> bool:
+    def validation_followup_was_sent(
+        self,
+        *,
+        thread_id: str,
+        key: str | None = None,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
+    ) -> bool:
         """Return whether this task already received a validation continuation."""
 
         with self.connect() as connection:
-            row = connection.execute(
-                """SELECT 1 FROM events
+            rows = connection.execute(
+                """SELECT opportunity_key,payload_json FROM events
                    WHERE event_type='VALIDATION_FOLLOWUP_SENT'
                      AND json_extract(payload_json,'$.threadId')=?
-                   LIMIT 1""",
+                   ORDER BY id DESC""",
                 (thread_id,),
-            ).fetchone()
-        return row is not None
+            ).fetchall()
+            if key is None:
+                return bool(rows)
+            for row in rows:
+                if row["opportunity_key"] != key:
+                    continue
+                try:
+                    payload = json.loads(row["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                binding = _resolve_event_intent_binding(
+                    connection, opportunity_key=key, payload=payload
+                )
+                if binding is None:
+                    continue
+                if intent_id and binding["intent_id"] != intent_id:
+                    continue
+                if worktree_path and not _resolved_path_equal(
+                    str(binding["worktree_path"]), str(worktree_path)
+                ):
+                    continue
+                return True
+        return False
 
     def reserve_validation_followup(
         self,
@@ -6252,15 +7784,24 @@ class RadarLedger:
         result_digest: str,
         max_active: int | None = None,
         exclude_intent_id: str | None = None,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> dict[str, Any]:
-        candidate = next(
-            (
+        candidates = [
+            item
+            for item in self.validation_followup_candidates()
+            if item["threadId"] == thread_id and item["resultDigest"] == result_digest
+        ]
+        if intent_id:
+            candidates = [item for item in candidates if item.get("intentId") == intent_id]
+        if worktree_path:
+            candidates = [
                 item
-                for item in self.validation_followup_candidates()
-                if item["threadId"] == thread_id and item["resultDigest"] == result_digest
-            ),
-            None,
-        )
+                for item in candidates
+                if item.get("worktreePath")
+                and _resolved_path_equal(str(item["worktreePath"]), str(worktree_path))
+            ]
+        candidate = candidates[0] if len(candidates) == 1 else None
         if candidate is None:
             raise LedgerError("validation follow-up authorization is stale or invalid")
         if exclude_intent_id is not None and exclude_intent_id != candidate["intentId"]:
@@ -6278,19 +7819,32 @@ class RadarLedger:
                 exclude_intent_id=exclude_intent_id,
             ) >= max(0, max_active):
                 raise LedgerError("global task WIP limit reached")
-            prior_attempts = int(
-                connection.execute(
-                    """SELECT COUNT(*) FROM events
-                       WHERE opportunity_key=?
-                         AND event_type='VALIDATION_FOLLOWUP_RESERVED'
-                         AND json_extract(payload_json,'$.threadId')=?
-                         AND json_extract(payload_json,'$.resultDigest')=?""",
-                    (candidate["key"], thread_id, result_digest),
-                ).fetchone()[0]
-            )
+            prior_rows = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='VALIDATION_FOLLOWUP_RESERVED'
+                     AND json_extract(payload_json,'$.threadId')=?
+                     AND json_extract(payload_json,'$.resultDigest')=?""",
+                (candidate["key"], thread_id, result_digest),
+            ).fetchall()
+            prior_attempts = 0
+            for prior_row in prior_rows:
+                try:
+                    prior_payload = json.loads(prior_row["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                prior_binding = _resolve_event_intent_binding(
+                    connection, opportunity_key=str(candidate["key"]), payload=prior_payload
+                )
+                if (
+                    prior_binding is not None
+                    and prior_binding["intent_id"] == candidate["intentId"]
+                ):
+                    prior_attempts += 1
             attempt = prior_attempts + 1
             reservation_digest = sha256_text(
-                f"{candidate['key']}|{thread_id}|{result_digest}|attempt:{attempt}"
+                f"{candidate['key']}|{candidate['intentId']}|{thread_id}|"
+                f"{candidate['worktreePath']}|{result_digest}|attempt:{attempt}"
             )
             self._event(
                 connection,
@@ -6298,7 +7852,9 @@ class RadarLedger:
                 "VALIDATION_FOLLOWUP_RESERVED",
                 reservation_digest,
                 {
+                    "intentId": candidate["intentId"],
                     "threadId": thread_id,
+                    "worktreePath": candidate["worktreePath"],
                     "resultDigest": result_digest,
                     "missing": candidate["missing"],
                     "attempt": attempt,
@@ -6314,26 +7870,32 @@ class RadarLedger:
         thread_id: str,
         result_digest: str,
         reservation_digest: str | None = None,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> None:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
-            row = connection.execute(
-                """SELECT o.key FROM opportunities o
+            rows = connection.execute(
+                f"""SELECT o.key,r.payload_json,r.id FROM opportunities o
                    JOIN intents i ON i.opportunity_key=o.key
                    JOIN events r ON r.opportunity_key=o.key
                      AND r.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                     AND {_intent_event_binding_clause("i", "r")}
                      AND json_extract(r.payload_json,'$.resultDigest')=?
                      AND (? IS NULL OR json_extract(r.payload_json,'$.reservationDigest')=?)
                    WHERE i.thread_id=?
+                     AND i.status IN ('DISPATCHED','COMPLETED')
                      AND NOT EXISTS (
                        SELECT 1 FROM events s WHERE s.opportunity_key=o.key
                          AND s.event_type='VALIDATION_FOLLOWUP_SENT'
+                         AND {_intent_event_binding_clause("i", "s")}
                          AND s.dedupe_key=?
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=r.opportunity_key
                          AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND {_intent_event_binding_clause("i", "abandoned")}
                          AND json_extract(abandoned.payload_json,'$.resultDigest')=
                              json_extract(r.payload_json,'$.resultDigest')
                          AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
@@ -6343,67 +7905,112 @@ class RadarLedger:
                        SELECT 1 FROM events cancelled
                        WHERE cancelled.opportunity_key=r.opportunity_key
                          AND cancelled.event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                         AND {_intent_event_binding_clause("i", "cancelled")}
                          AND json_extract(cancelled.payload_json,'$.reservationDigest')=
                              json_extract(r.payload_json,'$.reservationDigest')
                          AND cancelled.id>r.id
                      )
-                   ORDER BY r.id DESC LIMIT 1""",
+                   ORDER BY r.id DESC""",
                 (result_digest, reservation_digest, reservation_digest, thread_id, result_digest),
-            ).fetchone()
+            ).fetchall()
+            filtered_rows: list[sqlite3.Row] = []
+            for row in rows:
+                try:
+                    payload = json.loads(row["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if intent_id and payload.get("intentId") != intent_id:
+                    continue
+                if worktree_path and not payload.get("worktreePath"):
+                    continue
+                if worktree_path and not _resolved_path_equal(
+                    str(payload.get("worktreePath")), str(worktree_path)
+                ):
+                    continue
+                filtered_rows.append(row)
+            row = filtered_rows[0] if len(filtered_rows) == 1 else None
             if row is None:
-                sent = connection.execute(
-                    """SELECT 1 FROM events r JOIN events s
-                       ON s.opportunity_key=r.opportunity_key
-                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
-                      AND s.dedupe_key=?
+                sent_rows = connection.execute(
+                    f"""SELECT r.payload_json,s.payload_json AS sent_payload FROM events r
+                       JOIN intents i ON i.opportunity_key=r.opportunity_key
+                        AND i.thread_id=?
+                        AND i.status IN ('DISPATCHED','COMPLETED')
+                        AND {_intent_event_binding_clause("i", "r")}
+                       JOIN events s ON s.opportunity_key=r.opportunity_key
+                        AND s.event_type='VALIDATION_FOLLOWUP_SENT'
+                        AND {_intent_event_binding_clause("i", "s")}
+                        AND s.dedupe_key=?
                        WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
-                         AND json_extract(r.payload_json,'$.threadId')=?
-                     AND json_extract(r.payload_json,'$.resultDigest')=?
+                         AND json_extract(r.payload_json,'$.threadId')=i.thread_id
+                         AND json_extract(r.payload_json,'$.resultDigest')=?
                          AND (? IS NULL OR json_extract(r.payload_json,'$.reservationDigest')=?)
-                       LIMIT 1""",
+                       ORDER BY r.id DESC""",
                     (
-                        result_digest,
                         thread_id,
+                        result_digest,
                         result_digest,
                         reservation_digest,
                         reservation_digest,
                     ),
-                ).fetchone()
+                ).fetchall()
+                sent = False
+                for sent_row in sent_rows:
+                    try:
+                        sent_payload = json.loads(sent_row["payload_json"] or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    if intent_id and sent_payload.get("intentId") != intent_id:
+                        continue
+                    if worktree_path and not sent_payload.get("worktreePath"):
+                        continue
+                    if worktree_path and not _resolved_path_equal(
+                        str(sent_payload.get("worktreePath")), str(worktree_path)
+                    ):
+                        continue
+                    sent = True
+                    break
                 if sent:
                     return
                 raise LedgerError(
                     "validation follow-up reservation is missing or already committed"
                 )
+            reservation_payload = json.loads(row["payload_json"] or "{}")
             self._event(
                 connection,
                 row["key"],
                 "VALIDATION_FOLLOWUP_SENT",
                 result_digest,
-                {"threadId": thread_id, "resultDigest": result_digest},
+                {
+                    "intentId": reservation_payload.get("intentId"),
+                    "threadId": thread_id,
+                    "worktreePath": reservation_payload.get("worktreePath"),
+                    "resultDigest": result_digest,
+                },
                 now,
             )
 
     def unresolved_validation_followups(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.issue_url,i.worktree_path,r.payload_json,r.created_at,r.dedupe_key
+                f"""SELECT o.key,o.issue_url,i.intent_id,i.thread_id,i.worktree_path,
+                          r.payload_json,r.created_at,r.dedupe_key
                    FROM opportunities o
-                   JOIN intents i ON i.intent_id=(
-                     SELECT i2.intent_id FROM intents i2
-                     WHERE i2.opportunity_key=o.key AND i2.thread_id IS NOT NULL
-                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                   )
                    JOIN events r ON r.opportunity_key=o.key
                      AND r.event_type='VALIDATION_FOLLOWUP_RESERVED'
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND {_intent_event_binding_clause("i", "r")}
+                     AND i.status IN ('DISPATCHED','COMPLETED')
                    WHERE NOT EXISTS (
                      SELECT 1 FROM events s WHERE s.opportunity_key=o.key
                        AND s.event_type='VALIDATION_FOLLOWUP_SENT'
+                       AND {_intent_event_binding_clause("i", "s")}
                        AND s.dedupe_key=json_extract(r.payload_json,'$.resultDigest')
                    )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=r.opportunity_key
                          AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND {_intent_event_binding_clause("i", "abandoned")}
                          AND json_extract(abandoned.payload_json,'$.resultDigest')=
                              json_extract(r.payload_json,'$.resultDigest')
                          AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
@@ -6413,6 +8020,7 @@ class RadarLedger:
                        SELECT 1 FROM events cancelled
                        WHERE cancelled.opportunity_key=r.opportunity_key
                          AND cancelled.event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                         AND {_intent_event_binding_clause("i", "cancelled")}
                          AND json_extract(cancelled.payload_json,'$.reservationDigest')=
                              json_extract(r.payload_json,'$.reservationDigest')
                          AND cancelled.id>r.id
@@ -6422,8 +8030,9 @@ class RadarLedger:
             {
                 "key": row["key"],
                 "issueUrl": row["issue_url"],
+                "intentId": row["intent_id"],
                 "worktreePath": row["worktree_path"],
-                "threadId": json.loads(row["payload_json"]).get("threadId"),
+                "threadId": row["thread_id"] or json.loads(row["payload_json"]).get("threadId"),
                 "resultDigest": json.loads(row["payload_json"]).get("resultDigest"),
                 "reservationDigest": json.loads(row["payload_json"]).get("reservationDigest")
                 or row["dedupe_key"],
@@ -6440,36 +8049,55 @@ class RadarLedger:
         result_digest: str,
         reason: str,
         min_age_minutes: int = 90,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> None:
         """Retire an old reservation when no target task turn materialized."""
 
         current = datetime.now(UTC)
         now = iso_z(current)
         with self.transaction() as connection:
-            row = connection.execute(
-                """SELECT r.id,r.opportunity_key AS key,r.dedupe_key,r.created_at
+            rows = connection.execute(
+                f"""SELECT r.id,r.opportunity_key AS key,r.dedupe_key,r.created_at,
+                          i.intent_id,i.worktree_path
                    FROM events r
+                   JOIN intents i ON i.opportunity_key=r.opportunity_key
+                     AND i.thread_id=?
+                     AND i.status IN ('DISPATCHED','COMPLETED')
+                     AND {_intent_event_binding_clause("i", "r")}
                    WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
-                     AND json_extract(r.payload_json,'$.threadId')=?
+                     AND json_extract(r.payload_json,'$.threadId')=i.thread_id
                      AND json_extract(r.payload_json,'$.resultDigest')=?
                      AND NOT EXISTS (
                        SELECT 1 FROM events sent
                        WHERE sent.opportunity_key=r.opportunity_key
                          AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
+                         AND {_intent_event_binding_clause("i", "sent")}
                          AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest')
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=r.opportunity_key
                          AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND {_intent_event_binding_clause("i", "abandoned")}
                          AND json_extract(abandoned.payload_json,'$.resultDigest')=
                              json_extract(r.payload_json,'$.resultDigest')
                          AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
                          AND abandoned.id>r.id
                      )
-                   ORDER BY r.id DESC LIMIT 1""",
+                   ORDER BY r.id DESC""",
                 (thread_id, result_digest),
-            ).fetchone()
+            ).fetchall()
+            if intent_id:
+                rows = [row for row in rows if row["intent_id"] == intent_id]
+            if worktree_path:
+                rows = [
+                    row
+                    for row in rows
+                    if row["worktree_path"]
+                    and _resolved_path_equal(str(row["worktree_path"]), str(worktree_path))
+                ]
+            row = rows[0] if len(rows) == 1 else None
             if row is None:
                 raise LedgerError("validation follow-up delivery is not abandonable")
             minimum_age = timedelta(minutes=max(1, min_age_minutes))
@@ -6479,9 +8107,14 @@ class RadarLedger:
                 connection,
                 row["key"],
                 "VALIDATION_FOLLOWUP_DELIVERY_ABANDONED",
-                sha256_text(f"{thread_id}|{result_digest}|{row['created_at']}"),
+                sha256_text(
+                    f"{row['key']}|{row['intent_id']}|{thread_id}|{result_digest}|"
+                    f"{row['created_at']}"
+                ),
                 {
+                    "intentId": row["intent_id"],
                     "threadId": thread_id,
+                    "worktreePath": row["worktree_path"],
                     "resultDigest": result_digest,
                     "reservationDigest": row["dedupe_key"],
                     "reservedAt": row["created_at"],
@@ -6498,16 +8131,23 @@ class RadarLedger:
         result_digest: str,
         reservation_digest: str,
         reason: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> None:
         """Immediately invalidate the latest unstarted validation reservation."""
 
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
-            row = connection.execute(
-                """SELECT r.id,r.opportunity_key AS key,r.dedupe_key,r.created_at
+            rows = connection.execute(
+                f"""SELECT r.id,r.opportunity_key AS key,r.dedupe_key,r.created_at,
+                          i.intent_id,i.worktree_path
                    FROM events r
+                   JOIN intents i ON i.opportunity_key=r.opportunity_key
+                     AND i.thread_id=?
+                     AND i.status IN ('DISPATCHED','COMPLETED')
+                     AND {_intent_event_binding_clause("i", "r")}
                    WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
-                     AND json_extract(r.payload_json,'$.threadId')=?
+                     AND json_extract(r.payload_json,'$.threadId')=i.thread_id
                      AND json_extract(r.payload_json,'$.resultDigest')=?
                      AND json_extract(r.payload_json,'$.reservationDigest')=?
                      AND r.id=(
@@ -6519,12 +8159,14 @@ class RadarLedger:
                        SELECT 1 FROM events sent
                        WHERE sent.opportunity_key=r.opportunity_key
                          AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
+                         AND {_intent_event_binding_clause("i", "sent")}
                          AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest')
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=r.opportunity_key
                          AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND {_intent_event_binding_clause("i", "abandoned")}
                          AND json_extract(abandoned.payload_json,'$.resultDigest')=
                              json_extract(r.payload_json,'$.resultDigest')
                          AND json_extract(abandoned.payload_json,'$.reservedAt')=r.created_at
@@ -6534,6 +8176,7 @@ class RadarLedger:
                        SELECT 1 FROM events cancelled
                        WHERE cancelled.opportunity_key=r.opportunity_key
                          AND cancelled.event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                         AND {_intent_event_binding_clause("i", "cancelled")}
                          AND json_extract(cancelled.payload_json,'$.reservationDigest')=
                              json_extract(r.payload_json,'$.reservationDigest')
                          AND cancelled.id>r.id
@@ -6542,14 +8185,25 @@ class RadarLedger:
                        SELECT 1 FROM events started
                        WHERE started.opportunity_key=r.opportunity_key
                          AND started.event_type='TASK_TURN_DELIVERY_STARTED'
+                         AND {_intent_event_binding_clause("i", "started")}
                          AND json_extract(started.payload_json,'$.deliveryKind')='validation-followup'
                          AND json_extract(started.payload_json,'$.reservationDigest')=
                              json_extract(r.payload_json,'$.reservationDigest')
                          AND started.id>r.id
                      )
-                   ORDER BY r.id DESC LIMIT 1""",
+                   ORDER BY r.id DESC""",
                 (thread_id, result_digest, reservation_digest),
-            ).fetchone()
+            ).fetchall()
+            if intent_id:
+                rows = [row for row in rows if row["intent_id"] == intent_id]
+            if worktree_path:
+                rows = [
+                    row
+                    for row in rows
+                    if row["worktree_path"]
+                    and _resolved_path_equal(str(row["worktree_path"]), str(worktree_path))
+                ]
+            row = rows[0] if len(rows) == 1 else None
             if row is None:
                 raise LedgerError("validation follow-up reservation is not cancellable")
             self._event(
@@ -6558,7 +8212,9 @@ class RadarLedger:
                 "VALIDATION_FOLLOWUP_RESERVATION_CANCELLED",
                 sha256_text(f"cancelled|{reservation_digest}"),
                 {
+                    "intentId": row["intent_id"],
                     "threadId": thread_id,
+                    "worktreePath": row["worktree_path"],
                     "resultDigest": result_digest,
                     "reservationDigest": reservation_digest,
                     "reservedAt": row["created_at"],
@@ -6574,15 +8230,20 @@ class RadarLedger:
         )
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.issue_url,d.payload_json,s.created_at
+                f"""SELECT o.key,o.issue_url,i.intent_id,i.thread_id,i.worktree_path,
+                          d.payload_json,s.created_at
                    FROM opportunities o
                    JOIN events d ON d.id=(
                      SELECT MAX(d2.id) FROM events d2
                      WHERE d2.opportunity_key=o.key
                        AND d2.event_type='TASK_RESULT_VALIDATION_DEFERRED'
                    )
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND {_intent_event_binding_clause("i", "d")}
+                     AND i.status IN ('DISPATCHED','COMPLETED')
                    JOIN events s ON s.opportunity_key=o.key
                      AND s.event_type='VALIDATION_FOLLOWUP_SENT'
+                     AND {_intent_event_binding_clause("i", "s")}
                      AND s.dedupe_key=json_extract(d.payload_json,'$.resultDigest')
                      AND json_extract(s.payload_json,'$.threadId')=
                          json_extract(d.payload_json,'$.threadId')
@@ -6596,6 +8257,7 @@ class RadarLedger:
                            'TASK_RESULT_INGESTED','PUBLISHED_TASK_RESULT_BACKFILLED'
                          )
                          AND result.id>s.id
+                         AND {_intent_event_binding_clause("i", "result")}
                          AND json_extract(result.payload_json,'$.threadId')=
                              json_extract(d.payload_json,'$.threadId')
                      )
@@ -6612,6 +8274,8 @@ class RadarLedger:
                         AND recovery.dedupe_key=exhausted.dedupe_key
                        WHERE exhausted.opportunity_key=o.key
                          AND exhausted.event_type='THREAD_RECOVERY_RETRY_EXHAUSTED'
+                         AND {_intent_event_binding_clause("i", "exhausted")}
+                         AND {_intent_event_binding_clause("i", "recovery")}
                          AND json_extract(recovery.payload_json,'$.recoveryKind')=
                              'VALIDATION_FOLLOWUP_RESULT'
                          AND json_extract(recovery.payload_json,'$.followupDigest')=s.dedupe_key
@@ -6623,7 +8287,9 @@ class RadarLedger:
             {
                 "key": row["key"],
                 "issueUrl": row["issue_url"],
-                "threadId": json.loads(row["payload_json"]).get("threadId"),
+                "intentId": row["intent_id"],
+                "threadId": row["thread_id"] or json.loads(row["payload_json"]).get("threadId"),
+                "worktreePath": row["worktree_path"],
                 "resultDigest": json.loads(row["payload_json"]).get("resultDigest"),
                 "missing": list(json.loads(row["payload_json"]).get("missing") or []),
                 "sentAt": row["created_at"],
@@ -6637,13 +8303,17 @@ class RadarLedger:
         issue_url: str,
         thread_id: str | None = None,
         worktree_path: str | None = None,
+        intent_id: str | None = None,
     ) -> dict[str, Any] | None:
         clauses = ["o.issue_url=?"]
         params: list[Any] = [issue_url]
+        if intent_id:
+            clauses.append("i.intent_id=?")
+            params.append(intent_id)
         if thread_id:
             clauses.append("i.thread_id=?")
             params.append(thread_id)
-        if worktree_path and not thread_id:
+        if worktree_path:
             raw_worktree = str(worktree_path)
             resolved_worktree = str(Path(worktree_path).resolve())
             if raw_worktree == resolved_worktree:
@@ -6655,29 +8325,119 @@ class RadarLedger:
         if len(clauses) == 1:
             raise ValueError("thread_id or worktree_path is required")
         with self.connect() as connection:
-            row = connection.execute(
+            rows = connection.execute(
                 f"""SELECT o.key,o.stage,o.issue_url,i.intent_id,i.thread_id,
                            i.worktree_path,i.status,i.payload_json,i.title_time
                     FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                     WHERE {" AND ".join(clauses)}
-                    ORDER BY i.updated_at DESC LIMIT 1""",
+                    ORDER BY i.updated_at DESC,i.intent_id DESC""",
                 tuple(params),
-            ).fetchone()
+            ).fetchall()
+            # A thread or worktree can be reused by a later intent.  Without
+            # an explicit intent id, project only a uniquely provable binding;
+            # selecting the newest row would silently cross-wire lifecycle
+            # results after a rollover.
+            row = rows[0] if len(rows) == 1 else None
             audit_rows = (
                 _intent_bound_audit_rows(connection, row["key"], row["intent_id"])
                 if row is not None
                 else []
             )
             audit_row = audit_rows[0] if audit_rows else None
+            publication_worktree_values: tuple[str, ...] = ()
+            if row is not None and row["worktree_path"]:
+                raw_publication_worktree = str(row["worktree_path"])
+                try:
+                    resolved_publication_worktree = str(Path(raw_publication_worktree).resolve())
+                except (OSError, RuntimeError):
+                    resolved_publication_worktree = raw_publication_worktree
+                publication_worktree_values = tuple(
+                    dict.fromkeys((raw_publication_worktree, resolved_publication_worktree))
+                )
+            # ``taskId`` is the legacy spelling of the immutable intent id in
+            # a few pre-v5 publication snapshots.  Resolve both aliases from
+            # one guarded JSON object and reject a payload that carries two
+            # disagreeing ids; otherwise a request for an older generation
+            # could be projected onto the newer task merely because its SQL
+            # row happens to share the same thread/worktree.
+            request_json_object = (
+                "CASE WHEN json_valid(r.request_json)=1 THEN r.request_json ELSE '{}' END"
+            )
+            request_intent_expr = f"json_extract({request_json_object},'$.intentId')"
+            request_task_expr = f"json_extract({request_json_object},'$.taskId')"
+            request_identity_expr = f"COALESCE({request_intent_expr},{request_task_expr})"
             publication_row = (
                 connection.execute(
-                    """SELECT r.status AS request_status,r.commit_sha,r.branch,
+                    f"""SELECT r.status AS request_status,r.commit_sha,r.branch,
                               r.created_at AS requested_at,r.updated_at AS request_updated_at,
                               p.status AS permit_status,p.pr_url,
                               p.updated_at AS permit_updated_at
                        FROM publication_requests r
                        LEFT JOIN publication_permits p ON p.request_id=r.request_id
                        WHERE r.opportunity_key=?
+                         AND r.thread_id=?
+                         AND r.worktree_path IN (
+                           {",".join("?" for _ in publication_worktree_values) or "NULL"}
+                         )
+                         AND json_valid(r.request_json)=1
+                         AND (
+                           json_extract(r.request_json,'$.threadId') IS NULL
+                           OR json_extract(r.request_json,'$.threadId')=r.thread_id
+                         )
+                         AND (
+                           json_extract(r.request_json,'$.worktreePath') IS NULL
+                           OR json_extract(r.request_json,'$.worktreePath') IN (
+                             {",".join("?" for _ in publication_worktree_values) or "NULL"}
+                           )
+                         )
+                         AND (
+                           (
+                             {request_identity_expr}=?
+                             AND (
+                               json_type({request_json_object},'$.intentId') IS NULL
+                               OR json_type({request_json_object},'$.intentId')='null'
+                               OR (
+                                 json_type({request_json_object},'$.intentId')='text'
+                                 AND {request_intent_expr}<>''
+                               )
+                             )
+                             AND (
+                               json_type({request_json_object},'$.taskId') IS NULL
+                               OR json_type({request_json_object},'$.taskId')='null'
+                               OR (
+                                 json_type({request_json_object},'$.taskId')='text'
+                                 AND {request_task_expr}<>''
+                               )
+                             )
+                             AND NOT (
+                               COALESCE(
+                                 json_type({request_json_object},'$.intentId')='text',
+                                 0
+                               )
+                               AND COALESCE(
+                                 json_type({request_json_object},'$.taskId')='text',
+                                 0
+                               )
+                               AND COALESCE(
+                                 {request_intent_expr}<>{request_task_expr},
+                                 0
+                               )
+                             )
+                           )
+                           OR (
+                             {request_intent_expr} IS NULL
+                             AND {request_task_expr} IS NULL
+                             AND NOT EXISTS (
+                               SELECT 1 FROM intents other
+                               WHERE other.opportunity_key=r.opportunity_key
+                                 AND other.thread_id=r.thread_id
+                                 AND other.worktree_path IN (
+                                   {",".join("?" for _ in publication_worktree_values) or "NULL"}
+                                 )
+                                 AND other.intent_id<>?
+                             )
+                           )
+                         )
                        ORDER BY
                          CASE
                            WHEN p.status='CONSUMED' AND p.pr_url IS NOT NULL THEN 1
@@ -6690,7 +8450,15 @@ class RadarLedger:
                          END DESC,
                          r.updated_at DESC,r.created_at DESC,r.request_id DESC
                        LIMIT 1""",
-                    (row["key"],),
+                    (
+                        row["key"],
+                        row["thread_id"],
+                        *publication_worktree_values,
+                        *publication_worktree_values,
+                        row["intent_id"],
+                        *publication_worktree_values,
+                        row["intent_id"],
+                    ),
                 ).fetchone()
                 if row is not None
                 else None
@@ -6704,6 +8472,28 @@ class RadarLedger:
                 if row is not None
                 else None
             )
+            followup_binding_schema_present = _pr_followup_binding_columns_present(connection)
+            if followup_row is not None and not followup_binding_schema_present:
+                # A read-only view of an old ledger must not project an
+                # opportunity-wide wake into an arbitrary historical task.
+                followup_row = None
+            elif followup_row is not None:
+                # A follow-up observation belongs to one immutable task
+                # identity.  Partial/NULL bindings are ambiguous (especially
+                # after an opportunity rollover) and must never be projected
+                # into an arbitrary historical task.  The additive migration
+                # backfills legacy rows only when it can prove one exact
+                # identity; everything else fails closed until a fresh exact
+                # observation repairs it.
+                if any(
+                    followup_row[field] is None
+                    for field in ("intent_id", "thread_id", "worktree_path")
+                ) or (
+                    followup_row["intent_id"] != row["intent_id"]
+                    or followup_row["thread_id"] != row["thread_id"]
+                    or followup_row["worktree_path"] != row["worktree_path"]
+                ):
+                    followup_row = None
             context_authority_row = (
                 connection.execute(
                     """SELECT payload_json FROM events
@@ -6814,22 +8604,29 @@ class RadarLedger:
                 )
             preparation_row = (
                 connection.execute(
-                    """WITH latest_preparation AS (
-                         SELECT id,opportunity_key,dedupe_key,payload_json
-                         FROM events
-                         WHERE opportunity_key=?
-                           AND event_type='PR_FOLLOWUP_PREPARATION_BOUND'
-                           AND json_extract(payload_json,'$.threadId')=?
-                         ORDER BY id DESC LIMIT 1
+                    f"""WITH current_intent AS (
+                         SELECT * FROM intents
+                          WHERE opportunity_key=? AND intent_id=?
+                       ), latest_preparation AS (
+                         SELECT e.id,e.opportunity_key,e.dedupe_key,e.payload_json
+                         FROM events e
+                         JOIN current_intent ci
+                           ON ci.opportunity_key=e.opportunity_key
+                         WHERE e.opportunity_key=?
+                           AND e.event_type='PR_FOLLOWUP_PREPARATION_BOUND'
+                           AND {_intent_event_binding_clause("ci", "e")}
+                         ORDER BY e.id DESC LIMIT 1
                        )
                        SELECT b.payload_json FROM latest_preparation b
+                       CROSS JOIN current_intent ci
                        WHERE NOT (? > b.id)
                          AND NOT EXISTS (
                            SELECT 1 FROM events x
                            WHERE x.opportunity_key=b.opportunity_key
                              AND (
                                (x.event_type='PR_FOLLOWUP_RESULT_INGESTED'
-                                AND x.dedupe_key=b.dedupe_key)
+                                AND x.dedupe_key=b.dedupe_key
+                                AND {_intent_event_binding_clause("ci", "x")})
                                OR
                                (x.event_type=
                                   'TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
@@ -6837,7 +8634,8 @@ class RadarLedger:
                                   x.payload_json,'$.followupWakeDigest'
                                 )=b.dedupe_key
                                 AND json_extract(x.payload_json,'$.threadId')=
-                                    json_extract(b.payload_json,'$.threadId'))
+                                    json_extract(b.payload_json,'$.threadId')
+                                AND {_intent_event_binding_clause("ci", "x")})
                                OR
                                (x.event_type=
                                   'TASK_CONTEXT_TOMBSTONE_CONTINUATION_BOUND'
@@ -6846,18 +8644,21 @@ class RadarLedger:
                                 )=b.dedupe_key
                                 AND json_extract(x.payload_json,'$.threadId')=
                                     json_extract(b.payload_json,'$.threadId')
-                                AND x.dedupe_key=?)
+                                AND x.dedupe_key=?
+                                AND {_intent_event_binding_clause("ci", "x")})
                                OR
                                (x.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
                                 AND json_extract(x.payload_json,'$.wakeDigest')=
                                     b.dedupe_key
                                 AND json_extract(x.payload_json,'$.threadId')=
-                                    json_extract(b.payload_json,'$.threadId'))
+                                    json_extract(b.payload_json,'$.threadId')
+                                AND {_intent_event_binding_clause("ci", "x")})
                              )
                          )""",
                     (
                         row["key"],
-                        row["thread_id"],
+                        row["intent_id"],
+                        row["key"],
                         active_context_authority_origin_id,
                         active_context_continuation_ref,
                     ),
@@ -6867,7 +8668,10 @@ class RadarLedger:
             )
             latest_task_result_row = (
                 connection.execute(
-                    """WITH result_candidates AS (
+                    f"""WITH current_intent AS (
+                         SELECT * FROM intents
+                          WHERE opportunity_key=? AND intent_id=?
+                       ), result_candidates AS (
                          SELECT result2.id,result2.opportunity_key,result2.dedupe_key,
                                 result2.created_at,
                                 (
@@ -6888,34 +8692,30 @@ class RadarLedger:
                                     )=result2.dedupe_key
                                 ) AS selection_authority_id
                          FROM events result2
+                         CROSS JOIN current_intent ci
                          WHERE result2.opportunity_key=?
                            AND result2.event_type='TASK_RESULT_INGESTED'
                            AND (
-                             (
-                               json_extract(result2.payload_json,'$.threadId')=?
-                               AND COALESCE(
-                                 json_extract(result2.payload_json,'$.taskId'),''
-                               ) IN ('',?)
-                             )
+                             ({_intent_event_binding_clause("ci", "result2")})
                              OR (
-                               COALESCE(
-                                 json_extract(result2.payload_json,'$.threadId'),''
-                               )=''
-                               AND json_extract(result2.payload_json,'$.taskId')=?
-                             )
-                             OR EXISTS (
-                               SELECT 1 FROM events binding
-                               WHERE binding.opportunity_key=result2.opportunity_key
-                                 AND binding.event_type=
-                                   'TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
-                                 AND json_extract(
-                                   binding.payload_json,'$.sourceResultEventId'
-                                 )=result2.id
-                                 AND json_extract(
-                                   binding.payload_json,'$.resultDigest'
-                                 )=result2.dedupe_key
-                                 AND json_extract(binding.payload_json,'$.taskId')=?
-                                 AND json_extract(binding.payload_json,'$.threadId')=?
+                               json_valid(result2.payload_json)=1
+                               AND json_extract(result2.payload_json,'$.intentId') IS NULL
+                               AND json_extract(result2.payload_json,'$.taskId') IS NULL
+                               AND EXISTS (
+                                 SELECT 1 FROM events binding
+                                 WHERE binding.opportunity_key=result2.opportunity_key
+                                   AND binding.event_type=
+                                     'TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND'
+                                   AND json_extract(
+                                     binding.payload_json,'$.sourceResultEventId'
+                                   )=result2.id
+                                   AND json_extract(
+                                     binding.payload_json,'$.resultDigest'
+                                   )=result2.dedupe_key
+                                   AND json_extract(binding.payload_json,'$.taskId')=?
+                                   AND json_extract(binding.payload_json,'$.threadId')=?
+                                   AND {_intent_event_binding_clause("ci", "binding")}
+                               )
                              )
                            )
                        ), current_result AS (
@@ -6930,6 +8730,7 @@ class RadarLedger:
                               authority.id AS selection_authority_id,
                               authority.payload_json AS selection_authority_json
                        FROM current_result result
+                       CROSS JOIN current_intent ci
                        LEFT JOIN events authority
                          ON authority.id=result.selection_authority_id
                        LEFT JOIN events continuation ON continuation.id=(
@@ -6944,6 +8745,7 @@ class RadarLedger:
                              continuation2.payload_json,'$.resultDigest'
                            )=result.dedupe_key
                            AND json_extract(continuation2.payload_json,'$.taskId')=?
+                           AND {_intent_event_binding_clause("ci", "continuation2")}
                            AND (
                              authority.id IS NULL
                              OR continuation2.dedupe_key=json_extract(
@@ -6976,12 +8778,11 @@ class RadarLedger:
                          )='object'
                        LIMIT 1""",
                     (
+                        row["key"],
+                        row["intent_id"],
                         row["intent_id"],
                         row["thread_id"],
                         row["key"],
-                        row["thread_id"],
-                        row["intent_id"],
-                        row["intent_id"],
                         row["intent_id"],
                         row["thread_id"],
                         row["thread_id"],
@@ -7705,26 +9506,83 @@ class RadarLedger:
                    WHERE i.intent_id=? AND i.opportunity_key=? AND i.thread_id=?
                      AND i.status='DISPATCHED' AND t.state='IMPLEMENTATION_READY'
                      AND t.thread_id=i.thread_id
-                     AND json_extract(t.provenance_json,'$.probeReceipt.resultDigest')=?
-                     AND json_extract(t.provenance_json,'$.probeReceipt.receiptDigest')=
-                         json_extract(t.provenance_json,'$.probeReceiptDigest')""",
+                     AND json_extract(
+                           CASE WHEN json_valid(t.provenance_json)=1
+                                THEN t.provenance_json ELSE '{}' END,
+                           '$.probeReceipt.resultDigest'
+                         )=?
+                     AND json_extract(
+                           CASE WHEN json_valid(t.provenance_json)=1
+                                THEN t.provenance_json ELSE '{}' END,
+                           '$.probeReceipt.receiptDigest'
+                         )=
+                         json_extract(
+                           CASE WHEN json_valid(t.provenance_json)=1
+                                THEN t.provenance_json ELSE '{}' END,
+                           '$.probeReceiptDigest'
+                         )""",
                 (task_id, key, thread_id, result_digest),
             ).fetchone()
-            reproduction = connection.execute(
-                """SELECT 1 FROM events
+            reproduction = None
+            for result_row in connection.execute(
+                """SELECT payload_json FROM events
                    WHERE opportunity_key=? AND event_type='TASK_RESULT_INGESTED'
                      AND dedupe_key=?
-                     AND json_extract(payload_json,'$.stage')='IMPLEMENTATION_READY'""",
+                   ORDER BY id DESC""",
                 (key, result_digest),
-            ).fetchone()
-            sent = connection.execute(
-                """SELECT id FROM events
+            ).fetchall():
+                try:
+                    result_payload = json.loads(result_row["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(result_payload, dict) or result_payload.get("stage") != (
+                    "IMPLEMENTATION_READY"
+                ):
+                    continue
+                if result_payload.get("resultDigest") not in {None, result_digest}:
+                    continue
+                result_binding = _resolve_event_intent_binding(
+                    connection,
+                    opportunity_key=key,
+                    payload=result_payload,
+                )
+                if (
+                    result_binding is not None
+                    and str(result_binding["intent_id"]) == task_id
+                    and str(result_binding["thread_id"] or "") == thread_id
+                    and result_binding["worktree_path"] is not None
+                    and _resolved_path_equal(str(result_binding["worktree_path"]), worktree_path)
+                ):
+                    reproduction = result_row
+                    break
+            sent = None
+            for sent_row in connection.execute(
+                """SELECT id,dedupe_key,payload_json FROM events
                    WHERE opportunity_key=? AND event_type='IMPLEMENTATION_FOLLOWUP_SENT'
-                     AND (dedupe_key=? OR json_extract(payload_json,'$.resultDigest')=?)
-                     AND json_extract(payload_json,'$.threadId')=?
-                   ORDER BY id DESC LIMIT 1""",
-                (key, result_digest, result_digest, thread_id),
-            ).fetchone()
+                     AND (
+                       dedupe_key=?
+                       OR json_extract(
+                            CASE WHEN json_valid(payload_json)=1
+                                 THEN payload_json ELSE '{}' END,
+                            '$.resultDigest'
+                          )=?
+                     )
+                   ORDER BY id DESC""",
+                (key, result_digest, result_digest),
+            ).fetchall():
+                if _implementation_followup_event_matches_identity(
+                    connection,
+                    opportunity_key=key,
+                    row=sent_row,
+                    candidate={
+                        "intentId": task_id,
+                        "threadId": thread_id,
+                        "worktreePath": worktree_path,
+                    },
+                    result_digest=result_digest,
+                ):
+                    sent = sent_row
+                    break
             if (
                 binding is None
                 or not binding["worktree_path"]
@@ -7764,8 +9622,9 @@ class RadarLedger:
         """Return reproduced tasks that still need their implementation turn."""
 
         candidates: list[dict[str, Any]] = []
+        tasks = self.task_context_candidates()
         with self.connect() as connection:
-            for task in self.task_context_candidates():
+            for task in tasks:
                 intent = task.get("intent") or {}
                 if (
                     task.get("intentStatus") != "DISPATCHED"
@@ -7774,44 +9633,118 @@ class RadarLedger:
                     or not intent.get("probeReceiptDigest")
                 ):
                     continue
-                reproduction = connection.execute(
-                    """SELECT dedupe_key,payload_json,created_at FROM events
-                       WHERE opportunity_key=?
-                         AND event_type='TASK_RESULT_INGESTED'
-                         AND json_extract(payload_json,'$.stage')='IMPLEMENTATION_READY'
-                       ORDER BY id DESC LIMIT 1""",
+                reproduction = None
+                for result_row in connection.execute(
+                    """SELECT id,dedupe_key,payload_json,created_at FROM events
+                       WHERE opportunity_key=? AND event_type='TASK_RESULT_INGESTED'
+                       ORDER BY id DESC""",
                     (task["key"],),
-                ).fetchone()
+                ).fetchall():
+                    try:
+                        result_payload = json.loads(result_row["payload_json"] or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    if (
+                        not isinstance(result_payload, dict)
+                        or result_payload.get("stage") != "IMPLEMENTATION_READY"
+                    ):
+                        continue
+                    bound = _resolve_event_intent_binding(
+                        connection,
+                        opportunity_key=str(task["key"]),
+                        payload=result_payload,
+                    )
+                    if bound is None or str(bound["intent_id"]) != str(task["intentId"]):
+                        continue
+                    if bound["thread_id"] != task["threadId"] or not _resolved_path_equal(
+                        str(bound["worktree_path"]), str(task["worktreePath"])
+                    ):
+                        continue
+                    reproduction = result_row
+                    break
                 if reproduction is None:
                     continue
                 result_digest = str(reproduction["dedupe_key"] or "")
                 if not result_digest:
                     continue
-                sent = connection.execute(
-                    """SELECT id FROM events
-                       WHERE opportunity_key=?
-                         AND event_type='IMPLEMENTATION_FOLLOWUP_SENT'
-                         AND (dedupe_key=? OR json_extract(payload_json,'$.resultDigest')=?)
-                       ORDER BY id DESC LIMIT 1""",
-                    (task["key"], result_digest, result_digest),
-                ).fetchone()
-                reserved = connection.execute(
-                    """SELECT id FROM events
-                       WHERE opportunity_key=?
-                         AND event_type='IMPLEMENTATION_FOLLOWUP_RESERVED'
-                         AND (dedupe_key=? OR json_extract(payload_json,'$.resultDigest')=?)
-                       ORDER BY id DESC LIMIT 1""",
-                    (task["key"], result_digest, result_digest),
-                ).fetchone()
-                repair = connection.execute(
-                    """SELECT id,dedupe_key FROM events
-                       WHERE opportunity_key=?
-                         AND event_type='IMPLEMENTATION_CONTEXT_REPAIRED'
-                         AND json_extract(payload_json,'$.resultDigest')=?
-                         AND json_extract(payload_json,'$.threadId')=?
-                       ORDER BY id DESC LIMIT 1""",
-                    (task["key"], result_digest, task["threadId"]),
-                ).fetchone()
+                sent = None
+                for sent_row in connection.execute(
+                    """SELECT id,dedupe_key,payload_json FROM events
+                       WHERE opportunity_key=? AND event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                       ORDER BY id DESC""",
+                    (task["key"],),
+                ).fetchall():
+                    try:
+                        sent_payload = json.loads(sent_row["payload_json"] or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(sent_payload, dict):
+                        continue
+                    if not (
+                        str(sent_row["dedupe_key"] or "") == result_digest
+                        or sent_payload.get("resultDigest") == result_digest
+                    ):
+                        continue
+                    bound = _resolve_event_intent_binding(
+                        connection,
+                        opportunity_key=str(task["key"]),
+                        payload=sent_payload,
+                    )
+                    if bound is None or str(bound["intent_id"]) != str(task["intentId"]):
+                        continue
+                    sent = sent_row
+                    break
+                reserved = None
+                for reserved_row in connection.execute(
+                    """SELECT id,dedupe_key,payload_json FROM events
+                       WHERE opportunity_key=? AND event_type='IMPLEMENTATION_FOLLOWUP_RESERVED'
+                       ORDER BY id DESC""",
+                    (task["key"],),
+                ).fetchall():
+                    try:
+                        reserved_payload = json.loads(reserved_row["payload_json"] or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(reserved_payload, dict):
+                        continue
+                    if not (
+                        str(reserved_row["dedupe_key"] or "") == result_digest
+                        or reserved_payload.get("resultDigest") == result_digest
+                    ):
+                        continue
+                    bound = _resolve_event_intent_binding(
+                        connection,
+                        opportunity_key=str(task["key"]),
+                        payload=reserved_payload,
+                    )
+                    if bound is None or str(bound["intent_id"]) != str(task["intentId"]):
+                        continue
+                    reserved = reserved_row
+                    break
+                repair = None
+                for repair_row in connection.execute(
+                    """SELECT id,dedupe_key,payload_json FROM events
+                       WHERE opportunity_key=? AND event_type='IMPLEMENTATION_CONTEXT_REPAIRED'
+                       ORDER BY id DESC""",
+                    (task["key"],),
+                ).fetchall():
+                    try:
+                        repair_payload = json.loads(repair_row["payload_json"] or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(repair_payload, dict):
+                        continue
+                    if repair_payload.get("resultDigest") != result_digest:
+                        continue
+                    bound = _resolve_event_intent_binding(
+                        connection,
+                        opportunity_key=str(task["key"]),
+                        payload=repair_payload,
+                    )
+                    if bound is None or str(bound["intent_id"]) != str(task["intentId"]):
+                        continue
+                    repair = repair_row
+                    break
                 repair_rearms = (
                     repair is not None
                     and sent is not None
@@ -7834,20 +9767,37 @@ class RadarLedger:
         return candidates
 
     def reserve_implementation_followup(
-        self, *, thread_id: str, result_digest: str
+        self,
+        *,
+        thread_id: str,
+        result_digest: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> dict[str, Any]:
-        candidate = next(
-            (
+        if intent_id is not None and (not isinstance(intent_id, str) or not intent_id):
+            raise LedgerError("implementation follow-up intent binding is invalid")
+        if worktree_path is not None and (not isinstance(worktree_path, str) or not worktree_path):
+            raise LedgerError("implementation follow-up worktree binding is invalid")
+        candidates = [
+            item
+            for item in self.implementation_followup_candidates()
+            if item.get("threadId") == thread_id and item.get("resultDigest") == result_digest
+        ]
+        if intent_id is not None:
+            candidates = [item for item in candidates if item.get("intentId") == intent_id]
+        if worktree_path is not None:
+            candidates = [
                 item
-                for item in self.implementation_followup_candidates()
-                if item.get("threadId") == thread_id and item.get("resultDigest") == result_digest
-            ),
-            None,
-        )
-        if candidate is None:
+                for item in candidates
+                if item.get("worktreePath")
+                and _resolved_path_equal(str(item["worktreePath"]), worktree_path)
+            ]
+        if len(candidates) != 1:
             raise LedgerError("implementation follow-up authorization is stale or invalid")
+        candidate = candidates[0]
         now = iso_z(datetime.now(UTC))
         payload = {
+            "intentId": candidate["intentId"],
             "threadId": thread_id,
             "resultDigest": result_digest,
             "issueUrl": candidate["issueUrl"],
@@ -7860,11 +9810,33 @@ class RadarLedger:
                 opportunity_key=str(candidate["key"]),
                 operation="implementation follow-up reservation",
             )
+            attempt_digest = str(candidate["implementationFollowupAttemptDigest"])
+            existing = connection.execute(
+                """SELECT id,created_at,payload_json,dedupe_key FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='IMPLEMENTATION_FOLLOWUP_RESERVED'
+                     AND dedupe_key=?""",
+                (str(candidate["key"]), attempt_digest),
+            ).fetchone()
+            if existing is not None:
+                if _implementation_followup_event_matches_identity(
+                    connection,
+                    opportunity_key=str(candidate["key"]),
+                    row=existing,
+                    candidate=candidate,
+                    result_digest=result_digest,
+                    attempt_digest=attempt_digest,
+                ):
+                    return candidate | payload | {"reservedAt": existing["created_at"]}
+                raise LedgerError(
+                    "implementation follow-up reservation is stale or invalid: "
+                    "dedupe key is bound to another intent"
+                )
             self._event(
                 connection,
                 str(candidate["key"]),
                 "IMPLEMENTATION_FOLLOWUP_RESERVED",
-                str(candidate["implementationFollowupAttemptDigest"]),
+                attempt_digest,
                 payload,
                 now,
             )
@@ -7873,61 +9845,132 @@ class RadarLedger:
     def unresolved_implementation_followups(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT r.opportunity_key,r.dedupe_key,r.payload_json,r.created_at,
-                          o.issue_url,i.intent_id,i.thread_id,i.worktree_path
+                """SELECT r.id,r.opportunity_key,r.dedupe_key,r.payload_json,r.created_at,
+                          o.issue_url
                    FROM events r
                    JOIN opportunities o ON o.key=r.opportunity_key
-                   JOIN intents i ON i.opportunity_key=r.opportunity_key
                    WHERE r.event_type='IMPLEMENTATION_FOLLOWUP_RESERVED'
-                     AND i.status='DISPATCHED'
-                     AND i.thread_id=json_extract(r.payload_json,'$.threadId')
-                     AND NOT EXISTS (
-                       SELECT 1 FROM events sent
-                       WHERE sent.opportunity_key=r.opportunity_key
-                         AND sent.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
-                         AND sent.dedupe_key=r.dedupe_key
-                     )
                    ORDER BY r.id"""
             ).fetchall()
-        return [
-            {
-                "key": row["opportunity_key"],
-                "issueUrl": row["issue_url"],
-                "intentId": row["intent_id"],
-                "threadId": row["thread_id"],
-                "worktreePath": row["worktree_path"],
-                "resultDigest": str(
-                    json.loads(row["payload_json"]).get("resultDigest") or row["dedupe_key"]
-                ),
-                "implementationFollowupAttemptDigest": row["dedupe_key"],
-                "reservedAt": row["created_at"],
-                "reservation": json.loads(row["payload_json"]),
-            }
-            for row in rows
-        ]
+            unresolved: list[dict[str, Any]] = []
+            for row in rows:
+                try:
+                    reservation = json.loads(row["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(reservation, dict):
+                    continue
+                binding = _resolve_event_intent_binding(
+                    connection,
+                    opportunity_key=str(row["opportunity_key"]),
+                    payload=reservation,
+                )
+                if binding is None or binding["status"] != "DISPATCHED":
+                    continue
+                sent = False
+                for sent_row in connection.execute(
+                    """SELECT payload_json FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                         AND dedupe_key=?
+                       ORDER BY id DESC""",
+                    (row["opportunity_key"], row["dedupe_key"]),
+                ).fetchall():
+                    try:
+                        sent_payload = json.loads(sent_row["payload_json"] or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    sent_binding = _resolve_event_intent_binding(
+                        connection,
+                        opportunity_key=str(row["opportunity_key"]),
+                        payload=sent_payload,
+                    )
+                    if sent_binding is not None and str(sent_binding["intent_id"]) == str(
+                        binding["intent_id"]
+                    ):
+                        sent = True
+                        break
+                if sent:
+                    continue
+                unresolved.append(
+                    {
+                        "key": row["opportunity_key"],
+                        "issueUrl": row["issue_url"],
+                        "intentId": binding["intent_id"],
+                        "threadId": binding["thread_id"],
+                        "worktreePath": binding["worktree_path"],
+                        "resultDigest": str(reservation.get("resultDigest") or row["dedupe_key"]),
+                        "implementationFollowupAttemptDigest": row["dedupe_key"],
+                        "reservedAt": row["created_at"],
+                        "reservation": reservation,
+                    }
+                )
+        return unresolved
 
-    def commit_implementation_followup(self, *, thread_id: str, result_digest: str) -> None:
-        candidate = next(
-            (
+    def commit_implementation_followup(
+        self,
+        *,
+        thread_id: str,
+        result_digest: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
+    ) -> None:
+        if intent_id is not None and (not isinstance(intent_id, str) or not intent_id):
+            raise LedgerError("implementation follow-up intent binding is invalid")
+        if worktree_path is not None and (not isinstance(worktree_path, str) or not worktree_path):
+            raise LedgerError("implementation follow-up worktree binding is invalid")
+        candidates = [
+            item
+            for item in self.unresolved_implementation_followups()
+            if item.get("threadId") == thread_id and item.get("resultDigest") == result_digest
+        ]
+        if intent_id is not None:
+            candidates = [item for item in candidates if item.get("intentId") == intent_id]
+        if worktree_path is not None:
+            candidates = [
                 item
-                for item in self.unresolved_implementation_followups()
-                if item.get("threadId") == thread_id and item.get("resultDigest") == result_digest
-            ),
-            None,
-        )
-        if candidate is None:
+                for item in candidates
+                if item.get("worktreePath")
+                and _resolved_path_equal(str(item["worktreePath"]), worktree_path)
+            ]
+        if len(candidates) != 1:
             raise LedgerError("implementation follow-up reservation is unavailable")
+        candidate = candidates[0]
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
+            attempt_digest = str(candidate["implementationFollowupAttemptDigest"])
+            existing = connection.execute(
+                """SELECT id,created_at,payload_json,dedupe_key FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='IMPLEMENTATION_FOLLOWUP_SENT'
+                     AND dedupe_key=?""",
+                (str(candidate["key"]), attempt_digest),
+            ).fetchone()
+            if existing is not None:
+                if _implementation_followup_event_matches_identity(
+                    connection,
+                    opportunity_key=str(candidate["key"]),
+                    row=existing,
+                    candidate=candidate,
+                    result_digest=result_digest,
+                    attempt_digest=attempt_digest,
+                ):
+                    return
+                raise LedgerError(
+                    "implementation follow-up reservation is unavailable: "
+                    "dedupe key is bound to another intent"
+                )
             self._event(
                 connection,
                 str(candidate["key"]),
                 "IMPLEMENTATION_FOLLOWUP_SENT",
-                str(candidate["implementationFollowupAttemptDigest"]),
+                attempt_digest,
                 {
+                    "intentId": candidate["intentId"],
                     "threadId": thread_id,
+                    "worktreePath": candidate["worktreePath"],
                     "resultDigest": result_digest,
-                    "attemptDigest": candidate["implementationFollowupAttemptDigest"],
+                    "attemptDigest": attempt_digest,
                 },
                 now,
             )
@@ -8092,17 +10135,38 @@ class RadarLedger:
                 )
         return suppressed
 
-    def reset_dispatch_for_retry(self, *, thread_id: str, reason: str) -> dict[str, Any]:
+    def reset_dispatch_for_retry(
+        self,
+        *,
+        thread_id: str,
+        reason: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
+    ) -> dict[str, Any]:
         now_dt = datetime.now(UTC)
         now = iso_z(now_dt)
         with self.transaction() as connection:
-            row = connection.execute(
+            rows = connection.execute(
                 """SELECT i.intent_id,i.opportunity_key,i.status,i.expires_at,
-                          o.stage,o.issue_url,o.title,i.payload_json
+                          i.worktree_path,o.stage,o.issue_url,o.title,i.payload_json
                    FROM intents i JOIN opportunities o ON o.key=i.opportunity_key
                    WHERE i.thread_id=?""",
                 (thread_id,),
-            ).fetchone()
+            ).fetchall()
+            if len(rows) > 1 and (not intent_id or not worktree_path):
+                raise LedgerError("dispatch retry task identity is ambiguous")
+            if intent_id:
+                rows = [row for row in rows if str(row["intent_id"]) == str(intent_id)]
+            if worktree_path:
+                rows = [
+                    row
+                    for row in rows
+                    if row["worktree_path"]
+                    and _resolved_path_equal(str(row["worktree_path"]), str(worktree_path))
+                ]
+            if len(rows) > 1:
+                raise LedgerError("dispatch retry task identity is ambiguous")
+            row = rows[0] if rows else None
             if row is None:
                 raise LedgerError("dispatch retry task not found")
             if row["status"] != "DISPATCHED" or row["stage"] != "DISPATCHED":
@@ -8160,15 +10224,21 @@ class RadarLedger:
             for row in rows
         ]
 
-    def task_result_candidates(self) -> list[dict[str, Any]]:
-        """Return the broad historical audit set of thread-bound task results."""
-
-        with self.connect() as connection:
-            rows = connection.execute(
-                """SELECT o.key,o.stage,o.issue_url,i.intent_id,i.thread_id,
+    @staticmethod
+    def _task_result_candidate_query(*, latest_only: bool) -> str:
+        latest_clause = ""
+        if latest_only:
+            latest_clause = (
+                "AND i.rowid=("
+                "SELECT MAX(current.rowid) FROM intents current "
+                "WHERE current.opportunity_key=o.key"
+                ")"
+            )
+        return f"""SELECT o.key,o.stage,o.issue_url,i.intent_id,i.thread_id,
                           i.worktree_path,i.status,i.payload_json
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    WHERE i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
+                     {latest_clause}
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines q
                        WHERE q.opportunity_key=o.key AND q.status='ACTIVE'
@@ -8191,18 +10261,111 @@ class RadarLedger:
                        )
                      )
                    ORDER BY i.updated_at"""
+
+    def task_result_candidates(self) -> list[dict[str, Any]]:
+        """Return the broad historical audit set of thread-bound task results.
+
+        This intentionally includes older intents so independent review can
+        inspect retained historical worktrees.  Operational ingestion uses
+        :meth:`task_result_candidates_for_ingestion`, which projects only the
+        current intent and applies the identity gate after reading the result.
+        """
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                self._task_result_candidate_query(latest_only=False)
             ).fetchall()
         return self._task_result_candidates_from_rows(rows)
+
+    def task_result_candidates_for_ingestion(self) -> list[dict[str, Any]]:
+        """Return only the current, structurally bound task-result candidates."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                self._task_result_candidate_query(latest_only=True)
+            ).fetchall()
+        return self._task_result_candidates_from_rows(rows)
+
+    def task_result_binding_gate(
+        self,
+        candidate: dict[str, Any],
+        value: Any,
+    ) -> bool:
+        """Verify a result envelope belongs to one exact candidate intent.
+
+        ``taskId``/``intentId`` are optional for legacy result files.  When
+        omitted, the candidate's key/thread/worktree tuple must identify one
+        and only one intent in the ledger.  Any malformed or conflicting
+        identity is rejected instead of being guessed from the newest row.
+        """
+
+        if not isinstance(candidate, dict) or not isinstance(value, dict):
+            return False
+        key = str(candidate.get("key") or "")
+        intent_id = str(candidate.get("intentId") or "")
+        thread_id = str(candidate.get("threadId") or "")
+        worktree_path = str(candidate.get("worktreePath") or "")
+        issue_url = str(candidate.get("issueUrl") or "")
+        if not all((key, intent_id, thread_id, worktree_path, issue_url)):
+            return False
+        if (
+            value.get("key") != key
+            or value.get("issueUrl") != issue_url
+            or value.get("threadId") != thread_id
+            or not isinstance(value.get("worktreePath"), str)
+            or not _resolved_path_equal(worktree_path, str(value["worktreePath"]))
+        ):
+            return False
+        explicit_values: list[str] = []
+        for field in ("taskId", "intentId"):
+            if field not in value or value[field] is None:
+                continue
+            if not isinstance(value[field], str) or not value[field]:
+                return False
+            explicit_values.append(value[field])
+        if explicit_values and any(item != explicit_values[0] for item in explicit_values[1:]):
+            return False
+        if explicit_values and explicit_values[0] != intent_id:
+            return False
+        with self.connect() as connection:
+            binding = _resolve_exact_intent_binding(
+                connection,
+                opportunity_key=key,
+                intent_id=intent_id,
+                thread_id=thread_id,
+                worktree_path=worktree_path,
+            )
+            if binding is None:
+                return False
+            if explicit_values:
+                return True
+            # A legacy envelope without an immutable id is safe only when no
+            # other historical intent shares this exact task identity.
+            rows = connection.execute(
+                """SELECT intent_id,worktree_path FROM intents
+                   WHERE opportunity_key=? AND thread_id=? AND worktree_path IS NOT NULL""",
+                (key, thread_id),
+            ).fetchall()
+            matching = [
+                row
+                for row in rows
+                if _resolved_path_equal(str(row["worktree_path"]), worktree_path)
+            ]
+            return len(matching) == 1 and str(matching[0]["intent_id"]) == intent_id
 
     def local_receipt_candidates(self) -> list[dict[str, Any]]:
         """Return only tasks that the fast local receipt worker should inspect."""
 
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.stage,o.issue_url,i.intent_id,i.thread_id,
+                f"""SELECT o.key,o.stage,o.issue_url,i.intent_id,i.thread_id,
                           i.worktree_path,i.status,i.payload_json
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    WHERE i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
+                     AND i.rowid=(
+                       SELECT MAX(current.rowid) FROM intents current
+                       WHERE current.opportunity_key=o.key
+                     )
                      AND NOT EXISTS (
                        SELECT 1 FROM task_quarantines q
                        WHERE q.opportunity_key=o.key AND q.status='ACTIVE'
@@ -8228,11 +10391,13 @@ class RadarLedger:
                            SELECT 1 FROM events sent
                            WHERE sent.opportunity_key=o.key
                              AND sent.event_type='PR_FOLLOWUP_SENT'
+                             AND {_intent_event_binding_clause("i", "sent")}
                              AND NOT EXISTS (
                                SELECT 1 FROM events result
                                WHERE result.opportunity_key=o.key
                                  AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
                                  AND result.dedupe_key=sent.dedupe_key
+                                 AND {_intent_event_binding_clause("i", "result")}
                              )
                              AND NOT EXISTS (
                                SELECT 1 FROM events abandoned
@@ -8241,6 +10406,7 @@ class RadarLedger:
                                  AND json_extract(abandoned.payload_json,'$.wakeDigest')=
                                      sent.dedupe_key
                                  AND abandoned.id>sent.id
+                                 AND {_intent_event_binding_clause("i", "abandoned")}
                              )
                          )
                        )
@@ -8251,6 +10417,7 @@ class RadarLedger:
                            WHERE sent.opportunity_key=o.key
                              AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
                              AND json_extract(sent.payload_json,'$.threadId')=i.thread_id
+                             AND {_intent_event_binding_clause("i", "sent")}
                              AND NOT EXISTS (
                                SELECT 1 FROM events result
                                WHERE result.opportunity_key=sent.opportunity_key
@@ -8260,13 +10427,20 @@ class RadarLedger:
                                  )
                                  AND result.id>sent.id
                                  AND (
-                                   json_extract(result.payload_json,'$.threadId')=
-                                       i.thread_id
+                                   (
+                                     {_intent_event_binding_clause("i", "result")}
+                                     AND json_extract(result.payload_json,'$.threadId')=
+                                         i.thread_id
+                                   )
                                    OR (
                                      result.event_type='TASK_RESULT_INGESTED'
+                                     AND json_valid(result.payload_json)=1
                                      AND COALESCE(
                                        json_extract(result.payload_json,'$.threadId'),''
                                      )=''
+                                     AND json_extract(result.payload_json,'$.intentId') IS NULL
+                                     AND json_extract(result.payload_json,'$.taskId') IS NULL
+                                     AND json_extract(result.payload_json,'$.worktreePath') IS NULL
                                      AND EXISTS (
                                        SELECT 1 FROM events deferred
                                        WHERE deferred.opportunity_key=
@@ -8279,6 +10453,7 @@ class RadarLedger:
                                          AND json_extract(
                                            deferred.payload_json,'$.threadId'
                                          )=i.thread_id
+                                         AND {_intent_event_binding_clause("i", "deferred")}
                                      )
                                    )
                                  )
@@ -8293,6 +10468,7 @@ class RadarLedger:
                                  AND json_extract(cancelled.payload_json,'$.threadId')=
                                      i.thread_id
                                  AND cancelled.id>sent.id
+                                 AND {_intent_event_binding_clause("i", "cancelled")}
                              )
                              AND NOT EXISTS (
                                SELECT 1 FROM events abandoned
@@ -8304,6 +10480,7 @@ class RadarLedger:
                                  AND json_extract(abandoned.payload_json,'$.threadId')=
                                      i.thread_id
                                  AND abandoned.id>sent.id
+                                 AND {_intent_event_binding_clause("i", "abandoned")}
                              )
                              AND NOT EXISTS (
                                SELECT 1 FROM events no_progress
@@ -8313,6 +10490,7 @@ class RadarLedger:
                                  AND no_progress.dedupe_key=sent.dedupe_key
                                  AND json_extract(no_progress.payload_json,'$.threadId')=
                                      i.thread_id
+                                 AND {_intent_event_binding_clause("i", "no_progress")}
                                  AND NOT EXISTS (
                                    SELECT 1 FROM events rearmed
                                    WHERE rearmed.opportunity_key=sent.opportunity_key
@@ -8325,6 +10503,7 @@ class RadarLedger:
                                        rearmed.payload_json,'$.threadId'
                                      )=i.thread_id
                                      AND rearmed.id>no_progress.id
+                                     AND {_intent_event_binding_clause("i", "rearmed")}
                                  )
                              )
                              AND NOT EXISTS (
@@ -8337,6 +10516,7 @@ class RadarLedger:
                                  AND json_extract(rearmed.payload_json,'$.threadId')=
                                      i.thread_id
                                  AND rearmed.id>sent.id
+                                 AND {_intent_event_binding_clause("i", "rearmed")}
                              )
                          )
                        )
@@ -8366,6 +10546,7 @@ class RadarLedger:
         *,
         issue_url: str,
         thread_id: str,
+        intent_id: str | None = None,
         commit_sha: str,
         branch: str,
         worktree_path: str,
@@ -8395,17 +10576,29 @@ class RadarLedger:
         if target_base is not None:
             request_identity.append(canonical_json(target_base))
         request_id = sha256_text("|".join(request_identity))
+        if not isinstance(thread_id, str) or not thread_id:
+            raise LedgerError("publication thread identity is invalid")
+        if intent_id is not None and (not isinstance(intent_id, str) or not intent_id):
+            raise LedgerError("publication intent identity is invalid")
         with self.transaction() as connection:
-            row = connection.execute(
+            rows = connection.execute(
                 """SELECT o.key,o.stage,i.intent_id,i.status,i.thread_id,i.worktree_path,
                           i.payload_json
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    WHERE o.issue_url=? AND i.thread_id=?
-                   ORDER BY i.updated_at DESC LIMIT 1""",
+                   ORDER BY i.updated_at DESC,i.intent_id DESC""",
                 (issue_url, thread_id),
-            ).fetchone()
-            if row is None:
-                raise LedgerError("issue is not registered for radar publication")
+            ).fetchall()
+            matches = [
+                candidate
+                for candidate in rows
+                if (intent_id is None or str(candidate["intent_id"]) == intent_id)
+                and candidate["worktree_path"] is not None
+                and _resolved_path_equal(str(candidate["worktree_path"]), str(worktree_path))
+            ]
+            if len(matches) != 1:
+                raise LedgerError("publication task binding is stale or ambiguous")
+            row = matches[0]
             previous_publication = connection.execute(
                 """SELECT p.pr_url,r.commit_sha,r.branch
                    FROM publication_requests r
@@ -9219,6 +11412,7 @@ class RadarLedger:
                 task_id=str(source["intentId"]),
                 thread_id=str(source_row["thread_id"]),
                 request_updated_at=str(source_row["updated_at"]),
+                worktree_path=str(source_row["worktree_path"] or "") or None,
             )
             authority_id = watermark.get("authorityEventId")
             authority_row = (
@@ -10474,12 +12668,15 @@ class RadarLedger:
             (now, request_id),
         )
         previous_commit = str(request.get("previousCommitSha") or "")
+        # New requests carry intentId; legacy PR_UPDATE requests may omit it,
+        # but still have to prove the complete thread/worktree identity.  The
+        # resolver below accepts the legacy form only when that tuple maps to
+        # one intent, and otherwise fails closed.
         intent_id = str(request.get("intentId") or "")
         thread_id = str(request.get("threadId") or "")
         worktree_path = str(request.get("worktreePath") or "")
         if (
             re.fullmatch(r"[0-9a-f]{40}", previous_commit) is None
-            or not intent_id
             or not thread_id
             or not worktree_path
         ):
@@ -10514,12 +12711,17 @@ class RadarLedger:
                WHERE request_id=? AND opportunity_key=?""",
             (request_id, key),
         ).fetchone()
-        latest_intent = connection.execute(
-            """SELECT intent_id,thread_id,worktree_path,status FROM intents
-               WHERE opportunity_key=? AND thread_id IS NOT NULL AND worktree_path IS NOT NULL
-               ORDER BY updated_at DESC,intent_id DESC LIMIT 1""",
-            (key,),
-        ).fetchone()
+        # A rollover may leave a newer intent for the same opportunity.  The
+        # blocked PR_UPDATE request already carries the immutable task
+        # identity, so validate that exact tuple instead of borrowing the
+        # opportunity's latest intent.
+        bound_intent = _resolve_exact_intent_binding(
+            connection,
+            opportunity_key=key,
+            intent_id=intent_id or None,
+            thread_id=thread_id,
+            worktree_path=worktree_path,
+        )
         newer_request = connection.execute(
             """SELECT 1 FROM publication_requests newer
                JOIN publication_requests current
@@ -10547,11 +12749,8 @@ class RadarLedger:
             or request_row["reason"] != reason
             or request_row["thread_id"] != thread_id
             or request_row["worktree_path"] != worktree_path
-            or latest_intent is None
-            or latest_intent["intent_id"] != intent_id
-            or latest_intent["thread_id"] != thread_id
-            or latest_intent["worktree_path"] != worktree_path
-            or latest_intent["status"] not in {"DISPATCHED", "COMPLETED"}
+            or bound_intent is None
+            or bound_intent["status"] not in {"DISPATCHED", "COMPLETED"}
             or newer_request is not None
             or published is None
             or _publication_has_irreversible_terminal_evidence(
@@ -10586,24 +12785,71 @@ class RadarLedger:
             (now, key),
         )
         active_reservations = connection.execute(
-            """SELECT r.dedupe_key FROM events r
+            """SELECT r.id,r.dedupe_key,r.payload_json FROM events r
                WHERE r.opportunity_key=?
-                 AND r.event_type='PR_FOLLOWUP_RESERVED'
-                 AND NOT EXISTS (
-                   SELECT 1 FROM events finished
-                   WHERE finished.opportunity_key=r.opportunity_key
-                     AND finished.event_type='PR_FOLLOWUP_RESULT_INGESTED'
-                     AND finished.dedupe_key=r.dedupe_key
-                 )""",
+                 AND r.event_type='PR_FOLLOWUP_RESERVED'""",
             (key,),
         ).fetchall()
         for reservation in active_reservations:
+            try:
+                reservation_payload = json.loads(reservation["payload_json"] or "{}")
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise LedgerError("PR follow-up reservation identity is invalid") from exc
+            reservation_binding = _resolve_event_intent_binding(
+                connection, opportunity_key=key, payload=reservation_payload
+            )
+            if (
+                reservation_binding is None
+                or str(reservation_binding["intent_id"]) != str(bound_intent["intent_id"])
+                or str(reservation_binding["thread_id"]) != str(bound_intent["thread_id"])
+                or not _resolved_path_equal(
+                    str(reservation_binding["worktree_path"]),
+                    str(bound_intent["worktree_path"]),
+                )
+            ):
+                continue
+            finished_rows = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                     AND dedupe_key=?
+                     AND id>?""",
+                (key, reservation["dedupe_key"], reservation["id"]),
+            ).fetchall()
+            if finished_rows:
+                finished_bindings = [
+                    _resolve_event_intent_binding(
+                        connection,
+                        opportunity_key=key,
+                        payload=json.loads(row["payload_json"] or "{}"),
+                    )
+                    for row in finished_rows
+                ]
+                if any(
+                    binding is not None
+                    and str(binding["intent_id"]) == str(bound_intent["intent_id"])
+                    and str(binding["thread_id"]) == str(bound_intent["thread_id"])
+                    and _resolved_path_equal(
+                        str(binding["worktree_path"]), str(bound_intent["worktree_path"])
+                    )
+                    for binding in finished_bindings
+                ):
+                    continue
+                # A same-key result for another intent is a hard collision;
+                # do not silently mark this reservation complete.
+                raise LedgerError("PR follow-up result binding mismatch")
             self._event(
                 connection,
                 key,
                 "PR_FOLLOWUP_RESULT_INGESTED",
                 reservation["dedupe_key"],
-                {"requestId": request_id, "stage": "REARMED"},
+                {
+                    "requestId": request_id,
+                    "stage": "REARMED",
+                    "intentId": str(bound_intent["intent_id"]),
+                    "threadId": str(bound_intent["thread_id"]),
+                    "worktreePath": str(bound_intent["worktree_path"]),
+                },
                 now,
             )
         self._event(
@@ -11492,22 +13738,39 @@ class RadarLedger:
             rows = connection.execute(
                 """SELECT * FROM (
                      SELECT o.key,o.repo,o.issue_url,o.stage,p.pr_url,p.permit_id,
-                            p.updated_at,r.commit_sha,r.branch,i.thread_id,i.worktree_path,
+                            p.updated_at,r.commit_sha,r.branch,
+                            i.intent_id,i.thread_id,i.worktree_path,
                             ROW_NUMBER() OVER (
                               PARTITION BY p.pr_url ORDER BY p.updated_at DESC
                             ) AS latest_rank
                      FROM opportunities o
-                     JOIN intents i ON i.intent_id=(
-                       SELECT i2.intent_id FROM intents i2
-                       WHERE i2.opportunity_key=o.key
-                         AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
-                       ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                     )
                      JOIN publication_requests r ON r.opportunity_key=o.key
                      JOIN publication_permits p ON p.request_id=r.request_id
+                     JOIN intents i ON i.opportunity_key=o.key
+                       AND i.thread_id=r.thread_id
+                       AND i.worktree_path=r.worktree_path
+                       AND (
+                         (
+                           json_valid(r.request_json)=1
+                           AND json_extract(r.request_json,'$.intentId') IS NOT NULL
+                           AND i.intent_id=json_extract(r.request_json,'$.intentId')
+                         )
+                         OR (
+                           json_valid(r.request_json)=1
+                           AND json_extract(r.request_json,'$.intentId') IS NULL
+                           AND NOT EXISTS (
+                             SELECT 1 FROM intents other
+                             WHERE other.opportunity_key=i.opportunity_key
+                               AND other.thread_id=i.thread_id
+                               AND other.worktree_path=i.worktree_path
+                               AND other.intent_id<>i.intent_id
+                           )
+                         )
+                       )
                      WHERE p.pr_url IS NOT NULL AND (
                        p.status='CONSUMED' OR
                        (p.status='BLOCKED' AND r.reason='BLOCKED_REPRODUCTION_REQUIRED'
+                        AND json_valid(r.request_json)=1
                         AND json_extract(r.request_json,'$.recoveredFromTaskContext')=1)
                      )
                        AND o.stage NOT IN ('MERGED','CLOSED')
@@ -11526,31 +13789,51 @@ class RadarLedger:
         matched = 0
         stale_head_suppressed = 0
         with self.transaction() as connection:
-            tracked = {
-                str(row["pr_url"]): {
+            tracked: dict[str, dict[str, Any]] = {}
+            tracked_rows = connection.execute(
+                """SELECT pr_url,opportunity_key,commit_sha,consumed_at,
+                          thread_id,worktree_path,request_json
+                   FROM (
+                     SELECT p.pr_url,r.opportunity_key,r.commit_sha,
+                            p.updated_at AS consumed_at,r.thread_id,
+                            r.worktree_path,r.request_json,
+                            ROW_NUMBER() OVER (
+                              PARTITION BY p.pr_url
+                              ORDER BY p.updated_at DESC,r.updated_at DESC,
+                                       r.created_at DESC,r.request_id DESC
+                            ) AS latest_rank
+                     FROM publication_requests r
+                     JOIN publication_permits p ON p.request_id=r.request_id
+                     WHERE p.pr_url IS NOT NULL AND (
+                       p.status='CONSUMED' OR
+                       (p.status='BLOCKED' AND r.reason='BLOCKED_REPRODUCTION_REQUIRED'
+                        AND json_valid(r.request_json)=1
+                        AND json_extract(r.request_json,'$.recoveredFromTaskContext')=1)
+                     )
+                   ) WHERE latest_rank=1"""
+            ).fetchall()
+            for row in tracked_rows:
+                try:
+                    request_payload = json.loads(str(row["request_json"] or "{}"))
+                except (TypeError, json.JSONDecodeError):
+                    request_payload = {}
+                if not isinstance(request_payload, dict):
+                    request_payload = {}
+                exact_intent = _resolve_exact_intent_binding(
+                    connection,
+                    opportunity_key=str(row["opportunity_key"]),
+                    intent_id=str(request_payload.get("intentId") or "") or None,
+                    thread_id=str(row["thread_id"] or "") or None,
+                    worktree_path=str(row["worktree_path"] or "") or None,
+                )
+                tracked[str(row["pr_url"])] = {
                     "key": str(row["opportunity_key"]),
                     "commitSha": str(row["commit_sha"]),
                     "consumedAt": str(row["consumed_at"]),
+                    "intentId": str(exact_intent["intent_id"]) if exact_intent else None,
+                    "threadId": str(exact_intent["thread_id"]) if exact_intent else None,
+                    "worktreePath": str(exact_intent["worktree_path"]) if exact_intent else None,
                 }
-                for row in connection.execute(
-                    """SELECT pr_url,opportunity_key,commit_sha,consumed_at FROM (
-                         SELECT p.pr_url,r.opportunity_key,r.commit_sha,
-                                p.updated_at AS consumed_at,
-                                ROW_NUMBER() OVER (
-                                  PARTITION BY p.pr_url
-                                  ORDER BY p.updated_at DESC,r.updated_at DESC,
-                                           r.created_at DESC,r.request_id DESC
-                                ) AS latest_rank
-                         FROM publication_requests r
-                         JOIN publication_permits p ON p.request_id=r.request_id
-                         WHERE p.pr_url IS NOT NULL AND (
-                           p.status='CONSUMED' OR
-                           (p.status='BLOCKED' AND r.reason='BLOCKED_REPRODUCTION_REQUIRED'
-                            AND json_extract(r.request_json,'$.recoveredFromTaskContext')=1)
-                         )
-                       ) WHERE latest_rank=1"""
-                ).fetchall()
-            }
             for item in state["items"]:
                 if not isinstance(item, dict):
                     continue
@@ -11585,6 +13868,39 @@ class RadarLedger:
                         raise LedgerError("stored PR follow-up timestamp is invalid") from exc
                     if checked_time < previous_checked_time:
                         continue
+                incoming_identity = (
+                    binding.get("intentId"),
+                    binding.get("threadId"),
+                    binding.get("worktreePath"),
+                )
+                previous_identity = (
+                    previous["intent_id"] if previous is not None else None,
+                    previous["thread_id"] if previous is not None else None,
+                    previous["worktree_path"] if previous is not None else None,
+                )
+                previous_wake_active = False
+                if previous is not None and previous["wake_digest"]:
+                    previous_wake_active = (
+                        connection.execute(
+                            """SELECT 1 FROM events
+                               WHERE opportunity_key=?
+                                 AND event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                                 AND dedupe_key=? LIMIT 1""",
+                            (key, previous["wake_digest"]),
+                        ).fetchone()
+                        is None
+                    )
+                if previous_wake_active and all(previous_identity):
+                    # Keep an in-flight wake attached to the task that created
+                    # it even if a later publication request introduces a new
+                    # intent for the same opportunity.
+                    followup_identity = previous_identity
+                elif all(incoming_identity):
+                    followup_identity = incoming_identity
+                elif all(previous_identity):
+                    followup_identity = previous_identity
+                else:
+                    followup_identity = (None, None, None)
                 if head_sha != binding["commitSha"] and checked_time <= consumed_time:
                     retired = connection.execute(
                         """UPDATE pr_followups
@@ -11669,18 +13985,18 @@ class RadarLedger:
                         and "mergeConflictFiles" not in evidence
                         else incoming_conflicts
                     )
-                    identity = connection.execute(
-                        """SELECT o.issue_url,i.intent_id,i.thread_id,i.worktree_path
-                           FROM opportunities o JOIN intents i ON i.intent_id=(
-                             SELECT i2.intent_id FROM intents i2
-                             WHERE i2.opportunity_key=o.key
-                               AND i2.thread_id IS NOT NULL
-                               AND i2.worktree_path IS NOT NULL
-                             ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                           )
-                           WHERE o.key=?""",
-                        (key,),
-                    ).fetchone()
+                    identity = None
+                    if all(followup_identity):
+                        identity = connection.execute(
+                            """SELECT o.issue_url,i.intent_id,i.thread_id,i.worktree_path
+                               FROM opportunities o JOIN intents i
+                                 ON i.opportunity_key=o.key
+                                AND i.intent_id=?
+                                AND i.thread_id=?
+                                AND i.worktree_path=?
+                               WHERE o.key=?""",
+                            (*followup_identity, key),
+                        ).fetchone()
                     if (
                         isinstance(previous_evidence, dict)
                         and isinstance(previous_receipt, dict)
@@ -11763,8 +14079,8 @@ class RadarLedger:
                     """INSERT INTO pr_followups
                        (opportunity_key,pr_url,head_sha,action_digest,task_action_digest,
                         wake_digest,actions_json,evidence_json,followup_required,checked_at,
-                        updated_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                        updated_at,intent_id,thread_id,worktree_path)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(opportunity_key) DO UPDATE SET
                          pr_url=excluded.pr_url,head_sha=excluded.head_sha,
                          action_digest=excluded.action_digest,
@@ -11772,7 +14088,9 @@ class RadarLedger:
                          wake_digest=excluded.wake_digest,actions_json=excluded.actions_json,
                          evidence_json=excluded.evidence_json,
                          followup_required=excluded.followup_required,
-                         checked_at=excluded.checked_at,updated_at=excluded.updated_at""",
+                         checked_at=excluded.checked_at,updated_at=excluded.updated_at,
+                         intent_id=excluded.intent_id,thread_id=excluded.thread_id,
+                         worktree_path=excluded.worktree_path""",
                     (
                         key,
                         pr_url,
@@ -11785,6 +14103,9 @@ class RadarLedger:
                         int(required),
                         checked_at,
                         now,
+                        followup_identity[0],
+                        followup_identity[1],
+                        followup_identity[2],
                     ),
                 )
                 inserted += int(previous is None)
@@ -12195,6 +14516,11 @@ class RadarLedger:
         thread_id: str | None = None,
         wake_digest: str | None = None,
     ) -> list[sqlite3.Row]:
+        if not _pr_followup_binding_columns_present(connection):
+            # Read-only observers may open a pre-migration ledger.  Do not
+            # resurrect the old latest-intent heuristic; wait for the writable
+            # initializer to add and backfill the binding columns.
+            return []
         filters: list[str] = []
         params: list[str] = []
         if thread_id is not None:
@@ -12204,25 +14530,58 @@ class RadarLedger:
             filters.append("AND f.wake_digest=?")
             params.append(wake_digest)
         extra_filters = "\n                     ".join(filters)
-        query = f"""SELECT f.*,o.key,o.repo,o.issue_url,o.stage,i.intent_id,
-                          i.thread_id,i.worktree_path,
+        query = f"""SELECT f.*,o.key,o.repo,o.issue_url,o.stage,
+                          i.intent_id AS bound_intent_id,
+                          i.thread_id AS bound_thread_id,
+                          i.worktree_path AS bound_worktree_path,
                           r.branch
                    FROM pr_followups f
                    JOIN opportunities o ON o.key=f.opportunity_key
-                   JOIN intents i ON i.intent_id=(
-                     SELECT i2.intent_id FROM intents i2
-                     WHERE i2.opportunity_key=o.key
-                       AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
-                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                   )
                    JOIN publication_requests r ON r.opportunity_key=o.key
                    JOIN publication_permits p ON p.request_id=r.request_id
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND (
+                       (
+                         f.intent_id IS NOT NULL
+                         AND i.intent_id=f.intent_id
+                         AND i.thread_id=f.thread_id
+                         AND i.worktree_path=f.worktree_path
+                         AND r.thread_id=f.thread_id
+                         AND r.worktree_path=f.worktree_path
+                       )
+                       OR (
+                         f.intent_id IS NULL
+                         AND (f.thread_id IS NULL OR i.thread_id=f.thread_id)
+                         AND (f.worktree_path IS NULL OR i.worktree_path=f.worktree_path)
+                         AND i.thread_id=r.thread_id
+                         AND i.worktree_path=r.worktree_path
+                         AND (
+                           (
+                             json_valid(r.request_json)=1
+                             AND json_extract(r.request_json,'$.intentId') IS NOT NULL
+                             AND i.intent_id=json_extract(r.request_json,'$.intentId')
+                           )
+                           OR (
+                             json_valid(r.request_json)=1
+                             AND json_extract(r.request_json,'$.intentId') IS NULL
+                             AND NOT EXISTS (
+                               SELECT 1 FROM intents other
+                               WHERE other.opportunity_key=i.opportunity_key
+                                 AND other.thread_id=i.thread_id
+                                 AND other.worktree_path=i.worktree_path
+                                 AND other.intent_id<>i.intent_id
+                             )
+                           )
+                         )
+                       )
+                     )
                    WHERE f.followup_required=1 AND f.wake_digest IS NOT NULL
                      AND o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
                      AND i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
                      AND p.pr_url=f.pr_url AND (
                        p.status='CONSUMED' OR
                        (p.status='BLOCKED' AND r.reason='BLOCKED_REPRODUCTION_REQUIRED'
+                        AND json_valid(r.request_json)=1
                         AND json_extract(r.request_json,'$.recoveredFromTaskContext')=1)
                      )
                      AND NOT EXISTS (
@@ -12264,43 +14623,43 @@ class RadarLedger:
                          AND active.event_type='PR_FOLLOWUP_RESERVED'
                          AND EXISTS (
                            SELECT 1 FROM events completed
-                           WHERE completed.opportunity_key=active.opportunity_key
-                             AND completed.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
-                             AND completed.dedupe_key=active.dedupe_key
-                             AND completed.id>active.id
+                             WHERE completed.opportunity_key=active.opportunity_key
+                               AND completed.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
+                               AND completed.dedupe_key=active.dedupe_key
+                               AND completed.id>active.id
                          )
                          AND NOT EXISTS (
                            SELECT 1 FROM events rebound
-                           WHERE rebound.opportunity_key=active.opportunity_key
-                             AND rebound.event_type='PR_FOLLOWUP_REBIND_REQUIRED'
-                             AND rebound.id>active.id
+                             WHERE rebound.opportunity_key=active.opportunity_key
+                               AND rebound.event_type='PR_FOLLOWUP_REBIND_REQUIRED'
+                               AND rebound.id>active.id
                          )
                          AND NOT EXISTS (
                            SELECT 1 FROM events finished
-                           WHERE finished.opportunity_key=active.opportunity_key
-                             AND finished.event_type='PR_FOLLOWUP_RESULT_INGESTED'
-                             AND finished.dedupe_key=active.dedupe_key
+                             WHERE finished.opportunity_key=active.opportunity_key
+                               AND finished.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                               AND finished.dedupe_key=active.dedupe_key
                          )
                          AND NOT EXISTS (
                            SELECT 1 FROM events abandoned
-                           WHERE abandoned.opportunity_key=active.opportunity_key
-                             AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
-                             AND json_extract(abandoned.payload_json,'$.wakeDigest')=
-                                 active.dedupe_key
-                             AND abandoned.id>active.id
+                             WHERE abandoned.opportunity_key=active.opportunity_key
+                               AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                               AND json_extract(abandoned.payload_json,'$.wakeDigest')=
+                                   active.dedupe_key
+                               AND abandoned.id>active.id
                          )
                          AND NOT EXISTS (
                            SELECT 1 FROM events repair
                              WHERE repair.opportunity_key=active.opportunity_key
                                AND repair.event_type='PR_FOLLOWUP_RESERVATION_REPAIR_REQUIRED'
-                             AND repair.dedupe_key=active.dedupe_key
-                             AND repair.id>active.id
-                             AND NOT EXISTS (
-                               SELECT 1 FROM events repaired
-                               WHERE repaired.opportunity_key=repair.opportunity_key
-                                 AND repaired.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
-                                 AND repaired.dedupe_key=repair.dedupe_key
-                                 AND repaired.id>repair.id
+                               AND repair.dedupe_key=active.dedupe_key
+                               AND repair.id>active.id
+                               AND NOT EXISTS (
+                                 SELECT 1 FROM events repaired
+                                   WHERE repaired.opportunity_key=repair.opportunity_key
+                                     AND repaired.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
+                                     AND repaired.dedupe_key=repair.dedupe_key
+                                     AND repaired.id>repair.id
                                )
                          )
                      )
@@ -12312,42 +14671,42 @@ class RadarLedger:
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events pending
-                       WHERE pending.opportunity_key=o.key
-                         AND pending.event_type='PR_FOLLOWUP_RESERVED'
-                         AND pending.dedupe_key<>f.wake_digest
-                         AND NOT EXISTS (
-                           SELECT 1 FROM events completed
-                           WHERE completed.opportunity_key=pending.opportunity_key
-                             AND completed.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
-                             AND completed.dedupe_key=pending.dedupe_key
-                             AND completed.id>pending.id
-                         )
-                         AND NOT EXISTS (
-                           SELECT 1 FROM events finished
-                           WHERE finished.opportunity_key=pending.opportunity_key
-                             AND finished.event_type='PR_FOLLOWUP_RESULT_INGESTED'
-                             AND finished.dedupe_key=pending.dedupe_key
-                         )
-                         AND NOT EXISTS (
-                           SELECT 1 FROM events sent
-                           WHERE sent.opportunity_key=pending.opportunity_key
-                             AND sent.event_type='PR_FOLLOWUP_SENT'
-                             AND sent.dedupe_key=pending.dedupe_key
-                         )
-                         AND NOT EXISTS (
-                           SELECT 1 FROM events abandoned
-                           WHERE abandoned.opportunity_key=pending.opportunity_key
-                             AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
-                             AND json_extract(abandoned.payload_json,'$.wakeDigest')=
-                                 pending.dedupe_key
-                             AND abandoned.id>pending.id
-                         )
-                         AND NOT EXISTS (
-                           SELECT 1 FROM events rebound
-                           WHERE rebound.opportunity_key=pending.opportunity_key
-                             AND rebound.event_type='PR_FOLLOWUP_REBIND_REQUIRED'
-                             AND rebound.id>pending.id
-                         )
+                         WHERE pending.opportunity_key=o.key
+                           AND pending.event_type='PR_FOLLOWUP_RESERVED'
+                           AND pending.dedupe_key<>f.wake_digest
+                           AND NOT EXISTS (
+                             SELECT 1 FROM events completed
+                               WHERE completed.opportunity_key=pending.opportunity_key
+                                 AND completed.event_type='PR_FOLLOWUP_RESERVATION_REPAIRED'
+                                 AND completed.dedupe_key=pending.dedupe_key
+                                 AND completed.id>pending.id
+                           )
+                           AND NOT EXISTS (
+                             SELECT 1 FROM events finished
+                               WHERE finished.opportunity_key=pending.opportunity_key
+                                 AND finished.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                                 AND finished.dedupe_key=pending.dedupe_key
+                           )
+                           AND NOT EXISTS (
+                             SELECT 1 FROM events sent
+                               WHERE sent.opportunity_key=pending.opportunity_key
+                                 AND sent.event_type='PR_FOLLOWUP_SENT'
+                                 AND sent.dedupe_key=pending.dedupe_key
+                           )
+                           AND NOT EXISTS (
+                             SELECT 1 FROM events abandoned
+                               WHERE abandoned.opportunity_key=pending.opportunity_key
+                                 AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                                 AND json_extract(abandoned.payload_json,'$.wakeDigest')=
+                                     pending.dedupe_key
+                                 AND abandoned.id>pending.id
+                           )
+                           AND NOT EXISTS (
+                             SELECT 1 FROM events rebound
+                               WHERE rebound.opportunity_key=pending.opportunity_key
+                                 AND rebound.event_type='PR_FOLLOWUP_REBIND_REQUIRED'
+                                 AND rebound.id>pending.id
+                           )
                      )
                      {extra_filters}
                    ORDER BY f.checked_at,r.updated_at DESC"""
@@ -12389,9 +14748,9 @@ class RadarLedger:
                     "actions": json.loads(row["actions_json"]),
                     "evidence": json.loads(row["evidence_json"]),
                     "checkedAt": row["checked_at"],
-                    "threadId": row["thread_id"],
-                    "intentId": row["intent_id"],
-                    "worktreePath": row["worktree_path"],
+                    "threadId": row["bound_thread_id"],
+                    "intentId": row["bound_intent_id"],
+                    "worktreePath": row["bound_worktree_path"],
                     "branch": row["branch"],
                 },
             )
@@ -12636,7 +14995,12 @@ class RadarLedger:
                 candidate["key"],
                 "PR_FOLLOWUP_RESERVED",
                 wake_digest,
-                {"threadId": thread_id, "prUrl": candidate["prUrl"]},
+                {
+                    "intentId": candidate["intentId"],
+                    "threadId": thread_id,
+                    "worktreePath": candidate["worktreePath"],
+                    "prUrl": candidate["prUrl"],
+                },
                 iso_z(datetime.now(UTC)),
             )
             if prepared_head_sha is not None:
@@ -12646,7 +15010,9 @@ class RadarLedger:
                     "PR_FOLLOWUP_PREPARATION_BOUND",
                     wake_digest,
                     {
+                        "intentId": candidate["intentId"],
                         "threadId": thread_id,
+                        "worktreePath": candidate["worktreePath"],
                         "snapshot": self._pr_followup_snapshot(
                             snapshot_candidate, prepared_head_sha=prepared_head_sha
                         ),
@@ -12844,11 +15210,14 @@ class RadarLedger:
         """Return sent follow-ups created before prepared snapshots were durable."""
 
         with self.connect() as connection:
+            if not _pr_followup_binding_columns_present(connection):
+                return []
             rows = connection.execute(
                 """SELECT f.*,o.key,o.issue_url,r.dedupe_key AS reserved_wake_digest,
                           json_extract(r.payload_json,'$.threadId') AS reserved_thread_id,
                           json_extract(r.payload_json,'$.prUrl') AS reserved_pr_url,
-                          i.worktree_path,
+                          i.intent_id AS bound_intent_id,
+                          i.worktree_path AS bound_worktree_path,
                           (
                             SELECT request.commit_sha
                             FROM publication_requests request
@@ -12865,6 +15234,16 @@ class RadarLedger:
                      AND f.pr_url=json_extract(r.payload_json,'$.prUrl')
                    JOIN intents i ON i.opportunity_key=o.key
                      AND i.thread_id=json_extract(r.payload_json,'$.threadId')
+                     AND (
+                       (
+                         json_extract(r.payload_json,'$.intentId') IS NOT NULL
+                         AND i.intent_id=json_extract(r.payload_json,'$.intentId')
+                       )
+                       OR (
+                         json_extract(r.payload_json,'$.intentId') IS NULL
+                         AND f.intent_id=i.intent_id
+                       )
+                     )
                    WHERE r.event_type='PR_FOLLOWUP_RESERVED'
                      AND NOT EXISTS (
                        SELECT 1 FROM events b WHERE b.opportunity_key=o.key
@@ -12905,7 +15284,8 @@ class RadarLedger:
                 "evidence": json.loads(row["evidence_json"]),
                 "checkedAt": row["checked_at"],
                 "threadId": row["reserved_thread_id"],
-                "worktreePath": row["worktree_path"],
+                "intentId": row["bound_intent_id"],
+                "worktreePath": row["bound_worktree_path"],
             }
             for row in rows
         ]
@@ -13024,20 +15404,10 @@ class RadarLedger:
         reconciled: list[dict[str, str]] = []
         with self.transaction() as connection:
             rows = connection.execute(
-                """SELECT r.opportunity_key AS key,r.dedupe_key AS wake_digest,
-                          (SELECT later.dedupe_key FROM events later
-                           WHERE later.opportunity_key=r.opportunity_key
-                             AND later.event_type='PR_FOLLOWUP_RESULT_INGESTED'
-                             AND later.id>r.id
-                           ORDER BY later.id DESC LIMIT 1) AS superseded_by
+                """SELECT r.id,r.opportunity_key AS key,r.dedupe_key AS wake_digest,
+                          r.payload_json
                    FROM events r
                    WHERE r.event_type='PR_FOLLOWUP_RESERVED'
-                     AND NOT EXISTS (
-                       SELECT 1 FROM events same
-                       WHERE same.opportunity_key=r.opportunity_key
-                         AND same.event_type='PR_FOLLOWUP_RESULT_INGESTED'
-                         AND same.dedupe_key=r.dedupe_key
-                     )
                      AND EXISTS (
                        SELECT 1 FROM events later
                        WHERE later.opportunity_key=r.opportunity_key
@@ -13047,42 +15417,133 @@ class RadarLedger:
                    ORDER BY r.id"""
             ).fetchall()
             for row in rows:
+                try:
+                    reservation_payload = json.loads(row["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise LedgerError("PR follow-up reservation identity is invalid") from exc
+                reservation_binding = _resolve_event_intent_binding(
+                    connection, opportunity_key=row["key"], payload=reservation_payload
+                )
+                if reservation_binding is None:
+                    # Legacy unbound rows are only reconcilable when the
+                    # opportunity has one unambiguous complete intent.
+                    continue
+                existing_same = connection.execute(
+                    """SELECT payload_json FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                         AND dedupe_key=?""",
+                    (row["key"], row["wake_digest"]),
+                ).fetchall()
+                if existing_same:
+                    existing_bindings = []
+                    for existing_row in existing_same:
+                        try:
+                            existing_payload = json.loads(existing_row["payload_json"] or "{}")
+                        except (TypeError, json.JSONDecodeError) as exc:
+                            raise LedgerError("PR follow-up result identity is invalid") from exc
+                        existing_bindings.append(
+                            _resolve_event_intent_binding(
+                                connection,
+                                opportunity_key=row["key"],
+                                payload=existing_payload,
+                            )
+                        )
+                    if not any(
+                        binding is not None
+                        and str(binding["intent_id"]) == str(reservation_binding["intent_id"])
+                        and str(binding["thread_id"]) == str(reservation_binding["thread_id"])
+                        and _resolved_path_equal(
+                            str(binding["worktree_path"]),
+                            str(reservation_binding["worktree_path"]),
+                        )
+                        for binding in existing_bindings
+                    ):
+                        raise LedgerError("PR follow-up result binding mismatch")
+                    continue
+                later_rows = connection.execute(
+                    """SELECT id,dedupe_key,payload_json FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                         AND id>? ORDER BY id DESC""",
+                    (row["key"], row["id"]),
+                ).fetchall()
+                matching_later = None
+                for later in later_rows:
+                    try:
+                        later_payload = json.loads(later["payload_json"] or "{}")
+                    except (TypeError, json.JSONDecodeError) as exc:
+                        raise LedgerError("PR follow-up result identity is invalid") from exc
+                    later_binding = _resolve_event_intent_binding(
+                        connection, opportunity_key=row["key"], payload=later_payload
+                    )
+                    if (
+                        later_binding is not None
+                        and str(later_binding["intent_id"]) == str(reservation_binding["intent_id"])
+                        and str(later_binding["thread_id"]) == str(reservation_binding["thread_id"])
+                        and _resolved_path_equal(
+                            str(later_binding["worktree_path"]),
+                            str(reservation_binding["worktree_path"]),
+                        )
+                    ):
+                        matching_later = later
+                        break
+                if matching_later is None:
+                    continue
                 self._event(
                     connection,
                     row["key"],
                     "PR_FOLLOWUP_RESULT_INGESTED",
                     row["wake_digest"],
-                    {"stage": "SUPERSEDED", "supersededBy": row["superseded_by"]},
+                    {
+                        "stage": "SUPERSEDED",
+                        "supersededBy": matching_later["dedupe_key"],
+                        "intentId": str(reservation_binding["intent_id"]),
+                        "threadId": str(reservation_binding["thread_id"]),
+                        "worktreePath": str(reservation_binding["worktree_path"]),
+                    },
                     now,
                 )
                 reconciled.append(
                     {
                         "key": row["key"],
                         "wakeDigest": row["wake_digest"],
-                        "supersededBy": row["superseded_by"],
+                        "supersededBy": matching_later["dedupe_key"],
                     }
                 )
         return reconciled
 
-    def commit_pr_followup(self, *, thread_id: str, wake_digest: str) -> None:
+    def commit_pr_followup(
+        self,
+        *,
+        thread_id: str,
+        wake_digest: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
+    ) -> None:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
-            row = connection.execute(
-                """SELECT r.opportunity_key AS key,
-                          json_extract(r.payload_json,'$.prUrl') AS pr_url
+            rows = connection.execute(
+                f"""SELECT r.opportunity_key AS key,r.payload_json,
+                          i.intent_id,i.worktree_path
                    FROM events r
+                   JOIN intents i ON i.opportunity_key=r.opportunity_key
+                     AND {_intent_event_binding_clause("i", "r")}
                    WHERE r.event_type='PR_FOLLOWUP_RESERVED'
                      AND json_extract(r.payload_json,'$.threadId')=?
                      AND r.dedupe_key=?
                      AND NOT EXISTS (
-                       SELECT 1 FROM events s WHERE s.opportunity_key=r.opportunity_key
+                       SELECT 1 FROM events s
+                       WHERE s.opportunity_key=r.opportunity_key
                          AND s.event_type='PR_FOLLOWUP_SENT'
                          AND s.dedupe_key=r.dedupe_key
+                         AND {_intent_event_binding_clause("i", "s")}
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=r.opportunity_key
                          AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND {_intent_event_binding_clause("i", "abandoned")}
                          AND json_extract(abandoned.payload_json,'$.wakeDigest')=r.dedupe_key
                          AND abandoned.id>r.id
                      )
@@ -13090,31 +15551,70 @@ class RadarLedger:
                        SELECT 1 FROM events rebound
                        WHERE rebound.opportunity_key=r.opportunity_key
                          AND rebound.event_type='PR_FOLLOWUP_REBIND_REQUIRED'
+                         AND {_intent_event_binding_clause("i", "rebound")}
                          AND rebound.id>r.id
-                     )""",
+                     )
+                   ORDER BY r.id DESC""",
                 (thread_id, wake_digest),
-            ).fetchone()
+            ).fetchall()
+            if intent_id:
+                rows = [row for row in rows if str(row["intent_id"] or "") == str(intent_id)]
+            if worktree_path:
+                rows = [
+                    row
+                    for row in rows
+                    if row["worktree_path"]
+                    and _resolved_path_equal(str(row["worktree_path"]), str(worktree_path))
+                ]
+            if len(rows) > 1:
+                raise LedgerError("PR follow-up reservation is ambiguous")
+            row = rows[0] if rows else None
             if row is None:
-                sent = connection.execute(
-                    """SELECT 1 FROM events r JOIN events s
-                       ON s.opportunity_key=r.opportunity_key
-                      AND s.event_type='PR_FOLLOWUP_SENT'
-                      AND s.dedupe_key=r.dedupe_key
+                sent_rows = connection.execute(
+                    f"""SELECT r.payload_json,s.payload_json AS sent_payload,
+                              i.intent_id,i.worktree_path
+                       FROM events r
+                       JOIN events s
+                         ON s.opportunity_key=r.opportunity_key
+                        AND s.event_type='PR_FOLLOWUP_SENT'
+                        AND s.dedupe_key=r.dedupe_key
+                       JOIN intents i ON i.opportunity_key=r.opportunity_key
+                         AND {_intent_event_binding_clause("i", "r")}
                        WHERE r.event_type='PR_FOLLOWUP_RESERVED'
                          AND json_extract(r.payload_json,'$.threadId')=?
                          AND r.dedupe_key=?
-                       LIMIT 1""",
+                         AND {_intent_event_binding_clause("i", "s")}
+                       ORDER BY s.id DESC""",
                     (thread_id, wake_digest),
-                ).fetchone()
-                if sent:
+                ).fetchall()
+                if intent_id:
+                    sent_rows = [
+                        row for row in sent_rows if str(row["intent_id"] or "") == str(intent_id)
+                    ]
+                if worktree_path:
+                    sent_rows = [
+                        row
+                        for row in sent_rows
+                        if row["worktree_path"]
+                        and _resolved_path_equal(str(row["worktree_path"]), str(worktree_path))
+                    ]
+                if len(sent_rows) > 1:
+                    raise LedgerError("PR follow-up reservation is ambiguous")
+                if sent_rows:
                     return
                 raise LedgerError("PR follow-up reservation is missing or already committed")
+            reservation_payload = json.loads(row["payload_json"] or "{}")
             self._event(
                 connection,
                 row["key"],
                 "PR_FOLLOWUP_SENT",
                 wake_digest,
-                {"threadId": thread_id, "prUrl": row["pr_url"]},
+                {
+                    "intentId": reservation_payload.get("intentId") or row["intent_id"],
+                    "threadId": thread_id,
+                    "worktreePath": reservation_payload.get("worktreePath") or row["worktree_path"],
+                    "prUrl": reservation_payload.get("prUrl"),
+                },
                 now,
             )
 
@@ -13125,15 +15625,20 @@ class RadarLedger:
         wake_digest: str,
         reason: str,
         min_age_minutes: int = 90,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> dict[str, str]:
         """Retire an old reservation when no target task turn materialized."""
 
         current = datetime.now(UTC)
         now = iso_z(current)
         with self.transaction() as connection:
-            row = connection.execute(
-                """SELECT r.id,r.opportunity_key AS key,r.created_at
+            rows = connection.execute(
+                f"""SELECT r.id,r.opportunity_key AS key,r.created_at,
+                          r.payload_json,i.intent_id,i.worktree_path
                    FROM events r
+                   JOIN intents i ON i.opportunity_key=r.opportunity_key
+                     AND {_intent_event_binding_clause("i", "r")}
                    WHERE r.event_type='PR_FOLLOWUP_RESERVED'
                      AND json_extract(r.payload_json,'$.threadId')=?
                      AND r.dedupe_key=?
@@ -13142,23 +15647,38 @@ class RadarLedger:
                        WHERE sent.opportunity_key=r.opportunity_key
                          AND sent.event_type='PR_FOLLOWUP_SENT'
                          AND sent.dedupe_key=r.dedupe_key
+                         AND {_intent_event_binding_clause("i", "sent")}
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events finished
                        WHERE finished.opportunity_key=r.opportunity_key
                          AND finished.event_type='PR_FOLLOWUP_RESULT_INGESTED'
                          AND finished.dedupe_key=r.dedupe_key
+                         AND {_intent_event_binding_clause("i", "finished")}
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=r.opportunity_key
                          AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND {_intent_event_binding_clause("i", "abandoned")}
                          AND json_extract(abandoned.payload_json,'$.wakeDigest')=r.dedupe_key
                          AND abandoned.id>r.id
                      )
-                   ORDER BY r.id DESC LIMIT 1""",
+                   ORDER BY r.id DESC""",
                 (thread_id, wake_digest),
-            ).fetchone()
+            ).fetchall()
+            if intent_id:
+                rows = [row for row in rows if str(row["intent_id"] or "") == str(intent_id)]
+            if worktree_path:
+                rows = [
+                    row
+                    for row in rows
+                    if row["worktree_path"]
+                    and _resolved_path_equal(str(row["worktree_path"]), str(worktree_path))
+                ]
+            if len(rows) > 1:
+                raise LedgerError("PR follow-up delivery is ambiguous")
+            row = rows[0] if rows else None
             if row is None:
                 raise LedgerError("PR follow-up delivery is not abandonable")
             minimum_age = timedelta(minutes=max(1, min_age_minutes))
@@ -13170,8 +15690,10 @@ class RadarLedger:
                 "PR_FOLLOWUP_DELIVERY_ABANDONED",
                 sha256_text(f"{thread_id}|{wake_digest}|{row['created_at']}"),
                 {
+                    "intentId": row["intent_id"],
                     "threadId": thread_id,
                     "wakeDigest": wake_digest,
+                    "worktreePath": row["worktree_path"],
                     "reservedAt": row["created_at"],
                     "reason": reason,
                     "minimumAgeMinutes": max(1, min_age_minutes),
@@ -13195,17 +15717,31 @@ class RadarLedger:
 
     def unresolved_pr_followups(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
+            if not _pr_followup_binding_columns_present(connection):
+                return []
             rows = connection.execute(
-                """SELECT r.opportunity_key AS key,o.issue_url,i.worktree_path,
+                """SELECT r.opportunity_key AS key,o.issue_url,
+                          i.intent_id AS bound_intent_id,
+                          i.thread_id AS bound_thread_id,
+                          i.worktree_path AS bound_worktree_path,
                           r.dedupe_key AS wake_digest,
                           r.payload_json,r.created_at
                    FROM events r
                    JOIN opportunities o ON o.key=r.opportunity_key
-                   JOIN intents i ON i.intent_id=(
-                     SELECT i2.intent_id FROM intents i2
-                     WHERE i2.opportunity_key=o.key AND i2.thread_id IS NOT NULL
-                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                   )
+                   JOIN pr_followups f ON f.opportunity_key=r.opportunity_key
+                     AND f.pr_url=json_extract(r.payload_json,'$.prUrl')
+                   JOIN intents i ON i.opportunity_key=r.opportunity_key
+                     AND i.thread_id=json_extract(r.payload_json,'$.threadId')
+                     AND (
+                       (
+                         json_extract(r.payload_json,'$.intentId') IS NOT NULL
+                         AND i.intent_id=json_extract(r.payload_json,'$.intentId')
+                       )
+                       OR (
+                         json_extract(r.payload_json,'$.intentId') IS NULL
+                         AND f.intent_id=i.intent_id
+                       )
+                     )
                    WHERE r.event_type='PR_FOLLOWUP_RESERVED'
                      AND NOT EXISTS (
                      SELECT 1 FROM events s WHERE s.opportunity_key=r.opportunity_key
@@ -13251,8 +15787,9 @@ class RadarLedger:
             {
                 "key": row["key"],
                 "issue_url": row["issue_url"],
-                "worktree_path": row["worktree_path"],
+                "worktree_path": row["bound_worktree_path"],
                 "thread_id": json.loads(row["payload_json"]).get("threadId"),
+                "intent_id": row["bound_intent_id"],
                 "pr_url": json.loads(row["payload_json"]).get("prUrl"),
                 "wake_digest": row["wake_digest"],
                 "created_at": row["created_at"],
@@ -13274,29 +15811,142 @@ class RadarLedger:
             "evidence": json.loads(row["evidence_json"]),
         }
 
-    def task_result_digest_seen(self, key: str, digest: str) -> bool:
-        with self.connect() as connection:
-            row = connection.execute(
-                """SELECT 1 FROM events WHERE opportunity_key=? AND dedupe_key=?
-                   AND event_type='TASK_RESULT_INGESTED' LIMIT 1""",
-                (key, digest),
-            ).fetchone()
-        return row is not None
+    def task_result_digest_seen(
+        self,
+        key: str,
+        digest: str,
+        *,
+        intent_id: str | None = None,
+        thread_id: str | None = None,
+        worktree_path: str | None = None,
+    ) -> bool:
+        """Check one result digest without crossing immutable task bindings.
 
-    def published_task_result_is_terminal(self, key: str, *, thread_id: str) -> bool:
+        The historical API keyed only by opportunity and digest.  That is
+        insufficient after an intent rollover because two task generations
+        may legitimately produce the same digest.  Callers with a binding get
+        an exact match; an unbound call retains compatibility only for a
+        singleton opportunity and otherwise fails closed.
+        """
+
+        requested_intent = str(intent_id or "") or None
+        requested_thread = str(thread_id or "") or None
+        requested_worktree = str(worktree_path or "") or None
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=? AND dedupe_key=?
+                     AND event_type='TASK_RESULT_INGESTED'
+                   ORDER BY id DESC""",
+                (key, digest),
+            ).fetchall()
+            if not rows:
+                return False
+            intent_rows = connection.execute(
+                """SELECT intent_id,thread_id,worktree_path FROM intents
+                   WHERE opportunity_key=? ORDER BY rowid DESC""",
+                (key,),
+            ).fetchall()
+            if requested_intent is None and requested_thread is None and requested_worktree is None:
+                # A legacy caller cannot attribute an event across multiple
+                # intent generations.  Requiring a singleton preserves old
+                # behavior while preventing an old digest from suppressing a
+                # replacement task.
+                return len(intent_rows) == 1
+            for row in rows:
+                try:
+                    payload = json.loads(row["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                binding = _resolve_event_intent_binding(
+                    connection,
+                    opportunity_key=key,
+                    payload=payload,
+                )
+                if binding is None:
+                    # Pre-identity ledgers may have one intent row without a
+                    # materialized thread/worktree.  Preserve the historical
+                    # singleton read path, but never use it when another
+                    # intent exists or an explicit event id disagrees.
+                    if len(intent_rows) == 1:
+                        singleton_id = str(intent_rows[0]["intent_id"] or "")
+                        payload_id = payload.get("intentId") or payload.get("taskId")
+                        if payload_id and str(payload_id) != singleton_id:
+                            continue
+                        if requested_intent is not None and requested_intent != singleton_id:
+                            continue
+                        return True
+                    continue
+                if requested_intent is not None and str(binding["intent_id"]) != requested_intent:
+                    continue
+                if (
+                    requested_thread is not None
+                    and str(binding["thread_id"] or "") != requested_thread
+                ):
+                    continue
+                if requested_worktree is not None and (
+                    binding["worktree_path"] is None
+                    or not _resolved_path_equal(str(binding["worktree_path"]), requested_worktree)
+                ):
+                    continue
+                return True
+        return False
+
+    def published_task_result_is_terminal(
+        self,
+        key: str,
+        *,
+        thread_id: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
+    ) -> bool:
         """Return whether a missing historical worktree no longer needs local ingestion."""
 
         with self.connect() as connection:
+            binding = _resolve_exact_intent_binding(
+                connection,
+                opportunity_key=key,
+                intent_id=intent_id,
+                thread_id=thread_id,
+                worktree_path=worktree_path,
+            )
+            if binding is None:
+                return False
+            bound_intent_id = str(binding["intent_id"])
+            bound_thread_id = str(binding["thread_id"] or "")
+            bound_worktree_path = str(binding["worktree_path"] or "")
+            result_binding = (
+                f"({_intent_event_binding_clause('i', 'result')} OR "
+                f"{_legacy_unique_unbound_event_clause('i', 'result')})"
+            )
+            # PR follow-up lifecycle rows share a wake digest across intent
+            # generations.  Every relation below therefore carries the same
+            # immutable intent/thread/worktree binding as the task result;
+            # an old generation's sent/result/abandoned row must not close a
+            # replacement task's follow-up.
+            followup_sent_binding = (
+                f"({_intent_event_binding_clause('i', 'sent')} OR "
+                f"{_legacy_unique_unbound_event_clause('i', 'sent')})"
+            )
+            followup_result_binding = (
+                f"({_intent_event_binding_clause('i', 'result')} OR "
+                f"{_legacy_unique_unbound_event_clause('i', 'result')})"
+            )
+            followup_abandoned_binding = (
+                f"({_intent_event_binding_clause('i', 'abandoned')} OR "
+                f"{_legacy_unique_unbound_event_clause('i', 'abandoned')})"
+            )
+            followup_reserved_binding = (
+                f"({_intent_event_binding_clause('i', 'reserved')} OR "
+                f"{_legacy_unique_unbound_event_clause('i', 'reserved')})"
+            )
             row = connection.execute(
-                """SELECT 1
+                f"""SELECT 1
                    FROM opportunities o
-                   JOIN intents i ON i.intent_id=(
-                     SELECT i2.intent_id FROM intents i2
-                     WHERE i2.opportunity_key=o.key
-                       AND i2.thread_id=?
-                       AND i2.worktree_path IS NOT NULL
-                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                   )
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND i.intent_id=?
+                     AND i.thread_id=?
+                     AND i.worktree_path=?
                    WHERE o.key=?
                      AND i.status='COMPLETED'
                      AND o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED','MERGED','CLOSED')
@@ -13304,6 +15954,7 @@ class RadarLedger:
                        SELECT 1 FROM events result
                        WHERE result.opportunity_key=o.key
                          AND result.event_type='TASK_RESULT_INGESTED'
+                         AND {result_binding}
                      )
                      AND (
                        EXISTS (
@@ -13319,24 +15970,22 @@ class RadarLedger:
                        )
                      )
                      AND NOT EXISTS (
-                       SELECT 1 FROM publication_requests request
-                       WHERE request.opportunity_key=o.key
-                         AND request.status IN ('PENDING','GRANTED')
-                     )
-                     AND NOT EXISTS (
                        SELECT 1 FROM events sent
                        WHERE sent.opportunity_key=o.key
                          AND sent.event_type='PR_FOLLOWUP_SENT'
+                         AND {followup_sent_binding}
                          AND NOT EXISTS (
                            SELECT 1 FROM events result
                            WHERE result.opportunity_key=o.key
                              AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                             AND {followup_result_binding}
                              AND result.dedupe_key=sent.dedupe_key
-                         )
+                           )
                          AND NOT EXISTS (
                            SELECT 1 FROM events abandoned
                            WHERE abandoned.opportunity_key=o.key
                              AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                             AND {followup_abandoned_binding}
                              AND json_extract(abandoned.payload_json,'$.wakeDigest')=
                                  sent.dedupe_key
                              AND abandoned.id>sent.id
@@ -13346,46 +15995,151 @@ class RadarLedger:
                        SELECT 1 FROM events reserved
                        WHERE reserved.opportunity_key=o.key
                          AND reserved.event_type='PR_FOLLOWUP_RESERVED'
+                         AND {followup_reserved_binding}
                          AND NOT EXISTS (
                            SELECT 1 FROM events sent
                            WHERE sent.opportunity_key=o.key
                              AND sent.event_type='PR_FOLLOWUP_SENT'
+                             AND {followup_sent_binding}
                              AND sent.dedupe_key=reserved.dedupe_key
-                         )
+                           )
                          AND NOT EXISTS (
                            SELECT 1 FROM events result
                            WHERE result.opportunity_key=o.key
                              AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                             AND {followup_result_binding}
                              AND result.dedupe_key=reserved.dedupe_key
-                         )
+                           )
                          AND NOT EXISTS (
                            SELECT 1 FROM events abandoned
                            WHERE abandoned.opportunity_key=o.key
                              AND abandoned.event_type='PR_FOLLOWUP_DELIVERY_ABANDONED'
+                             AND {followup_abandoned_binding}
                              AND json_extract(abandoned.payload_json,'$.wakeDigest')=
                                  reserved.dedupe_key
                              AND abandoned.id>reserved.id
                          )
                        )
                    LIMIT 1""",
-                (thread_id, key),
+                (bound_intent_id, bound_thread_id, bound_worktree_path, key),
             ).fetchone()
             if row is None:
                 return False
+
+            def binding_matches(candidate: sqlite3.Row | None) -> bool:
+                """Check one resolved row against the selected task binding."""
+
+                return bool(
+                    candidate is not None
+                    and str(candidate["intent_id"] or "") == bound_intent_id
+                    and str(candidate["thread_id"] or "") == bound_thread_id
+                    and candidate["worktree_path"] is not None
+                    and _resolved_path_equal(str(candidate["worktree_path"]), bound_worktree_path)
+                )
+
+            # The lifecycle stage is projected per opportunity, but the
+            # evidence that makes a missing worktree terminal is per intent.
+            # Re-resolve PR_OPEN and publication rows in Python so a foreign
+            # intent cannot satisfy (or block) this task through an
+            # opportunity-wide SQL EXISTS/NOT EXISTS.
+            opened_for_binding = False
+            opened_rows = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=? AND event_type='PR_OPEN'
+                   ORDER BY id""",
+                (key,),
+            ).fetchall()
+            for opened_row in opened_rows:
+                try:
+                    opened_payload = json.loads(opened_row["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                opened_binding = _resolve_event_intent_binding(
+                    connection,
+                    opportunity_key=key,
+                    payload=opened_payload,
+                )
+                if binding_matches(opened_binding):
+                    opened_for_binding = True
+                    break
+
+            publication_for_binding = False
+            pending_for_binding = False
+            publication_rows = connection.execute(
+                """SELECT request.*,permit.pr_url AS _terminal_permit_pr_url
+                   FROM publication_requests request
+                   LEFT JOIN publication_permits permit
+                     ON permit.request_id=request.request_id
+                   WHERE request.opportunity_key=?""",
+                (key,),
+            ).fetchall()
+            for publication_row in publication_rows:
+                try:
+                    publication_binding, _ = _resolve_publication_request_binding(
+                        connection, publication_row
+                    )
+                except LedgerError:
+                    # A malformed/ambiguous publication row is unsafe to
+                    # classify while deciding terminality; fail closed rather
+                    # than letting either intent inherit it by recency.
+                    return False
+                if not binding_matches(publication_binding):
+                    continue
+                if publication_row["_terminal_permit_pr_url"] is not None:
+                    publication_for_binding = True
+                if publication_row["status"] in {"PENDING", "GRANTED"}:
+                    pending_for_binding = True
+
+            if not (opened_for_binding or publication_for_binding) or pending_for_binding:
+                return False
+            marker_binding = (
+                f"({_intent_event_binding_clause('i', 'marker')} OR "
+                f"{_legacy_unique_unbound_event_clause('i', 'marker')})"
+            )
+            sent_binding = (
+                f"({_intent_event_binding_clause('i', 'sent')} OR "
+                f"{_legacy_unique_unbound_event_clause('i', 'sent')})"
+            )
+            result_binding_for_sent = (
+                f"({_intent_event_binding_clause('i', 'result')} OR "
+                f"{_legacy_unique_unbound_event_clause('i', 'result')})"
+            )
+            cancelled_binding = (
+                f"({_intent_event_binding_clause('i', 'cancelled')} OR "
+                f"{_legacy_unique_unbound_event_clause('i', 'cancelled')})"
+            )
+            abandoned_binding = (
+                f"({_intent_event_binding_clause('i', 'abandoned')} OR "
+                f"{_legacy_unique_unbound_event_clause('i', 'abandoned')})"
+            )
+            no_progress_binding = (
+                f"({_intent_event_binding_clause('i', 'no_progress')} OR "
+                f"{_legacy_unique_unbound_event_clause('i', 'no_progress')})"
+            )
+            rearmed_binding = (
+                f"({_intent_event_binding_clause('i', 'rearmed')} OR "
+                f"{_legacy_unique_unbound_event_clause('i', 'rearmed')})"
+            )
             unresolved_validation = connection.execute(
-                """SELECT 1
+                f"""SELECT 1
                    FROM events marker
+                   JOIN intents i ON i.opportunity_key=marker.opportunity_key
+                     AND i.intent_id=?
+                     AND i.thread_id=?
+                     AND i.worktree_path=?
                    WHERE marker.opportunity_key=?
+                     AND {marker_binding}
                      AND marker.event_type IN (
                        'VALIDATION_FOLLOWUP_RESERVED',
                        'VALIDATION_FOLLOWUP_SENT'
                      )
-                     AND json_extract(marker.payload_json,'$.threadId')=?
+                     AND json_extract(marker.payload_json,'$.threadId')=i.thread_id
                      AND json_extract(marker.payload_json,'$.resultDigest') IS NOT NULL
                      AND NOT EXISTS (
                        SELECT 1 FROM events sent
                        WHERE sent.opportunity_key=marker.opportunity_key
                          AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
+                         AND {sent_binding}
                          AND sent.dedupe_key=
                              json_extract(marker.payload_json,'$.resultDigest')
                          AND json_extract(sent.payload_json,'$.threadId')=
@@ -13397,6 +16151,7 @@ class RadarLedger:
                            SELECT 1 FROM events result
                            WHERE result.opportunity_key=sent.opportunity_key
                              AND result.event_type='TASK_RESULT_INGESTED'
+                             AND {result_binding_for_sent}
                              AND result.id>sent.id
                          )
                      )
@@ -13405,6 +16160,7 @@ class RadarLedger:
                        WHERE cancelled.opportunity_key=marker.opportunity_key
                          AND cancelled.event_type=
                              'VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
+                         AND {cancelled_binding}
                          AND json_extract(cancelled.payload_json,'$.reservationDigest')=
                              json_extract(marker.payload_json,'$.reservationDigest')
                          AND cancelled.id>marker.id
@@ -13413,6 +16169,7 @@ class RadarLedger:
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=marker.opportunity_key
                          AND abandoned.event_type='VALIDATION_FOLLOWUP_DELIVERY_ABANDONED'
+                         AND {abandoned_binding}
                          AND json_extract(abandoned.payload_json,'$.resultDigest')=
                              json_extract(marker.payload_json,'$.resultDigest')
                          AND json_extract(abandoned.payload_json,'$.threadId')=
@@ -13428,6 +16185,7 @@ class RadarLedger:
                        SELECT 1 FROM events no_progress
                        WHERE no_progress.opportunity_key=marker.opportunity_key
                          AND no_progress.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS'
+                         AND {no_progress_binding}
                          AND no_progress.dedupe_key=
                              json_extract(marker.payload_json,'$.resultDigest')
                          AND json_extract(no_progress.payload_json,'$.threadId')=
@@ -13438,6 +16196,7 @@ class RadarLedger:
                            WHERE rearmed.opportunity_key=no_progress.opportunity_key
                              AND rearmed.event_type=
                                  'VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                             AND {rearmed_binding}
                              AND json_extract(rearmed.payload_json,'$.resultDigest')=
                                  json_extract(marker.payload_json,'$.resultDigest')
                              AND json_extract(rearmed.payload_json,'$.threadId')=
@@ -13449,6 +16208,7 @@ class RadarLedger:
                        SELECT 1 FROM events rearmed
                        WHERE rearmed.opportunity_key=marker.opportunity_key
                          AND rearmed.event_type='VALIDATION_FOLLOWUP_NO_PROGRESS_REARMED'
+                         AND {rearmed_binding}
                          AND json_extract(rearmed.payload_json,'$.resultDigest')=
                              json_extract(marker.payload_json,'$.resultDigest')
                          AND json_extract(rearmed.payload_json,'$.threadId')=
@@ -13456,20 +16216,144 @@ class RadarLedger:
                          AND rearmed.id>marker.id
                      )
                    LIMIT 1""",
-                (key, thread_id),
+                (bound_intent_id, bound_thread_id, bound_worktree_path, key),
             ).fetchone()
         return unresolved_validation is None
 
     def record_followup_result(
-        self, key: str, *, wake_digest: str, result_digest: str, stage: str
+        self,
+        key: str,
+        *,
+        wake_digest: str,
+        result_digest: str,
+        stage: str,
+        intent_id: str | None = None,
+        thread_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> None:
+        """Record a PR follow-up result against one immutable task identity.
+
+        Older callers did not pass identity fields.  In that compatibility
+        path we recover them from the exact sent event (or the bound follow-up
+        row) and only fill them when one intent can be proven.  Ambiguous
+        rollover history is deliberately left unacknowledged rather than
+        allowing a result to suppress another task's recovery.
+        """
+
         with self.transaction() as connection:
+            identity_supplied = any(
+                value is not None and str(value) for value in (intent_id, thread_id, worktree_path)
+            )
+            binding = (
+                _resolve_exact_intent_binding(
+                    connection,
+                    opportunity_key=key,
+                    intent_id=intent_id,
+                    thread_id=thread_id,
+                    worktree_path=worktree_path,
+                )
+                if identity_supplied
+                else None
+            )
+            if identity_supplied and binding is None:
+                # An explicit identity is authoritative.  Falling back to a
+                # sent event or follow-up row here could silently attach the
+                # result to a newer task after an intent rollover.
+                raise LedgerError("PR follow-up result binding is invalid")
+            source_rows = connection.execute(
+                """SELECT payload_json FROM events
+                       WHERE opportunity_key=?
+                         AND event_type='PR_FOLLOWUP_SENT'
+                         AND dedupe_key=?
+                       ORDER BY id DESC""",
+                (key, wake_digest),
+            ).fetchall()
+            source_bindings: list[sqlite3.Row] = []
+            for source_row in source_rows:
+                try:
+                    source_payload = json.loads(source_row["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                source_binding = _resolve_event_intent_binding(
+                    connection, opportunity_key=key, payload=source_payload
+                )
+                if source_binding is not None and all(
+                    str(existing["intent_id"]) != str(source_binding["intent_id"])
+                    for existing in source_bindings
+                ):
+                    source_bindings.append(source_binding)
+            if identity_supplied and source_rows:
+                if (
+                    binding is None
+                    or not source_bindings
+                    or not any(
+                        str(source["intent_id"]) == str(binding["intent_id"])
+                        and str(source["thread_id"]) == str(binding["thread_id"])
+                        and _resolved_path_equal(
+                            str(source["worktree_path"]), str(binding["worktree_path"])
+                        )
+                        for source in source_bindings
+                    )
+                ):
+                    raise LedgerError("PR follow-up result binding conflicts with its source")
+            if binding is None:
+                if len(source_bindings) == 1:
+                    binding = source_bindings[0]
+                elif len(source_bindings) > 1:
+                    raise LedgerError("PR follow-up result binding is ambiguous")
+            if binding is None:
+                followup_rows = connection.execute(
+                    """SELECT intent_id,thread_id,worktree_path
+                       FROM pr_followups
+                       WHERE opportunity_key=? AND wake_digest=?""",
+                    (key, wake_digest),
+                ).fetchall()
+                followup_bindings: list[sqlite3.Row] = []
+                for followup_row in followup_rows:
+                    followup_binding = _resolve_exact_intent_binding(
+                        connection,
+                        opportunity_key=key,
+                        intent_id=followup_row["intent_id"],
+                        thread_id=followup_row["thread_id"],
+                        worktree_path=followup_row["worktree_path"],
+                    )
+                    if followup_binding is not None and all(
+                        str(existing["intent_id"]) != str(followup_binding["intent_id"])
+                        for existing in followup_bindings
+                    ):
+                        followup_bindings.append(followup_binding)
+                if len(followup_bindings) == 1:
+                    binding = followup_bindings[0]
+                elif len(followup_bindings) > 1:
+                    raise LedgerError("PR follow-up result binding is ambiguous")
+            if binding is None and not (intent_id or thread_id or worktree_path):
+                unique_rows = connection.execute(
+                    """SELECT * FROM intents
+                       WHERE opportunity_key=?
+                         AND thread_id IS NOT NULL
+                         AND worktree_path IS NOT NULL""",
+                    (key,),
+                ).fetchall()
+                if len(unique_rows) == 1:
+                    binding = unique_rows[0]
+            payload: dict[str, Any] = {
+                "resultDigest": result_digest,
+                "stage": stage,
+            }
+            if binding is not None:
+                payload.update(
+                    {
+                        "intentId": str(binding["intent_id"]),
+                        "threadId": str(binding["thread_id"]),
+                        "worktreePath": str(binding["worktree_path"]),
+                    }
+                )
             self._event(
                 connection,
                 key,
                 "PR_FOLLOWUP_RESULT_INGESTED",
                 wake_digest,
-                {"resultDigest": result_digest, "stage": stage},
+                payload,
                 iso_z(datetime.now(UTC)),
             )
 
@@ -13491,6 +16375,8 @@ class RadarLedger:
             raise LedgerError("PR follow-up resolution scope binding is invalid")
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
+            if not _pr_followup_binding_columns_present(connection):
+                raise LedgerError("PR follow-up binding schema migration is required")
             existing = connection.execute(
                 """SELECT payload_json FROM events
                    WHERE opportunity_key=?
@@ -13505,16 +16391,20 @@ class RadarLedger:
                 return payload | {"created": False}
 
             row = connection.execute(
-                """SELECT f.*,o.issue_url,i.intent_id,i.thread_id,i.worktree_path
+                """SELECT f.*,o.issue_url,
+                          i.intent_id AS bound_intent_id,
+                          i.thread_id AS bound_thread_id,
+                          i.worktree_path AS bound_worktree_path
                    FROM pr_followups f
                    JOIN opportunities o ON o.key=f.opportunity_key
-                   JOIN intents i ON i.intent_id=(
-                     SELECT i2.intent_id FROM intents i2
-                     WHERE i2.opportunity_key=f.opportunity_key
-                       AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
-                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                   )
-                   WHERE f.opportunity_key=?""",
+                   JOIN intents i ON i.opportunity_key=f.opportunity_key
+                     AND i.intent_id=f.intent_id
+                     AND i.thread_id=f.thread_id
+                     AND i.worktree_path=f.worktree_path
+                   WHERE f.opportunity_key=?
+                     AND f.intent_id IS NOT NULL
+                     AND f.thread_id IS NOT NULL
+                     AND f.worktree_path IS NOT NULL""",
                 (key,),
             ).fetchone()
             if row is None or row["wake_digest"] != source_wake_digest:
@@ -13529,7 +16419,7 @@ class RadarLedger:
                      AND dedupe_key=?
                      AND json_extract(payload_json,'$.threadId')=?
                    ORDER BY id DESC LIMIT 1""",
-                (key, source_wake_digest, row["thread_id"]),
+                (key, source_wake_digest, row["bound_thread_id"]),
             ).fetchone()
             try:
                 source_payload = (
@@ -13580,10 +16470,10 @@ class RadarLedger:
                     receipt,
                     key=key,
                     issue_url=str(row["issue_url"]),
-                    intent_id=str(row["intent_id"]),
-                    thread_id=str(row["thread_id"]),
+                    intent_id=str(row["bound_intent_id"]),
+                    thread_id=str(row["bound_thread_id"]),
                     worktree_path_fingerprint=sha256_text(
-                        str(Path(str(row["worktree_path"])).resolve())
+                        str(Path(str(row["bound_worktree_path"])).resolve())
                     ),
                     pr_url=str(row["pr_url"]),
                     current_wake_digest=replacement_wake,
@@ -13618,7 +16508,13 @@ class RadarLedger:
                 key,
                 "PR_FOLLOWUP_RESULT_INGESTED",
                 source_wake_digest,
-                {"resultDigest": result_digest, "stage": "PR_OPEN"},
+                {
+                    "resultDigest": result_digest,
+                    "stage": "PR_OPEN",
+                    "intentId": str(row["bound_intent_id"]),
+                    "threadId": str(row["bound_thread_id"]),
+                    "worktreePath": str(row["bound_worktree_path"]),
+                },
                 now,
             )
             payload = {
@@ -13683,11 +16579,47 @@ class RadarLedger:
         with self.transaction() as connection:
             recorded_at = iso_z(datetime.now(UTC))
             existing_result_row = connection.execute(
-                """SELECT id FROM events
+                """SELECT id,payload_json FROM events
                    WHERE opportunity_key=? AND event_type='TASK_RESULT_INGESTED'
                      AND dedupe_key=?""",
                 (key, digest),
             ).fetchone()
+            intent_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM intents WHERE opportunity_key=?", (key,)
+                ).fetchone()[0]
+            )
+            if intent_count > 1 and not task_id and not thread_id:
+                raise LedgerError("task result identity is required for multiple intents")
+            if existing_result_row is not None and intent_count > 1:
+                try:
+                    existing_payload = json.loads(existing_result_row["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise LedgerError("task result dedupe binding is invalid") from exc
+                if not isinstance(existing_payload, dict):
+                    raise LedgerError("task result dedupe binding is invalid")
+                existing_binding = _resolve_event_intent_binding(
+                    connection,
+                    opportunity_key=key,
+                    payload=existing_payload,
+                )
+                incoming_payload: dict[str, Any] = {
+                    "taskId": task_id,
+                    "threadId": thread_id,
+                }
+                incoming_binding = _resolve_event_intent_binding(
+                    connection,
+                    opportunity_key=key,
+                    payload=incoming_payload,
+                )
+                # INSERT OR IGNORE would otherwise keep an old, partially
+                # attributed row and silently make the replacement result
+                # look already consumed.  Reuse is safe only when both rows
+                # resolve to the same immutable intent.
+                if existing_binding is None or incoming_binding is None:
+                    raise LedgerError("task result dedupe binding is ambiguous")
+                if existing_binding["intent_id"] != incoming_binding["intent_id"]:
+                    raise LedgerError("event dedupe binding mismatch")
             payload = {"stage": stage, "resultDigest": digest}
             if task_id:
                 payload["taskId"] = task_id
@@ -13787,9 +16719,67 @@ class RadarLedger:
         task_id: str,
         thread_id: str,
         request_updated_at: str,
+        worktree_path: str | None = None,
     ) -> dict[str, Any]:
+        result_payload = (
+            "CASE WHEN json_valid(result.payload_json)=1 THEN result.payload_json ELSE '{}' END"
+        )
+        result_task_id = f"NULLIF(json_extract({result_payload},'$.taskId'),'')"
+        result_intent_id = f"NULLIF(json_extract({result_payload},'$.intentId'),'')"
+        result_identity = f"COALESCE({result_task_id},{result_intent_id})"
+        result_thread_id = f"json_extract({result_payload},'$.threadId')"
+        result_worktree_path = f"json_extract({result_payload},'$.worktreePath')"
+        result_identity_shape = (
+            f"NOT ({result_task_id} IS NOT NULL AND {result_intent_id} IS NOT NULL "
+            f"AND {result_task_id}<>{result_intent_id})"
+        )
+        worktree_values: tuple[str, ...] = ()
+        if worktree_path:
+            raw_worktree = str(worktree_path)
+            try:
+                resolved_worktree = str(Path(raw_worktree).resolve())
+            except (OSError, RuntimeError):
+                resolved_worktree = raw_worktree
+            worktree_values = tuple(dict.fromkeys((raw_worktree, resolved_worktree)))
+        result_worktree_gate = ""
+        result_worktree_params: tuple[str, ...] = ()
+        if worktree_values:
+            placeholders = ",".join("?" for _ in worktree_values)
+            result_worktree_gate = (
+                f"AND ({result_worktree_path} IS NULL "
+                f"OR {result_worktree_path} IN ({placeholders}))"
+            )
+            result_worktree_params = worktree_values
+            legacy_result_uniqueness = (
+                f"({result_worktree_path} IS NOT NULL AND NOT EXISTS ("
+                "SELECT 1 FROM intents other "
+                "WHERE other.opportunity_key=result.opportunity_key "
+                "AND other.intent_id<>? AND other.thread_id=? "
+                f"AND other.worktree_path IN ({placeholders})"
+                f")) OR ({result_worktree_path} IS NULL AND NOT EXISTS ("
+                "SELECT 1 FROM intents other "
+                "WHERE other.opportunity_key=result.opportunity_key "
+                "AND other.intent_id<>? AND other.thread_id=?"
+                "))"
+            )
+            legacy_result_uniqueness_params = (
+                task_id,
+                thread_id,
+                *worktree_values,
+                task_id,
+                thread_id,
+            )
+        else:
+            legacy_result_uniqueness = (
+                f"{result_worktree_path} IS NULL AND NOT EXISTS ("
+                "SELECT 1 FROM intents other "
+                "WHERE other.opportunity_key=result.opportunity_key "
+                "AND other.intent_id<>? AND other.thread_id=?"
+                "))"
+            )
+            legacy_result_uniqueness_params = (task_id, thread_id)
         selected = connection.execute(
-            """WITH candidates AS (
+            f"""WITH candidates AS (
                  SELECT result.*,(
                    SELECT MAX(authority.id) FROM events authority
                    WHERE authority.opportunity_key=result.opportunity_key
@@ -13804,15 +16794,22 @@ class RadarLedger:
                  FROM events result
                  WHERE result.opportunity_key=?
                    AND result.event_type='TASK_RESULT_INGESTED'
+                   AND {result_identity_shape}
+                   {result_worktree_gate}
                    AND (
                      (
-                       json_extract(result.payload_json,'$.threadId')=?
-                       AND COALESCE(json_extract(result.payload_json,'$.taskId'),'')
-                           IN ('',?)
+                       {result_thread_id}=?
+                       AND (
+                         {result_identity}=?
+                         OR (
+                           {result_identity} IS NULL
+                           AND ({legacy_result_uniqueness})
+                         )
+                       )
                      )
                      OR (
-                       COALESCE(json_extract(result.payload_json,'$.threadId'),'')=''
-                       AND json_extract(result.payload_json,'$.taskId')=?
+                       COALESCE({result_thread_id},'')=''
+                       AND {result_identity}=?
                      )
                      OR EXISTS (
                        SELECT 1 FROM events binding
@@ -13841,26 +16838,91 @@ class RadarLedger:
                 task_id,
                 thread_id,
                 key,
+                *result_worktree_params,
                 thread_id,
                 task_id,
+                *legacy_result_uniqueness_params,
                 task_id,
                 task_id,
                 thread_id,
             ),
         ).fetchone()
+        related_payload = (
+            "CASE WHEN json_valid(related.payload_json)=1 THEN related.payload_json ELSE '{}' END"
+        )
+        related_task_id = f"NULLIF(json_extract({related_payload},'$.taskId'),'')"
+        related_intent_id = f"NULLIF(json_extract({related_payload},'$.intentId'),'')"
+        related_identity = f"COALESCE({related_task_id},{related_intent_id})"
+        related_thread_id = f"json_extract({related_payload},'$.threadId')"
+        related_worktree_path = f"json_extract({related_payload},'$.worktreePath')"
+        related_identity_shape = (
+            f"NOT ({related_task_id} IS NOT NULL AND {related_intent_id} IS NOT NULL "
+            f"AND {related_task_id}<>{related_intent_id})"
+        )
+        related_worktree_gate = ""
+        if worktree_values:
+            placeholders = ",".join("?" for _ in worktree_values)
+            related_worktree_gate = (
+                f"AND ({related_worktree_path} IS NULL "
+                f"OR {related_worktree_path} IN ({placeholders}))"
+            )
+            related_legacy_uniqueness = (
+                f"({related_worktree_path} IS NOT NULL AND NOT EXISTS ("
+                "SELECT 1 FROM intents other "
+                "WHERE other.opportunity_key=related.opportunity_key "
+                "AND other.intent_id<>? AND other.thread_id=? "
+                f"AND other.worktree_path IN ({placeholders})"
+                f")) OR ({related_worktree_path} IS NULL AND NOT EXISTS ("
+                "SELECT 1 FROM intents other "
+                "WHERE other.opportunity_key=related.opportunity_key "
+                "AND other.intent_id<>? AND other.thread_id=?"
+                "))"
+            )
+            related_legacy_uniqueness_params = (
+                task_id,
+                thread_id,
+                *worktree_values,
+                task_id,
+                thread_id,
+            )
+        else:
+            related_legacy_uniqueness = (
+                f"{related_worktree_path} IS NULL AND NOT EXISTS ("
+                "SELECT 1 FROM intents other "
+                "WHERE other.opportunity_key=related.opportunity_key "
+                "AND other.intent_id<>? AND other.thread_id=?"
+                "))"
+            )
+            related_legacy_uniqueness_params = (task_id, thread_id)
         latest_related = connection.execute(
-            """SELECT MAX(id) FROM events
+            f"""SELECT MAX(related.id) FROM events related
                WHERE opportunity_key=?
-                 AND event_type IN (
+                 AND related.event_type IN (
                    'TASK_RESULT_INGESTED',
                    'TASK_RESULT_TOMBSTONE_CONTINUATION_BOUND',
                    'TASK_RESULT_AUTHORITY_BOUND'
                  )
+                 AND {related_identity_shape}
+                 {related_worktree_gate}
                  AND (
-                   json_extract(payload_json,'$.taskId')=?
-                   OR json_extract(payload_json,'$.threadId')=?
+                   (
+                     {related_identity}=?
+                     AND ({related_thread_id} IS NULL OR {related_thread_id}=?)
+                   )
+                   OR (
+                     {related_identity} IS NULL
+                     AND {related_thread_id}=?
+                     AND ({related_legacy_uniqueness})
+                   )
                  )""",
-            (key, task_id, thread_id),
+            (
+                key,
+                *result_worktree_params,
+                task_id,
+                thread_id,
+                thread_id,
+                *related_legacy_uniqueness_params,
+            ),
         ).fetchone()[0]
         authority_payload: dict[str, Any] = {}
         if selected is not None and selected["selection_authority_json"] is not None:
@@ -13913,6 +16975,7 @@ class RadarLedger:
                 task_id=str(request["intentId"]),
                 thread_id=str(request_row["thread_id"]),
                 request_updated_at=str(request_row["updated_at"]),
+                worktree_path=str(request.get("worktreePath") or "") or None,
             )
 
     def bind_managed_replay_task_result_continuation(
@@ -14012,6 +17075,7 @@ class RadarLedger:
                     task_id=task_id,
                     thread_id=thread_id,
                     request_updated_at=str(request_row["updated_at"]),
+                    worktree_path=worktree_path,
                 )
             ):
                 raise LedgerError("managed replay task result projection changed")
@@ -14331,6 +17395,7 @@ class RadarLedger:
                     task_id=task_id,
                     thread_id=thread_id,
                     request_updated_at=str(request_row["updated_at"]),
+                    worktree_path=worktree_path,
                 )
                 result_event_id = selection.get("resultEventId")
                 if result_event_id is None:
@@ -14525,19 +17590,62 @@ class RadarLedger:
                 "previousContinuationDedupeKey": previous_continuation_key,
             }
 
-    def published_task_result_backfill_seen(self, key: str, *, digest: str) -> bool:
-        """Return whether the legacy controller recorded a published-result backfill."""
+    def published_task_result_backfill_seen(
+        self,
+        key: str,
+        *,
+        digest: str,
+        intent_id: str | None = None,
+        thread_id: str | None = None,
+        worktree_path: str | None = None,
+    ) -> bool:
+        """Check a published-result backfill without crossing task bindings."""
 
+        requested_intent = str(intent_id or "") or None
+        requested_thread = str(thread_id or "") or None
+        requested_worktree = str(worktree_path or "") or None
         with self.connect() as connection:
-            row = connection.execute(
-                """SELECT 1 FROM events
+            rows = connection.execute(
+                """SELECT payload_json FROM events
                    WHERE opportunity_key=?
                      AND event_type='PUBLISHED_TASK_RESULT_BACKFILLED'
                      AND dedupe_key=?
-                   LIMIT 1""",
+                   ORDER BY id DESC""",
                 (key, digest),
-            ).fetchone()
-        return row is not None
+            ).fetchall()
+            if not rows:
+                return False
+            if requested_intent is None and requested_thread is None and requested_worktree is None:
+                intent_count = connection.execute(
+                    "SELECT COUNT(*) FROM intents WHERE opportunity_key=?", (key,)
+                ).fetchone()[0]
+                return int(intent_count) == 1
+            for row in rows:
+                try:
+                    payload = json.loads(row["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                binding = _resolve_event_intent_binding(
+                    connection,
+                    opportunity_key=key,
+                    payload=payload,
+                )
+                if binding is None:
+                    continue
+                if requested_intent is not None and str(binding["intent_id"]) != requested_intent:
+                    continue
+                if (
+                    requested_thread is not None
+                    and str(binding["thread_id"] or "") != requested_thread
+                ):
+                    continue
+                if requested_worktree is not None and (
+                    binding["worktree_path"] is None
+                    or not _resolved_path_equal(str(binding["worktree_path"]), requested_worktree)
+                ):
+                    continue
+                return True
+        return False
 
     def record_published_task_result_backfilled(
         self,
@@ -14553,6 +17661,39 @@ class RadarLedger:
         """Append the legacy-side completion marker for an atomic managed backfill."""
 
         with self.transaction() as connection:
+            existing = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='PUBLISHED_TASK_RESULT_BACKFILLED'
+                     AND dedupe_key=?""",
+                (key, digest),
+            ).fetchone()
+            intent_count = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM intents WHERE opportunity_key=?", (key,)
+                ).fetchone()[0]
+            )
+            if existing is not None and intent_count > 1:
+                try:
+                    existing_payload = json.loads(existing["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise LedgerError("published result dedupe binding is invalid") from exc
+                if not isinstance(existing_payload, dict):
+                    raise LedgerError("published result dedupe binding is invalid")
+                existing_binding = _resolve_event_intent_binding(
+                    connection,
+                    opportunity_key=key,
+                    payload=existing_payload,
+                )
+                incoming_binding = _resolve_event_intent_binding(
+                    connection,
+                    opportunity_key=key,
+                    payload={"taskId": task_id, "threadId": thread_id},
+                )
+                if existing_binding is None or incoming_binding is None:
+                    raise LedgerError("published result dedupe binding is ambiguous")
+                if existing_binding["intent_id"] != incoming_binding["intent_id"]:
+                    raise LedgerError("event dedupe binding mismatch")
             self._event(
                 connection,
                 key,
@@ -14681,7 +17822,7 @@ class RadarLedger:
             if permit is None or permit["status"] != "ACTIVE":
                 raise LedgerError("publication permit is not active")
             request_row = connection.execute(
-                "SELECT opportunity_key,request_json FROM publication_requests WHERE request_id=?",
+                "SELECT * FROM publication_requests WHERE request_id=?",
                 (permit["request_id"],),
             ).fetchone()
             if request_row is None or not _publication_probe_valid_json(
@@ -14699,6 +17840,7 @@ class RadarLedger:
                 raise LedgerError(
                     "publication receipt blocked: authenticated reproduction is required"
                 )
+            request_binding, _ = _resolve_publication_request_binding(connection, request_row)
             require_quarantine_clear(
                 connection,
                 opportunity_key=str(request_row["opportunity_key"]),
@@ -14724,15 +17866,21 @@ class RadarLedger:
                     (now, request["opportunity_key"]),
                 )
                 connection.execute(
-                    "UPDATE intents SET status='COMPLETED',updated_at=? WHERE opportunity_key=?",
-                    (now, request["opportunity_key"]),
+                    "UPDATE intents SET status='COMPLETED',updated_at=? WHERE intent_id=?",
+                    (now, request_binding["intent_id"]),
                 )
                 self._event(
                     connection,
                     request["opportunity_key"],
                     "PR_OPEN",
                     pr_url,
-                    {"permitId": permit_id, "prUrl": pr_url},
+                    {
+                        "permitId": permit_id,
+                        "prUrl": pr_url,
+                        "intentId": request_binding["intent_id"],
+                        "threadId": request_binding["thread_id"],
+                        "worktreePath": request_binding["worktree_path"],
+                    },
                     now,
                 )
                 self._retire_pr_followup_snapshot_after_publication(
@@ -14742,24 +17890,65 @@ class RadarLedger:
     def publication_feedback_candidates(self) -> list[dict[str, Any]]:
         """Return published tasks whose visible task reply does not yet reflect the PR."""
 
+        binding_clause = f"""
+            (
+              {_intent_event_binding_clause("i", "opened")}
+              OR (
+                json_valid(opened.payload_json)=1
+                AND json_extract(opened.payload_json,'$.intentId') IS NULL
+                AND json_extract(opened.payload_json,'$.threadId') IS NULL
+                AND json_extract(opened.payload_json,'$.worktreePath') IS NULL
+                AND i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
+                AND NOT EXISTS (
+                  SELECT 1 FROM intents other
+                  WHERE other.opportunity_key=o.key
+                    AND other.intent_id<>i.intent_id
+                    AND other.thread_id IS NOT NULL
+                    AND other.worktree_path IS NOT NULL
+                )
+              )
+            )
+        """
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.issue_url,i.thread_id,i.worktree_path,
+                f"""SELECT o.key,o.issue_url,i.intent_id,i.thread_id,i.worktree_path,
                           COALESCE(
                             json_extract(opened.payload_json,'$.prUrl'),opened.dedupe_key
                           ) AS pr_url,opened.created_at AS published_at
                    FROM opportunities o
-                   JOIN intents i ON i.intent_id=(
-                     SELECT i2.intent_id FROM intents i2
-                     WHERE i2.opportunity_key=o.key
-                       AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
-                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                   )
-                   JOIN events opened ON opened.id=(
-                     SELECT MAX(e.id) FROM events e
-                     WHERE e.opportunity_key=o.key AND e.event_type='PR_OPEN'
-                   )
+                   JOIN intents i ON i.opportunity_key=o.key
+                   JOIN events opened ON opened.opportunity_key=o.key
+                     AND opened.event_type='PR_OPEN'
+                     AND {binding_clause}
                    WHERE o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
+                     AND NOT EXISTS (
+                       SELECT 1 FROM events newer
+                       WHERE newer.opportunity_key=o.key
+                         AND newer.event_type='PR_OPEN'
+                         AND COALESCE(
+                           json_extract(newer.payload_json,'$.prUrl'),newer.dedupe_key
+                         )=COALESCE(
+                           json_extract(opened.payload_json,'$.prUrl'),opened.dedupe_key
+                         )
+                         AND newer.id>opened.id
+                         AND (
+                           {_intent_event_binding_clause("i", "newer")}
+                           OR (
+                             json_valid(newer.payload_json)=1
+                             AND json_extract(newer.payload_json,'$.intentId') IS NULL
+                             AND json_extract(newer.payload_json,'$.threadId') IS NULL
+                             AND json_extract(newer.payload_json,'$.worktreePath') IS NULL
+                             AND i.thread_id IS NOT NULL AND i.worktree_path IS NOT NULL
+                             AND NOT EXISTS (
+                               SELECT 1 FROM intents other
+                               WHERE other.opportunity_key=o.key
+                                 AND other.intent_id<>i.intent_id
+                                 AND other.thread_id IS NOT NULL
+                                 AND other.worktree_path IS NOT NULL
+                             )
+                           )
+                         )
+                     )
                      AND NOT EXISTS (
                        SELECT 1 FROM events sent
                        WHERE sent.opportunity_key=o.key
@@ -14767,6 +17956,7 @@ class RadarLedger:
                          AND sent.dedupe_key=COALESCE(
                            json_extract(opened.payload_json,'$.prUrl'),opened.dedupe_key
                          )
+                         AND {_intent_event_binding_clause("i", "sent")}
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events reserved
@@ -14775,19 +17965,32 @@ class RadarLedger:
                          AND json_extract(reserved.payload_json,'$.prUrl')=COALESCE(
                            json_extract(opened.payload_json,'$.prUrl'),opened.dedupe_key
                          )
+                         AND {_intent_event_binding_clause("i", "reserved")}
                          AND NOT EXISTS (
                            SELECT 1 FROM events abandoned
-                           WHERE abandoned.opportunity_key=o.key
-                             AND abandoned.event_type='THREAD_PUBLICATION_STATUS_ABANDONED'
-                             AND abandoned.dedupe_key=reserved.dedupe_key
+                             WHERE abandoned.opportunity_key=o.key
+                               AND abandoned.event_type='THREAD_PUBLICATION_STATUS_ABANDONED'
+                               AND abandoned.dedupe_key=reserved.dedupe_key
+                               AND {_intent_event_binding_clause("i", "abandoned")}
                          )
                      )
                    ORDER BY opened.created_at"""
             ).fetchall()
+        # A PR URL can only be delivered after one immutable task owns it.
+        # If legacy/manual history claims the same URL for multiple intents,
+        # suppress all candidates instead of arbitrarily choosing one thread.
+        conflict_urls = {
+            str(pr_url)
+            for pr_url in {str(row["pr_url"]) for row in rows}
+            if len({str(row["intent_id"]) for row in rows if str(row["pr_url"]) == pr_url}) > 1
+        }
+        if conflict_urls:
+            rows = [row for row in rows if str(row["pr_url"]) not in conflict_urls]
         return [
             {
                 "key": row["key"],
                 "issueUrl": row["issue_url"],
+                "intentId": row["intent_id"],
                 "threadId": row["thread_id"],
                 "worktreePath": row["worktree_path"],
                 "prUrl": row["pr_url"],
@@ -14970,30 +18173,28 @@ class RadarLedger:
     def unresolved_publication_feedback(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT o.key,o.issue_url,i.thread_id,i.worktree_path,
+                f"""SELECT o.key,o.issue_url,i.intent_id,i.thread_id,i.worktree_path,
                           json_extract(reserved.payload_json,'$.prUrl') AS pr_url,
                           reserved.dedupe_key AS reservation_nonce,
                           reserved.created_at AS reserved_at
                    FROM opportunities o
-                   JOIN intents i ON i.intent_id=(
-                     SELECT i2.intent_id FROM intents i2
-                     WHERE i2.opportunity_key=o.key
-                       AND i2.thread_id IS NOT NULL AND i2.worktree_path IS NOT NULL
-                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                   )
                    JOIN events reserved ON reserved.opportunity_key=o.key
                      AND reserved.event_type='THREAD_PUBLICATION_STATUS_RESERVED'
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND {_intent_event_binding_clause("i", "reserved")}
                    WHERE NOT EXISTS (
                      SELECT 1 FROM events sent
                      WHERE sent.opportunity_key=o.key
                        AND sent.event_type='THREAD_PUBLICATION_STATUS_SENT'
                        AND sent.dedupe_key=json_extract(reserved.payload_json,'$.prUrl')
+                       AND {_intent_event_binding_clause("i", "sent")}
                    )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=o.key
                          AND abandoned.event_type='THREAD_PUBLICATION_STATUS_ABANDONED'
                          AND abandoned.dedupe_key=reserved.dedupe_key
+                         AND {_intent_event_binding_clause("i", "abandoned")}
                    )
                    ORDER BY reserved.created_at"""
             ).fetchall()
@@ -15001,6 +18202,7 @@ class RadarLedger:
             {
                 "key": row["key"],
                 "issueUrl": row["issue_url"],
+                "intentId": row["intent_id"],
                 "threadId": row["thread_id"],
                 "worktreePath": row["worktree_path"],
                 "prUrl": row["pr_url"],
@@ -15010,24 +18212,60 @@ class RadarLedger:
             for row in rows
         ]
 
-    def reserve_publication_feedback(self, *, thread_id: str, pr_url: str) -> dict[str, Any]:
+    def reserve_publication_feedback(
+        self,
+        *,
+        thread_id: str,
+        pr_url: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
+    ) -> dict[str, Any]:
         now = iso_z(datetime.now(UTC))
         nonce = sha256_text(f"{thread_id}|{pr_url}|{now}|{secrets.token_hex(16)}")
+        intent_join = ["i.thread_id=?", "i.worktree_path IS NOT NULL"]
+        intent_params: list[str] = [thread_id]
+        if intent_id:
+            intent_join.append("i.intent_id=?")
+            intent_params.append(str(intent_id))
+        elif not worktree_path:
+            # A legacy caller supplies only a thread.  Accept it only when
+            # that thread identifies one complete intent for this opportunity.
+            intent_join.append(
+                "NOT EXISTS ("
+                "SELECT 1 FROM intents other "
+                "WHERE other.opportunity_key=o.key "
+                "AND other.intent_id<>i.intent_id "
+                "AND other.thread_id=? "
+                "AND other.worktree_path IS NOT NULL)"
+            )
+            intent_params.append(thread_id)
+        # Select an opened event that is itself attributable to the selected
+        # intent.  Looking up the latest URL match without this predicate lets
+        # a later intent's PR_OPEN hide (or be mistaken for) the caller's
+        # publication.
+        opened_binding = (
+            f"({_intent_event_binding_clause('i', 'e')} OR "
+            f"{_legacy_unique_unbound_event_clause('i', 'e')})"
+        )
         with self.transaction() as connection:
-            row = connection.execute(
-                """SELECT o.key,o.issue_url,i.thread_id,i.worktree_path,
+            rows = connection.execute(
+                f"""SELECT o.key,o.issue_url,i.intent_id,i.thread_id,i.worktree_path,
                           opened.created_at AS published_at
                    FROM opportunities o
-                   JOIN intents i ON i.intent_id=(
-                     SELECT i2.intent_id FROM intents i2
-                     WHERE i2.opportunity_key=o.key
-                       AND i2.thread_id=? AND i2.worktree_path IS NOT NULL
-                     ORDER BY i2.updated_at DESC,i2.intent_id DESC LIMIT 1
-                   )
+                   JOIN intents i ON i.opportunity_key=o.key
+                     AND {" AND ".join(intent_join)}
                    JOIN events opened ON opened.id=(
                      SELECT MAX(e.id) FROM events e
                      WHERE e.opportunity_key=o.key AND e.event_type='PR_OPEN'
-                       AND COALESCE(json_extract(e.payload_json,'$.prUrl'),e.dedupe_key)=?
+                       AND COALESCE(
+                         json_extract(
+                           CASE WHEN json_valid(e.payload_json)=1
+                                THEN e.payload_json ELSE '{{}}' END,
+                           '$.prUrl'
+                         ),
+                         e.dedupe_key
+                       )=?
+                       AND {opened_binding}
                    )
                    WHERE o.stage IN ('PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED')
                      AND NOT EXISTS (
@@ -15035,23 +18273,75 @@ class RadarLedger:
                        WHERE sent.opportunity_key=o.key
                          AND sent.event_type='THREAD_PUBLICATION_STATUS_SENT'
                          AND sent.dedupe_key=?
+                         AND {_intent_event_binding_clause("i", "sent")}
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events reserved
                        WHERE reserved.opportunity_key=o.key
                          AND reserved.event_type='THREAD_PUBLICATION_STATUS_RESERVED'
                          AND json_extract(reserved.payload_json,'$.prUrl')=?
+                         AND {_intent_event_binding_clause("i", "reserved")}
                          AND NOT EXISTS (
                            SELECT 1 FROM events abandoned
-                           WHERE abandoned.opportunity_key=o.key
-                             AND abandoned.event_type='THREAD_PUBLICATION_STATUS_ABANDONED'
-                             AND abandoned.dedupe_key=reserved.dedupe_key
+                             WHERE abandoned.opportunity_key=o.key
+                               AND abandoned.event_type='THREAD_PUBLICATION_STATUS_ABANDONED'
+                               AND abandoned.dedupe_key=reserved.dedupe_key
+                               AND {_intent_event_binding_clause("i", "abandoned")}
                          )
                      )""",
-                (thread_id, pr_url, pr_url, pr_url),
-            ).fetchone()
+                tuple(intent_params) + (pr_url, pr_url, pr_url),
+            ).fetchall()
+            if worktree_path:
+                rows = [
+                    row
+                    for row in rows
+                    if row["worktree_path"]
+                    and _resolved_path_equal(str(row["worktree_path"]), str(worktree_path))
+                ]
+            if len(rows) > 1:
+                raise LedgerError("publication feedback identity is ambiguous")
+            row = rows[0] if rows else None
             if row is None:
                 raise LedgerError("publication feedback is stale or already reserved")
+
+            # This is the compare-and-swap guard for duplicate PR URLs.  The
+            # reservation transaction is BEGIN IMMEDIATE, so the complete
+            # claim set is observed atomically with the event we append.  If
+            # any same-URL PR_OPEN cannot be resolved to the selected intent,
+            # or resolves to another intent generation, fail closed instead of
+            # sending a status reply to the wrong task.
+            claim_rows = connection.execute(
+                """SELECT payload_json,dedupe_key
+                   FROM events
+                   WHERE opportunity_key=?
+                     AND event_type='PR_OPEN'
+                     AND COALESCE(
+                       json_extract(
+                         CASE WHEN json_valid(payload_json)=1
+                              THEN payload_json ELSE '{}'
+                         END,
+                         '$.prUrl'
+                       ),
+                       dedupe_key
+                     )=?""",
+                (str(row["key"]), pr_url),
+            ).fetchall()
+            claim_intents: set[str] = set()
+            for claim in claim_rows:
+                try:
+                    claim_payload = json.loads(claim["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise LedgerError("publication feedback identity is ambiguous") from exc
+                claim_binding = _resolve_event_intent_binding(
+                    connection,
+                    opportunity_key=str(row["key"]),
+                    payload=claim_payload,
+                )
+                if claim_binding is None:
+                    raise LedgerError("publication feedback identity is ambiguous")
+                claim_intents.add(str(claim_binding["intent_id"]))
+            if claim_intents != {str(row["intent_id"])}:
+                raise LedgerError("publication feedback identity is ambiguous")
             require_quarantine_clear(
                 connection,
                 opportunity_key=str(row["key"]),
@@ -15062,12 +18352,19 @@ class RadarLedger:
                 row["key"],
                 "THREAD_PUBLICATION_STATUS_RESERVED",
                 nonce,
-                {"threadId": thread_id, "prUrl": pr_url, "reservationNonce": nonce},
+                {
+                    "intentId": row["intent_id"],
+                    "threadId": thread_id,
+                    "worktreePath": row["worktree_path"],
+                    "prUrl": pr_url,
+                    "reservationNonce": nonce,
+                },
                 now,
             )
         return {
             "key": row["key"],
             "issueUrl": row["issue_url"],
+            "intentId": row["intent_id"],
             "threadId": row["thread_id"],
             "worktreePath": row["worktree_path"],
             "prUrl": pr_url,
@@ -15076,45 +18373,87 @@ class RadarLedger:
             "reservedAt": now,
         }
 
-    def commit_publication_feedback(self, *, thread_id: str, reservation_nonce: str) -> None:
+    def commit_publication_feedback(
+        self,
+        *,
+        thread_id: str,
+        reservation_nonce: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
+    ) -> None:
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
-            row = connection.execute(
-                """SELECT reserved.opportunity_key,
+            rows = connection.execute(
+                f"""SELECT reserved.opportunity_key,i.intent_id,i.worktree_path,
                           json_extract(reserved.payload_json,'$.prUrl') AS pr_url
                    FROM events reserved
                    JOIN intents i ON i.opportunity_key=reserved.opportunity_key
-                     AND i.thread_id=?
+                     AND {_intent_event_binding_clause("i", "reserved")}
                    WHERE reserved.event_type='THREAD_PUBLICATION_STATUS_RESERVED'
+                     AND json_extract(reserved.payload_json,'$.threadId')=?
                      AND reserved.dedupe_key=?
                      AND NOT EXISTS (
                        SELECT 1 FROM events sent
                        WHERE sent.opportunity_key=reserved.opportunity_key
                          AND sent.event_type='THREAD_PUBLICATION_STATUS_SENT'
                          AND sent.dedupe_key=json_extract(reserved.payload_json,'$.prUrl')
+                         AND {_intent_event_binding_clause("i", "sent")}
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=reserved.opportunity_key
                          AND abandoned.event_type='THREAD_PUBLICATION_STATUS_ABANDONED'
                          AND abandoned.dedupe_key=reserved.dedupe_key
+                         AND {_intent_event_binding_clause("i", "abandoned")}
                      )
-                   LIMIT 1""",
+                   ORDER BY reserved.id DESC""",
                 (thread_id, reservation_nonce),
-            ).fetchone()
+            ).fetchall()
+            if intent_id:
+                rows = [row for row in rows if str(row["intent_id"] or "") == str(intent_id)]
+            if worktree_path:
+                rows = [
+                    row
+                    for row in rows
+                    if row["worktree_path"]
+                    and _resolved_path_equal(str(row["worktree_path"]), str(worktree_path))
+                ]
+            if len(rows) > 1:
+                raise LedgerError("publication feedback reservation is ambiguous")
+            row = rows[0] if rows else None
             if row is None:
-                sent = connection.execute(
-                    """SELECT 1 FROM events reserved JOIN events sent
+                sent_rows = connection.execute(
+                    f"""SELECT i.intent_id,i.worktree_path
+                       FROM events reserved
+                       JOIN events sent
                        ON sent.opportunity_key=reserved.opportunity_key
                       AND sent.event_type='THREAD_PUBLICATION_STATUS_SENT'
                       AND sent.dedupe_key=json_extract(reserved.payload_json,'$.prUrl')
+                       JOIN intents i ON i.opportunity_key=reserved.opportunity_key
+                        AND {_intent_event_binding_clause("i", "reserved")}
+                        AND {_intent_event_binding_clause("i", "sent")}
                        WHERE reserved.event_type='THREAD_PUBLICATION_STATUS_RESERVED'
                          AND json_extract(reserved.payload_json,'$.threadId')=?
                          AND reserved.dedupe_key=?
-                       LIMIT 1""",
+                       ORDER BY sent.id DESC""",
                     (thread_id, reservation_nonce),
-                ).fetchone()
-                if sent:
+                ).fetchall()
+                if intent_id:
+                    sent_rows = [
+                        value
+                        for value in sent_rows
+                        if str(value["intent_id"] or "") == str(intent_id)
+                    ]
+                if worktree_path:
+                    sent_rows = [
+                        value
+                        for value in sent_rows
+                        if value["worktree_path"]
+                        and _resolved_path_equal(str(value["worktree_path"]), str(worktree_path))
+                    ]
+                if len(sent_rows) > 1:
+                    raise LedgerError("publication feedback reservation is ambiguous")
+                if sent_rows:
                     return
                 raise LedgerError("publication feedback reservation is unavailable")
             self._event(
@@ -15123,7 +18462,9 @@ class RadarLedger:
                 "THREAD_PUBLICATION_STATUS_SENT",
                 row["pr_url"],
                 {
+                    "intentId": row["intent_id"],
                     "threadId": thread_id,
+                    "worktreePath": row["worktree_path"],
                     "prUrl": row["pr_url"],
                     "reservationNonce": reservation_nonce,
                 },
@@ -15137,32 +18478,49 @@ class RadarLedger:
         reservation_nonce: str,
         reason: str,
         min_age_minutes: int = 1,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> None:
         now_dt = datetime.now(UTC)
         now = iso_z(now_dt)
         with self.transaction() as connection:
-            row = connection.execute(
-                """SELECT reserved.opportunity_key,reserved.created_at
+            rows = connection.execute(
+                f"""SELECT reserved.opportunity_key,i.intent_id,i.worktree_path,reserved.created_at
                    FROM events reserved
                    JOIN intents i ON i.opportunity_key=reserved.opportunity_key
-                     AND i.thread_id=?
+                     AND {_intent_event_binding_clause("i", "reserved")}
                    WHERE reserved.event_type='THREAD_PUBLICATION_STATUS_RESERVED'
+                     AND json_extract(reserved.payload_json,'$.threadId')=?
                      AND reserved.dedupe_key=?
                      AND NOT EXISTS (
                        SELECT 1 FROM events sent
                        WHERE sent.opportunity_key=reserved.opportunity_key
                          AND sent.event_type='THREAD_PUBLICATION_STATUS_SENT'
                          AND sent.dedupe_key=json_extract(reserved.payload_json,'$.prUrl')
+                         AND {_intent_event_binding_clause("i", "sent")}
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events abandoned
                        WHERE abandoned.opportunity_key=reserved.opportunity_key
                          AND abandoned.event_type='THREAD_PUBLICATION_STATUS_ABANDONED'
                          AND abandoned.dedupe_key=reserved.dedupe_key
+                         AND {_intent_event_binding_clause("i", "abandoned")}
                      )
-                   LIMIT 1""",
+                   ORDER BY reserved.id DESC""",
                 (thread_id, reservation_nonce),
-            ).fetchone()
+            ).fetchall()
+            if intent_id:
+                rows = [row for row in rows if str(row["intent_id"] or "") == str(intent_id)]
+            if worktree_path:
+                rows = [
+                    row
+                    for row in rows
+                    if row["worktree_path"]
+                    and _resolved_path_equal(str(row["worktree_path"]), str(worktree_path))
+                ]
+            if len(rows) > 1:
+                raise LedgerError("publication feedback reservation is ambiguous")
+            row = rows[0] if rows else None
             if row is None:
                 raise LedgerError("publication feedback reservation is unavailable")
             if parse_time(str(row["created_at"])) + timedelta(minutes=min_age_minutes) > now_dt:
@@ -15173,7 +18531,9 @@ class RadarLedger:
                 "THREAD_PUBLICATION_STATUS_ABANDONED",
                 reservation_nonce,
                 {
+                    "intentId": row["intent_id"],
                     "threadId": thread_id,
+                    "worktreePath": row["worktree_path"],
                     "reservationNonce": reservation_nonce,
                     "reason": reason,
                 },
@@ -15186,16 +18546,51 @@ class RadarLedger:
         thread_id: str,
         pr_url: str,
         reason: str | None = None,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> None:
         """Record that the existing final task reply already contains the exact PR URL."""
+        if not isinstance(thread_id, str) or not thread_id:
+            raise LedgerError("publication feedback thread identity is invalid")
+        if intent_id is not None and (not isinstance(intent_id, str) or not intent_id):
+            raise LedgerError("publication feedback intent identity is invalid")
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
-            row = connection.execute(
-                """SELECT opened.opportunity_key
+            rows = connection.execute(
+                f"""SELECT opened.opportunity_key
+                          ,i.intent_id,i.thread_id,i.worktree_path
                    FROM events opened
                    JOIN intents i ON i.opportunity_key=opened.opportunity_key
-                     AND i.thread_id=?
+                     AND (
+                       {_intent_event_binding_clause("i", "opened")}
+                       OR (
+                         i.thread_id=? AND i.worktree_path IS NOT NULL
+                         AND json_valid(opened.payload_json)=1
+                         AND json_extract(opened.payload_json,'$.intentId') IS NULL
+                         AND json_extract(opened.payload_json,'$.threadId') IS NULL
+                         AND json_extract(opened.payload_json,'$.worktreePath') IS NULL
+                         AND NOT EXISTS (
+                           SELECT 1 FROM intents other
+                           WHERE other.opportunity_key=opened.opportunity_key
+                             AND other.intent_id<>i.intent_id
+                             AND other.thread_id=i.thread_id
+                             AND other.worktree_path IS NOT NULL
+                         )
+                       )
+                     )
                    WHERE opened.event_type='PR_OPEN'
+                     AND (
+                       json_extract(
+                         CASE WHEN json_valid(opened.payload_json)
+                              THEN opened.payload_json ELSE '{{}}' END,
+                         '$.threadId'
+                       )=?
+                       OR json_extract(
+                         CASE WHEN json_valid(opened.payload_json)
+                              THEN opened.payload_json ELSE '{{}}' END,
+                         '$.threadId'
+                       ) IS NULL
+                     )
                      AND COALESCE(
                        json_extract(opened.payload_json,'$.prUrl'),opened.dedupe_key
                      )=?
@@ -15203,11 +18598,26 @@ class RadarLedger:
                        SELECT 1 FROM events sent
                        WHERE sent.opportunity_key=opened.opportunity_key
                          AND sent.event_type='THREAD_PUBLICATION_STATUS_SENT'
-                         AND sent.dedupe_key=opened.dedupe_key
+                         AND sent.dedupe_key=COALESCE(
+                           json_extract(opened.payload_json,'$.prUrl'),opened.dedupe_key
+                         )
+                         AND {_intent_event_binding_clause("i", "sent")}
                      )
-                   LIMIT 1""",
-                (thread_id, pr_url),
-            ).fetchone()
+                   ORDER BY opened.id DESC""",
+                (thread_id, thread_id, pr_url),
+            ).fetchall()
+            if intent_id is not None:
+                rows = [row for row in rows if str(row["intent_id"] or "") == intent_id]
+            if worktree_path is not None:
+                rows = [
+                    row
+                    for row in rows
+                    if row["worktree_path"] is not None
+                    and _resolved_path_equal(str(row["worktree_path"]), worktree_path)
+                ]
+            if len(rows) > 1:
+                raise LedgerError("publication feedback binding is ambiguous")
+            row = rows[0] if rows else None
             if row is None:
                 return
             self._event(
@@ -15216,7 +18626,9 @@ class RadarLedger:
                 "THREAD_PUBLICATION_STATUS_SENT",
                 pr_url,
                 {
+                    "intentId": row["intent_id"],
                     "threadId": thread_id,
+                    "worktreePath": row["worktree_path"],
                     "prUrl": pr_url,
                     "reconciledExistingReply": reason is None,
                     "reason": reason,
@@ -15252,11 +18664,12 @@ class RadarLedger:
             if permit["status"] == "EXPIRED" and effect["status"] != "RECONCILE_REQUIRED":
                 raise LedgerError("expired permit can only reconcile an ambiguous effect")
             request = connection.execute(
-                "SELECT opportunity_key FROM publication_requests WHERE request_id=?",
+                "SELECT * FROM publication_requests WHERE request_id=?",
                 (permit["request_id"],),
             ).fetchone()
             if request is None:
                 raise LedgerError("publication request is missing")
+            request_binding, _ = _resolve_publication_request_binding(connection, request)
             require_quarantine_clear(
                 connection,
                 opportunity_key=str(request["opportunity_key"]),
@@ -15287,15 +18700,21 @@ class RadarLedger:
                     (now, request["opportunity_key"]),
                 )
                 connection.execute(
-                    "UPDATE intents SET status='COMPLETED',updated_at=? WHERE opportunity_key=?",
-                    (now, request["opportunity_key"]),
+                    "UPDATE intents SET status='COMPLETED',updated_at=? WHERE intent_id=?",
+                    (now, request_binding["intent_id"]),
                 )
                 self._event(
                     connection,
                     request["opportunity_key"],
                     "PR_OPEN",
                     pr_url,
-                    {"permitId": permit_id, "prUrl": pr_url},
+                    {
+                        "permitId": permit_id,
+                        "prUrl": pr_url,
+                        "intentId": request_binding["intent_id"],
+                        "threadId": request_binding["thread_id"],
+                        "worktreePath": request_binding["worktree_path"],
+                    },
                     now,
                 )
                 self._retire_pr_followup_snapshot_after_publication(
@@ -15307,9 +18726,13 @@ class RadarLedger:
         with self.connect() as connection:
             rows = connection.execute(
                 f"""SELECT o.key,o.stage,o.updated_at,o.issue_url,i.thread_id,i.worktree_path,
-                          i.title_synced_state
+                          i.intent_id,i.title_synced_state
                    FROM opportunities o JOIN intents i ON i.opportunity_key=o.key
                    WHERE o.stage='AUDIT_NO_GO' AND i.thread_id IS NOT NULL
+                     AND i.rowid=(
+                       SELECT MAX(current.rowid) FROM intents current
+                       WHERE current.opportunity_key=o.key
+                     )
                      {title_clause}
                      AND COALESCE((
                        SELECT lifecycle.event_type FROM events lifecycle
@@ -15324,12 +18747,14 @@ class RadarLedger:
             {
                 "key": row["key"],
                 "issueUrl": row["issue_url"],
+                "intentId": row["intent_id"],
                 "threadId": row["thread_id"],
                 "worktreePath": row["worktree_path"],
                 "stage": row["stage"],
                 "titleSyncedState": row["title_synced_state"],
                 "cleanupNonce": sha256_text(
-                    f"{row['key']}|{row['thread_id']}|{row['stage']}|{row['updated_at']}"
+                    f"{row['key']}|{row['intent_id']}|{row['thread_id']}|"
+                    f"{row['worktree_path']}|{row['stage']}|{row['updated_at']}"
                 ),
             }
             for row in rows
@@ -15343,17 +18768,51 @@ class RadarLedger:
 
         return self._cleanup_candidates(require_title_sync=False)
 
-    def commit_cleanup(self, *, thread_id: str, nonce: str) -> None:
-        candidates = {item["threadId"]: item for item in self.cleanup_candidates()}
-        candidate = candidates.get(thread_id)
-        if not candidate or candidate["cleanupNonce"] != nonce:
+    def commit_cleanup(
+        self,
+        *,
+        thread_id: str,
+        nonce: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
+    ) -> None:
+        candidates = [
+            item
+            for item in self.cleanup_candidates()
+            if item["threadId"] == thread_id
+            and item["cleanupNonce"] == nonce
+            and (intent_id is None or item.get("intentId") == intent_id)
+            and (
+                worktree_path is None
+                or _resolved_path_equal(str(item.get("worktreePath") or ""), worktree_path)
+            )
+        ]
+        candidate = candidates[0] if len(candidates) == 1 else None
+        if candidate is None:
             raise LedgerError("cleanup authorization is stale or invalid")
         self._commit_cleanup_candidate(candidate, nonce=nonce)
 
-    def commit_reconciled_cleanup(self, *, thread_id: str, nonce: str) -> None:
-        candidates = {item["threadId"]: item for item in self.cleanup_reconciliation_candidates()}
-        candidate = candidates.get(thread_id)
-        if not candidate or candidate["cleanupNonce"] != nonce:
+    def commit_reconciled_cleanup(
+        self,
+        *,
+        thread_id: str,
+        nonce: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
+    ) -> None:
+        candidates = [
+            item
+            for item in self.cleanup_reconciliation_candidates()
+            if item["threadId"] == thread_id
+            and item["cleanupNonce"] == nonce
+            and (intent_id is None or item.get("intentId") == intent_id)
+            and (
+                worktree_path is None
+                or _resolved_path_equal(str(item.get("worktreePath") or ""), worktree_path)
+            )
+        ]
+        candidate = candidates[0] if len(candidates) == 1 else None
+        if candidate is None:
             raise LedgerError("cleanup reconciliation authorization is stale or invalid")
         self._commit_cleanup_candidate(candidate, nonce=nonce)
 
@@ -15365,7 +18824,12 @@ class RadarLedger:
                 candidate["key"],
                 "THREAD_ARCHIVED",
                 nonce,
-                {"threadId": candidate["threadId"], "cleanupNonce": nonce},
+                {
+                    "intentId": candidate.get("intentId"),
+                    "threadId": candidate["threadId"],
+                    "worktreePath": candidate.get("worktreePath"),
+                    "cleanupNonce": nonce,
+                },
                 now,
             )
 
@@ -15382,8 +18846,16 @@ class RadarLedger:
         snapshot_digest: str | None = None,
         worktree_input_path: str | None = None,
         worktree_input_digest: str | None = None,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> dict[str, Any]:
         """Atomically bind a reserved turn to the current quarantine-free state."""
+
+        # The bridge carries the immutable task identity whenever it is
+        # available.  Keep both arguments optional for legacy callers and
+        # normalize them once for the fail-closed checks below.
+        intent_id = str(intent_id) if intent_id else None
+        worktree_path = str(worktree_path) if worktree_path else None
 
         selectors = {
             "implementation-followup": (
@@ -15413,6 +18885,10 @@ class RadarLedger:
             raise LedgerError("unsupported task-turn delivery kind")
         now = iso_z(datetime.now(UTC))
         idempotency_key = f"task-turn-start:{delivery_kind}:{thread_id}:{delivery_token}"
+        if intent_id:
+            idempotency_key += f":intent:{intent_id}"
+        if worktree_path:
+            idempotency_key += f":worktree:{sha256_text(worktree_path)}"
         if delivery_kind == "implementation-followup":
             if not delivery_attempt_digest:
                 delivery_attempt_digest = delivery_token
@@ -15438,64 +18914,247 @@ class RadarLedger:
             ):
                 raise LedgerError("validation task-turn worktree input binding is invalid")
             idempotency_key += f":{reservation_digest}"
+
+        def select_bound_row(
+            connection: sqlite3.Connection,
+            rows: list[sqlite3.Row],
+            *,
+            ambiguity_message: str,
+            eligible=None,
+        ) -> tuple[sqlite3.Row, sqlite3.Row] | None:
+            """Resolve every candidate before choosing a task reservation.
+
+            The previous newest-first lookup let a replacement task hide an
+            older valid reservation whenever they shared a thread or digest.
+            Resolve all rows to immutable identities first; only rows that
+            collapse to one exact identity may be selected.
+            """
+
+            resolved: list[tuple[sqlite3.Row, sqlite3.Row]] = []
+            for candidate_row in rows:
+                try:
+                    payload = json.loads(candidate_row["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                binding_row = _resolve_event_intent_binding(
+                    connection,
+                    opportunity_key=str(candidate_row["opportunity_key"]),
+                    payload=payload,
+                )
+                if binding_row is None:
+                    continue
+                if str(binding_row["thread_id"] or "") != thread_id:
+                    continue
+                if intent_id and str(binding_row["intent_id"] or "") != intent_id:
+                    continue
+                if worktree_path and not _resolved_path_equal(
+                    str(binding_row["worktree_path"] or ""), worktree_path
+                ):
+                    continue
+                if eligible is not None and not eligible(candidate_row, binding_row):
+                    continue
+                resolved.append((candidate_row, binding_row))
+            if not resolved:
+                return None
+            identities = {
+                (
+                    str(binding["intent_id"]),
+                    str(binding["thread_id"]),
+                    str(binding["worktree_path"]),
+                )
+                for _row, binding in resolved
+            }
+            if len(identities) > 1:
+                raise LedgerError(ambiguity_message)
+            return resolved[0]
+
+        def bound_event_exists(
+            connection: sqlite3.Connection,
+            *,
+            opportunity_key: str,
+            event_type: str,
+            binding: sqlite3.Row,
+            dedupe_key: str | None = None,
+            after_id: int | None = None,
+            payload_field: str | None = None,
+            payload_value: str | None = None,
+        ) -> bool:
+            """Check a lifecycle event only after resolving its identity."""
+
+            clauses = ["opportunity_key=?", "event_type=?"]
+            params: list[Any] = [opportunity_key, event_type]
+            if dedupe_key is not None:
+                clauses.append("dedupe_key=?")
+                params.append(dedupe_key)
+            if after_id is not None:
+                clauses.append("id>?")
+                params.append(after_id)
+            rows = connection.execute(
+                f"SELECT id,payload_json FROM events WHERE {' AND '.join(clauses)} ORDER BY id DESC",
+                tuple(params),
+            ).fetchall()
+            for event_row in rows:
+                try:
+                    payload = json.loads(event_row["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if payload_field is not None and payload.get(payload_field) != payload_value:
+                    continue
+                event_binding = _resolve_event_intent_binding(
+                    connection,
+                    opportunity_key=opportunity_key,
+                    payload=payload,
+                )
+                if event_binding is None:
+                    continue
+                if str(event_binding["intent_id"]) != str(binding["intent_id"]):
+                    continue
+                if str(event_binding["thread_id"]) != str(binding["thread_id"]):
+                    continue
+                if not _resolved_path_equal(
+                    str(event_binding["worktree_path"]), str(binding["worktree_path"])
+                ):
+                    continue
+                return True
+            return False
+
         with self.transaction() as connection:
             if delivery_kind == "implementation-followup":
-                row = connection.execute(
-                    """SELECT r.opportunity_key,r.payload_json,r.dedupe_key
+                rows = connection.execute(
+                    """SELECT r.id,r.opportunity_key,r.payload_json,r.dedupe_key
                        FROM events r
                        WHERE r.event_type='IMPLEMENTATION_FOLLOWUP_RESERVED'
                          AND json_extract(r.payload_json,'$.threadId')=?
                          AND (r.dedupe_key=? OR json_extract(r.payload_json,'$.resultDigest')=?)
-                         AND NOT EXISTS (
-                           SELECT 1 FROM events sent
-                           WHERE sent.opportunity_key=r.opportunity_key
-                             AND sent.event_type='IMPLEMENTATION_FOLLOWUP_SENT'
-                             AND sent.dedupe_key=r.dedupe_key
-                         )
-                       ORDER BY r.id DESC LIMIT 1""",
+                       ORDER BY r.id DESC""",
                     (thread_id, delivery_token, delivery_token),
-                ).fetchone()
-                if row is not None and row["dedupe_key"] != delivery_attempt_digest:
-                    raise LedgerError("implementation task-turn attempt binding mismatch")
+                ).fetchall()
+                rows = [
+                    candidate_row
+                    for candidate_row in rows
+                    if candidate_row["dedupe_key"] == delivery_attempt_digest
+                ]
+                selected = select_bound_row(
+                    connection,
+                    rows,
+                    ambiguity_message="task-turn delivery reservation is ambiguous",
+                    eligible=lambda candidate_row, binding: (
+                        not bound_event_exists(
+                            connection,
+                            opportunity_key=str(candidate_row["opportunity_key"]),
+                            event_type="IMPLEMENTATION_FOLLOWUP_SENT",
+                            binding=binding,
+                            dedupe_key=str(candidate_row["dedupe_key"]),
+                        )
+                    ),
+                )
+                row, resolved_binding = selected if selected is not None else (None, None)
             elif delivery_kind == "validation-followup":
-                row = connection.execute(
-                    """SELECT r.id,r.opportunity_key,r.payload_json
+                rows = connection.execute(
+                    """SELECT r.id,r.opportunity_key,r.payload_json,r.dedupe_key
                        FROM events r
                        WHERE r.event_type='VALIDATION_FOLLOWUP_RESERVED'
                          AND json_extract(r.payload_json,'$.threadId')=?
                          AND json_extract(r.payload_json,'$.resultDigest')=?
                          AND json_extract(r.payload_json,'$.reservationDigest')=?
-                         AND r.id=(
-                           SELECT MAX(latest.id) FROM events latest
-                           WHERE latest.opportunity_key=r.opportunity_key
-                             AND latest.event_type='VALIDATION_FOLLOWUP_RESERVED'
-                         )
-                         AND NOT EXISTS (
-                           SELECT 1 FROM events sent
-                           WHERE sent.opportunity_key=r.opportunity_key
-                             AND sent.event_type='VALIDATION_FOLLOWUP_SENT'
-                             AND sent.dedupe_key=json_extract(r.payload_json,'$.resultDigest')
-                         )
-                         AND NOT EXISTS (
-                           SELECT 1 FROM events cancelled
-                           WHERE cancelled.opportunity_key=r.opportunity_key
-                             AND cancelled.event_type='VALIDATION_FOLLOWUP_RESERVATION_CANCELLED'
-                             AND json_extract(cancelled.payload_json,'$.reservationDigest')=?
-                             AND cancelled.id>r.id
-                         )
-                       ORDER BY r.id DESC LIMIT 1""",
-                    (thread_id, delivery_token, reservation_digest, reservation_digest),
-                ).fetchone()
+                       ORDER BY r.id DESC""",
+                    (thread_id, delivery_token, reservation_digest),
+                ).fetchall()
+                selected = select_bound_row(
+                    connection,
+                    rows,
+                    ambiguity_message="task-turn delivery reservation is ambiguous",
+                    eligible=lambda candidate_row, binding: (
+                        not bound_event_exists(
+                            connection,
+                            opportunity_key=str(candidate_row["opportunity_key"]),
+                            event_type="VALIDATION_FOLLOWUP_SENT",
+                            binding=binding,
+                            dedupe_key=delivery_token,
+                        )
+                        and not bound_event_exists(
+                            connection,
+                            opportunity_key=str(candidate_row["opportunity_key"]),
+                            event_type="VALIDATION_FOLLOWUP_RESERVATION_CANCELLED",
+                            binding=binding,
+                            after_id=int(candidate_row["id"]),
+                            payload_field="reservationDigest",
+                            payload_value=reservation_digest,
+                        )
+                    ),
+                )
+                row, resolved_binding = selected if selected is not None else (None, None)
             else:
                 event_type, predicate = selector
-                row = connection.execute(
-                    f"""SELECT opportunity_key,payload_json FROM events
+                rows = connection.execute(
+                    f"""SELECT id,opportunity_key,payload_json,dedupe_key FROM events
                         WHERE event_type=? AND {predicate}
-                        ORDER BY id DESC LIMIT 1""",
+                        ORDER BY id DESC""",
                     (event_type, thread_id, delivery_token),
-                ).fetchone()
+                ).fetchall()
+                sent_type = {
+                    "pr-followup": "PR_FOLLOWUP_SENT",
+                    "recovery": "THREAD_RECOVERY_SENT",
+                    "publication-feedback": "THREAD_PUBLICATION_STATUS_SENT",
+                }.get(delivery_kind)
+
+                def sent_dedupe(candidate_row: sqlite3.Row) -> str | None:
+                    if delivery_kind != "publication-feedback":
+                        return str(candidate_row["dedupe_key"])
+                    try:
+                        payload = json.loads(candidate_row["payload_json"] or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        return None
+                    value = payload.get("prUrl") if isinstance(payload, dict) else None
+                    return str(value) if value else None
+
+                selected = select_bound_row(
+                    connection,
+                    rows,
+                    ambiguity_message="task-turn delivery reservation is ambiguous",
+                    eligible=(
+                        lambda candidate_row, binding: (
+                            not bound_event_exists(
+                                connection,
+                                opportunity_key=str(candidate_row["opportunity_key"]),
+                                event_type=str(sent_type),
+                                binding=binding,
+                                dedupe_key=sent_dedupe(candidate_row),
+                            )
+                            if sent_type
+                            else True
+                        )
+                    ),
+                )
+                row, resolved_binding = selected if selected is not None else (None, None)
             if row is None:
                 raise LedgerError("task-turn delivery reservation is unavailable")
+
+            # Resolve the reservation payload to one immutable intent before
+            # starting a user-visible turn.  Without this check, a historical
+            # event sharing a thread/token could silently bind to whichever
+            # row happened to be newest.  Legacy payloads remain usable only
+            # when the resolver can prove a unique thread/worktree binding.
+            try:
+                reservation_payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise LedgerError("task-turn delivery reservation binding is invalid") from exc
+            if resolved_binding is None:
+                resolved_binding = _resolve_event_intent_binding(
+                    connection,
+                    opportunity_key=str(row["opportunity_key"]),
+                    payload=reservation_payload,
+                )
+            if resolved_binding is None:
+                raise LedgerError("task-turn delivery reservation binding is ambiguous")
+            if str(resolved_binding["thread_id"] or "") != str(thread_id):
+                raise LedgerError("task-turn delivery thread binding mismatch")
+            if intent_id and str(resolved_binding["intent_id"] or "") != intent_id:
+                raise LedgerError("task-turn delivery intent binding mismatch")
+            if worktree_path and not _resolved_path_equal(
+                str(resolved_binding["worktree_path"] or ""), worktree_path
+            ):
+                raise LedgerError("task-turn delivery worktree binding mismatch")
             require_quarantine_clear(
                 connection,
                 opportunity_key=str(row["opportunity_key"]),
@@ -15505,6 +19164,11 @@ class RadarLedger:
                 "deliveryKind": delivery_kind,
                 "threadId": thread_id,
                 "deliveryToken": delivery_token,
+                # Persist the resolver's result even when a legacy caller did
+                # not supply identity explicitly.  This prevents a later
+                # rollover from inheriting an old idempotency record.
+                "intentId": str(resolved_binding["intent_id"]),
+                "worktreePath": str(resolved_binding["worktree_path"]),
             }
             if delivery_kind == "implementation-followup":
                 binding["deliveryAttemptDigest"] = delivery_attempt_digest
@@ -15528,7 +19192,14 @@ class RadarLedger:
             ).fetchone()
             if existing is not None:
                 payload = json.loads(existing["payload_json"])
-                if any(payload.get(key) != value for key, value in binding.items()):
+                if any(
+                    key not in {"intentId", "worktreePath"} and payload.get(key) != value
+                    for key, value in binding.items()
+                ) or any(
+                    key in payload and payload.get(key) != value
+                    for key, value in binding.items()
+                    if key in {"intentId", "worktreePath"}
+                ):
                     raise LedgerError("task-turn delivery binding mismatch")
                 return {
                     "opportunityKey": str(row["opportunity_key"]),
@@ -15553,21 +19224,38 @@ class RadarLedger:
         thread_id: str,
         result_digest: str,
         reservation_digest: str,
+        intent_id: str | None = None,
+        worktree_path: str | None = None,
     ) -> dict[str, Any] | None:
         with self.connect() as connection:
-            row = connection.execute(
+            rows = connection.execute(
                 """SELECT payload_json FROM events
                    WHERE event_type='TASK_TURN_DELIVERY_STARTED'
                      AND json_extract(payload_json,'$.deliveryKind')='validation-followup'
                      AND json_extract(payload_json,'$.threadId')=?
                      AND json_extract(payload_json,'$.resultDigest')=?
                      AND json_extract(payload_json,'$.reservationDigest')=?
-                   ORDER BY id DESC LIMIT 1""",
+                   ORDER BY id DESC""",
                 (thread_id, result_digest, reservation_digest),
-            ).fetchone()
-        if row is None:
+            ).fetchall()
+        matches: list[sqlite3.Row] = []
+        for row in rows:
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if intent_id and str(payload.get("intentId") or "") != str(intent_id):
+                continue
+            if worktree_path and not payload.get("worktreePath"):
+                continue
+            if worktree_path and not _resolved_path_equal(
+                str(payload.get("worktreePath")), str(worktree_path)
+            ):
+                continue
+            matches.append(row)
+        if len(matches) != 1:
             return None
-        payload = json.loads(row["payload_json"])
+        payload = json.loads(matches[0]["payload_json"])
         return {
             key: payload.get(key)
             for key in (
@@ -15590,6 +19278,19 @@ class RadarLedger:
         payload: dict[str, Any],
         created_at: str,
     ) -> None:
+        if event_type in _IDENTITY_GUARDED_EVENT_TYPES:
+            existing = connection.execute(
+                """SELECT payload_json FROM events
+                   WHERE opportunity_key=? AND event_type=? AND dedupe_key=?""",
+                (key, event_type, dedupe_key),
+            ).fetchone()
+            if existing is not None:
+                try:
+                    existing_payload = json.loads(existing["payload_json"] or "{}")
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise LedgerError("event binding payload is invalid") from exc
+                if _event_identity_conflicts(existing_payload, payload):
+                    raise LedgerError("event dedupe binding mismatch")
         connection.execute(
             """INSERT OR IGNORE INTO events
                (opportunity_key,event_type,dedupe_key,payload_json,created_at)

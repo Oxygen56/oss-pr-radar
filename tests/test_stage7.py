@@ -7,6 +7,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from oss_pr_radar.automation_snapshot import (
     canonical_prompt,
 )
 from oss_pr_radar.daily_war_room import run_daily_cycle
+from oss_pr_radar.ledger import RadarLedger
 from oss_pr_radar.local_publication import slow_advance_once, worker_specs
 from oss_pr_radar.managed_lifecycle import ManagedLedger
 from oss_pr_radar.managed_security import sign_current
@@ -35,6 +37,7 @@ from oss_pr_radar.operational_auth import (
     reset_expired_worker_staging,
     staged_worker_receipt_path,
     verify_operational_authorization,
+    verify_staged_worker_receipt,
     worker_spec_digest,
 )
 from oss_pr_radar.outbound_pause import OUTBOUND_PAUSE_FILENAME, OUTBOUND_PAUSE_SCHEMA
@@ -576,6 +579,58 @@ def _signed_staging_fixture(tmp_path: Path) -> tuple[Path, Path, list[dict[str, 
     )
 
 
+def test_authorization_status_is_read_only_without_authorization(tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    ledger_path = runtime / "state" / "radar_ledger.sqlite3"
+    RadarLedger(ledger_path).enqueue(
+        {
+            "intentId": "intent-pending",
+            "key": "a/b#1",
+            "repo": "a/b",
+            "issueNumber": 1,
+            "issueUrl": "https://github.com/a/b/issues/1",
+            "issueUpdatedAt": iso_z(utc_now()),
+            "policyDigest": "policy",
+            "title": "Pending task",
+            "mode": "canary",
+            "score": 1,
+            "snapshotId": "snapshot",
+            "decisionDigest": "decision",
+            "issuedAt": iso_z(utc_now()),
+            "expiresAt": iso_z(utc_now() + timedelta(hours=1)),
+        }
+    )
+
+    def snapshot() -> dict[str, tuple[str, object]]:
+        values: dict[str, tuple[str, object]] = {}
+        for path in runtime.rglob("*"):
+            relative = str(path.relative_to(runtime))
+            # SQLite may refresh its WAL shared-memory sidecar while opening
+            # a database read-only; the durable ledger and auth files must
+            # remain byte-for-byte unchanged.
+            if relative.endswith(("-shm", "-wal")):
+                continue
+            if path.is_symlink():
+                values[relative] = ("symlink", str(path.readlink()))
+            elif path.is_file():
+                values[relative] = ("file", path.read_bytes())
+            else:
+                values[relative] = ("directory", "")
+        return values
+
+    before = snapshot()
+    result = operational_auth_module.read_operational_authorization_status(runtime)
+    after = snapshot()
+
+    assert result["ok"] is True
+    assert result["readOnly"] is True
+    assert result["authorization"] == {"present": False, "state": "MISSING"}
+    assert result["blockedReason"] == "OPERATIONAL_AUTHORIZATION_MISSING"
+    assert result["pending"]["pendingIntents"] == 1
+    assert result["release"]["bound"] is True
+    assert before == after
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -671,6 +726,179 @@ def _consume_signed_staging_fixture(
         specs=specs,
         worker_records=records,
     )
+
+
+def test_expired_receipt_rejected_even_when_worker_observations_are_fresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The staging permit, not a recent worker observation, controls validity."""
+
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "receipt-expiry-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime, home, specs, token_path = _signed_staging_fixture(tmp_path)
+    receipt = _consume_signed_staging_fixture(runtime, home, specs)
+    receipt_path = staged_worker_receipt_path(runtime)
+    expired_issued = utc_now() - timedelta(minutes=4)
+    expired_staged = utc_now() - timedelta(minutes=3)
+    expired_at = utc_now() - timedelta(seconds=1)
+    expired = dict(receipt)
+    expired.update(
+        {
+            "stagingIssuedAt": iso_z(expired_issued),
+            "stagingExpiresAt": iso_z(expired_at),
+            "stagedAt": iso_z(expired_staged),
+            "workers": [
+                {
+                    **item,
+                    "observedAt": iso_z(expired_staged - timedelta(seconds=1)),
+                }
+                for item in receipt["workers"]
+            ],
+        }
+    )
+    observation_cutoff = utc_now() - timedelta(minutes=10)
+    assert all(
+        datetime.fromisoformat(str(item["observedAt"]).replace("Z", "+00:00")) >= observation_cutoff
+        for item in expired["workers"]
+    )
+    unsigned = {key: value for key, value in expired.items() if key not in {"keyId", "signature"}}
+    receipt_path.write_text(
+        json.dumps(
+            {
+                **unsigned,
+                **sign_current(
+                    unsigned, context=operational_auth_module.STAGED_WORKER_RECEIPT_CONTEXT
+                ),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    receipt_path.chmod(0o600)
+    # Keep the consumed staging record's timestamps aligned with the receipt;
+    # the expiry check must be the reason for rejection, not a binding mismatch.
+    token = json.loads(token_path.read_text(encoding="utf-8"))
+    token.update({"issuedAt": iso_z(expired_issued), "expiresAt": iso_z(expired_at)})
+    token_unsigned = {
+        key: value for key, value in token.items() if key not in {"keyId", "signature"}
+    }
+    token_path.write_text(
+        json.dumps(
+            {
+                **token_unsigned,
+                **sign_current(
+                    token_unsigned, context=operational_auth_module.WORKER_STAGING_AUTH_CONTEXT
+                ),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    token_path.chmod(0o600)
+
+    reports = [
+        {
+            "label": str(spec["Label"]),
+            "loaded": False,
+            "actualConfigMatch": True,
+        }
+        for spec in specs
+    ]
+    assert (
+        verify_staged_worker_receipt(
+            runtime,
+            specs=specs,
+            worker_reports=reports,
+            home=home,
+        )
+        is False
+    )
+
+    # Exercise the same rejection at the operational-authorization entrypoint
+    # without duplicating the large strict-preflight fixture.
+    monkeypatch.setattr(operational_auth_module, "_preflight_requirements", lambda _value: None)
+    with pytest.raises(RuntimeError, match="staging authorization is expired"):
+        operational_auth_module._issue_operational_authorization_unlocked(
+            runtime,
+            preflight={},
+            managed_counts_evidence=Path(
+                str(json.loads(token_path.read_text())["managedCountsEvidencePath"])
+            ),
+            automation_snapshot=tmp_path / "automation.json",
+        )
+
+
+def test_expired_receipt_cannot_be_finalized_into_active_authorization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "receipt-finalize-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime, home, specs, token_path = _signed_staging_fixture(tmp_path)
+    receipt = _consume_signed_staging_fixture(runtime, home, specs)
+    ledger = operational_auth_module._current_ledger_identity(runtime)
+    monkeypatch.setattr(operational_auth_module, "_preflight_requirements", lambda _value: None)
+    auth = operational_auth_module._issue_operational_authorization_unlocked(
+        runtime,
+        preflight={"ledger": ledger, "workerSpecDigest": worker_spec_digest(specs)},
+        managed_counts_evidence=Path(str(receipt["managedCountsEvidencePath"])),
+        automation_snapshot=tmp_path / "unused-automation.json",
+        managed_counts_evidence_sha256=str(receipt["managedCountsEvidenceSha256"]),
+        automation_snapshot_sha256="a" * 64,
+    )
+    assert auth["state"] == "STAGED"
+    assert not token_path.exists()
+    auth_path = authorization_path(runtime)
+    receipt_path = staged_worker_receipt_path(runtime)
+    auth_before = auth_path.read_bytes()
+    receipt_before = receipt_path.read_bytes()
+    expires = datetime.fromisoformat(str(receipt["stagingExpiresAt"]).replace("Z", "+00:00"))
+
+    with pytest.raises(RuntimeError, match="staging authorization is expired"):
+        finalize_operational_authorization(runtime, now=expires + timedelta(seconds=1))
+
+    assert auth_path.read_bytes() == auth_before
+    assert receipt_path.read_bytes() == receipt_before
+    assert json.loads(auth_path.read_text(encoding="utf-8"))["state"] == "STAGED"
+
+
+@pytest.mark.parametrize("field", ["receiptSha256", "initialAuthorizationDigest"])
+def test_consumed_receipt_retry_rejects_cross_transaction_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "receipt-binding-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime, home, specs, token_path = _signed_staging_fixture(tmp_path)
+    _consume_signed_staging_fixture(runtime, home, specs)
+    receipt_path = staged_worker_receipt_path(runtime)
+    token = json.loads(token_path.read_text(encoding="utf-8"))
+    token[field] = "f" * 64
+    unsigned = {key: value for key, value in token.items() if key not in {"keyId", "signature"}}
+    token_path.write_text(
+        json.dumps(
+            {
+                **unsigned,
+                **sign_current(
+                    unsigned,
+                    context=operational_auth_module.WORKER_STAGING_AUTH_CONTEXT,
+                ),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    token_path.chmod(0o600)
+    token_before = token_path.read_bytes()
+    receipt_before = receipt_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="consumed proof mismatch"):
+        consume_worker_staging_authorization(
+            runtime,
+            specs=specs,
+            worker_records=[],
+        )
+
+    assert token_path.read_bytes() == token_before
+    assert receipt_path.read_bytes() == receipt_before
 
 
 def test_expired_worker_staging_reset_preserves_bound_plists_and_allows_reissue(
@@ -942,6 +1170,167 @@ def test_stage7_prepare_activate_and_rollback_only_moves_pointer(tmp_path, monke
     assert first_target.read_bytes() == before
     assert second_target.is_file()
     assert status(runtime)["pointer"]["target"] == str(first_target.relative_to(runtime / "state"))
+
+
+def test_stage7_activate_holds_staging_lock_through_pointer_switch(tmp_path, monkeypatch):
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "stage7-lock-activate-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime = _runtime(tmp_path)
+    source = tmp_path / "source.sqlite3"
+    _source(source, "lock-activate")
+    _bootstrap(runtime, source, tmp_path)
+    prepared = prepare(runtime, source, quiesce_token="writer-stopped")
+    state = runtime / "state"
+    pointer = state / "current-ledger"
+    pointer_before = pointer.resolve()
+    revoke_entered = threading.Event()
+    allow_revoke = threading.Event()
+    pointer_entered = threading.Event()
+    allow_pointer = threading.Event()
+    contender_started = threading.Event()
+    contender_acquired = threading.Event()
+    outcome: list[object] = []
+    original_revoke = cutover_module.revoke_operational_authorization
+    original_fsync = cutover_module._fsync_directory
+
+    def revoke(root: Path, *, _lock_held: bool = False) -> None:
+        assert _lock_held is True
+        revoke_entered.set()
+        if not allow_revoke.wait(timeout=2):
+            raise RuntimeError("test revoke barrier timed out")
+        original_revoke(root, _lock_held=_lock_held)
+
+    def fsync(path: Path) -> None:
+        if path.resolve() == state.resolve() and pointer.resolve() != pointer_before:
+            pointer_entered.set()
+            if not allow_pointer.wait(timeout=2):
+                raise RuntimeError("test pointer barrier timed out")
+        original_fsync(path)
+
+    monkeypatch.setattr(cutover_module, "revoke_operational_authorization", revoke)
+    monkeypatch.setattr(cutover_module, "_fsync_directory", fsync)
+
+    def run_activate() -> None:
+        try:
+            outcome.append(activate(runtime, Path(prepared["manifestPath"])))
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            outcome.append(exc)
+
+    activation_thread = threading.Thread(target=run_activate)
+    activation_thread.start()
+    contender_thread: threading.Thread | None = None
+    try:
+        assert revoke_entered.wait(timeout=2)
+
+        def contend() -> None:
+            contender_started.set()
+            with cutover_module.worker_staging_transaction_lock(runtime):
+                contender_acquired.set()
+
+        contender_thread = threading.Thread(target=contend)
+        contender_thread.start()
+        assert contender_started.wait(timeout=2)
+        assert not contender_acquired.wait(timeout=0.1)
+
+        allow_revoke.set()
+        assert pointer_entered.wait(timeout=2)
+        # The contender must remain blocked while the new ledger pointer is
+        # being committed, proving revoke and pointer switch share one lock.
+        assert not contender_acquired.wait(timeout=0.1)
+        allow_pointer.set()
+    finally:
+        allow_revoke.set()
+        allow_pointer.set()
+        activation_thread.join(timeout=3)
+        if contender_thread is not None:
+            contender_thread.join(timeout=3)
+    assert not activation_thread.is_alive()
+    assert contender_thread is not None and not contender_thread.is_alive()
+    assert outcome and isinstance(outcome[0], dict)
+    assert outcome[0]["phase"] == "ACTIVATED"
+    assert contender_acquired.is_set()
+
+
+def test_stage7_rollback_holds_staging_lock_through_nonce_and_pointer_switch(tmp_path, monkeypatch):
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY", "stage7-lock-rollback-key" * 4)
+    monkeypatch.setenv("RADAR_DISPATCH_HMAC_KEY_ID", "stage7-current")
+    runtime = _runtime(tmp_path)
+    source = tmp_path / "source.sqlite3"
+    _source(source, "lock-rollback-before")
+    _bootstrap(runtime, source, tmp_path)
+    first = prepare(runtime, source, quiesce_token="writer-stopped")
+    activate(runtime, Path(first["manifestPath"]))
+    _source(source, "lock-rollback-after")
+    second = prepare(runtime, source, quiesce_token="writer-stopped")
+    activate(runtime, Path(second["manifestPath"]))
+
+    state = runtime / "state"
+    pointer = state / "current-ledger"
+    pointer_before = pointer.resolve()
+    revoke_entered = threading.Event()
+    allow_revoke = threading.Event()
+    pointer_entered = threading.Event()
+    allow_pointer = threading.Event()
+    contender_started = threading.Event()
+    contender_acquired = threading.Event()
+    outcome: list[object] = []
+    original_revoke = cutover_module.revoke_operational_authorization
+    original_fsync = cutover_module._fsync_directory
+
+    def revoke(root: Path, *, _lock_held: bool = False) -> None:
+        assert _lock_held is True
+        revoke_entered.set()
+        if not allow_revoke.wait(timeout=2):
+            raise RuntimeError("test revoke barrier timed out")
+        original_revoke(root, _lock_held=_lock_held)
+
+    def fsync(path: Path) -> None:
+        if path.resolve() == state.resolve() and pointer.resolve() != pointer_before:
+            pointer_entered.set()
+            if not allow_pointer.wait(timeout=2):
+                raise RuntimeError("test pointer barrier timed out")
+        original_fsync(path)
+
+    monkeypatch.setattr(cutover_module, "revoke_operational_authorization", revoke)
+    monkeypatch.setattr(cutover_module, "_fsync_directory", fsync)
+
+    def run_rollback() -> None:
+        try:
+            outcome.append(rollback(runtime, Path(second["manifestPath"])))
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            outcome.append(exc)
+
+    rollback_thread = threading.Thread(target=run_rollback)
+    rollback_thread.start()
+    contender_thread: threading.Thread | None = None
+    try:
+        assert revoke_entered.wait(timeout=2)
+
+        def contend() -> None:
+            contender_started.set()
+            with cutover_module.worker_staging_transaction_lock(runtime):
+                contender_acquired.set()
+
+        contender_thread = threading.Thread(target=contend)
+        contender_thread.start()
+        assert contender_started.wait(timeout=2)
+        assert not contender_acquired.wait(timeout=0.1)
+
+        allow_revoke.set()
+        assert pointer_entered.wait(timeout=2)
+        assert not contender_acquired.wait(timeout=0.1)
+        allow_pointer.set()
+    finally:
+        allow_revoke.set()
+        allow_pointer.set()
+        rollback_thread.join(timeout=3)
+        if contender_thread is not None:
+            contender_thread.join(timeout=3)
+    assert not rollback_thread.is_alive()
+    assert contender_thread is not None and not contender_thread.is_alive()
+    assert outcome and isinstance(outcome[0], dict)
+    assert outcome[0]["phase"] == "ROLLED_BACK"
+    assert contender_acquired.is_set()
 
 
 def test_stage7_bootstrap_rollback_consumes_nonce_once(tmp_path, monkeypatch):
@@ -1511,6 +1900,7 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
     )
     assert staged_worker_receipt_path(runtime).exists()
     receipt_before_finalize = staged_worker_receipt_path(runtime).read_bytes()
+    authorization_before_finalize = authorization_path(runtime).read_bytes()
     with monkeypatch.context() as context:
         context.setattr(
             operational_auth_module,
@@ -1540,10 +1930,25 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
             "_remove_private_and_fsync",
             lambda _path: (_ for _ in ()).throw(OSError("receipt fsync failure")),
         )
-        with pytest.raises(OSError, match="receipt fsync failure"):
-            finalize_operational_authorization(runtime)
+        activated = finalize_operational_authorization(runtime)
+    assert activated["state"] == "ACTIVE"
     assert staged_worker_receipt_path(runtime).read_bytes() == receipt_before_finalize
-    assert json.loads(authorization_path(runtime).read_text())["state"] == "STAGED"
+    assert json.loads(authorization_path(runtime).read_text())["state"] == "ACTIVE"
+    # A retry must finish cleanup after an ACTIVE commit even though the
+    # prior attempt reported no error, and later retries must remain
+    # idempotent after both staging records are already gone.
+    activated_retry = finalize_operational_authorization(runtime)
+    assert activated_retry["state"] == "ACTIVE"
+    assert not staged_worker_receipt_path(runtime).exists()
+    assert not operational_auth_module.worker_staging_authorization_path(runtime).exists()
+    assert finalize_operational_authorization(runtime)["state"] == "ACTIVE"
+    # Rewind to the original STAGED record so the commit-point failure below
+    # exercises the pre-activation path without changing the rest of this
+    # strict acceptance scenario.
+    authorization_path(runtime).write_bytes(authorization_before_finalize)
+    authorization_path(runtime).chmod(0o600)
+    staged_worker_receipt_path(runtime).write_bytes(receipt_before_finalize)
+    staged_worker_receipt_path(runtime).chmod(0o600)
     with monkeypatch.context() as context:
         context.setattr(
             operational_auth_module,
@@ -1552,10 +1957,8 @@ def test_stage7_strict_acceptance_uses_actual_plists_launchd_and_signed_inputs(
         )
         with pytest.raises(OSError, match="active write failure"):
             finalize_operational_authorization(runtime)
-    assert not staged_worker_receipt_path(runtime).exists()
+    assert staged_worker_receipt_path(runtime).read_bytes() == receipt_before_finalize
     assert json.loads(authorization_path(runtime).read_text())["state"] == "STAGED"
-    staged_worker_receipt_path(runtime).write_bytes(receipt_before_finalize)
-    staged_worker_receipt_path(runtime).chmod(0o600)
 
     def assert_staged_receipt_drift_rejected() -> None:
         assert (
