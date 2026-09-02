@@ -584,6 +584,7 @@ def _intent_bound_audit_rows(
     ).fetchall()
     prefix = f"{intent_id}:"
     bound: list[sqlite3.Row] = []
+    legacy_unbound: list[sqlite3.Row] = []
     for row in rows:
         dedupe_bound = str(row["dedupe_key"] or "").startswith(prefix)
         try:
@@ -609,6 +610,7 @@ def _intent_bound_audit_rows(
                     continue
                 bound.append(row)
                 continue
+            legacy_unbound.append(row)
         if dedupe_bound:
             # Legacy snapshots had no identity fields; their canonical writer
             # encoded the generation in the dedupe prefix.
@@ -618,7 +620,7 @@ def _intent_bound_audit_rows(
     intent_count = connection.execute(
         "SELECT COUNT(*) FROM intents WHERE opportunity_key=?", (opportunity_key,)
     ).fetchone()[0]
-    return list(rows) if int(intent_count) == 1 else []
+    return legacy_unbound if int(intent_count) == 1 else []
 
 
 def bind_dispatched_recovery_prompt(

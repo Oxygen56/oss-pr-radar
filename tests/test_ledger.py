@@ -2614,6 +2614,53 @@ def test_audited_probe_paths_same_digest_still_requires_exact_intent_binding(tmp
         )
 
 
+def test_single_intent_audit_fallback_rejects_foreign_explicit_identity(tmp_path):
+    """Singleton legacy fallback must not trust an explicitly foreign row."""
+
+    base_sha = "a" * 40
+    receipt = repository_path_receipt(base_sha, ["src/shared.py"])
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(
+        intent(
+            selectedBaseSha=base_sha,
+            probeReceiptDigest=receipt["receiptDigest"],
+            codePaths=["src/controller.py"],
+            preTaskEvidence={"baseSha": base_sha, "codePathsPlan": ["src/controller.py"]},
+        )
+    )
+    store.claim("intent-1", "worker-1")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker-1",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree-1",
+    )
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "AUDIT_SNAPSHOT",
+            "foreign-audit",
+            {
+                "intentId": "foreign-intent",
+                "threadId": "foreign-thread",
+                "worktreePath": "/tmp/foreign-worktree",
+                "liveAudit": {"evidence": {"repoProbeReceipt": receipt}},
+            },
+            iso_z(datetime.now(UTC)),
+        )
+
+    with pytest.raises(LedgerError, match="digest is unavailable"):
+        store.audited_probe_code_paths(
+            intent_id="intent-1",
+            issue_url="https://github.com/a/b/issues/1",
+            thread_id="thread-1",
+            worktree_path="/tmp/worktree-1",
+            expected_base_sha=base_sha,
+        )
+
+
 def test_live_audit_binding_reuses_canonical_receipt_across_timestamp_refresh(tmp_path):
     base_sha = "a" * 40
     first_receipt = repository_path_receipt(base_sha, ["src/runtime.py"])

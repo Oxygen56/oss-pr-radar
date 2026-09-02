@@ -1947,6 +1947,14 @@ def test_blocked_slow_worker_does_not_block_fast_receipt_registration(monkeypatc
         "publicationKind": "PR_CREATE",
     }
     with ledger.connect() as connection:
+        # The publication gate now requires an explicit request-to-intent
+        # binding.  Make this concurrency fixture represent the post-dispatch
+        # state that a real publication preflight receives.
+        connection.execute(
+            "UPDATE intents SET status='COMPLETED',thread_id=?,project_id=?,worktree_path=? "
+            "WHERE intent_id='intent-1'",
+            ("thread-1", "project-1", str(worktree)),
+        )
         connection.execute(
             "UPDATE publication_requests SET commit_sha=?,branch=?,worktree_path=?,request_json=? WHERE request_id='request-1'",
             (head_sha, branch, str(worktree), json.dumps(request_payload, sort_keys=True)),
