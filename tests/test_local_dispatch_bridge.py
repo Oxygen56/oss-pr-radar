@@ -24614,9 +24614,7 @@ def test_fast_receipt_skips_bound_published_backfill_after_pr_followup(tmp_path)
     store.reserve_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
     store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
     with store.connect() as connection:
-        connection.execute(
-            "UPDATE intents SET status='COMPLETED' WHERE intent_id='intent-1'"
-        )
+        connection.execute("UPDATE intents SET status='COMPLETED' WHERE intent_id='intent-1'")
     store.record_published_task_result_backfilled(
         "a/b#1",
         task_id="intent-1",
