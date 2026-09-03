@@ -21868,6 +21868,34 @@
     ],
     "why": "Issue reports two concrete reliability bugs in factory pipeline with detailed evidence and repro sketch, but root causes are partially inferred (e.g., provider stream error, race condition) and require maintainer design confirmation on signal delivery semantics and resource_id contract. No open PR competition; maintainer has labeled for triage but not confirmed approach."
   },
+  "5b06f3f317bb0d6a9b8f726dd2492772c5a8bb81c6f57bef0c94d00002c5ee52": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "weaviate_vector.py delete_by_ids logic",
+      "batch_clean_document_task.py cleanup path"
+    ],
+    "risks": [
+      "Existing open PRs may already fix the issue; need to compare implementations to avoid duplication.",
+      "Changing UUID generation may require reindexing existing data."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by creating a Weaviate knowledge base, uploading a document, deleting it, and verifying orphan vectors remain; then run a regression test that deletes a document and asserts no vectors remain for that doc_id."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the deletion-side fix (PR #40499) or the UUID alignment fix (PR #39550)."
+    ],
+    "why": "Issue provides a clear root cause (UUID v5 vs v4 mismatch in Weaviate delete path), concrete reproduction steps, and code anchors. Multiple open PRs address the same root cause, indicating actionable fix. No material unknowns block implementation."
+  },
   "5b7d157a49b3fdc4da18317bbbbb8ab7ea4b1fb0a9c9d929bff3b96223209e55": {
     "confidence": 0.85,
     "contradictions": [],
@@ -25306,6 +25334,39 @@
     ],
     "why": "The issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach instead of per-model hardcoding. No open PR or issue addresses this, and the existing PRs are merged and only add specific models."
   },
+  "68e1edf4aacc535169cfd0e410be4709f85bb12621e3c6722b49f8655fc47548": {
+    "confidence": 0.8,
+    "contradictions": [
+      "PR #52555 title suggests all-reduce perf work, yet semantic overlap with DFlash2/Qwen3 is reported; direct code overlap is false."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "DFlash2DraftModel speculative decoding verification",
+      "target hybrid GDN/DeltaNet/Mamba state update"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #52555 or duplicate issue #55198 requires manual comparison before implementation.",
+      "Numerical sensitivity may require careful baseline and tolerance selection."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run greedy target-only vs DFlash2 K=1 on a smaller supported model with fixed seed and temperature=0; assert token sequences match exactly.",
+      "Add opt-in tracing for draft IDs, target argmax/logits, acceptance results, and KV/SSM cache write/rollback boundaries around token 29/30."
+    ],
+    "unknowns": [
+      "Whether PR #52555 or another open PR already fixes the root cause."
+    ],
+    "why": "Issue provides a concrete greedy-equivalence failure with deterministic reproduction, clear divergence point, and multiple controlled variants isolating the speculative-decode path. Root cause is localized to DFlash2 verification or hybrid-state handling, and a reference-vs-implementation test is feasible."
+  },
   "68fa7091c56b8f4d663ed5af4d8df87398a79ba9db9398e21dc1974ef11e0dee": {
     "confidence": 0.7,
     "contradictions": [],
@@ -28193,6 +28254,40 @@
       "Maintainer preference on warning vs. enabling Cache-DiT with BCG"
     ],
     "why": "Issue clearly identifies a silent suppression of Cache-DiT when breakable CUDA graphs are enabled, with a concrete code path and suggested warning behavior. However, existing PR #33569 (maintainer-owned) semantically overlaps the same code path and may already address the root cause, requiring human comparison before creating a new task."
+  },
+  "73b5170d3fee1720f79776795605f2cd8f560c0b96cb6749decc5c5f9537a227": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Add timeout and error handling to get_placement_group in transfer_queue/utils/common.py",
+      "Adjust SimpleStorage startup to fail fast and clean up partial actors",
+      "Possibly update verl defaults or documentation for num_data_storage_units"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #165; must compare implementations to avoid duplication",
+      "Changes to TransferQueue may affect other users relying on current behavior",
+      "Timeout value must be chosen carefully to avoid false positives on slow nodes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided gsm8k PPO quickstart on a machine with 8 or fewer CPUs and verify no deadlock occurs",
+      "Add a unit test simulating insufficient CPU capacity to ensure placement group creation times out and raises a clear error",
+      "Verify that reducing num_data_storage_units to 1 allows training to proceed as in the issue's workaround"
+    ],
+    "unknowns": [
+      "Whether the existing PR #165 fully resolves the issue or if additional verl-side changes are needed"
+    ],
+    "why": "Issue provides a precise root cause (placement group deadlock due to insufficient CPU capacity), a concrete reproduction command, and a validated workaround. The referenced TransferQueue PR #165 directly addresses the same code path and semantics, offering a clear implementation reference. The task is actionable and testable."
   },
   "73b534f79c0e576d1533c3ff2dd26ccf31d8e070757187f2836f1e9564d2e7b3": {
     "confidence": 0.8,
@@ -35962,6 +36057,38 @@
     ],
     "why": "Issue provides a precise root cause (shape mismatch in requestContext user slot) and a verified workaround, but a PR (#20690) already exists and is closed, with maintainer triage ongoing. The deterministic gate requires HUMAN_REVIEW, and the PR's completeness and maintainer scope decisions (e.g., handling two other quiet readers) are unresolved."
   },
+  "94f4474b437b0e6f37b8a1dbc590289fe28ed7a62b543efa3f12e3b85b0d5545": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Initial analysis assumed standalone FastMCP AzureProvider path, but production uses MCP SDK's mcp.server.fastmcp without AzureProvider"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Introduce standalone FastMCP AzureProvider/OAuthProxy as OAuth translation layer",
+      "Configure identifier_uri, required_scopes, callback URI, durable storage, and jwt_signing_key"
+    ],
+    "risks": [
+      "Migration may require changes to existing Entra app registration and deployment configuration",
+      "Potential client interoperability issues with scope selection remain"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Verify protected-resource metadata advertises intended MCP resource and scope",
+      "Confirm upstream Entra authorize URL does not forward MCP resource value",
+      "Confirm upstream scope is resource-qualified (e.g., api://.../mcp.invoke)",
+      "Test callback and token exchange",
+      "Test reconnect after restart and across replicas"
+    ],
+    "unknowns": [
+      "Exact FastMCP version and configuration in the target deployment after migration"
+    ],
+    "why": "The issue reports a concrete OAuth failure with a clear reproduction path and identifies a mismatch between the MCP resource indicator and Entra's required resource-qualified scopes. The discussion confirms the root cause and proposes a migration to FastMCP's AzureProvider/OAuthProxy as the translation boundary, which is actionable."
+  },
   "9506866a686728a5b7f1cc814f069c369f312e7c52c8457bb684a0bddf54e530": {
     "confidence": 0.85,
     "contradictions": [],
@@ -36914,6 +37041,37 @@
       "Whether PR #34432 already fixes this issue"
     ],
     "why": "The issue provides a clear reproduction with expected vs actual behavior, specific test cases, and deployment flags. The root cause is likely in the tool-call handling logic under PD disaggregation and DCP, with potential interaction with fp8 quantization. The evidence includes code anchors and a concrete validation path via KVV tests."
+  },
+  "999313dfcfdb6e7022d5e4725bc38273d19f17a0a3abcea6377ba124505c69c4": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Update OpenAIResponsesStreamedResponse to refresh model_name from response.completed.response.model before terminal usage mapping, with created as fallback.",
+      "Add integration regression tests for streaming with created model alias and completed model different."
+    ],
+    "risks": [
+      "Potential behavioral change for deployments where created and completed models differ but alias retention is expected; mitigated by fallback to created when completed absent.",
+      "Coordination with adjacent PR #7916 to avoid merge conflicts or overlapping changes."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided minimal repro against a mock SSE stream to assert final ModelResponse.model_name equals the completed model.",
+      "Add a regression test feeding a stream where created model is 'model-router' and completed model is 'gpt-5-mini-2025-08-07', asserting final model name is the latter.",
+      "Run existing OpenAI model tests and static checks."
+    ],
+    "unknowns": [
+      "Exact test file path and reusable SSE helper (blocking only for test implementation, not for actionability)."
+    ],
+    "why": "Issue provides a concrete root cause (streamed response model name not refreshed from terminal event), a runnable reproduction with observed vs expected output, and a clear fix location. Maintainer bot confirms behavior is real and wrong, with contract violation and no workaround. Existing PR #7916 is adjacent but does not cover this specific attribution bug, so no duplicate coverage."
   },
   "99eab2edc31a3ac702fff1d30cc640fad4373d496cb2224f9aac79f626043ab1": {
     "confidence": 0.85,
@@ -50287,6 +50445,35 @@
     ],
     "why": "The issue provides a detailed design with a clear root cause (async Redis lookup overlaps upstream forwarding due to ActionContinue), a concrete fix (return HeaderStopAllIterationAndWatermark after successful dispatch), and a comprehensive verification plan including unit tests and a real Envoy harness. Maintainer approval is evidenced in comments, and the design has been updated to address review notes."
   },
+  "d1808c98a372c12119e340358021b8ba2f2e3b998dd554cbf882f6b28e552304": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PRs #7027 and #7028 are not linked to the issue but semantically overlap; they may partially fix the regressions."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "tools/checkpoint/utils.py",
+      "tools/checkpoint/saver_base.py",
+      "megatron/core/process_groups_config.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #7027 and #7028; need to coordinate to avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided convert.py command with a small Mixtral checkpoint and target TP=4, PP=2 to reproduce both regressions; verify conversion completes and checkpoint loads in pretrain_gpt.py."
+    ],
+    "unknowns": [
+      "Whether existing PRs fully resolve both regressions or only one; maintainer preference for fix approach."
+    ],
+    "why": "Issue provides precise root cause, reproduction steps, and expected vs actual behavior for two regressions in checkpoint conversion. It identifies specific code paths and proposes concrete fixes. Although open PRs overlap semantically, they do not fully cover both root causes, and the issue remains actionable."
+  },
   "d1860ad83e044a143fc4f182d8b07c248f0134f0b095aa7336676cc9a6e861ae": {
     "confidence": 0.8,
     "contradictions": [],
@@ -58216,6 +58403,35 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue describes a real user-facing failure mode with concrete code anchors and a clear proposal, but lacks a public reproduction, root-cause confirmation, and maintainer design approval. The gate decision is HUMAN_REVIEW, and the issue is labeled needs triage, so work should not start without maintainer confirmation."
+  },
+  "ebf8284ce21821bc9e8f10aa538a9a2693ff66fb87a33b5f76b13afc0d51fffd": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #38755 title suggests text-to-speech, but semantic overlap flagged; direct code overlap false."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/chatgpt/responses/transformation.py",
+      "litellm/responses/streaming_iterator.py",
+      "litellm/completion_extras/litellm_responses_transformation/transformation.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #38755 or #38719; need to compare implementation boundaries before duplicating."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided minimal example asserting litellm.responses(stream=False) returns a ResponsesAPIResponse with non-empty output; add regression test for non-streaming chatgpt/* responses."
+    ],
+    "unknowns": [
+      "Whether PR #38719 or #38755 already fixes the root cause; maintainer design preference for fix location."
+    ],
+    "why": "Issue provides a clear regression (non-streaming chatgpt/* fails after 1.88.1), a minimal reproducer, and a recent comment identifies the root cause: forced stream=true in transform_responses_api_request makes the non-streaming path unreachable, and the streaming iterator's completed_response has empty output. The suggested fix location is concrete and testable."
   },
   "ec1841e17d9bee2037a7685d2bedbc84059dc42e3d3ab6b80968817680cdc1f3": {
     "confidence": 0.85,
