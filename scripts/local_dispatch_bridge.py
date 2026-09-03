@@ -61,6 +61,7 @@ from oss_pr_radar.independent_review import (  # noqa: E402
 )
 from oss_pr_radar.ledger import (  # noqa: E402
     LedgerError,
+    RECOVERABLE_CONTEXT_INTENT_STATUSES,
     RadarLedger,
     bind_dispatched_recovery_prompt,
 )
@@ -3418,6 +3419,12 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                 entry["raw"],
                 entry["sourceStat"],
             )
+            # A rejected/expired task mirror is authenticated historical evidence,
+            # not a candidate for lifecycle restoration.  Retained worktrees are
+            # expected after terminal cleanup, so do not let them stop recovery for
+            # unrelated active tasks.
+            if str(context.get("intentStatus") or "") not in RECOVERABLE_CONTEXT_INTENT_STATUSES:
+                continue
             binding = _task_context_binding(context)
             if binding is None:
                 raise RuntimeError("private task context lifecycle binding is incomplete")

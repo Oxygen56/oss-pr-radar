@@ -4266,6 +4266,33 @@ def test_managed_private_context_wins_over_a_foreign_shared_singleton(monkeypatc
     assert context_path.read_bytes() == private_raw
 
 
+def test_terminal_private_context_does_not_block_unrelated_recovery(monkeypatch, tmp_path):
+    """Retained rejected worktrees are historical evidence, not recovery errors."""
+
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    terminal = json.loads(context_path.read_text(encoding="utf-8"))
+    terminal.update({"intentStatus": "REJECTED", "stage": "AUDIT_NO_GO"})
+    terminal["contextDigest"] = MODULE._task_context_digest(terminal, None)
+    MODULE._atomic_json(context_path, terminal)
+    MODULE._atomic_json(MODULE.shared_context_path(terminal["issueUrl"]), terminal)
+
+    result = MODULE.recover_shared_task_contexts(store)
+
+    assert result["errors"] == []
+    assert result["privateErrors"] == []
+    assert result["verified"] == 0
+
+
 def test_authenticated_private_context_wins_over_a_stale_same_binding_singleton(
     monkeypatch, tmp_path
 ):
