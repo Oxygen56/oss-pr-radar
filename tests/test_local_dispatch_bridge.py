@@ -24608,6 +24608,33 @@ def test_fast_receipt_skips_plain_published_history_with_missing_worktree(tmp_pa
     assert result["rejected"] == []
 
 
+def test_fast_receipt_skips_bound_published_backfill_after_pr_followup(tmp_path):
+    store, worktree, head_sha, pr_url = _published_followup_store(tmp_path)
+    candidate = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=candidate["wakeDigest"])
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE intents SET status='COMPLETED' WHERE intent_id='intent-1'"
+        )
+    store.record_published_task_result_backfilled(
+        "a/b#1",
+        task_id="intent-1",
+        thread_id="thread-1",
+        digest="f" * 64,
+        stage="PR_OPEN",
+        pr_url=pr_url,
+        head_sha=head_sha,
+    )
+    shutil.rmtree(worktree)
+
+    result = MODULE.enqueue_local_receipts(tmp_path / "ledger.sqlite3")
+
+    assert result["ok"] is True
+    assert result["queued"] == []
+    assert result["rejected"] == []
+
+
 def test_fast_receipt_reports_unfinished_pr_followup_with_missing_worktree(tmp_path):
     store, worktree, _head_sha, _pr_url = _published_followup_store(tmp_path)
     candidate = store.pr_followup_candidates()[0]

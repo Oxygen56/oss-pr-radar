@@ -10530,8 +10530,19 @@ class RadarLedger:
                              AND NOT EXISTS (
                                SELECT 1 FROM events result
                                WHERE result.opportunity_key=o.key
-                                 AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
-                                 AND result.dedupe_key=sent.dedupe_key
+                                 AND (
+                                   (
+                                     result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                                     AND result.dedupe_key=sent.dedupe_key
+                                   )
+                                   OR (
+                                     result.event_type='PUBLISHED_TASK_RESULT_BACKFILLED'
+                                     AND json_extract(result.payload_json,'$.stage') IN (
+                                       'PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED','MERGED'
+                                     )
+                                   )
+                                 )
+                                 AND result.id>sent.id
                                  AND {_intent_event_binding_clause("i", "result")}
                              )
                              AND NOT EXISTS (
