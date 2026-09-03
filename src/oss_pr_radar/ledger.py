@@ -5940,7 +5940,10 @@ class RadarLedger:
                        AND result.event_type IN (
                          'TASK_RESULT_INGESTED','PR_FOLLOWUP_RESULT_INGESTED'
                        )
-                       AND {_intent_event_binding_clause("i", "result")}
+                       AND (
+                         {_intent_event_binding_clause("i", "result")}
+                         OR {_legacy_unique_unbound_event_clause("i", "result")}
+                       )
                    )
                      AND NOT EXISTS (
                      SELECT 1 FROM events terminal
@@ -6045,7 +6048,10 @@ class RadarLedger:
                          AND result.event_type IN (
                            'TASK_RESULT_INGESTED','PR_FOLLOWUP_RESULT_INGESTED'
                          )
-                         AND {_intent_event_binding_clause("i", "result")}
+                         AND (
+                           {_intent_event_binding_clause("i", "result")}
+                           OR {_legacy_unique_unbound_event_clause("i", "result")}
+                         )
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events terminal

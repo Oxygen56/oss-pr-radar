@@ -3938,6 +3938,40 @@ def test_terminal_stage_retires_sent_recovery_without_result(tmp_path):
     assert store.sent_recoveries_without_result() == []
 
 
+@pytest.mark.parametrize("sent", [False, True])
+def test_legacy_unbound_result_retires_recovery_reservation(tmp_path, sent):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    recovery = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    if sent:
+        store.commit_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+        assert store.sent_recoveries_without_result()
+    else:
+        assert store.unresolved_recoveries()
+
+    with store.transaction() as connection:
+        store._event(
+            connection,
+            "a/b#1",
+            "TASK_RESULT_INGESTED",
+            "legacy-result",
+            {"stage": "FIX_READY"},
+            iso_z(datetime.now(UTC)),
+        )
+
+    assert store.unresolved_recoveries() == []
+    assert store.sent_recoveries_without_result() == []
+
+
 def test_new_prompt_rearms_a_legacy_exhausted_dispatch_recovery_once(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(intent())
