@@ -6543,6 +6543,36 @@
     ],
     "why": "Issue reports a runtime crash on NPU for a specific model, but root cause is unconfirmed and likely in the NPU plugin or stateful inference, not a clear algorithm defect. No maintainer confirmation or design direction; requires maintainer investigation."
   },
+  "1d9b50cc998a6419fa07b7c2b7a9e81a3c242b1d2843e4f93a5b6655eb763a8b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "tools/checkpoint/utils.py",
+      "tools/checkpoint/saver_base.py",
+      "megatron/core/parallel_state.py",
+      "megatron/core/process_groups_config.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #7027 and #7028; need to compare implementations to avoid duplication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided convert.py command with a small Mixtral model and target TP>1 to reproduce both regressions; verify conversion completes and checkpoint loads with pretrain_gpt.py."
+    ],
+    "unknowns": [
+      "Whether existing PRs fully fix both regressions or only one; need to inspect their code changes."
+    ],
+    "why": "Issue provides precise root cause, reproduction steps, and expected behavior for two regressions in checkpoint conversion. It is actionable and technically valuable, with clear code paths and validation via existing conversion and load tests."
+  },
   "1dc0f79d5e503f879abe0d0c4da2f50b116aba3bc862b4dc0b58ad3471202083": {
     "confidence": 0.85,
     "contradictions": [
@@ -34204,6 +34234,37 @@
     ],
     "why": "The issue provides a clear root cause: the sequential pipeline FX-traces the vision tower even when it is in the ignore list, and Qwen3-VL's rot_pos_emb is not FX-traceable, causing a CUDA driver error. It includes a minimal reproduction script and environment details, and the failure is isolated to the calibration/tracing path (RTN works). This is a concrete, actionable bug in an LLM quantization algorithm."
   },
+  "8b9923bb1590650217c32977350aa94792c07010a44ca43e9c406e60c5182c31": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #38755 is titled for Mistral TTS but shows semantic overlap with non_streaming; likely false positive"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Fix in ResponsesToCompletionBridgeHandler._collect_response_from_stream{,_async} to accumulate output items and backfill when completed_response.output is empty",
+      "Potentially adjust transform_responses_api_request to not force stream=True for non-streaming requests"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #38755 or #38719; need to compare implementations",
+      "Changing stream handling may affect other provider paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided minimal reproducer to create a failing test for non-streaming chatgpt responses",
+      "Add regression test that drains the iterator and asserts completed_response.output is populated"
+    ],
+    "unknowns": [
+      "Whether existing PR #38719 already fixes this issue and its implementation details"
+    ],
+    "why": "Issue provides a clear regression with version matrix, minimal reproducer, and a detailed root-cause analysis in comments identifying the forced stream=True and the dead compensation path. The fix location is suggested and code anchors are provided, making the contribution actionable."
+  },
   "8bbf2c53df2caa1e03f26ec1571ec0e685657e5587c0fd1f8f1be34647b30c4e": {
     "confidence": 0.8,
     "contradictions": [
@@ -34296,6 +34357,40 @@
       "Whether maintainers prefer a specific fix approach or have design constraints"
     ],
     "why": "Issue reports stale get_episodes data; maintainer attributes to queue latency, but a commenter identifies a concrete root cause: get_episodes uses keyset pagination with ORDER BY uuid DESC, returning arbitrary stable subset instead of most recent. Existing PR #1726 claims to fix this but has failing CI/check and lacks evidence of root-cause analysis. A materially better PR with proper tests and root-cause explanation is plausible."
+  },
+  "8c13c6ee00211775eefbf3927b999215c63885c93fb17cb0890af43f6b11db68": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent-controller/session.ts",
+      "packages/core/src/agent-controller/agent-controller.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/sync.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/async-buffer.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/resource-scoped.ts",
+      "packages/core/src/agent-controller/thread-title.test.ts",
+      "packages/memory/src/processors/observational-memory/__tests__/"
+    ],
+    "risks": [
+      "Potential API change to rename() signature may affect existing callers; need to ensure default pin:true does not break initial title setting flows",
+      "Metadata key collision or compatibility with existing threads lacking the flag"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add core tests in thread-title.test.ts for rename pinning and regenerate clearing pin",
+      "Add OM strategy tests verifying pinned threads do not get auto-title overwrites across sync, async-buffer, and resource-scoped strategies"
+    ],
+    "unknowns": [
+      "Exact implementation details of metadata helpers and whether maintainers prefer a different approach"
+    ],
+    "why": "Issue provides a clear root cause (OM strategies overwrite manual renames because no pin flag exists), a concrete design (metadata pin, rename pins by default, regenerate clears pin, shared helper), and specific test files. Evidence includes code anchors and a detailed proposed fix, making it actionable."
   },
   "8c238c048c0c7bed1e10d2c4abaac29ef26e699dce8606ae6416a6284e06c82f": {
     "confidence": 0.85,
