@@ -4256,6 +4256,33 @@ def test_recovery_delivery_abandonment_is_idempotent(tmp_path):
     assert count == 1
 
 
+def test_legacy_sent_recovery_can_be_abandoned_with_recovered_identity(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    recovery = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+
+    store.abandon_recovery_delivery(
+        thread_id="thread-1",
+        nonce=recovery["recoveryNonce"],
+        reason="TERMINAL_RECOVERY_TURN_INTERRUPTED",
+        min_age_minutes=0,
+        intent_id="intent-1",
+        worktree_path="/tmp/worktree",
+    )
+
+    assert store.sent_recoveries_without_result() == []
+
+
 def test_sent_pr_followup_without_a_result_gets_recovery(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(

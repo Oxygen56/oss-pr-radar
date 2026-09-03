@@ -6461,10 +6461,11 @@ class RadarLedger:
                 "RECOVERY_RETRY_EXHAUSTED",
             }
             identity_clause = ""
-            reservation_params: list[Any] = [thread_id, nonce, nonce, int(allow_sent)]
+            reservation_params: list[Any] = [thread_id, nonce, nonce]
             if intent_id:
                 identity_clause = " AND i.intent_id=?"
                 reservation_params.append(str(intent_id))
+            reservation_params.append(int(allow_sent))
             rows = connection.execute(
                 f"""SELECT r.id,r.opportunity_key AS key,r.dedupe_key,r.created_at,
                           r.payload_json,i.intent_id,i.thread_id,i.worktree_path
