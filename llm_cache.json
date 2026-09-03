@@ -19341,6 +19341,31 @@
     ],
     "why": "The issue clearly identifies a recurring bug: new Claude models fail because temperature is deprecated, and the fix requires a maintainable approach rather than adding each model to an exclusion list. The root cause is a hardcoded model list in the Bedrock provider. No open PR or issue addresses this, and the issue provides a concrete reproduction."
   },
+  "535b7f01389dedddb33cf5b19e4909cb888b2dce12f641edf7071fa94030a4e3": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Investigate and fix numerical divergence in CUDA graph execution for Gemma-4-26B-A4B, likely in kernel selection or batch-invariant handling."
+    ],
+    "risks": [
+      "The fix may involve complex kernel selection logic; ensuring no regression on other models or performance is needed."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script on the target model to confirm the divergence, then apply a fix and rerun to verify greedy token and logprobs match between eager and CUDA graph modes within bf16 tolerance."
+    ],
+    "unknowns": [
+      "Exact root cause not yet identified; whether existing PRs fully address this issue is unclear."
+    ],
+    "why": "The issue provides a concrete, reproducible bug with clear evidence of a numerical divergence between CUDA graph and eager execution on a specific model, including a self-contained reproduction script and control experiments. The root cause is localized to kernel selection or numerical handling in the CUDA graph path, and the validation path is clear: compare greedy outputs and logprobs between modes. This is a legitimate LLM algorithm bug with actionable code work."
+  },
   "5368c6d0815fda3207392bbcedcebf1445c15ee83a0933623fe096e85c455d9a": {
     "confidence": 0.95,
     "contradictions": [
@@ -62012,6 +62037,31 @@
       "Maintainer design preference on how to fix the indexing (e.g., pass steps.length-1 or adjust extractor) is not yet confirmed."
     ],
     "why": "Issue provides a precise root cause (0-indexed count fed to 1-indexed extractor, plus incorrect slice) with code anchors and a self-contained reproduction using the vendor's mock model, showing expected vs actual output. The bug is user-visible and impactful, and the fix is actionable."
+  },
+  "f8513b1b62896ac57bcb95482f05b6545c81ace81e12804732a545f9caeb2fcb": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "router dispatch validation in panel_call_tool",
+      "error messaging for self-referential calls"
+    ],
+    "risks": [
+      "Potential change in error behavior may affect existing clients expecting the current message."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that calls panel_call_tool with an inner tool name and asserts a clear error message or proper delegation."
+    ],
+    "unknowns": [
+      "Exact code structure and location of panel_call_tool implementation."
+    ],
+    "why": "Issue clearly describes a user-facing bug: calling the router name `panel_call_tool` with an inner tool name produces a confusing error instead of helpful guidance. Root cause is identified as insufficient dispatch validation or unclear routing. The owner has claimed the issue and created a worktree, indicating maintainer interest and actionability."
   },
   "f857d44cf89091379a15bd0bc2bf059ce66a6ee88b36ddce15327701e478e815": {
     "confidence": 0.8,
