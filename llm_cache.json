@@ -26589,6 +26589,38 @@
     ],
     "why": "The issue provides a clear, reproducible OAuth2 token-exchange failure for TikTok custom auth, with a likely root cause (TikTok requires client_key instead of client_id and returns access_token at top level). The reproduction steps and expected behavior are concrete, making the fix actionable."
   },
+  "6c81a44f4c4c9ffebbd52a7a9914e875863697c3ab8b58fd5bbb242a39e6709d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #40796 is marked as technical_complete but root_cause_coverage is false, suggesting it may not address the underlying bug"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "session message serialization to preserve byte-identity across tool-call transitions",
+      "prompt cache handling in the Anthropic provider or model message conversion"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #40796 or #14743; need to coordinate to avoid duplicate work",
+      "Changing serialization may affect other providers or introduce subtle behavioral changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that simulates a tool-call loop and asserts cache_read > 0 on subsequent turns, using the SQL query pattern from the issue to verify cache busts",
+      "Run existing cache-related unit tests and integration tests for session handling"
+    ],
+    "unknowns": [
+      "Exact code location where serialization changes occur (e.g., filterCompactedEffect or toModelMessages) is not pinpointed in the issue",
+      "Whether maintainers prefer a fix in the session layer vs provider layer is not confirmed"
+    ],
+    "why": "Issue provides detailed production evidence of Anthropic prompt cache busts with deterministic correlation to tool-calls, root cause traced to serialization changes between API calls, and reproducible SQL queries from local database. Existing PR #40796 only adds warnings, leaving the core fix open. The evidence supports a concrete fix in the session/message serialization path."
+  },
   "6c8f10a04ab386a229a4c98323ae8fe36422aabb093efa84860c263e52f34c58": {
     "confidence": 0.7,
     "contradictions": [
@@ -27008,6 +27040,36 @@
       "Whether fix requires changes to vLLM or upstream TileLang"
     ],
     "why": "Issue provides a clear reproduction path, specific code anchors (TileLang kernel, symmetric memory), and identifies a regression from v0.25.0 to v0.27.1 on SM90. The root cause is localized to MLA kernel warmup and distributed initialization, with concrete validation via multi-rank startup test."
+  },
+  "6db08a43283a3ad3e47932179ebff012fb1f678e2e6cb828eedcdf02ed60828a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "tools/checkpoint/utils.py",
+      "tools/checkpoint/saver_base.py",
+      "tools/checkpoint/loader_mixtral_hf.py",
+      "megatron/core/process_groups_config.py"
+    ],
+    "risks": [
+      "Open PRs #7027 and #7028 may partially overlap; need to coordinate to avoid duplicate or conflicting changes.",
+      "Fixing only one side of the process-group issue may move the crash; both loader and saver must be handled."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided convert.py command with Mixtral-8x7B safetensors and target TP=4 PP=2; assert conversion completes and checkpoint loads in pretrain_gpt.py.",
+      "Add unit test for saver_base._load_checkpoint_args to ensure target-derived weight-shard args are preserved."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer one of the proposed fix options for process groups."
+    ],
+    "why": "Issue provides concrete root cause, reproduction steps, and expected behavior for two regressions in checkpoint conversion. The proposed fixes are local and validated. Open PRs overlap but do not fully cover both regressions, so work remains actionable."
   },
   "6db4447b73de4eeabbadf20ce1b4c28f96d951f305226f6d6361ceb50e0782be": {
     "confidence": 0.9,
