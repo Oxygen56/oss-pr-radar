@@ -9591,6 +9591,40 @@
     ],
     "why": "Issue provides a clear, reproducible bug with root-cause analysis and a concrete fix direction. The triage bot confirms the root cause and extends it to the OpenAI-compatible pipeline where the clamp is not invoked. The issue is actionable and valuable for agent_ai_infra track."
   },
+  "2a74f260657006090d90fd0df288ea954fcea120c71b7aa2c674df4a3f33021d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "tools/checkpoint/utils.py",
+      "tools/checkpoint/saver_base.py",
+      "megatron/core/parallel_state.py",
+      "megatron/core/process_groups_config.py"
+    ],
+    "risks": [
+      "Potential interaction with existing open PRs #7027 and #7028 that may already address parts of the issue; need to compare implementations.",
+      "Changes to process group initialization might affect other converter paths or training if not carefully scoped."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided convert.py command with a small Mixtral model and target TP>1 to reproduce both regressions.",
+      "After fix, verify conversion completes and the resulting checkpoint loads in pretrain_gpt.py with target parallelism.",
+      "Add a unit test for saver_base._load_checkpoint_args to ensure target-derived weight-shard args are preserved."
+    ],
+    "unknowns": [
+      "Whether the open PRs #7027 and #7028 fully resolve the issue or only partially; requires manual comparison."
+    ],
+    "why": "The issue provides a precise root cause for two regressions in the checkpoint converter, with exact code locations, a reproducible command, and expected vs actual behavior. The proposed fixes are concrete and local to tools/checkpoint. The track is llm_algorithm, and the issue involves distributed training process group initialization and weight-shard argument handling, which are algorithmically relevant. The presence of open PRs with semantic overlap requires review but does not block actionability."
+  },
   "2ac54972f8f7a33492bce2863b84a5b6ac53801210785ca7dd8935689c9a73ac": {
     "confidence": 0.85,
     "contradictions": [],
@@ -35601,6 +35635,36 @@
     ],
     "why": "The issue reports three concrete bugs in the diffusion multi-output rollout path, with detailed code-level root causes and a clear numerical corruption mechanism (Bug 1) that silently breaks GRPO training. The reporter has prepared fixes with regression tests and explicitly requests maintainer confirmation on intended semantics. Maintainer Rockdu has acknowledged and is checking, indicating active investigation. The deterministic gate is HUMAN_REVIEW, and the open PR #22183 is weak (no tests, stale), but the maintainer's response suggests a wait for their review rather than immediate competition."
   },
+  "918bd47cd01dc6b799793b4e70d9df8becc7f565791b06e96f917141bce52a50": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #38755 title suggests text-to-speech, not directly related to this issue despite semantic overlap flags."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/llms/chatgpt/responses/transformation.py",
+      "litellm/responses/streaming_iterator.py",
+      "litellm/completion_extras/litellm_responses_transformation/transformation.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #38755 or other open PRs; need to compare implementation boundaries before duplicating."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided minimal reproducer to assert that litellm.responses(stream=False) returns a ResponsesAPIResponse with non-empty output, and that non-streaming chat completions succeed."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer fixing at provider level vs bridge handler level; whether existing PR #38755 actually addresses this issue."
+    ],
+    "why": "Issue provides a clear regression with version matrix and minimal reproducer. A recent comment traces the root cause to forced stream=true in transform_responses_api_request and incomplete aggregation in the streaming iterator, with a suggested fix location. This is actionable and technically valuable."
+  },
   "91fe7fd80aa4a5e5ccc7b8740979a00f400096a3ae300dbf9013419a47098241": {
     "confidence": 0.85,
     "contradictions": [],
@@ -60828,6 +60892,36 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a reproducible CUDA illegal memory access in custom_all_reduce during CUDA graph capture on Hopper TP=4, with a clear version regression and code anchors. However, existing PR #46515 semantically overlaps the same code path and may already address the root cause; a human must compare implementations before starting new work."
+  },
+  "f59a2c69b16a11538c3c35a124b8ba2d61e2fe9ab00bc6b640b6ff00ed780687": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/pkg/mcp/server",
+      "plugins/wasm-go/extensions/mcp-server",
+      "plugins/wasm-go/extensions/mcp-router"
+    ],
+    "risks": [
+      "Potential maintainer preference for alternative design",
+      "Risk of unintended behavior changes in legacy REST paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run differential configuration acceptance tests against v2.0.0 oracle",
+      "Run unit/package tests with GOMAXPROCS=1 and tokens unset",
+      "Run exact-head runtime verification harness with RUNTIME_EVIDENCE"
+    ],
+    "unknowns": [
+      "No missing facts that affect actionability"
+    ],
+    "why": "The issue provides a detailed design with clear root cause (schema-derived validation incorrectly rejecting legacy REST configs), concrete implementation steps, and a comprehensive verification plan including differential testing against v2.0.0 and exact-head runtime verification. Evidence shows implementation tasks completed and verified, with no competing PRs."
   },
   "f59cefbfbbb6f58868e6b3d0596f534dc9f5ee1a5bdf6b2ebf5c986b738cb508": {
     "confidence": 0.85,
