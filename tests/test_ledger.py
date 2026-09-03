@@ -4222,6 +4222,40 @@ def test_unknown_recovery_delivery_can_be_abandoned_and_rearmed(tmp_path):
     assert store.unresolved_recoveries() == []
 
 
+def test_recovery_delivery_abandonment_is_idempotent(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.enqueue(intent())
+    store.claim("intent-1", "worker")
+    store.commit_dispatch(
+        "intent-1",
+        owner="worker",
+        thread_id="thread-1",
+        project_id="repo-project",
+        worktree_path="/tmp/worktree",
+    )
+    recovery = store.recovery_candidates(min_age_minutes=0)[0]
+    store.reserve_recovery(thread_id="thread-1", nonce=recovery["recoveryNonce"])
+    with store.connect() as connection:
+        connection.execute(
+            "UPDATE events SET created_at=? WHERE event_type='THREAD_RECOVERY_RESERVED'",
+            (iso_z(datetime.now(UTC) - timedelta(minutes=10)),),
+        )
+
+    for _ in range(2):
+        store.abandon_recovery_delivery(
+            thread_id="thread-1",
+            nonce=recovery["recoveryNonce"],
+            reason="TARGET_TURN_NOT_MATERIALIZED",
+            min_age_minutes=5,
+        )
+
+    with store.connect() as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'"
+        ).fetchone()[0]
+    assert count == 1
+
+
 def test_sent_pr_followup_without_a_result_gets_recovery(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.enqueue(
@@ -4305,6 +4339,33 @@ def test_sent_pr_followup_without_a_result_gets_recovery(tmp_path):
     assert store.unresolved_recoveries() == []
 
 
+def test_published_backfill_retires_older_pr_followup_recovery(tmp_path):
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    key = _make_pr_followup_candidate(store)
+    followup = store.pr_followup_candidates()[0]
+    store.reserve_pr_followup(thread_id="thread-1", wake_digest=followup["wakeDigest"])
+    store.commit_pr_followup(thread_id="thread-1", wake_digest=followup["wakeDigest"])
+    assert any(
+        item["recoveryKind"] == "PR_FOLLOWUP_RESULT"
+        for item in store.recovery_candidates(min_age_minutes=0)
+    )
+
+    store.record_published_task_result_backfilled(
+        key,
+        task_id="intent-1",
+        thread_id="thread-1",
+        digest="d" * 64,
+        stage="PR_OPEN",
+        pr_url="https://github.com/a/b/pull/9",
+        head_sha="b" * 40,
+    )
+
+    assert all(
+        item["recoveryKind"] != "PR_FOLLOWUP_RESULT"
+        for item in store.recovery_candidates(min_age_minutes=0)
+    )
+
+
 def test_pr_followup_result_prevents_recovery(tmp_path):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     store.restore_task_context(published_task_context())
@@ -4331,6 +4392,12 @@ def test_pr_followup_result_prevents_recovery(tmp_path):
     store.record_followup_result(
         "a/b#1", wake_digest=wake_digest, result_digest="result", stage="PR_OPEN"
     )
+    with store.connect() as connection:
+        connection.execute(
+            """UPDATE events SET payload_json=?
+               WHERE event_type='PR_FOLLOWUP_RESULT_INGESTED' AND dedupe_key=?""",
+            (json.dumps({"resultDigest": "result", "stage": "PR_OPEN"}), wake_digest),
+        )
 
     assert store.recovery_candidates(min_age_minutes=90) == []
 

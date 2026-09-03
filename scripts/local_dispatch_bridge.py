@@ -19559,6 +19559,68 @@ def _ingest_merge_resolution_scope_request(
     )
 
 
+def _superseded_merge_resolution_scope_request(
+    store: RadarLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    raw: bytes,
+    worktree: Path,
+) -> bool:
+    """Recognize an already-ingested scope request replaced by a newer live wake."""
+
+    if (
+        value.get("reason") != "CONFLICT_SCOPE_INSUFFICIENT"
+        or value.get("stage") != "PR_OPEN"
+        or str(candidate.get("stage") or "") not in PUBLISHED_TASK_STAGES
+    ):
+        return False
+    followup = context.get("prFollowup")
+    source_wake = str(value.get("followupDigest") or "")
+    current_wake = str(followup.get("wakeDigest") or "") if isinstance(followup, dict) else ""
+    if (
+        not re.fullmatch(r"[0-9a-f]{64}", source_wake)
+        or not re.fullmatch(r"[0-9a-f]{64}", current_wake)
+        or source_wake == current_wake
+    ):
+        return False
+    try:
+        preparation = store.historical_pr_followup_preparation(
+            key=str(candidate["key"]),
+            task_id=str(candidate.get("intentId") or ""),
+            thread_id=str(candidate["threadId"]),
+            wake_digest=source_wake,
+        )
+    except (LedgerError, ValueError):
+        return False
+    snapshot = preparation.get("snapshot") if isinstance(preparation, dict) else None
+    if (
+        not isinstance(snapshot, dict)
+        or preparation.get("worktreePath") is None
+        or Path(str(preparation["worktreePath"])).resolve() != worktree.resolve()
+        or snapshot.get("wakeDigest") != source_wake
+        or snapshot.get("prUrl") != value.get("prUrl")
+        or snapshot.get("headSha") != value.get("headSha")
+        or not isinstance(followup, dict)
+        or followup.get("prUrl") != value.get("prUrl")
+        or followup.get("headSha") != value.get("headSha")
+    ):
+        return False
+    try:
+        if parse_time(str(followup.get("checkedAt") or "")) <= parse_time(
+            str(snapshot.get("checkedAt") or "")
+        ):
+            return False
+    except (TypeError, ValueError):
+        return False
+    return store.task_result_digest_seen(
+        str(candidate["key"]),
+        _task_result_digest(value, raw),
+        **_ledger_binding_kwargs(candidate),
+    )
+
+
 def _preserved_published_stage(current_stage: str, managed_pr_state: str) -> str:
     if managed_pr_state == "MERGED":
         return "MERGED"
@@ -19852,6 +19914,21 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             binding_gate = getattr(store, "task_result_binding_gate", None)
             if binding_gate is None or not binding_gate(candidate, value):
                 raise RuntimeError("task result identity binding mismatch")
+            if _superseded_merge_resolution_scope_request(
+                store,
+                candidate=candidate,
+                context=context,
+                value=value,
+                raw=raw,
+                worktree=result_access.worktree,
+            ):
+                ignored.append(
+                    {
+                        "key": str(candidate["key"]),
+                        "reason": "SUPERSEDED_MERGE_RESOLUTION_SCOPE_REQUEST",
+                    }
+                )
+                continue
             scope_authorization = _ingest_merge_resolution_scope_request(
                 store,
                 managed_ledger,

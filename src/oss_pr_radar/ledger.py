@@ -5518,9 +5518,24 @@ class RadarLedger:
                      AND NOT EXISTS (
                        SELECT 1 FROM events result
                        WHERE result.opportunity_key=o.key
-                         AND result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
-                         AND result.dedupe_key=s.dedupe_key
-                         AND {_intent_event_binding_clause("i", "result")}
+                         AND (
+                           (
+                             result.event_type='PR_FOLLOWUP_RESULT_INGESTED'
+                             AND result.dedupe_key=s.dedupe_key
+                             AND (
+                               {_intent_event_binding_clause("i", "result")}
+                               OR {_legacy_unique_unbound_event_clause("i", "result")}
+                             )
+                           )
+                           OR (
+                             result.event_type='PUBLISHED_TASK_RESULT_BACKFILLED'
+                             AND result.id>s.id
+                             AND {_intent_event_binding_clause("i", "result")}
+                             AND json_extract(result.payload_json,'$.stage') IN (
+                               'PR_OPEN','CI_GREEN','MAINTAINER_ACCEPTED','MERGED','CLOSED'
+                             )
+                           )
+                         )
                      )
                      AND NOT EXISTS (
                        SELECT 1 FROM events recovery
@@ -6494,6 +6509,36 @@ class RadarLedger:
                 raise LedgerError("recovery delivery is ambiguous")
             row = rows[0] if rows else None
             if row is None:
+                existing_rows = connection.execute(
+                    f"""SELECT abandoned.payload_json,i.intent_id,i.worktree_path
+                       FROM events abandoned
+                       JOIN intents i ON i.opportunity_key=abandoned.opportunity_key
+                         AND {_intent_event_binding_clause("i", "abandoned")}
+                       WHERE abandoned.event_type='THREAD_RECOVERY_DELIVERY_ABANDONED'
+                         AND json_extract(abandoned.payload_json,'$.threadId')=?
+                         AND json_extract(
+                               abandoned.payload_json,'$.reservationDigest'
+                             )=?
+                       ORDER BY abandoned.id DESC""",
+                    (thread_id, nonce),
+                ).fetchall()
+                if intent_id:
+                    existing_rows = [
+                        existing
+                        for existing in existing_rows
+                        if str(existing["intent_id"] or "") == str(intent_id)
+                    ]
+                if worktree_path:
+                    existing_rows = [
+                        existing
+                        for existing in existing_rows
+                        if existing["worktree_path"]
+                        and _resolved_path_equal(str(existing["worktree_path"]), str(worktree_path))
+                    ]
+                if len(existing_rows) == 1:
+                    return
+                if len(existing_rows) > 1:
+                    raise LedgerError("recovery delivery abandonment is ambiguous")
                 raise LedgerError("recovery delivery is not abandonable")
             minimum_age = timedelta(minutes=max(0 if allow_sent else 1, min_age_minutes))
             if parse_time(row["created_at"]) + minimum_age > current:

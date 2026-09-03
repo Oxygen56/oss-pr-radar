@@ -21531,6 +21531,80 @@ def test_legacy_ingested_source_wake_can_backfill_merge_resolution_scope(tmp_pat
     ]
 
 
+def test_ingest_ignores_scope_request_superseded_by_newer_live_wake(tmp_path):
+    store, worktree, result_path, source_context, request, head_sha, base_sha = (
+        _merge_resolution_scope_request_fixture(tmp_path)
+    )
+    source_wake = str(source_context["prFollowup"]["wakeDigest"])
+    raw = result_path.read_bytes()
+    result_digest = MODULE._task_result_digest(json.loads(raw), raw)
+    store.record_task_result_ingested(
+        "a/b#1",
+        digest=result_digest,
+        stage="PR_OPEN",
+        task_id="intent-1",
+        thread_id="thread-1",
+    )
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest=source_wake,
+        result_digest=result_digest,
+        stage="PR_OPEN",
+        intent_id="intent-1",
+        thread_id="thread-1",
+        worktree_path=str(worktree.resolve()),
+    )
+    refreshed_at = iso_z(datetime.now(UTC) + timedelta(seconds=10))
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": refreshed_at,
+            "items": [
+                {
+                    "url": request["prUrl"],
+                    "headSha": head_sha,
+                    "actionDigest": "newer-live-action",
+                    "taskActionDigest": "newer-live-task-action",
+                    "taskFollowupRequired": True,
+                    "taskActions": ["处理更新后的合并冲突"],
+                    "evidence": {
+                        "mergeConflict": True,
+                        "baseRefName": "main",
+                        "baseSha": base_sha,
+                        "mergeConflictFiles": ["runtime.py"],
+                    },
+                    "checkedAt": refreshed_at,
+                }
+            ],
+        }
+    )
+    replacement = store.pr_followup_candidates()[0]
+    assert replacement["wakeDigest"] != source_wake
+    store.reserve_pr_followup(
+        thread_id="thread-1",
+        wake_digest=str(replacement["wakeDigest"]),
+        prepared_head_sha=head_sha,
+        prepared_base_sha=base_sha,
+        merge_conflict_files=["runtime.py"],
+    )
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+        prepared_followup_head=head_sha,
+    )
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+
+    assert result["ok"] is True, result["errors"]
+    assert result.get("resolutionScopeAuthorized", []) == []
+    assert {
+        "key": "a/b#1",
+        "reason": "SUPERSEDED_MERGE_RESOLUTION_SCOPE_REQUEST",
+    } in result["ignored"]
+
+
 def test_scope_backfill_uses_bound_preparation_when_refresh_omits_conflicts(tmp_path):
     store, _worktree, result_path, source_context, request, head_sha, base_sha = (
         _merge_resolution_scope_request_fixture(tmp_path)
