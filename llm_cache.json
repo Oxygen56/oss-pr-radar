@@ -27216,6 +27216,34 @@
     ],
     "why": "Issue provides a clear root cause (OM observer includes working-memory state signals as user-authored history), a concrete reproduction with expected/actual behavior, and a suggested fix with regression test steps. Maintainer bot confirms the bug and proposes a narrow fix. No duplicate PR or issue found."
   },
+  "6dfc471f4e2b749a397d415d6aefd7c5b3134a8105548e3c8180836cc3ba104d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "MCP OAuth discovery and authorization flow",
+      "Configuration handling for per-server gateway DCR opt-out"
+    ],
+    "risks": [
+      "Potential behavior change for existing deployments relying on aggregate DCR; need to ensure opt-out is backward compatible.",
+      "May require coordination with existing MCP OAuth implementation to avoid breaking other flows."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test that configures a managed OAuth2 MCP server without dcr_bridge and verifies the .well-known/oauth-protected-resource response advertises the per-server authorization server, not the aggregate /mcp endpoint.",
+      "Add integration test that simulates the OAuth flow and asserts the redirect goes to the vendor authorization URL instead of the LiteLLM UI."
+    ],
+    "unknowns": [
+      "Exact code location where the aggregate endpoint is advertised and how to implement the opt-out cleanly."
+    ],
+    "why": "The issue provides a clear regression scenario with detailed reproduction steps, expected vs actual behavior, and code anchors. The root cause is identified as a change in OAuth discovery that makes managed MCP servers advertise the aggregate /mcp endpoint instead of per-server relay endpoints. The proposed fix (per-server opt-out) is actionable and testable."
+  },
   "6e16bf9e0b7436bfb4cd43bad39e87a51ffb5a5ce2cfb1c78a20cdad4faa0121": {
     "confidence": 0.85,
     "contradictions": [],
@@ -37636,6 +37664,31 @@
       "Maintainer preference for the fix approach."
     ],
     "why": "Issue provides detailed reproduction steps, expected vs actual behavior, and a clear root-cause hypothesis (cancellation state not shared between HTTP and Prefill contexts; SGLang request ID only known after first output). Concrete code anchors and a validation path (reproduce with long prompt, disconnect, observe delay) are supplied. Existing PR #13703 is incomplete and lacks root-cause coverage, leaving room for a more complete fix."
+  },
+  "9aa6003c92c89acbd3db75506b7be4011195dc384eac8e5988d9c27ee763628c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Hosted proxy layer (api.cline.bot) DSML tool-call extraction",
+      "Normalization of DSML token variants and newline handling"
+    ],
+    "risks": [
+      "Potential maintainer design preference for parser implementation; risk of affecting other models if parser changes are too broad."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided steps using deepseek-v4-flash-0731 and verify raw DSML tags are not leaked; add a regression test for DSML parsing in the proxy layer."
+    ],
+    "unknowns": [
+      "Exact code location of the proxy layer and whether the fix should be in the client or server side."
+    ],
+    "why": "Issue provides a clear user-visible bug with detailed reproduction steps and a specific root cause: missing DSML tool-call parser at the hosted proxy layer. The expected behavior and technical fix are concrete, and the issue is actionable for a developer to implement and test."
   },
   "9aa6b63e1b7b1655abe6da2dfa85a1e78ab79bf51d3956badd01dba4430ecbc6": {
     "confidence": 0.85,
@@ -53725,6 +53778,36 @@
       "Maintainer decision on accepting the behavior change is pending"
     ],
     "why": "Issue provides a precise root cause with code anchors, a concrete reproduction using the reference MCP server, and a clear fix direction (propagate MCP provenance structurally). The triage confirms the root cause and notes the behavior is documented intent, making this an enhancement rather than a regression. The suggested fix is actionable and testable."
+  },
+  "db88c651ba9f36f1e5c13c1f6d1d6b27f7db8b2a4893a81a1a86ebffb8a12437": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #38755 is about text-to-speech and has only semantic overlap on 'non_streaming', not direct code overlap; not a true duplicate."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/llms/chatgpt/responses/transformation.py",
+      "litellm/responses/streaming_iterator.py",
+      "litellm/completion_extras/litellm_responses_transformation/transformation.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #38719 or #38755; need to compare implementation boundaries before duplicating work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided minimal reproducer to create a failing test for non-streaming chatgpt responses, then verify the fix makes it pass while streaming still works."
+    ],
+    "unknowns": [
+      "Whether PR #38719 already fixes this issue and is merged or open; need to check its status and coverage."
+    ],
+    "why": "Issue provides a clear regression with version matrix and minimal reproducer. A recent comment traces the root cause to forced stream=true in request transformation and incomplete aggregation in the streaming iterator, with a concrete suggested fix location. This is actionable and technically valuable."
   },
   "db8f5cb996e9231163dd2916904fd4055e3932480f55fc9b862615300b40cf77": {
     "confidence": 0.9,
