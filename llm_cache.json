@@ -13335,6 +13335,36 @@
     ],
     "why": "Issue reports a Triton illegal memory access in Qwen3.5 with vLLM 0.23.0, but root cause is unconfirmed; maintainer asked to try latest release, and related issue/PR lookup timed out, so duplicate coverage cannot be excluded."
   },
+  "3ad4589f086d91ec6a521c23ee805d747a1ca96ec982c4c30624161af109c0e7": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "prompt loop message serialization",
+      "cache handling in session management"
+    ],
+    "risks": [
+      "Existing PR #40796 may already address the issue; need to avoid duplication",
+      "Fix may require changes to Anthropic API interaction that could affect other providers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use provided SQL queries to reproduce cache bust pattern from local database",
+      "Add regression test simulating tool-call transitions and verifying cache byte-identity"
+    ],
+    "unknowns": [
+      "Exact code location where serialization changes between tool-call states",
+      "Whether maintainers prefer a specific fix approach over existing PRs"
+    ],
+    "why": "Issue provides detailed production evidence of cache busts after tool-calls, with SQL queries for reproduction and a clear root cause linked to existing issue #24841. The evidence is actionable for a code fix in the prompt loop serialization path."
+  },
   "3ae6732ca5522d2a998665eec25b27348f6cdb0b607982034131174f1571a30c": {
     "confidence": 0.7,
     "contradictions": [
@@ -51177,6 +51207,38 @@
     ],
     "why": "The issue describes a plausible stale-session bug in Continue's PR check pipeline, but the repository is now read-only post-acquisition and the deterministic gate requires HUMAN_REVIEW. Open PR lookup failed, so duplicate work cannot be excluded. The suggested fix is a hypothesis without confirmed server-side root cause."
   },
+  "d331319fb5e0ec55211c3af50ff9e9c08f59e1816582ca5d32a4e59d5b036171": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "tools/checkpoint/utils.py and related loader/saver files to initialize GTP_remat process groups",
+      "tools/checkpoint/saver_base.py to preserve target-derived weight-shard args"
+    ],
+    "risks": [
+      "Open PRs #7027 and #7028 may partially overlap; need to ensure no duplicate or conflicting changes",
+      "Changes to process group initialization might affect other converter paths if not carefully scoped"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided convert.py command with a small Mixtral checkpoint on CPU to reproduce both regressions",
+      "After fix, verify conversion completes and the output checkpoint loads in pretrain_gpt.py with target TP/PP",
+      "Add a regression test that exercises the converter with target TP>1 and GTP_remat groups uninitialized"
+    ],
+    "unknowns": [
+      "Whether open PRs #7027 and #7028 fully resolve both regressions or only one each; need manual comparison"
+    ],
+    "why": "The issue provides a precise root cause for two regressions in the checkpoint converter, with exact code locations, reproduction commands, and expected vs actual behavior. The proposed fixes are concrete and local to tools/checkpoint. Although open PRs #7027 and #7028 overlap semantically, they are not linked to this issue and may not fully cover both regressions; this does not block actionability but requires manual comparison."
+  },
   "d36ac351b2d221dd5d1016b09b4a25d8e55b397577ed2163591732eed209899e": {
     "confidence": 0.8,
     "contradictions": [
@@ -57333,6 +57395,38 @@
     "wait_reason": null,
     "why": "Issue provides a minimal reproducer, exact traceback, and root-cause analysis (zero-sized parameter absent from param_to_partition_ids) with a clear fix direction. It is a concrete distributed-training bug in ZeRO stage 1/2, actionable and testable."
   },
+  "e7e922a26c2cb25779d45e6a36f2fbcf2e37f9410a7d57691f6db57b7a257a7d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #38755 is semantically overlapping but actually unrelated (text-to-speech), so no real contradiction"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Fix forced stream=True in chatgpt responses transformation",
+      "Aggregate output items in ResponsesToCompletionBridgeHandler stream collection",
+      "Backfill completed_response.output when empty"
+    ],
+    "risks": [
+      "Potential behavior change in streaming path if aggregation logic is incorrectly applied",
+      "Need to coordinate with existing PR #38719 to avoid duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test using the issue's minimal reproducer (stream=false vs stream=true) asserting non-streaming returns content",
+      "Unit test for _collect_response_from_stream_async to verify output aggregation from output_item.done events"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer fixing at provider level vs bridge handler level"
+    ],
+    "why": "Issue provides a clear regression (non-streaming chatgpt/* fails after 1.88.1) with a minimal reproducer and a detailed root-cause analysis in comments, including code-level evidence and a suggested fix location. The bug is user-visible, affects a core inference path, and is actionable."
+  },
   "e7ea66cd742fa992eb2b677302a613c9a5f030f9b8623b8e62b8156ae0a6496c": {
     "confidence": 0.85,
     "contradictions": [],
@@ -61521,6 +61615,29 @@
       "Whether maintainers plan to merge or revise PR #25387; whether backfill is acceptable or requires migration; exact CI failure causes."
     ],
     "why": "Issue clearly identifies a bug where max_end_user_budget_id is not persisted to DB, causing budget reset to fail. However, an existing PR (#25387) directly addresses this issue but is closed with missing tests and CI failures, requiring maintainer review to determine if it can be revived or if a new PR is needed."
+  },
+  "f76d33b514546fee5fbf974d5a2125ef4b5ea8437c3b3ffddfee1a3e108ad9d7": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify _serialize_offload_strategies and _deserialize_offload_strategies in haystack/hooks/tool_result_offloading/hooks.py to use an explicit sentinel prefix for tuple keys, removing the startswith('[') heuristic."
+    ],
+    "risks": [
+      "Potential backward compatibility for any existing serialized hooks that relied on the old (buggy) behavior, though issue argues no real users affected; defensive shim may be needed."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add parametrized regression test as suggested in the issue, covering tuple keys, string keys that look like JSON arrays, empty/invalid JSON strings, and sanity cases, asserting round-trip key shape preservation."
+    ],
+    "unknowns": [
+      "No maintainer feedback or design preference yet, but that is not a blocker for actionability."
+    ],
+    "why": "Issue provides a precise root cause (asymmetric serialize/deserialize heuristic), a verified local reproducer with expected vs actual outputs, and a concrete sentinel-based fix with regression tests. The affected code is isolated to a single file, and the proposed change is minimal and low-risk."
   },
   "f780eef814f26a4bae83c9cc2a0ede195c1bbafcc97fd3b248692e66c1debb6e": {
     "confidence": 0.85,
