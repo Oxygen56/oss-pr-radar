@@ -2843,6 +2843,37 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a reproducible MTP speculative decoding corruption at concurrency >=4, with strong evidence of a mixed-batch indexing bug. However, the supplied evidence indicates a potential duplicate issue #50427 sharing stack failure signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not fully confirmed, and maintainer investigation is not active."
   },
+  "0cb924446706b1d811c308f13f72a0944c24f5b1a247fa479d361bb6ad4618ae": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mcp-server schema validation decoupling",
+      "parseConfig acceptance behavior",
+      "modern tools/call validation",
+      "diagnostic warning emission"
+    ],
+    "risks": [
+      "Potential behavior change for modern tools/call when validation unavailable",
+      "Diagnostic warning format may need adjustment based on maintainer feedback"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run differential configuration acceptance tests against v2.0.0 oracle",
+      "Run unit/package tests in pkg/mcp, mcp-server, mcp-router",
+      "Run exact-head runtime verification harness with real Envoy/proxy-Wasm"
+    ],
+    "unknowns": [
+      "No unresolved unknowns; implementation and verification evidence provided"
+    ],
+    "why": "The issue provides a detailed design with clear root cause (schema-derived validation incorrectly rejecting legacy REST configs), concrete code anchors, and a comprehensive verification plan including differential testing against v2.0.0 oracle. Evidence shows implementation tasks completed and verified, with no competing PRs."
+  },
   "0cc0439c61fa12f891d63078e40da97d52af4be5bba2d708de549e438cb78643": {
     "confidence": 0.85,
     "contradictions": [],
@@ -10476,6 +10507,33 @@
     ],
     "why": "Issue provides a deterministic CPU reproducer, exact root cause (missing reward_extra_info key in DisRM return), and a minimal fix. The change is a concrete algorithm-contract fix in the reward path, with clear regression test path."
   },
+  "2d103a9998c82d8defd07df3e3748e3bcc4e73057172ea45de85b1b2226568bd": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims bug, maintainer hiasky says it's expected behavior; another contributor Greenplumwine argues it should allow registration via invite link."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "frontend/src/views/auth/Login.vue",
+      "possibly backend invite registration flow"
+    ],
+    "risks": [
+      "Changing behavior may conflict with intended invite_only semantics; requires product decision."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with settings: invite_only, disable self-service space creation, no auto-create space; then verify registration form visibility with valid invite token."
+    ],
+    "unknowns": [
+      "Maintainer's product decision on whether invite_only should allow registration via invite link."
+    ],
+    "why": "The issue describes a frontend bug with detailed code references, but recent maintainer comments indicate the expected behavior is disputed and requires product-level confirmation. The root cause is clear in code, but the desired fix is not agreed upon, making the contribution not actionable without maintainer decision."
+  },
   "2d20737835a18cacdd71192fb6a9764a1288bc51cb6e33179e270463ebe10767": {
     "confidence": 0.85,
     "contradictions": [
@@ -10829,6 +10887,42 @@
       "Whether PR #14313 is complete and acceptable; whether maintainers prefer that PR over a new one"
     ],
     "why": "Issue provides a precise root cause: the native Rust sidecar omits native_offloading_capacity in runtime_data, with code anchors and a concrete reproduction. An open PR #14313 directly addresses the same code path but lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
+  "2f70e32f5cd30d17dc4722198e9162e35d8e9ca1ce298864a8cbd4e6d2aa27a6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Backend selection logic in vllm/attention/selector.py or similar",
+      "Preflight validation for cache dtype combinations",
+      "Error handling to raise informative compatibility error"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #55330 or others; need to compare implementation boundaries",
+      "Fix may require touching multiple backend files, increasing regression risk",
+      "Need to ensure error message is user-friendly and does not break existing workflows"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script with Qwen3-Embedding-8B and mixed dtypes to confirm the error",
+      "Add a unit test that mocks backend capability and asserts a clear error for unsupported dtype combinations",
+      "Verify that valid dtype combinations still select the correct backend"
+    ],
+    "unknowns": [
+      "Exact code path where backend selection fails (file/function)",
+      "Whether maintainers have already started a fix in an unlinked PR",
+      "Exact set of dtype combinations that are unsupported"
+    ],
+    "why": "Issue reports a concrete failure: Qwen3-Embedding with mixed cache dtypes (bfloat16/float16/float32) triggers 'No valid attention backend found for cuda' instead of a preflight compatibility error. Root cause is likely a dtype combination not supported by any CUDA attention backend, with a clear reproduction command and environment details. This is a numerical/quantization mechanism in an LLM inference engine, qualifying as llm_algorithm. The fix is actionable: validate backend capability against requested dtypes before engine init, and add a regression test."
   },
   "2f7c2d58fca81dca69ab95dcae132d6c0b42b1955ef0bff9677335ccf15d07ee": {
     "confidence": 0.85,
@@ -15887,6 +15981,33 @@
       "Exact maintainer preference for identity scheme (dotted vs plain) not confirmed"
     ],
     "why": "Issue provides a self-contained repro script and detailed root-cause analysis for a high-impact data-quality bug in nested workflow suspend/resume. The maintainer triage confirms the bug and suggests concrete fix locations. No competing PR exists, and the fix is well-scoped to core workflow state handling."
+  },
+  "44da76b05afb159af66456c6551689eb624e2c64648e5d86f76ec26348d265e8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "ggml-backend CPU kernel dispatch",
+      "qvac-fabric-llm.cpp training path"
+    ],
+    "risks": [
+      "Potential misidentification of the exact op; fix may require upstream llama.cpp changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided configurations on CPU-only build",
+      "Add regression test for missing CPU kernel in LoRA backward"
+    ],
+    "unknowns": [
+      "Exact op lacking CPU kernel not definitively identified"
+    ],
+    "why": "Issue provides a clear root cause: missing CPU kernel for a specific op in LoRA backward pass, evidenced by consistent crash across varied configurations. Concrete validation path exists via CPU-only reproduction and kernel dispatch inspection."
   },
   "44e40295ec80bba4ec088320d33d4758b2ac9b04f13e68736d1d27b4e6b1fcda": {
     "confidence": 0.7,
@@ -22699,6 +22820,36 @@
       "Whether maintainers prefer integrating into #12835 or a separate PR"
     ],
     "why": "Issue clearly identifies a CLI gap: nativeToolCallEnabled is ignored and no CLI-visible control for XML tool calling exists. The related PR #12835 adds the setting but only wires it for VS Code, leaving CLI parity unaddressed. The issue provides a concrete reproduction and expected behavior, making it actionable."
+  },
+  "5d33917d8238532ece5ac801331c95c524d0f09ec09720cf963adc3239b21faa": {
+    "confidence": 0.85,
+    "contradictions": [
+      "No contradictions found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "DFlash2 speculative decoding logic",
+      "Qwen3.8 thinking path handling",
+      "possibly chat template or parser integration"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs (e.g., #35629, #36136) that may already address the root cause; need to verify before duplicating effort."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction with target-only and DFlash2 profiles, compare token sequences at index 30; add regression test with fixed seed and temperature=0 to assert exact match."
+    ],
+    "unknowns": [
+      "Whether any existing open PR already fixes this exact issue; root cause not yet identified in the issue."
+    ],
+    "why": "The issue provides a deterministic reproduction with exact divergence token, controlled experiments isolating the thinking path, and clear expected behavior. It targets a concrete algorithmic bug in DFlash2 speculative decoding with Qwen3.8 thinking, offering a clear validation path via token-level comparison."
   },
   "5d39a492a84d1b06be35f4afe8e5345953abe29077f0a3989b8667bfb78da9c7": {
     "confidence": 0.7,
@@ -32828,6 +32979,36 @@
     ],
     "why": "The issue describes a concrete user-visible bug with a clear repro and expected behavior, but the recent collaborator comment reveals a critical gap: the shared-tier path does not honor clientMessageId, so the proposed idempotent retry is not currently safe. This requires design confirmation on server-side deduplication before implementation. The issue is actionable but not cleanly startable without maintainer input."
   },
+  "841871ae9fb9c3e69741fc459f04463c4eb77958cf3c72ad4736b667d24abfab": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #38818 and #39589 are marked as semantic overlap but do not directly reference the issue; their actual coverage is uncertain."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/llms/chatgpt/responses/transformation.py",
+      "litellm/responses/streaming_iterator.py",
+      "litellm/completion_extras/litellm_responses_transformation/transformation.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #38818 or #39589; need to compare implementation boundaries before duplicating work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided minimal reproducer to create a failing test for non-streaming chatgpt responses, then verify the fix makes it pass and streaming still works."
+    ],
+    "unknowns": [
+      "Whether the suggested fix in #38719 or the alternative in the bridge handler is preferred by maintainers; exact code changes not yet proposed."
+    ],
+    "why": "Issue provides a clear regression with version matrix and minimal reproducer. A recent comment traces the root cause to forced streaming in transform_responses_api_request and incomplete aggregation in the streaming iterator, with a suggested fix location. This is actionable for an agent."
+  },
   "8442a888bb75d59bc58efc532b1a74c5589c9c22d125733590947071935bc8ed": {
     "confidence": 0.7,
     "contradictions": [],
@@ -39627,6 +39808,41 @@
     ],
     "why": "Issue provides a clear reproduction (uv sync --upgrade) and a precise root cause: jsonschema-rs 0.29.1 depends on PyO3 0.23.4 which does not support Python 3.14. The fix is to update the dependency constraint or pin a compatible version, with a regression test ensuring Python 3.14 compatibility."
   },
+  "9fff7430ff967a6f0395ea7ea71d46f42957d0a92cf91aa7576423ef4adc96c8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent-controller/session.ts",
+      "packages/core/src/agent-controller/agent-controller.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/sync.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/async-buffer.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/resource-scoped.ts",
+      "packages/memory/src/processors/observational-memory/__tests__/",
+      "packages/core/src/agent-controller/thread-title.test.ts"
+    ],
+    "risks": [
+      "Potential semantic overlap with open PR #23039 requires manual comparison before implementation",
+      "Design choice of metadata key may need maintainer input"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add core tests for rename pinning and regenerate unpinning in thread-title.test.ts",
+      "Add memory tests for all three OM strategies verifying pinned titles are not overwritten",
+      "Run targeted unit tests for core and memory packages"
+    ],
+    "unknowns": [
+      "Whether open PR #23039 already implements the same fix"
+    ],
+    "why": "Issue clearly identifies a cross-package bug with root cause in Observational Memory's unconditional title overwrite, proposes a concrete per-thread pinning design, and includes test surface. No blocking unknowns; open PRs are not direct duplicates."
+  },
   "a08005de470f5ffd226c49d2956600f182b092332c0fd1db663a9b5cb057ae18": {
     "confidence": 0.7,
     "contradictions": [
@@ -46390,6 +46606,37 @@
       "Exact implementation details for passing AgentIDs through the installation flow"
     ],
     "why": "The issue clearly identifies a bug where CodeGraph configuration ignores the user's agent selection, with specific code paths and a failing test that encodes the bug. However, the repository requires issues to have 'status:approved' before PRs are accepted, and the issue lacks maintainer approval or design confirmation. The gate decision is HUMAN_REVIEW, indicating a need for maintainer input before implementation."
+  },
+  "bda02d71ca8398e734fea300776a00af7e8f421d8ed3c6fea3c1a53ec14a5ac8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "lib/runtime/src/pipeline/network/egress/push_router.rs",
+      "lib/runtime/src/component/client.rs",
+      "lib/llm/src/discovery/worker_monitor.rs",
+      "lib/llm/src/kv_router/publisher/worker_metrics.rs",
+      "lib/runtime/src/pipeline/network/ingress/shared_tcp_endpoint.rs"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #14210; need to coordinate or ensure independent implementation.",
+      "Changes to overload marking logic may affect other overload scenarios; need careful review."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that simulates TCP ingress rejection, stops load, and verifies that overloaded marks expire and requests are routed again within a bounded time.",
+      "Run targeted unit tests for the modified runtime and llm packages."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer to merge PR #14210 as-is or require additional tests and changes."
+    ],
+    "why": "The issue provides a detailed root cause with code anchors and a concrete reproduction path. An open PR (#14210) directly addresses the issue with a proposed fix, but lacks tests and is not yet merged. The issue is actionable for implementing a tested fix or improving the existing PR."
   },
   "bdbb3e86ab975b8c28880afb175193ef8c314715f635a79aff1646adf06117bf": {
     "confidence": 0.7,
