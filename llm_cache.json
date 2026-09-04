@@ -10281,6 +10281,35 @@
     ],
     "why": "The issue provides a clear, reproducible bug with expected vs actual behavior, identifies the likely root cause (per-deployment tag filtering override not implemented, causing deployment's own tags to be treated as required request tags), and includes code anchors. This is a valuable, actionable bug fix opportunity in the routing logic."
   },
+  "2cac34ec7fc25f8c184dfef1801657310bffba9c82aeaab1f46162af9721be8d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "transfer_queue/storage/bootstrap/simple_storage_bootstrap.py",
+      "transfer_queue/utils/common.py",
+      "verl/trainer/main_ppo.py"
+    ],
+    "risks": [
+      "Potential interaction with existing PR #7525 that adjusts verl's default; need to ensure both fixes are compatible.",
+      "Changes to TransferQueue may affect other users relying on current blocking behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided gsm8k PPO quickstart on a machine with 8 or fewer CPUs and verify no deadlock; test with num_data_storage_units=8 and confirm fail-fast error message.",
+      "Add a unit test for placement group timeout and cleanup of partially created storage actors."
+    ],
+    "unknowns": [
+      "Exact implementation details of PR #165 and whether it fully resolves the issue without regressions."
+    ],
+    "why": "Issue provides a clear root cause (placement group deadlock due to insufficient CPU capacity), a concrete reproduction path, and a workaround. The referenced PR #165 directly addresses the root cause with a fail-fast mechanism and cleanup, making the contribution actionable."
+  },
   "2cb812b502e6a1ab0fd78e4f429baa1a7d8ef9ead39292c5465ab560f1991c09": {
     "confidence": 0.85,
     "contradictions": [],
@@ -18968,6 +18997,34 @@
       "Whether the issue requires assignment before contribution"
     ],
     "why": "The issue provides a clear regression range, a minimal 5-line repro, and multiple independent reproductions across hardware. A comment identifies a concrete root cause (PR #53968 enabling gp-relative relaxation on a core where gp is never initialized) with a proposed fix. This is actionable for an LLM-algorithm track because the failure blocks distributed training (GRPO example) and involves a numerical/address computation error in the fabric handshake."
+  },
+  "513392dfdb8daf4fdcab4a58dc452d6fc87abc447ab679455cdad3f2965e65e7": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer suggests reproduction may be keyless and expected to redirect to LiteLLM login, while issue claims per-server relay should be used without a key."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "MCP OAuth discovery and authorization routing",
+      "Configuration schema for per-server gateway DCR opt-out"
+    ],
+    "risks": [
+      "Potential design conflict with maintainer's intended keyless flow; need to ensure opt-out does not break keyless authentication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided curl commands against a local proxy configured with a mock vendor OAuth endpoint; assert that .well-known/oauth-protected-resource/mcp/figma returns per-server authorization server and /figma/authorize redirects to vendor URL."
+    ],
+    "unknowns": [
+      "Whether the issue reporter is using a LiteLLM key in the flow; maintainer's clarification request remains unanswered."
+    ],
+    "why": "Issue provides a clear regression scenario with detailed reproduction steps, expected vs actual behavior, and code anchors. The maintainer's comment raises a design question about keyless vs keyed flows, but the issue explicitly requests an opt-out mechanism and the root cause (aggregate DCR advertisement) is well-defined. This is actionable for a fix or feature addition."
   },
   "5136ffeab45de80a89f012d72bf41262e9efd142937ffac65e96026cf5d71562": {
     "confidence": 0.8,
@@ -38583,6 +38640,43 @@
     ],
     "why": "Issue reports a clear regression in Dify Cloud MCP servers with a specific SQLAlchemy closed-transaction error. Dosu's comment identifies the root cause as PR #34281's sessionmaker().begin() usage in api/controllers/mcp/mcp.py, conflicting with internal commits in the generation pipeline. No open PR addresses this; existing merged PRs are historical and not direct competition. The fix is actionable: revert to plain Session with explicit commit management, mirroring PR #36392."
   },
+  "9cb15991a8836519e9e9515041b41c577795152f3949ef315a390ebec74c4a57": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #21682 is marked as semantic overlap but its title and scope (examples/evals) do not directly address the bug, so overlap may be superficial."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent-controller/session.ts",
+      "packages/core/src/agent-controller/agent-controller.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/sync.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/async-buffer.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/resource-scoped.ts",
+      "packages/core/src/agent-controller/thread-title.test.ts",
+      "packages/memory/src/processors/observational-memory/__tests__/"
+    ],
+    "risks": [
+      "Potential semantic overlap with PR #21682 requires manual comparison to avoid duplicate work.",
+      "Design choice of pin flag in metadata may need maintainer approval."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add tests in packages/core/src/agent-controller/thread-title.test.ts covering rename with pin default, regenerate clearing pin, and programmatic initial title with pin:false.",
+      "Add tests in packages/memory/src/processors/observational-memory/__tests__/ for all three OM strategies verifying pinned threads do not get title overwritten."
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for pinning (e.g., metadata key naming) or whether PR #21682 actually fixes the issue."
+    ],
+    "why": "The issue precisely identifies a user-visible bug where manual thread renames are overwritten by Observational Memory's auto-generated titles, with clear root cause in the OM persist logic and a concrete proposed fix (pinned titles). The evidence includes code anchors, a proposed design, and test surface, making it actionable."
+  },
   "9cf55d96d0d6ef56f1b0866da54e70052dbacf2bb4098551110b33218b27bfaa": {
     "confidence": 0.8,
     "contradictions": [
@@ -50239,6 +50333,34 @@
       "Maintainer approval for the specific implementation approach"
     ],
     "why": "Issue identifies a concrete bug: fast mode silently excludes scripts/ via hardcoded FAST_SKIP_DIRS in discover.c, with reproduction and maintainer acknowledgment. However, the deterministic gate requires HUMAN_REVIEW, and the issue lacks explicit maintainer approval or design confirmation for the fix approach. The competing PRs do not address this specific bug, so a new PR is plausible, but maintainer direction is needed."
+  },
+  "ce6e596dad796c3a4adcbd33ced69743da1181d171de6050a81778451c471636": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/llms/chatgpt/responses/transformation.py",
+      "litellm/responses/streaming_iterator.py",
+      "litellm/completion_extras/litellm_responses_transformation/transformation.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #38719 or #38818; need to compare implementations to avoid duplication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided minimal reproducer to create a failing test for non-streaming chatgpt responses, then verify the fix makes it pass and streaming still works."
+    ],
+    "unknowns": [
+      "Whether existing PR #38719 already fixes this issue and is acceptable to maintainers."
+    ],
+    "why": "Issue provides a clear regression with version matrix and minimal reproducer. A recent comment traces the root cause to forced stream=True in transform_responses_api_request and incomplete aggregation in the streaming iterator, with a suggested fix location. This is actionable and technically valuable."
   },
   "ce9058e48eacde75fbea02430b723f2c8d6cf4c4c73b484b0def8c8847db5771": {
     "confidence": 0.85,
