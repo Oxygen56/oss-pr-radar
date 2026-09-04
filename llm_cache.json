@@ -10002,6 +10002,42 @@
     ],
     "why": "The issue provides a detailed, reproducible bug with clear root-cause evidence: MTP speculative decoding with turboquant KV cache on sm120 causes repetition collapse, while fp8 KV works. The evidence includes exact reproduction commands, a table of results, and ruled-out hypotheses. The track is llm_algorithm with concrete mechanisms (model_architecture, numerics_quantization, kernel_algorithm) and a validation path via reference-vs-implementation comparison. Although there are open PRs that may overlap, the issue itself is actionable and not blocked by missing facts."
   },
+  "2b9b6f0638984c3e7112427ba619d77bdc81b6623ddba576605eaf1c8252beb6": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent-controller/session.ts",
+      "packages/core/src/agent-controller/agent-controller.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/sync.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/async-buffer.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/resource-scoped.ts",
+      "packages/core/src/agent-controller/thread-title.test.ts",
+      "packages/memory/src/processors/observational-memory/__tests__/"
+    ],
+    "risks": [
+      "Potential API change in rename() signature may affect existing callers",
+      "Metadata key collision or compatibility with existing threads",
+      "Open PR #23039 may touch overlapping code and require coordination"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add tests in thread-title.test.ts for rename pinning and regenerate unpinning",
+      "Add tests for each OM strategy verifying pinned threads are not overwritten",
+      "Run existing observational-memory tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different design for pinning (e.g., separate field vs metadata)"
+    ],
+    "why": "Issue clearly identifies a user-visible bug where manual thread renames are overwritten by Observational Memory's auto-generated titles. Root cause is precisely located in three OM strategies that unconditionally update titles, with no distinction between manual and generated titles. Proposed fix is concrete: add a pinned flag in thread metadata, set it on rename, clear on regenerate, and centralize title-update logic. Test surface is specified. No blocking unknowns; open PR #23039 has only semantic overlap on one file and does not cover the root cause."
+  },
   "2bd27863d39fa51332d0dac529218d24971ac99bb7012d10abf057dd4fb06ae0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -10764,6 +10800,35 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue provides a deterministic reproduction and clear symptom (permanent hang on empty multimodal embeddings), but lacks a root cause analysis or code-level diagnosis. The proposed fix is vague ('minimal fix along runtime/provider/scheduler path') and no maintainer has confirmed the approach. The existing related issues and PRs indicate this is a known fragile area, but no open PR or maintainer investigation is present. The candidate is actionable only after maintainer guidance on the intended fix direction."
+  },
+  "2ebf8b470a0e9eee193500d1ff6caaf2c72976296e4ef013ffea25cfa3ae5652": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims no writer exists, but PR #14313 adds a writer; however PR lacks tests and may not fully cover root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/sidecar/sglang/src/engine.rs: add native_offloading_capacity to runtime_data based on hicache settings",
+      "possibly add regression tests for capacity publication"
+    ],
+    "risks": [
+      "PR #14313 may already implement the fix, requiring coordination to avoid duplication",
+      "Numerical rounding of host pool size may cause off-by-one mismatches"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by launching SGLang with HiCache and sidecar, then assert runtime_data contains native_offloading_capacity matching expected host pool; add unit test for build_engine_config with mocked server_info"
+    ],
+    "unknowns": [
+      "Whether PR #14313 is complete and acceptable; whether maintainers prefer that PR over a new one"
+    ],
+    "why": "Issue provides a precise root cause: the native Rust sidecar omits native_offloading_capacity in runtime_data, with code anchors and a concrete reproduction. An open PR #14313 directly addresses the same code path but lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
   "2f7c2d58fca81dca69ab95dcae132d6c0b42b1955ef0bff9677335ccf15d07ee": {
     "confidence": 0.85,
@@ -17069,6 +17134,37 @@
       "Whether existing PRs (e.g., #36632) overlap with these fixes"
     ],
     "why": "The issue details four concrete, reproducible bugs in LiteLLM's image/video routes for OpenAI-compatible backends, with clear root causes and expected behavior. However, the track is agent_ai_infra, not llm_algorithm, and the candidate lacks maintainer approval or explicit design confirmation. The presence of multiple related PRs and the need for maintainer input on API behavior changes warrant a wait decision."
+  },
+  "4abfa3b8d6a8e99dec2b732867feabd173344a03546e7ef448b757e5a3e25583": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #40796 is marked technical_complete but only adds warnings, not a fix; issue requests a fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "session message serialization to preserve byte-identity across tool-call transitions",
+      "prompt cache handling in provider runtime"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #36852 or #14743; need to ensure fix is not duplicative",
+      "Changing serialization may affect other provider behaviors"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a regression test that simulates a tool-call loop and asserts cache_read > 0 on subsequent turns",
+      "Run existing session/cache unit tests with the new test case"
+    ],
+    "unknowns": [
+      "Exact code path where byte-identity is broken; maintainer preference for fix approach"
+    ],
+    "why": "Issue provides concrete production evidence of cache busts after tool-calls, with deterministic correlation and reproducible SQL queries. Root cause is clearly identified and matches prior issue #24841. Existing PR #40796 only adds warnings, not a fix, leaving room for a valuable code contribution."
   },
   "4ac0decc54fb82a89e6cc839568479947709537e4a10d80fcd2848a78a7684da": {
     "confidence": 0.85,
@@ -39290,6 +39386,39 @@
     ],
     "why": "Issue is a real user-visible bug with strong reproduction evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed unmerged and do not settle the policy, so a new PR would be premature without maintainer direction."
   },
+  "9f8d3c286adddf53fa7eaf54d9aca8cc0ab61bddb1754ccc2253db7d5adb2a4c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Add bounded wait/timeout for SimpleStorage placement group in transfer_queue/utils/common.py",
+      "Report configured vs available Ray CPU capacity on failure",
+      "Terminate partially created storage actors and rollback controller on startup failure",
+      "Possibly adjust verl defaults for num_data_storage_units on small machines"
+    ],
+    "risks": [
+      "Potential behavior change for users relying on the current blocking behavior",
+      "Interaction with existing PR #7525 in verl may require coordination",
+      "Need to ensure rollback logic correctly cleans up partially created actors"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction command on a machine with 8 or fewer CPU cores and verify no deadlock occurs",
+      "Verify that the system fails fast with a clear error message when CPU capacity is insufficient",
+      "Run the existing test suite for TransferQueue and verl to ensure no regressions"
+    ],
+    "unknowns": [
+      "Exact implementation details of the referenced PR #165 and whether it fully resolves the issue",
+      "Whether the issue is already fixed by the referenced PR or if additional work is needed in verl"
+    ],
+    "why": "Issue provides a clear root cause (Ray placement group deadlock due to insufficient CPU capacity), a concrete reproduction command, and a validated workaround. The referenced TransferQueue PR #165 directly addresses the root cause with a fail-fast mechanism, and the issue is open with no conflicting evidence. The work is actionable and testable."
+  },
   "9fb4580cf3cddc5bbbf0958a6148ce65efe5d899674cab03fb99b58f29137d2b": {
     "confidence": 0.85,
     "contradictions": [],
@@ -53946,6 +54075,37 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a CI failure with a plausible environment/cache root cause, but existing PR #52256 overlaps the exact test file and is maintainer-owned with passing CI. The issue is not verified on main and the failure may be node-specific. A new PR would risk duplicating #52256 or addressing a non-reproducible environment issue."
+  },
+  "da540c78dfbafd7316481cbf74f4ff96c3367404b0004f9b590905b59a2f9583": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/chatgpt/responses/transformation.py",
+      "litellm/responses/streaming_iterator.py",
+      "litellm/completion_extras/litellm_responses_transformation/transformation.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #38818 or #38719; need to compare implementations to avoid duplication.",
+      "Changing aggregation behavior may affect streaming clients if not carefully scoped."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided minimal reproducer to assert that litellm.responses(stream=False) returns a ResponsesAPIResponse with non-empty output, not a streaming iterator.",
+      "Add a regression test that drains the streaming iterator and verifies completed_response.output is populated from output_item.done events."
+    ],
+    "unknowns": [
+      "Whether existing PR #38818 or #38719 already fully fixes the issue; requires manual comparison."
+    ],
+    "why": "Issue provides a clear regression with version matrix and minimal reproducer. A recent comment traces the root cause to forced stream=True in transform_responses_api_request and incomplete aggregation in the streaming iterator, with concrete evidence and suggested fix locations. This is actionable for an agent."
   },
   "da84c242c48f45fad5fdc23df5993e3dde30a8cec96a6d049cac2ee0574a37ec": {
     "confidence": 0.85,
