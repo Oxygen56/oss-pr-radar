@@ -14868,6 +14868,37 @@
     ],
     "why": "Issue reports a concrete bug in MLX model packaging causing leaked control tokens and ignored response_format, with clear reproduction and controls. However, root cause is not identified, and a collaborator comment references another issue (#16563) without explanation, suggesting maintainer awareness or potential duplicate. The deterministic gate is HUMAN_REVIEW, so we must wait for maintainer direction."
   },
+  "4115513c8b5501bda31df4ca75efe36827facb08509898bb2a581f23d17981c5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue body hypothesizes recovery failure, but comment identifies forced stream=True as root cause; these are not contradictory but complementary."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/llms/chatgpt/responses/transformation.py",
+      "litellm/responses/streaming_iterator.py",
+      "litellm/completion_extras/litellm_responses_transformation/transformation.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #38719 or #38818; need to compare implementations to avoid duplication.",
+      "Changing the forced stream=True behavior may affect other code paths that depend on streaming for non-streaming requests."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that calls litellm.responses with stream=False on a chatgpt/* model and asserts the returned object is a ResponsesAPIResponse with non-empty output, using a mock SSE stream that emits output_item.done and output_text.done events but empty response.completed output."
+    ],
+    "unknowns": [
+      "Whether the suggested fix in #38719 is already merged or covers the exact scenario; need to verify PR status and implementation details."
+    ],
+    "why": "Issue provides a clear regression with version matrix, minimal reproducer, and a detailed root-cause analysis in comments identifying the forced stream=True and empty completed output. The fix is actionable and testable."
+  },
   "41163f4663a4d6cc73fdecf87d5d1ade446d01b06fa04d934adc25439a13a1f2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -25150,6 +25181,43 @@
       "Maintainer confirmation on desired recovery behavior"
     ],
     "why": "Issue reports a user-visible bug in agent loop recovery after tool execution failures, with concrete reproduction steps and error structure. However, the root cause is not identified, and the maintainer has only labeled it for triage without confirming design direction. The deterministic gate requires HUMAN_REVIEW, and design confirmation is needed before implementation."
+  },
+  "670d63269f0dcd84d731c0aaa4d019153febee73cf10add5d2d35d34140d18d8": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #23039 title suggests feature work but overlaps on code path and 'auto_generated' semantics; issue claims root cause in memory, PR may address different aspect"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent-controller/session.ts",
+      "packages/core/src/agent-controller/agent-controller.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/sync.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/async-buffer.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/resource-scoped.ts",
+      "packages/core/src/agent-controller/thread-title.test.ts",
+      "packages/memory/src/processors/observational-memory/__tests__/"
+    ],
+    "risks": [
+      "Potential semantic overlap with PR #23039 requires manual comparison to avoid duplicate work",
+      "Design choice of metadata key and pin semantics may need maintainer confirmation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add core tests for rename with pin default true and regenerate clearing pin in thread-title.test.ts",
+      "Add memory strategy tests verifying pinned threads are not overwritten by observer-generated titles in sync, async-buffer, and resource-scoped strategies"
+    ],
+    "unknowns": [
+      "Whether PR #23039 already implements the proposed fix or conflicts with it",
+      "Maintainer preference on pin metadata key and API design"
+    ],
+    "why": "The issue precisely identifies a cross-package bug where Observational Memory's threadTitle extractor overwrites manual thread renames, with clear code anchors and a proposed design (pinned titles) that is actionable and testable."
   },
   "6718722f6768f44e94cf351a7228c61d420d4c02a77329d7a8dc4c8cc6792ff9": {
     "confidence": 0.7,
@@ -41992,6 +42060,37 @@
     ],
     "why": "The issue provides a precise root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative-token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm, and the issue involves model architecture and distributed training mechanisms with a clear validation path via numerical regression or runtime assertion checks."
   },
+  "ac4120ea094d6cbd777c14685834333458ab96829afd209ba11d3b592e921e05": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue reports bug in v0.14.1, but comment claims fixed upstream in main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Add regression test for mm_encoder_only conversion across model families",
+      "Update documentation or error messages for --convert mm_encoder_only flag"
+    ],
+    "risks": [
+      "Potential duplicate issue #55238 may cover similar ground",
+      "Fix may already be merged upstream, reducing need for new code changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script on current main to verify the fix",
+      "Add a unit test that exercises mm_encoder_only conversion for mistral3, qwen2_vl, and pixtral models"
+    ],
+    "unknowns": [
+      "Whether the issue is still reproducible on current main",
+      "Exact scope of upstream fix and whether it fully addresses all model families"
+    ],
+    "why": "Issue reports a concrete multimodal conversion failure with a clear reproduction command and traceback. A recent comment identifies the root cause as outdated code in v0.14.1, fixed upstream by PR #32605, which changed the model spec mechanism and flag name. This makes the issue actionable as a regression test or documentation update, though the fix may already be merged."
+  },
   "ac553920bd412a17a26482b4718dff959c811094b3d3fdd52c4485e5bcb18249": {
     "confidence": 0.8,
     "contradictions": [
@@ -42247,6 +42346,38 @@
       "Whether maintainers prefer self-contained retract vs. separate flush; whether existing PRs will be merged and supersede this work."
     ],
     "why": "Issue provides a clear root cause (retract only decrements lock refs for radix-owned prefix, leaving KV resident), measured impact (old-weight KV reuse causing logprob difference), and a concrete validation path (instrument prefix matching, compare logprobs). The suggested fix is actionable and aligns with documented retract semantics."
+  },
+  "adc0d91f431f7f67cf1115c8bd03f67883d8510f5fbcb8e619087e36951abe2a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugins/wasm-go/pkg/mcp/server",
+      "plugins/wasm-go/extensions/mcp-server",
+      "plugins/wasm-go/extensions/mcp-router"
+    ],
+    "risks": [
+      "Potential maintainer preference for alternative design",
+      "Risk of unintended behavior changes in legacy REST paths",
+      "Requires careful handling of user-owned untracked files during verification"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run differential configuration acceptance tests comparing v2.0.0 oracle with fixed head",
+      "Run unit tests in pkg/mcp, mcp-server, mcp-router with GOMAXPROCS=1 and env -u GH_TOKEN -u GITHUB_TOKEN",
+      "Execute exact-head runtime verification harness run.sh and check 26 PASS / 0 FAIL matrix"
+    ],
+    "unknowns": [
+      "No missing facts that affect actionability; implementation and verification evidence is comprehensive."
+    ],
+    "why": "The issue provides a detailed design with clear root cause (schema-derived validation incorrectly rejecting legacy REST configs), concrete code anchors, and a comprehensive verification plan including differential testing against v2.0.0 oracle. Recent comments show implementation and verification tasks completed successfully with exact-head evidence, indicating actionable and validated work."
   },
   "adc74379218cff0bdb5ba4cf9f186dd6db85e239ba5a975f09e7a26c84587190": {
     "confidence": 0.85,
@@ -47910,6 +48041,35 @@
       "Whether maintainers prefer collapsing InferenceMetadata to non-Option; whether existing PRs already fix this issue."
     ],
     "why": "Issue provides a precise root cause and a concrete fix, but the deterministic gate requires HUMAN_REVIEW and existing PRs overlap semantically, so maintainer review is needed before starting work."
+  },
+  "c3af34662662b67f572dcee3259df73f5bea81e288453b39619ea180e4c986fe": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "session message serialization",
+      "prompt loop cache handling"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #40796 or #14743; maintainer may prefer a different implementation approach."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce cache bust by simulating tool-call transitions and verifying cache_read=0 and cache_write>0; add regression test for byte-identity preservation across tool-calls."
+    ],
+    "unknowns": [
+      "Exact code location for the serialization bug is not pinpointed; maintainer design preference unknown."
+    ],
+    "why": "Issue provides production evidence of a cache-bust bug with deterministic correlation to tool-calls, a clear root cause referencing existing issue #24841, and reproducible SQL queries from the local database. The candidate is actionable for a code fix in the session/prompt-loop path, with a concrete validation path via regression tests."
   },
   "c3b6ae8e1ac189a7ffd4504aef23a93de3815a18b4ebfbcb705ee150ebead6e6": {
     "confidence": 0.85,
@@ -59816,6 +59976,37 @@
       "Maintainer design preference and whether assignment is required"
     ],
     "why": "Issue identifies a real architectural gap: capability hooks run outside durable units, causing side effects to replay. Proposal is technically sound and references precedents, but requires maintainer design confirmation and assignment."
+  },
+  "eded3dff9dfe211f60a62c0ccfb27453fa304173caab6a256838ffa1a043922b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer comment suggests keyless flow may be expected to redirect to LiteLLM login, but reporter clarifies keyed flow is used."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/proxy/_experimental/mcp_server/discoverable_endpoints.py",
+      "litellm/types/mcp_server/mcp_server_manager.py"
+    ],
+    "risks": [
+      "Potential conflict with existing PRs #39286 and #35394 that touch same file; need to coordinate to avoid duplicate work.",
+      "Changing default behavior may affect keyless flow; ensure keyed flow is preserved."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test for .well-known/oauth-protected-resource/mcp/figma returning per-server authorization server when configured with oauth2 authorization_code and no dcr_bridge.",
+      "Run existing MCP OAuth discovery tests and lint."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a configurable opt-out vs. reverting default behavior; exact intended behavior for keyless flow."
+    ],
+    "why": "Issue provides a clear regression scenario with exact configuration, HTTP requests/responses, and code-level root cause in discoverable_endpoints.py. The proposed fix is minimal and aligns with expected per-server OAuth relay behavior. No blocking unknowns; existing PRs overlap but do not directly address this issue."
   },
   "edfac9d678fa7cb9aaa338c242a793e9c1e052801cf545ab7f328556265c7383": {
     "confidence": 0.85,
