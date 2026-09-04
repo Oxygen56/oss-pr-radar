@@ -13460,6 +13460,32 @@
     ],
     "why": "Issue provides a detailed root-cause analysis with code references and a concrete race scenario, but lacks a native CUDA reproduction and maintainer confirmation. A contributor has claimed the fix, so assignment and design confirmation are needed before starting work."
   },
+  "3b015de1424c8260c1a6ca2d15b9fcd0f04f252a08962403d603e885f7b6cb49": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "OpenAI-compatible provider adapter serialization of reasoning:false",
+      "Configuration handling for reasoning disablement"
+    ],
+    "risks": [
+      "Changing serialization behavior might affect other models that rely on automatic reasoning injection; need to ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a unit test that mocks the OpenAI-compatible request builder and verifies that when reasoning:false is set, no reasoning parameters are injected into the payload.",
+      "Add an integration test using a local llama-server with thinking disabled to confirm no <think> blocks appear when reasoning:false is configured."
+    ],
+    "unknowns": [
+      "Exact code location where reasoning parameters are injected is not specified in the evidence."
+    ],
+    "why": "Issue clearly describes a bug where Continue overrides user's reasoning:false setting by injecting reasoning parameters for Qwen/DeepSeek models. Comment provides a workaround but confirms the core issue: reasoning:false is not serialized by the OpenAI-compatible adapter. Root cause is identifiable in the adapter code path."
+  },
   "3b0947df1f634bf70a07c2fd7f78e01533cf2c6d8f5cd24f9f8e1ab34d5810b8": {
     "confidence": 0.7,
     "contradictions": [
@@ -20340,6 +20366,37 @@
       "Whether an open PR already addresses this issue; maintainer's preferred fix approach"
     ],
     "why": "The issue reports a reproducible server-side bug (leading space in model name) with strong evidence, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups failed, so duplicate work cannot be excluded."
+  },
+  "563481538f6f2e96fa4dbc31b5ec4926b61ae72c6c25c6fa858ed7273928b4cf": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PRs #7027 and #7028 are semantically overlapping but not directly linked to the issue; they may partially address the regressions"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "tools/checkpoint/utils.py and loader/saver to initialize GTP_remat process groups",
+      "tools/checkpoint/saver_base.py to preserve target-derived weight-shard args"
+    ],
+    "risks": [
+      "Potential interaction with existing open PRs #7027 and #7028; need to ensure no duplicate or conflicting changes",
+      "Changes to process group initialization may affect other converter paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided convert.py command on a small HF model with target TP>1 to reproduce both regressions",
+      "After fix, verify conversion completes and checkpoint loads with pretrain_gpt.py at target parallelism"
+    ],
+    "unknowns": [
+      "Whether the open PRs fully fix both regressions or only one each; need to compare their changes with the issue's proposed fixes"
+    ],
+    "why": "Issue provides precise root cause for two regressions in checkpoint conversion, with exact code paths, tracebacks, and a concrete reproduction command. The proposed fixes are local and validated. Although open PRs overlap semantically, they do not fully cover both regressions, and the issue remains actionable."
   },
   "56353b888b4ae17328ed5e56b7395b3dbd8b7a8d877624275936d9b3bda1388b": {
     "confidence": 0.7,
@@ -27626,6 +27683,37 @@
     ],
     "why": "Issue provides a precise root cause (has_custom branch bypasses chunk_token_num), a reproducible example with expected vs actual output, and a clear minimal fix (Option A). Maintainer comment confirms the diagnosis and suggests a concrete implementation path. The bug is user-visible and severe (429k chunks vs 1.4k), and the fix is well-scoped."
   },
+  "6f66f339a58f5964a85c41ac9a7bf47a0f11bba5af15c73233415a3b081dc041": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/models/openai.py: refresh model_name in ResponseCompletedEvent branch before _map_usage, completed-preferred with created fallback",
+      "tests/models/test_openai_responses.py: add regression test for created!=completed model name"
+    ],
+    "risks": [
+      "Potential behavioral change if terminal event model differs from created in non-router scenarios, but fallback to created mitigates",
+      "Overlap with PR #7916 requires coordination to avoid merge conflicts"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use MockOpenAIResponses.create_mock_stream with ResponseCreatedEvent model='model-router' and ResponseCompletedEvent model='gpt-5-mini-2025-08-07', assert final ModelResponse.model_name equals 'gpt-5-mini-2025-08-07'",
+      "Run existing tests in tests/models/test_openai_responses.py"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different implementation approach, but this is normal design choice and not blocking"
+    ],
+    "why": "Issue provides a clear root cause: OpenAIResponsesStreamedResponse initializes model_name from response.created and never refreshes from response.completed, causing final ModelResponse.model_name to retain the router alias. A concrete reproduction with expected vs actual output and a Logfire trace is supplied. The fix is localized and a regression test is specified. Existing PR #7916 overlaps in code path but does not cover this specific attribution issue, so no duplicate coverage is confirmed."
+  },
   "7057df55bbf9160940e8f467b3f36babb514c682390f79fe14e6fdde100d2afa": {
     "confidence": 0.7,
     "contradictions": [],
@@ -29973,6 +30061,45 @@
       "Whether PR #36292 actually resolves the issue for gemini-3.5-flash"
     ],
     "why": "Issue reports a concrete bug with a clear repro and plausible root cause (Gemini 3.5 API change). Existing PR #36292 overlaps semantically but is not linked to the issue and may not fully address the root cause. A new PR that directly fixes the mapping and adds a regression test could be materially better."
+  },
+  "79ebdf7c2c0bc1d08d756d75854490aad8a3be8663fa4510de0838b99ef4b282": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Commenter jahnclawdmonet could not reproduce on SM120 with a different quant path, while reporter reproduces on Thor with NVFP4, suggesting hardware or quant-specific behavior."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/sample/thinking_budget.py",
+      "vllm/v1/worker/gpu/spec_decode/rejection_sampler.py",
+      "vllm/v1/worker/gpu/spec_decode/rejection_sampler_utils.py",
+      "vllm/v1/worker/gpu/sample/gumbel.py",
+      "tests/v1/worker/test_gpu_thinking_budget.py"
+    ],
+    "risks": [
+      "The bug may be specific to the Thor/SM110 platform or the NVFP4 quant path, which could limit reproducibility on other hardware.",
+      "The fix might interact with the speculative decoding fallback path, requiring careful handling of draft token states.",
+      "Potential overlap with open PRs #54788 and #54826 that touch similar code paths, requiring coordination to avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction with MTP4 and thinking_token_budget=1 on a supported GPU, assert first token is 248069 and content is emitted.",
+      "Add a unit test in tests/v1/worker/test_gpu_thinking_budget.py that simulates a no-draft-token step with speculative config and verifies ThinkingBudgetState.apply is invoked and forces the end marker.",
+      "Run existing thinking budget tests with and without speculative decoding to ensure no regression."
+    ],
+    "unknowns": [
+      "Whether the bug reproduces on non-Thor hardware with the same NVFP4 model and MTP config.",
+      "Whether the Thor-specific build patches affect the thinking budget path.",
+      "Whether the open PRs #54788 or #54826 already fix this issue."
+    ],
+    "why": "Issue provides a concrete reproduction with expected/actual token sequences, isolates the bug to MTP speculative decoding under Model Runner V2, and identifies specific code paths (thinking_budget.py, rejection_sampler.py). The root cause is likely that ThinkingBudgetState is not applied or its state is not initialized when speculative decoding is active, as evidenced by the first token being wrong even without draft tokens. This is a clear algorithmic bug in the sampling/budget enforcement mechanism."
   },
   "79ed7d67199ec28efaf241e85952f821075d837fc9d5ffcc1b0c6a57929a7cd8": {
     "confidence": 0.7,
@@ -43506,6 +43633,37 @@
       "Exact code locations for the cancellation monitor and context linking are not fully specified, but the issue provides sufficient anchors."
     ],
     "why": "The issue provides a clear bug description with reproduction steps, expected vs actual behavior, and a detailed code-path analysis identifying two lifecycle gaps. The root cause is well-defined: cancellation state is not shared between the original HTTP context and the remote Prefill context, and the SGLang cancellation monitor cannot abort before the first output. This is actionable for a code contribution."
+  },
+  "b49916fc3a2b0c070aad7541a5ab7cf19b1154aa7bf594119dac5af0eb900250": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent-controller/session.ts",
+      "packages/core/src/agent-controller/agent-controller.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/sync.ts",
+      "async-buffer.ts",
+      "resource-scoped.ts",
+      "packages/memory/src/processors/observational-memory/__tests__/"
+    ],
+    "risks": [
+      "Potential API changes to rename() signature may affect existing callers",
+      "Metadata key collision or compatibility with storage backends"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add core tests in thread-title.test.ts for rename pinning and regenerate unpinning",
+      "Add memory tests for all three OM strategies verifying pinned titles are not overwritten"
+    ],
+    "unknowns": [
+      "No maintainer approval yet, but not blocking for actionability"
+    ],
+    "why": "Issue clearly identifies a cross-package bug where Observational Memory's threadTitle extractor overwrites manual renames, with root cause pinpointed to unconditional title updates in three OM strategies. Proposed fix (pinned titles via metadata) is concrete, actionable, and includes test surface."
   },
   "b4ad55a4b4d9145dd97b93a70b54f728b49ea84d734a229fe259d547fca3b53e": {
     "confidence": 0.7,
@@ -59139,6 +59297,36 @@
       "Maintainer design preference"
     ],
     "why": "Issue reports a user-facing bug with DeepSeek thinking mode in react_agent, but lacks a minimal reproducible example and root cause is unconfirmed. Existing PR #6535 is closed and stale, and repository requires assignment, so maintainer confirmation is needed."
+  },
+  "edbfdc43de324831ec6aec0338659281384b0cd164d55bf83220abe8898321c4": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #38755 title suggests audio speech, but semantic overlap flagged; likely false positive."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/llms/chatgpt/responses/transformation.py",
+      "litellm/responses/streaming_iterator.py",
+      "litellm/completion_extras/litellm_responses_transformation/transformation.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #38719 or #38755; need to compare implementations to avoid duplication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided minimal reproducer to create a failing test for non-streaming chatgpt responses, then verify the fix makes it pass while streaming still works."
+    ],
+    "unknowns": [
+      "Whether existing PR #38719 already fixes this issue and is merged or open."
+    ],
+    "why": "Issue provides a clear regression with version matrix and minimal reproducer. A recent comment traces the root cause to forced stream=true in transform_responses_api_request and incomplete aggregation in the streaming iterator, with concrete evidence and suggested fix locations. This is actionable for an agent_ai_infra track."
   },
   "edcd4d8de7ec8b2d897d486b7fec2f465b62a65a64cc0366d2bee7627e09c26d": {
     "confidence": 0.9,
