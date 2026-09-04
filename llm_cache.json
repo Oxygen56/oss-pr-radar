@@ -13276,6 +13276,42 @@
     ],
     "why": "Issue provides a concrete user-visible bug with a suspected root cause (non-atomic read-modify-write on pending approvals in interactions.js) and a clear validation path via the five-card reproduction. The suggested fix direction is actionable and the code anchors are specific."
   },
+  "3a6f216d99630c702b612a7bc78d8d4a66cf8dd490c57382b49f5e8cc328e1b0": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #21682 has semantic overlap but no direct code overlap or root cause coverage"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent-controller/session.ts",
+      "packages/core/src/agent-controller/agent-controller.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/sync.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/async-buffer.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/resource-scoped.ts",
+      "packages/core/src/agent-controller/thread-title.test.ts",
+      "packages/memory/src/processors/observational-memory/__tests__/"
+    ],
+    "risks": [
+      "Potential semantic overlap with PR #21682 requires manual comparison before implementation",
+      "Design choice of metadata key may need maintainer confirmation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add core tests for rename pinning and regenerate unpinning in thread-title.test.ts",
+      "Add memory tests for all three OM strategies verifying pinned titles are not overwritten"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer an alternative design or have existing plans for title pinning"
+    ],
+    "why": "Issue identifies a clear cross-package bug with root cause in Observational Memory's unconditional title overwrite, proposes a concrete per-thread pinning design with code anchors and test surface, and is not covered by existing PRs."
+  },
   "3a84d39438704a06d53295f3884e7ad0f2aedd3ddb4647ec994b69fb3e0fab9d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -26918,6 +26954,39 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports a policy-dependent prefix-cache miss, but the reporter later retracts the policy correlation and the maintainer's scheduler-level reproduction shows no policy divergence. The remaining hypothesis (admission/chunk-budget fragmentation) is plausible but lacks a concrete reproducer or root-cause confirmation. The issue is a bug report with no proposed code change, and the deterministic gate is HUMAN_REVIEW."
+  },
+  "6cf7e625de51e522bdd687951e9613acd38f1e23cedc6dec577518f2e32b9cb6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "OpenAIResponsesStreamedResponse model_name refresh in terminal event branches",
+      "Regression tests in tests/models/test_openai_responses.py"
+    ],
+    "risks": [
+      "Potential overlap with PR #7916 which touches similar terminal event handling; need to ensure no duplication",
+      "Behavior change could affect users relying on alias retention, though fallback preserves common case"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add integration test using MockOpenAIResponses.create_mock_stream with created model 'model-router' and completed model 'gpt-5-mini-2025-08-07', assert final ModelResponse.model_name is the served model",
+      "Add fallback test where created==completed",
+      "Add ResponseFailedEvent variant"
+    ],
+    "unknowns": [
+      "Whether PR #7916 already fixes this issue or requires coordination",
+      "Maintainer assignment and design approval pending"
+    ],
+    "why": "Issue provides a concrete root cause (streamed response model name not refreshed from terminal event), a runnable repro, and a clear fix location. The proposed change is narrow and testable, with maintainer discussion confirming the bug and approach."
   },
   "6d24452a9ba97788de956d33271eaf95b97f2295055b62365e61110b5b73f959": {
     "confidence": 0.7,
@@ -47706,6 +47775,36 @@
     "wait_reason": null,
     "why": "Issue reports a clear regression in .NET Semantic Kernel 1.79 streaming Responses tool continuation, with A/B version comparison and detailed diagnostics. Root cause is not pinpointed but is localized to SK 1.79 changes in streaming/tool-call state propagation. No competing PR addresses this specific issue."
   },
+  "c3f7b3eecdc5e7e3d421dd0a5ee726762e21d7989db6e9f08ffab5616f77a8c6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "tools/checkpoint/utils.py",
+      "tools/checkpoint/saver_base.py",
+      "megatron/core/parallel_state.py",
+      "megatron/core/process_groups_config.py"
+    ],
+    "risks": [
+      "Open PRs #7027 and #7028 may already address parts of the issue; need to compare implementations to avoid duplication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided convert.py command with a small Mixtral checkpoint to reproduce both regressions; apply fix and verify conversion completes and checkpoint loads with target parallelism."
+    ],
+    "unknowns": [
+      "Whether PR #7027 and #7028 together fully resolve both regressions; their technical completeness is not confirmed."
+    ],
+    "why": "Issue provides precise root cause for two regressions in checkpoint conversion, with exact code paths, tracebacks, and a reproducible command. The fix is well-scoped to tools/checkpoint and validated by the reporter. Although open PRs #7027 and #7028 overlap semantically, they are not linked to the issue and may not fully cover both regressions; this remains a valuable contribution opportunity."
+  },
   "c404def84d9bc7cd1a8df1ef92e2ff8a4144319ec2d9351518c5c6453ad7305d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -51808,6 +51907,33 @@
       "Exact cause of CUDA graph hang (e.g., unsupported output type vs. memory issue) not fully isolated."
     ],
     "why": "The issue provides a concrete, reproducible bug with clear root causes: CUDA graph capture hangs for hybrid GDN models, dtype mismatch in AWQ/Mamba state cache, and MTP memory allocation failure. It includes exact commands, environment details, and code anchors. The track is llm_algorithm with mechanisms in model_architecture and numerics_quantization, and a validation path via reference comparison and numerical tolerance tests."
+  },
+  "d4293bba929a1d5540f60ef0e599e69267e4f1c1abbbc1d724b11ec993bc4c2c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Fix in ResponsesToCompletionBridgeHandler._collect_response_from_stream{,_async} to accumulate output items and backfill when completed_response.output is empty",
+      "Possibly adjust transform_responses_api_request to not force stream=True for non-streaming requests"
+    ],
+    "risks": [
+      "Potential behavior change in streaming path if aggregation logic is incorrectly applied",
+      "Need to ensure compatibility with existing provider-level fix in #38719"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided minimal example asserting litellm.responses(stream=False) returns a ResponsesAPIResponse with non-empty output",
+      "Add regression test that drains the streaming iterator and verifies output aggregation from output_item.done events"
+    ],
+    "unknowns": [
+      "Whether the suggested fix in the bridge handler is preferred over the provider-level fix in #38719"
+    ],
+    "why": "Issue provides a clear regression with version matrix, minimal reproducer, and a detailed root-cause analysis in comments identifying the forced stream=True and missing output aggregation. The suggested fix location is concrete and testable."
   },
   "d42f3a2b89d900d71e102588859c00ffe6fe291b508a39dc19ed18c1fb9f3e03": {
     "confidence": 0.85,
