@@ -5565,6 +5565,35 @@
     ],
     "why": "The issue provides a detailed root cause analysis with specific code paths (PrefillRouter::generate, Context::with_id_and_metadata, cancellation monitor) and a clear reproduction scenario. The expected lifecycle is well-defined, and the proposed fix is actionable. Although an open PR exists, it lacks root-cause coverage and has CI failures, leaving room for a more complete contribution."
   },
+  "19fd06284ddfb83a1b60887f52b3d0bf075dcc1e1828768d0243bb128033b6f0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "session message caching",
+      "prompt serialization in toModelMessages",
+      "cache bust detection/logging"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #40796 or #14743",
+      "Requires access to Anthropic API for full integration testing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce cache bust using the provided SQL query on a session database",
+      "Add regression test simulating tool-call transitions and verifying cache_read > 0 on subsequent turns"
+    ],
+    "unknowns": [
+      "Exact code path causing serialization change is not pinpointed in the issue"
+    ],
+    "why": "Issue provides concrete production evidence of cache busts after tool-calls, with a clear root cause (message serialization changes) and a reproducible SQL query. Existing PR #40796 only adds a warning, not a fix, leaving room for a valuable contribution."
+  },
   "1a382a89c34b2429e525fb9fb1b04831eeea49cc94d94678be3df3f5b09eb270": {
     "confidence": 0.85,
     "contradictions": [
@@ -22647,6 +22676,46 @@
     ],
     "why": "Issue provides detailed root-cause analysis and measured impact, but deterministic gate requires HUMAN_REVIEW and maintainer has not yet confirmed design or assignment. Existing PR #19217 is weak (failed CI) and #20661 overlaps partially, so a better PR is plausible but needs maintainer direction."
   },
+  "5bf6f116020b1a999e3436a90d7fb87341e4964bf6c339d7534be42fb24bab8c": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #23039 is titled 'feat(mastracode): explain the subconscious...' but has semantic overlap with issue; likely false positive",
+      "PR #23042 is about passive reminder thread ownership, not title pinning"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent-controller/session.ts",
+      "packages/core/src/agent-controller/agent-controller.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/sync.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/async-buffer.ts",
+      "packages/memory/src/processors/observational-memory/observation-strategies/resource-scoped.ts",
+      "packages/core/src/agent-controller/thread-title.test.ts",
+      "packages/memory/src/processors/observational-memory/__tests__/"
+    ],
+    "risks": [
+      "Potential conflict with open PRs #23039 and #23042 that touch overlapping code paths; need to compare implementation boundaries",
+      "Metadata key naming and backward compatibility with existing threads",
+      "Behavior change for programmatic callers that rely on auto-title evolution after rename"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add core tests for rename pinning and regenerate unpinning in thread-title.test.ts",
+      "Add memory tests for all three OM strategies verifying pinned threads are not overwritten",
+      "Run existing observational-memory.test.ts to ensure no regression"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for the pin flag (e.g., metadata key name)",
+      "Exact behavior of programmatic initial-title callers that should opt out of pinning"
+    ],
+    "why": "Issue clearly identifies a user-visible bug where manual thread renames are overwritten by Observational Memory's auto-generated titles. Root cause is precisely located in three OM strategies that unconditionally update titles, with no distinction between manual and generated titles. Proposed fix is concrete: add a pinned flag in thread metadata, set it on rename, clear on regenerate, and centralize title-update logic. Test surface is specified. No blocking unknowns; open PRs have semantic overlap but do not cover the root cause."
+  },
   "5c2282ffe4ada13c3bbb8430c8a6ef070098a3728539faf9b642f696c78e93b3": {
     "confidence": 0.85,
     "contradictions": [
@@ -25889,6 +25958,39 @@
       "Full related issue audit results (timeout)"
     ],
     "why": "Issue reports a clear crash with root cause and repro, but the deterministic gate requires HUMAN_REVIEW and the related issue audit timed out. Existing PR #50894 is a draft with partial coverage, so a new PR could compete but needs maintainer confirmation."
+  },
+  "68c554d617da8220807994d297bb276dc4805db77889784151aa7bdc54e733ed": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comment says --convert mm_encoder_only no longer exists, but issue title and body use it; likely version difference."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/mistral3.py",
+      "vllm/model_executor/models/qwen2_vl.py",
+      "vllm/model_executor/models/pixtral.py",
+      "vllm/transformers_utils/processors/pixtral.py",
+      "vllm/entrypoints/cli/collect_env.py"
+    ],
+    "risks": [
+      "Potential duplicate issue #55046 shares stack signatures but different root cause; ensure no overlap in fix scope.",
+      "Upstream fix may already be merged, reducing need for new code work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided standalone reproducer with --mm-encoder-only on main to confirm the fix; add a regression test for mm_encoder_only conversion across mistral3, qwen2_vl, and pixtral models."
+    ],
+    "unknowns": [
+      "Whether the issue is already resolved on main after PR #32605; needs verification."
+    ],
+    "why": "Issue reports a concrete multimodal conversion failure with a standalone reproducer and clear error. A comment identifies the root cause as a missing model override in older code and points to a merged upstream fix (#32605) that changed the mechanism. The issue is actionable for verifying the fix on main or backporting, with a clear regression test path."
   },
   "68df18c426d78215e55e752daba02ffcd6dde82a7dbe86ce1ee2c4aa06a9724c": {
     "confidence": 0.85,
@@ -36053,6 +36155,40 @@
       "The exact code path where the enforcement fails, as the issue does not pinpoint the specific line."
     ],
     "why": "The issue identifies a concrete bug in the gemma4 tool parser where tool_choice='required' is not enforced, leading to prose-only responses mislabeled as tool calls. The root cause is partially known (finish_reason logic) and the enforcement gap is clearly described. The issue provides a reproduction script and analysis, making it actionable despite the lack of a minimal reproducer."
+  },
+  "9005630a49d1a8b7b165b5039fda692e43c089be36f1783555f42e742495570a": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Initial analysis focused on standalone FastMCP AzureProvider, but later comments clarified the deployment uses MCP SDK's mcp.server.fastmcp, not standalone fastmcp"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Introduce standalone FastMCP AzureProvider/OAuthProxy as an OAuth translation boundary",
+      "Configure AzureProvider with unprefixed required_scopes and identifier_uri",
+      "Set up durable client_storage and explicit jwt_signing_key for production"
+    ],
+    "risks": [
+      "Potential need for additional configuration or code changes in FastMCP to support the translation layer",
+      "Operational complexity of deploying an OAuth proxy in Azure Container Apps"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Verify protected-resource metadata advertises the intended MCP resource and scope",
+      "Confirm the upstream Entra authorize URL does not forward the MCP resource value",
+      "Confirm the upstream scope is resource-qualified (e.g., api://.../mcp.invoke)",
+      "Test callback and token exchange success",
+      "Test reconnect after process restart and across replicas"
+    ],
+    "unknowns": [
+      "Exact FastMCP version and configuration details for the proposed migration",
+      "Whether FastMCP's AzureProvider supports all required production features (e.g., durable storage, explicit signing key) in the current version"
+    ],
+    "why": "The issue reports a concrete OAuth failure with a clear reproduction path and identifies the root cause as a mismatch between the MCP resource indicator and Entra's required resource-qualified scopes. The discussion confirms that the standalone FastMCP AzureProvider/OAuthProxy is the intended translation layer, and the proposed migration path is actionable."
   },
   "90133600ab2458083b494a4eddaf482c6b14af58add9ea08910d4995b0805743": {
     "confidence": 0.7,
@@ -49965,6 +50101,41 @@
       "Whether maintainers have already started an internal fix."
     ],
     "why": "Issue provides a clear user-visible regression with a concrete reproduction command and isolation steps, identifying a specific model architecture and version range. Root cause is not yet identified but the evidence is sufficient to start a bisect and targeted debugging. No duplicate or merged fix found."
+  },
+  "c9b2c0bb5d2b031c82d54e66b3de8acbcaa1e2b708efe579b958246b3b4b93b5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comment by chenWULUQI suggests BF16 numerical path differences are the cause, while jschmied reports block verification can be bit-for-bit identical after kernel fixes, and wickist attributes the issue to a specific GDN gate alignment bug."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Speculative decoding verification path",
+      "GDN/DeltaNet/Mamba state update or rollback logic",
+      "Numerical precision handling in block verification"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #53826 and #55307 that may already address the root cause; need to compare implementations before duplicating effort.",
+      "Distinguishing between inherent numerical path differences and fixable kernel bugs requires careful controlled experiments."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script with target-only and DFlash2 K=1, compare logits at token 30, and test FP32 verification to isolate numerical vs state issues.",
+      "Use tools/determinism/accept.py to log per-position acceptance and first-divergence index across configurations."
+    ],
+    "unknowns": [
+      "Whether the issue is already fixed by PR #51812 or other merged changes; the reporter's build predates the fix.",
+      "Whether the divergence persists on the latest vLLM version with the suggested fix applied."
+    ],
+    "why": "Issue provides a concrete greedy-equivalence failure with reproducible commands, expected/actual token divergence at a fixed position, and multiple independent reports isolating the problem to speculative verification numerical paths or state handling. The evidence includes a clear validation path via logit-level A/B and FP32 comparisons, and the issue is algorithmically relevant to LLM inference correctness."
   },
   "c9c946ff34929ec11bb867b43746f226c79807213cec8fbc11eac784c8e17f7d": {
     "confidence": 0.6,
