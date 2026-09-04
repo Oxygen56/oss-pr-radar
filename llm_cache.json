@@ -40723,6 +40723,38 @@
     ],
     "why": "Issue reports an unrecognized configuration class for DeepSeek-V4-Flash-0731, but root cause is unclear; a contributor suggests a workaround with additional flags, indicating possible usage or version mismatch. Open PR and related issue lookups timed out, so duplicate implementation cannot be ruled out."
   },
+  "a33c37eec797b874b60c14b71cbc4a0b7e30fabd39389abd4a88b26f0ce87477": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue reports a bug in gemma-4-26B-A4B-it, but the open PR #55167 is about FunASR adaptor attention, which seems unrelated; semantic overlap may be coincidental."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "CUDA graph capture/execution path",
+      "kernel selection logic for MoE models",
+      "batch invariance handling"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs or issues that may already address the root cause; need to verify no duplicate fix exists.",
+      "The fix may require hardware-specific tuning and may not generalize to all models."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script on the affected model and compare eager vs CUDA graph outputs; assert same greedy token and logprob deltas within tolerance.",
+      "Add a regression test that runs the same model with enforce_eager and CUDA graphs and checks for output consistency."
+    ],
+    "unknowns": [
+      "Whether the root cause is in CUDA graph capture, kernel selection, or model-specific numerical sensitivity; the issue suggests batch-shape-dependent kernel selection but not confirmed.",
+      "Whether existing PRs or issues already provide a fix; the open PR assessment indicates potential overlap but not direct coverage."
+    ],
+    "why": "The issue provides a concrete, reproducible bug with a clear root cause hypothesis (CUDA graph path causing numerical divergence in a specific MoE model) and a validation path via the provided script. It qualifies as an llm_algorithm issue because it involves model architecture and numerical behavior under different execution modes, with a reference-vs-implementation test."
+  },
   "a3672ff5b434c1c9dcb6632372bfc346f22267d6753d4d76d39155854559c012": {
     "confidence": 0.9,
     "contradictions": [
@@ -43815,6 +43847,38 @@
       "Whether existing PR #4043 or #4352 already addresses this exact issue; need to compare implementation boundaries."
     ],
     "why": "Issue provides a precise root cause: #3063 accidentally removed ctx.DisableReroute() from ai-load-balancer's onHttpRequestHeaders, causing route cache invalidation and 404s when combined with model routing. The fix is a one-line revert plus regression test, with clear reproduction steps and code anchors."
+  },
+  "b1ea908745ca80a8ba93869b322c89ed7b52d5232e820d32a203a14cc7ff044b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer reports successful cache reads in repro, conflicting with issue's claim of zero cache reads"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Bridge logic in /v1/messages to Responses API translation to replay encrypted_content or chain previous_response_id",
+      "Session state management for previous_response_id"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #37655 which addresses reasoning_items in streaming; must compare implementation boundaries",
+      "Changing request replay semantics could affect non-reasoning models or introduce API behavior changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that simulates a multi-turn /v1/messages conversation with an OpenAI reasoning model and asserts cache_read_input_tokens increases after the first turn",
+      "Run targeted unit tests for the bridge and integration tests with a mock OpenAI Responses API"
+    ],
+    "unknowns": [
+      "Exact repro steps that trigger the issue for the maintainer",
+      "Whether PR #37655 already fixes the root cause or only partially addresses it"
+    ],
+    "why": "Issue provides a clear root cause (missing encrypted_content replay or previous_response_id chaining in the /v1/messages to Responses API bridge), concrete reproduction steps, and measured evidence of cache misses. Maintainer comment requests more repro details but does not contradict the root cause; the issue remains actionable with a defined fix direction and validation path."
   },
   "b23458a086727897c48c5afb097272de6041089847c1ce2260ffeff3434407ee": {
     "confidence": 0.85,
@@ -62520,6 +62584,33 @@
       "Whether existing PRs fully fix the root cause"
     ],
     "why": "The issue provides a detailed root cause and deterministic repro for a sandbox desync bug, but the track is llm_algorithm and the core fix is in the Python interpreter/Deno runner, not an LLM algorithm. The supplied gate says HUMAN_REVIEW, and existing PRs overlap semantically, requiring maintainer comparison."
+  },
+  "f5cc1d066fab562e339a89868e1614f32bd1ea0394d654b1a4323ce370abdf7e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Bybit adapter REST and websocket fill parsing to exclude execType=Funding",
+      "Regression tests for REST and WS funding payloads"
+    ],
+    "risks": [
+      "Potential exclusion of legitimate ADL/BustTrade fills if filter is too broad",
+      "Engine-level dedup changes may have broader impact and should be separate"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit tests feeding REST and WS payloads with execType=Funding and assert no FillReport/OrderFilled is produced",
+      "Run existing adapter test suite"
+    ],
+    "unknowns": [
+      "Maintainer design preference on whether to filter via request parameter or parse-time check"
+    ],
+    "why": "Issue provides a precise root cause (funding execType not filtered), code anchors, reproduction steps, and observed impact. The proposed fix is concrete and testable."
   },
   "f5f865e683b56e39b01086fcf2f4cc3f6254456ca732f57f723fc9a0a0fae0d3": {
     "confidence": 0.7,
