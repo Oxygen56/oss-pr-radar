@@ -26705,6 +26705,40 @@
     ],
     "why": "Issue clearly identifies a security-relevant bug in a shared download path, with a verified repro and suggested fix direction. However, the deterministic gate requires HUMAN_REVIEW, and the existing PR #7162 is closed with CI failures, so maintainer confirmation is needed before starting new work."
   },
+  "6b149b11d9d2a1ad94d537bd1502573710d82c134b258d4a8226819d2ae4e46b": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comment reports no crash on sm121, while issue crashes on sm110, suggesting architecture-specific behavior."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/compilation/cuda_graph.py",
+      "vllm/model_executor/models/nemotron_h.py",
+      "vllm/v1/worker/gpu_model_runner.py"
+    ],
+    "risks": [
+      "Hardware-specific (sm110) may not be available in CI; need to ensure test can run on Jetson Thor or be skipped appropriately.",
+      "Potential overlap with PR #55184 requires manual comparison to avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided 8-request sequence on sm110 with CUDA graphs enabled and verify no crash at request 5; compare outputs with --enforce-eager as reference.",
+      "Add a regression test that captures and replays a multi-line completion on sm110 to ensure no illegal memory access."
+    ],
+    "unknowns": [
+      "Exact root cause within CUDA graph capture/replay is not identified; may require further debugging on sm110 hardware."
+    ],
+    "why": "The issue provides a deterministic 5-request reproducer, a clear workaround (--enforce-eager), and a stack trace pointing to CUDA graph replay on sm110. It identifies a concrete numerical/kernel path (NVFP4, Mamba-2, CUDA graphs) with a reference-vs-implementation test (eager vs graph mode). The related PR #55184 overlaps semantically but does not directly reference the issue, so a new fix is actionable."
+  },
   "6b3bb9794dfe202f061c90a589c07c6159ab171efad48765f233f76902848c41": {
     "confidence": 0.85,
     "contradictions": [
@@ -44503,6 +44537,36 @@
       "No maintainer approval yet, but not blocking for actionability"
     ],
     "why": "Issue clearly identifies a cross-package bug where Observational Memory's threadTitle extractor overwrites manual renames, with root cause pinpointed to unconditional title updates in three OM strategies. Proposed fix (pinned titles via metadata) is concrete, actionable, and includes test surface."
+  },
+  "b4a8bb300f192570e087d8f88059de1a63a274e55f27ede1faa924b9bb7db2b5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #13900 title suggests unrelated feature but overlaps on runtime-builder test file."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/runtime/orchestration/runtime-builder.test.ts",
+      "runtime-builder implementation or MCP server fixture"
+    ],
+    "risks": [
+      "Potential overlap with PR #13900 may require coordination to avoid duplicate work.",
+      "Windows-specific behavior may not reproduce on CI Linux, requiring local verification."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction command on Windows to confirm the two failures, then implement a fix and rerun the targeted unit tests to ensure all pass."
+    ],
+    "unknowns": [
+      "Exact root cause of the MCP server tool exposure failure is not yet determined.",
+      "Whether maintainers prefer a specific fix approach or have existing design preferences."
+    ],
+    "why": "Issue reports two reproducible test failures on Windows with clear reproduction steps and expected behavior. Root cause is not yet established but the failing assertions and code anchors are provided, making the work actionable. Existing PR #13900 overlaps semantically but does not directly reference the issue, so a separate fix is justified pending maintainer review."
   },
   "b4ad55a4b4d9145dd97b93a70b54f728b49ea84d734a229fe259d547fca3b53e": {
     "confidence": 0.7,
