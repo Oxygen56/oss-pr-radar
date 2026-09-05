@@ -2419,6 +2419,37 @@
     ],
     "why": "The issue provides a precise root cause: DSV4's compressed KV cache geometry (num_states=2) violates the paged MQA kernel's compile-time block_kv template constraints (32/64), causing an assert or silent memory corruption. It includes code anchors, reproduction details, and a concrete validation path via reference comparison and regression tests. The track is llm_algorithm with kernel_algorithm and numerics_quantization mechanisms, satisfying the algorithm requirement."
   },
+  "0a3f91ad0f38e7cb3dbbd41d98b2b09a2b2fadfeaf4aa8bfdc4c495f81c68256": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue states pnpm version 11.24.0 while repo declares 10.26.2, but failure is shell resolution before Next.js starts, so not material."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "frontend/playwright.config.ts",
+      "Add regression test for webServer command portability"
+    ],
+    "risks": [
+      "Potential maintainer preference for alternative fix (e.g., Node launcher) may require design confirmation.",
+      "Existing PR #5185 may be merged, making this contribution redundant."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction command on Windows to confirm failure before fix, then verify success after fix.",
+      "Add a unit test or CI check that validates the webServer command is cross-platform (e.g., uses pnpm exec)."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific cross-platform command pattern.",
+      "Whether PR #5185 will be updated with tests or merged soon."
+    ],
+    "why": "Issue provides clear reproduction steps, exact error logs, and identifies the root cause: Unix-style binary path in Playwright webServer command on Windows. A concrete fix is suggested (use pnpm exec). Existing PR #5185 attempts the fix but lacks tests, leaving room for a more complete contribution."
+  },
   "0a4ac8b4b7346ac989d82d68c9156d254bf895bbab86a139e8f3b07b67d42960": {
     "confidence": 0.7,
     "contradictions": [],
@@ -33324,6 +33355,34 @@
     ],
     "why": "The issue is a broad feature request for DAP integration, but the maintainer triage explicitly recommends a smaller MCP-first alternative and labels it need-discussion, indicating the proposed scope is not actionable as-is. The evidence shows no existing code anchors or reproduction, and the maintainer suggests community prototype before core work."
   },
+  "84b0c41100651855487e18c136b426f35b0df0de19429db541c1e690060cbb10": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/soup_cli/trainer/distill.py",
+      "src/soup_cli/utils/uld.py"
+    ],
+    "risks": [
+      "Potential interaction with aligned tokenizer mapping requiring careful mask propagation",
+      "Risk of changing numerical behavior in existing ULD strategies"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run provided reproduction with labels [-100,-100,2] and assert zero ULD gradient at masked positions",
+      "Add unit test for responses-only mode with prompt tokens and causal shift",
+      "Test padding, multi-turn, and fully masked batches for finite loss"
+    ],
+    "unknowns": [
+      "Exact implementation details of aligned tokenizer mapping for mask propagation"
+    ],
+    "why": "Issue provides concrete root cause: ULD loss ignores response-only label mask and causal shift, with reproducible gradient evidence and owner confirmation. Fix is well-scoped and aligns with existing implementation in adjacent distillation terms."
+  },
   "84b0ea046ab1ae63478e4db0b868ce472117604e8460725ee01c97c889e5cf82": {
     "confidence": 0.85,
     "contradictions": [
@@ -41800,6 +41859,32 @@
       "Whether #50720 will be fixed soon"
     ],
     "why": "The issue reports a crash in FLASHMLA_SPARSE_DSV4 backend on SM12x, but the root cause is that FlashMLA-sparse kernels are unsupported on SM12x. The proposed fix is a fail-fast error message, not a functional backend. The issue is already being investigated by a contributor, and the user is satisfied with waiting. No competing implementation exists, but the work is not actionable as a new algorithm contribution."
+  },
+  "a90fabcdd9a3fa75303c8f110537d7c8aa7c8ed866b3dadad181880db3aa919d": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/minillm.py",
+      "configuration validation logic"
+    ],
+    "risks": [
+      "Changing default could alter existing runs; maintainer prefers validation error, but implementation must not break on-policy semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test asserting that enabling MiniLLM offline with teacher_mix_ratio=0.0 raises a validation error",
+      "Verify on-policy path still allows ratio 0 and computes KL(student||teacher)"
+    ],
+    "unknowns": [
+      "Exact location of validation logic and test framework details"
+    ],
+    "why": "Issue provides a precise root cause (default offline MiniLLM path uses teacher_mix_ratio=0.0, making the distillation target the detached student, yielding zero teacher signal), numerical reproduction tables, and maintainer confirmation with a preferred fix (config-time validation). This is a concrete, actionable LLM algorithm bug with clear acceptance criteria."
   },
   "a914b553d453658ba3eb327b4c6a951b5c5f960f6aa02b3fb0d3599a86fac9ba": {
     "confidence": 0.85,
@@ -50532,6 +50617,34 @@
     ],
     "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction path and a proposed fix, making it actionable."
   },
+  "ca647b9a4627ac00bbf23294255d9a6378b2fdc3304f798bc83fd42b1cfe0e1e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Update dependency constraint for hiredis to >=3.4.1",
+      "Add regression test for Redis Cluster logging worker resilience"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach",
+      "Dependency bump may conflict with other packages"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce crash with hiredis 3.4.0 and Redis Cluster under timeout conditions",
+      "Run targeted unit tests for logging_worker and hiredis parser integration"
+    ],
+    "unknowns": [
+      "Exact native crash cause not proven; core dump unavailable"
+    ],
+    "why": "Issue provides a concrete crash scenario with exit code 139, traceback frames in hiredis parser, and a clear dependency fix (raise hiredis minimum to 3.4.1) with upstream references. Existing PR #39768 is a draft with incomplete root-cause coverage, leaving room for a more complete fix with tests."
+  },
   "ca68bc09610b49727446be0b0f9441f10e4829b8c9da9194c4fd65ca8b6631ee": {
     "confidence": 0.85,
     "contradictions": [],
@@ -50908,6 +51021,36 @@
       "Exact root cause in NgramCorpus implementation not yet identified; whether existing PR #38130 already fixes the issue despite being draft."
     ],
     "why": "Issue provides a concrete, self-contained reproduction script with expected vs actual outputs, identifying stale NGRAM cache behavior after trie growth. Root cause is clearly localized to NgramCorpus state handling. Existing draft PR #38130 lacks root-cause coverage and is still draft, leaving actionable competition space."
+  },
+  "cc3be7d3a0587a35a31c2e8b44acc396be176106719c2d5e74c433225a82cd0e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Modify scheduler exception handling to abort the offending request instead of sending SIGQUIT",
+      "Add logging context (rid, offsets, prefix info) for mismatch diagnosis",
+      "Potentially fix the multimodal embedding length adjustment logic in _adjust_embedding_length"
+    ],
+    "risks": [
+      "Changing error handling may mask underlying corruption; need to ensure proper error responses and no silent failures",
+      "Potential performance impact if logging is excessive"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a mixed image-video request under chunked prefill and verify the engine survives and returns an error response",
+      "Add a regression test that simulates the mismatch and asserts the request is aborted without process termination",
+      "Run existing multimodal tests to ensure no regressions"
+    ],
+    "unknowns": [
+      "Exact fix location and maintainer preference for handling request-level errors",
+      "Whether the underlying offset bug from #37968 will be fixed in tandem"
+    ],
+    "why": "The issue identifies a concrete root cause: a data-dependent RuntimeError in _adjust_embedding_length during multimodal chunked prefill kills the entire scheduler process via SIGQUIT, amplified by client retries across nodes. The proposed fix (abort request instead of server) is actionable and testable, with clear reproduction evidence and a related issue (#37968) pointing to a specific offset bug."
   },
   "ccc29486782af47e01b7954a01d003571797600e189a59dc7788e2a161a9deee": {
     "confidence": 0.85,
@@ -65091,6 +65234,37 @@
       "Whether maintainers prefer a broader fix covering Databricks and other stores, but this does not block the Weaviate-specific fix."
     ],
     "why": "The issue provides a precise root cause: Weaviate read paths hard-code return_properties without expiration_date, so the Python expiry gate never sees it. Reproduction steps and expected/actual output are concrete, and the fix is localized to adding the missing property. The existing PR #6290 is stale and does not cover the Python read whitelist, so the contribution remains actionable."
+  },
+  "fd31a637f6268ba610af25b2e6db6b781a0472f204fd84237776a27c59bab6b6": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py",
+      "ReLoRA callback logic",
+      "magnitude_prune_tensor tie handling"
+    ],
+    "risks": [
+      "Choosing between implementing full ReLoRA restarts vs renaming feature requires maintainer decision",
+      "Handling quantized/distributed/streamed combinations may require additional work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with constant LoRA factors and prune_ratio=0.9 to verify exact count retention",
+      "Test merge-then-reset preserves effective linear map to numerical tolerance",
+      "Regression test ensuring both A and B cannot be zeroed by prune_ratio < 1"
+    ],
+    "unknowns": [
+      "No explicit confirmation of which fix option maintainer prefers, but issue and comment indicate openness to either"
+    ],
+    "why": "Issue provides concrete root cause: ReLoRA callback prunes adapters without merging, causing function discontinuity, and strict thresholding can zero both factors on ties. Maintainer confirmed both claims with reproducible evidence. Clear fix options and acceptance criteria are given."
   },
   "fd422176e691f8c3623930ae9f6e203e0de80dc675fc98c7c6d35d14c7783223": {
     "confidence": 0.85,
