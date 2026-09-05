@@ -50882,6 +50882,33 @@
     ],
     "why": "The issue identifies a real architectural gap: capability hooks that touch external state are re-executed under durable execution, causing duplicate side effects. The proposal is technically sound and references existing code paths, but the maintainer has not approved the design and the issue explicitly requires design confirmation. The commenter also raises a valid concern about the 'exactly once' semantics, suggesting a stable effect identity, which needs maintainer input."
   },
+  "cc20b2fbc19436d608f26cea5dce0565d20391546fd87ed1d536115320168658": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/speculative/cpp_ngram/ngram_corpus.py",
+      "NgramCorpus batch_get/erase_match_state logic"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach; need to compare with existing PR #38130 to avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproduction script on baseline to confirm failure, then apply fix and rerun to verify cached request returns [30,40,50,60] for both BFS and PROB modes.",
+      "Add regression test to test suite covering cached request after longer context insertion and synchronize."
+    ],
+    "unknowns": [
+      "Exact root cause in NgramCorpus implementation not yet identified; whether existing PR #38130 already fixes the issue despite being draft."
+    ],
+    "why": "Issue provides a concrete, self-contained reproduction script with expected vs actual outputs, identifying stale NGRAM cache behavior after trie growth. Root cause is clearly localized to NgramCorpus state handling. Existing draft PR #38130 lacks root-cause coverage and is still draft, leaving actionable competition space."
+  },
   "ccc29486782af47e01b7954a01d003571797600e189a59dc7788e2a161a9deee": {
     "confidence": 0.85,
     "contradictions": [
