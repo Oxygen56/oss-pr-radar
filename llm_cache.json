@@ -12332,6 +12332,33 @@
     ],
     "why": "Issue reports a reproducible hang in agent integrations with local Qwen models on macOS, while direct API calls work. Comments identify root cause: large prompts (40k+ tokens) cause long prefill times, and prefix cache restoration fails across sessions, leading to timeouts. This is a concrete performance/caching bug in Ollama's inference path, actionable for maintainers."
   },
+  "35cfd399681df59222a596f180ff986dc94adf3602e7d9f925af6f5171ea0abe": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "mastracode/sdk/src/index.ts",
+      "mastracode/sdk/src/agents/prompts/tool-guidance.ts",
+      "packages/core/src/agent-controller/agent-controller.ts"
+    ],
+    "risks": [
+      "Potential behavior change if explicit empty array should disable subagents; need to preserve that semantics."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test to mastracode/sdk/src/__tests__/index.test.ts that asserts native subagents are registered when config omits subagents; run targeted vitest command from issue."
+    ],
+    "unknowns": [
+      "Maintainer design preference on default subagent registration semantics."
+    ],
+    "why": "Issue provides a clear root cause (SDK defaults to empty subagent list, core only registers tool for nonempty list) with source code anchors and a minimal reproduction test that fails deterministically. The fix is straightforward and testable."
+  },
   "3607f77f00e354e0ee32bf7477fbad05a58c25737c827284cfa38728d961b844": {
     "confidence": 0.85,
     "contradictions": [],
@@ -19579,6 +19606,34 @@
       "Maintainer preference on whether to await title persistence or use a runtime-supported background hook."
     ],
     "why": "Issue clearly identifies a detached promise in Agent#executeOnFinish causing title loss on serverless runtimes, with a public repro and maintainer acknowledgment. However, a contributor has asked for design direction (await vs background hook) and no maintainer has confirmed the intended behavior, so implementation choice is unresolved."
+  },
+  "51dbd52c26f3bb92d50e9d4d327583c5375c7f6f1fbaecf831b68a8f98e04dd7": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/openai/serving_chat.py",
+      "Add regression test for request-first precedence of reasoning_effort"
+    ],
+    "risks": [
+      "Potential overlap with PR #38105; must compare implementations to avoid duplicate work.",
+      "Changing precedence may affect existing users relying on server defaults; need to ensure backward compatibility."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the new unit test test_request_reasoning_effort_beats_default_after_conversion on main to confirm failure, then verify it passes with the fix.",
+      "Optionally run the curl reproduction against a local server to confirm behavior."
+    ],
+    "unknowns": [
+      "Whether PR #38105 fully fixes the issue or has gaps; requires manual comparison."
+    ],
+    "why": "Issue provides a clear root cause (order of operations in serving_chat.py) and a concrete reproduction path. The candidate is actionable and technically valuable, though an open PR (#38105) semantically overlaps and must be reviewed first."
   },
   "521388a01a8e883b561378b1fdb17b14448d6ecde1e6e3bb2719fa01c2b976a9": {
     "confidence": 0.85,
@@ -40111,6 +40166,33 @@
     ],
     "why": "Issue provides a clear root cause (Ray placement group deadlock due to insufficient CPU capacity), a concrete reproduction command, and a validated workaround. The referenced TransferQueue PR #165 directly addresses the root cause with a fail-fast mechanism, and the issue is open with no conflicting evidence. The work is actionable and testable."
   },
+  "9f9cc5517cf9c86ce9cd45093c2946cba3c0ae12262f014935276f8957ed1b7a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Dependency constraint for hiredis in pyproject.toml or equivalent",
+      "Possibly update lock file to require hiredis>=3.4.1"
+    ],
+    "risks": [
+      "Potential compatibility issues with redis-py versions if hiredis 3.4.1 requires a newer redis-py",
+      "The crash may not be fully reproducible in CI due to timing or environment specifics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that installs hiredis 3.4.0 and exercises Redis Cluster logging path to reproduce the crash, then verify the fix with hiredis 3.4.1",
+      "Run existing Redis-related unit tests with the updated dependency"
+    ],
+    "unknowns": [
+      "Exact mechanism of crash not fully proven (core dump unavailable), but the upstream fix is a security release and safe to apply regardless"
+    ],
+    "why": "Issue provides concrete crash evidence (exit 139, traceback frames, hiredis 3.4.0) and identifies a known upstream fix (hiredis 3.4.1) with a clear safe-minimum dependency bump. The root cause is well-scoped to a dependency version, and the validation path is straightforward: reproduce with the vulnerable version and verify the fix with the patched version."
+  },
   "9fb4580cf3cddc5bbbf0958a6148ce65efe5d899674cab03fb99b58f29137d2b": {
     "confidence": 0.85,
     "contradictions": [],
@@ -55224,6 +55306,40 @@
       "Whether existing PR #38818 or #38719 already fully fixes the issue; requires manual comparison."
     ],
     "why": "Issue provides a clear regression with version matrix and minimal reproducer. A recent comment traces the root cause to forced stream=True in transform_responses_api_request and incomplete aggregation in the streaming iterator, with concrete evidence and suggested fix locations. This is actionable for an agent."
+  },
+  "da7144810136c4c4ea7f2386b3e4e4ca46c91cc259b368a33cc802ecb9563ca1": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Investigate and fix model initialization for Qwen3.8-Flash-Next with tensor parallel and expert parallel",
+      "Correct dimension divisibility checks or sharding logic in model architecture",
+      "Possibly adjust expert parallel configuration handling"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #55506 or issue #55515, requiring coordination",
+      "The fix may be specific to the Qwen3.8-Flash-Next model and not generalize",
+      "Hardware requirements for multi-GPU testing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided command on a multi-GPU setup",
+      "Run with tensor parallel size 1 to confirm it works, then with size 3 to trigger the error",
+      "Add a regression test that loads the model with TP=3 and EP enabled, checking for successful initialization"
+    ],
+    "unknowns": [
+      "Exact root cause of the assertion failure (which numerator/denominator)",
+      "Whether the issue is already fixed in a later commit or PR"
+    ],
+    "why": "The issue provides a clear reproduction command, environment details, and a stack trace pointing to a model initialization failure in Qwen3.8-Flash-Next under tensor parallel and expert parallel. The error is an assertion failure about divisibility, indicating a distributed configuration or model architecture mismatch. The evidence includes code anchors in model loading and executor paths, and the issue is labeled as a bug. Although there is a potential duplicate issue and an overlapping PR, the root cause is not yet resolved and the issue is actionable for investigation."
   },
   "da84c242c48f45fad5fdc23df5993e3dde30a8cec96a6d049cac2ee0574a37ec": {
     "confidence": 0.85,
