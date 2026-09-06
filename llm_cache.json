@@ -49,6 +49,34 @@
     ],
     "why": "Issue reports an unrecognized arguments error for MiniMax-H3, but a comment suggests adding --model-type diffusion resolves it, indicating a usage/documentation gap rather than a clear code bug. The issue is not a PR and lacks maintainer confirmation or root cause analysis. Open PR and related issue lookups timed out, so duplicate work cannot be excluded."
   },
+  "0079624f8c02aa8fe43fc24a1ea2baa9537809a23f462759ebeb9ff9a47adcbb": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/layers/quantization/marlin_utils_fp4.py",
+      "loader parameter lifetime handling in Qwen4 loader"
+    ],
+    "risks": [
+      "Potential numerical changes if parameter identity is altered; need bitwise comparison",
+      "Fix may not cover all loader paths or hardware configurations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run test_qwen4_loader_lifetime.py regression test",
+      "Reproduce memory growth with large NVFP4 MoE on SM89 and verify flat memory curve across layers"
+    ],
+    "unknowns": [
+      "Exact owner of the FQN dict in the original issue is not fully identified, but the fix makes it harmless"
+    ],
+    "why": "Issue identifies a concrete memory leak in NVFP4 MoE Marlin fallback with root cause traced to a closure cycle in the Qwen4 loader retaining old parameters. A draft PR (#38102) provides a focused fix with regression tests and validation on the original hardware, confirming the leak is resolved. The issue is actionable and technically valuable."
+  },
   "0087d91f9c563fd811d6763cd8fd2f24da759dade2c345c11e6cf1417a2a4345": {
     "confidence": 0.9,
     "contradictions": [],
