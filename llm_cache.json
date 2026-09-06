@@ -3821,6 +3821,31 @@
     "wait_reason": null,
     "why": "Issue clearly identifies a concrete bug: RequestTraceSink::shutdown is a no-op for JsonlGzipRequestTraceSink, causing buffered records to be lost on shutdown. Root cause is well-localized with code anchors and a deterministic reproducer is proposed. No competing PR addresses this path."
   },
+  "108f8e0e8af6d0d61bdd77174c96603a22f87b8f48f924e68f5ba85729c98a06": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "HeadroomGuardrail.async_pre_call_deployment_hook",
+      "request conversion logic to drop stream_options when stream is set to false"
+    ],
+    "risks": [
+      "Potential impact on other providers that may require stream_options even when stream=false; need to ensure only DeepSeek or similar providers are affected"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided curl and config to confirm 400 error, then apply fix and verify 200 SSE response; add regression test for stream_options removal when stream=false"
+    ],
+    "unknowns": [
+      "Exact code location and maintainer preference for fix implementation"
+    ],
+    "why": "Issue provides a clear root cause (Headroom guardrail sets stream=false but leaves stream_options), a concrete reproduction with curl and config, and a suggested fix. The bug is user-visible and actionable."
+  },
   "10d4d9d8d2753a9e1e70976c36f97ccb1cfb2c23fb2912e1419d1b28841728a8": {
     "confidence": 0.85,
     "contradictions": [],
