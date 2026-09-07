@@ -3266,6 +3266,29 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a concrete expert-parallel divisibility assertion failure with a clear repro command and stack trace, but an existing PR #46370 overlaps semantically and may already address the root cause. The issue is not linked to that PR, and the related issue #52407 shares stack signatures, so duplicate review is required before starting new work."
   },
+  "0e00fc1ffe85a4b76f1cd9c6e49e9127012efeabc595fbe57e851a5dc1ed18b2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Modify the resume logic in langgraph/pregel/_loop.py or _runner.py to re-evaluate conditional edges after a recoverable router exception, or preserve the error state so resume does not appear successful."
+    ],
+    "risks": [
+      "Changing resume behavior may affect existing error-handling semantics; need to ensure no regression in node-failure resume cases."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the provided reproduction script that asserts after a router failure and resume, the router is called again and the downstream node executes, or the error is re-raised."
+    ],
+    "unknowns": [
+      "Maintainer preference on whether to retry the router or preserve the error; but this does not block the fix as either approach is actionable."
+    ],
+    "why": "The issue provides a detailed, reproducible bug with a clear root cause in the LangGraph runtime: when a conditional-edge function raises after a node's state write, the error is persisted but the router is not retried on resume, causing the graph to return normally without executing downstream nodes. The report includes a minimal reproduction script, observed outputs, and source code anchors, making it actionable for a fix."
+  },
   "0e098b5bc7a4419c24019e327e30777126dcba1c796cc1f7d80d1888b462cde9": {
     "confidence": 0.7,
     "contradictions": [
@@ -17726,6 +17749,41 @@
       "Exact source of the error message"
     ],
     "why": "The issue reports a bug, but the triage bot's investigation found that the error message does not exist in the codebase or dependency tree, and the error likely originates from the external OpenAI-compatible server (llama-swap/llama.cpp). The root cause is unconfirmed and the reporter has not yet provided the requested debug logs and configuration. Without this, the contribution is not actionable."
+  },
+  "4adc9e0d29f9b63c21b992f0f136fc43d8b195e50d0e26fc920132ff5b26a917": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #7769 has semantic overlap but is about provider authentication, not this bug; no direct contradiction."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "models/openai.py: refresh model_name from terminal response events",
+      "models/_continuation.py: adjust merge heuristic to preserve parts on resumed streams",
+      "tests/models/test_openai_responses.py: add regression tests for completed/failed/incomplete events"
+    ],
+    "risks": [
+      "Changing model_name on terminal events may affect continuation merging logic; must ensure parts are not dropped on resumed streams.",
+      "Potential impact on usage/cost attribution if model_name is used as key before refresh."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add integration test in tests/models/test_openai_responses.py using MockOpenAIResponses.create_mock_stream with created model 'model-router' and completed model 'gpt-5-mini-2025-08-07', assert final ModelResponse.model_name is the served model.",
+      "Add variant where created==completed to ensure no behavior change.",
+      "Add ResponseFailedEvent variant to cover failed path.",
+      "Run existing tests in test_fallback.py and test_continuation_stream.py to ensure no regression."
+    ],
+    "unknowns": [
+      "Exact maintainer preference on implementation location (adapter vs shared merge module) is not yet confirmed.",
+      "Whether the proposed fix will be accepted without assignment is pending."
+    ],
+    "why": "Issue identifies a concrete bug: streamed OpenAI Responses retains the requested router alias instead of the served model from the terminal event. Root cause is clear (model_name not refreshed from response.completed), with a runnable repro and public trace. A contributor has proposed a fix and tests, and a maintainer bot has confirmed the behavior and requested only a test file path. The fix is localized but touches shared merge logic; however, the issue is actionable with a clear validation path."
   },
   "4afef72f7faab589c64235738ae45e53d02e3da49950703caefc8301617da865": {
     "confidence": 0.9,
