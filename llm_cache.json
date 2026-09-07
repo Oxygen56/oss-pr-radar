@@ -9947,6 +9947,40 @@
     ],
     "why": "Issue reports a .NET agent runtime failure when web search is enabled, with a clear stack trace pointing to an unsupported web_search_options parameter. However, the deterministic gate requires HUMAN_REVIEW, and the issue lacks maintainer confirmation or design direction. Existing related PRs are Python-specific and not directly linked, so no direct competition. Actionability is limited by the need for maintainer input on the intended fix approach."
   },
+  "2a096c9f29646a68746f755d8962ee2eead7fa7aed3b141c0ee8e73b2a2531f6": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found; comments align on root cause and fix direction, with one correction on _map_usage being a red herring for cost."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "models/openai.py",
+      "models/_continuation.py",
+      "tests/models/test_openai_responses.py",
+      "tests/models/test_continuation_stream.py"
+    ],
+    "risks": [
+      "Changing model_name refresh may affect continuation merging logic; the proposed narrowing of merge_mode's 'replace-new' condition requires careful validation to avoid dropping parts in resumed streams.",
+      "Potential behavior change in cost attribution when model_name changes; need to ensure pricing and observability are correctly updated without unintended side effects."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add integration regression tests in tests/models/test_openai_responses.py using MockOpenAIResponses.create_mock_stream: created event with model='model-router', completed event with model='gpt-5-mini-2025-08-07', assert final ModelResponse.model_name is the served model; include created==completed fallback and ResponseFailedEvent variants.",
+      "Add a continuation-stream test in tests/models/test_continuation_stream.py covering a two-segment background stream where the resumed segment omits response.created and has a different model in response.completed, verifying parts are preserved and the served model is reported."
+    ],
+    "unknowns": [
+      "Exact maintainer preference on implementation location (adapter vs shared merge code) is not yet confirmed, but the issue and comments provide sufficient technical direction for a contributor to proceed."
+    ],
+    "why": "Issue provides a concrete, reproducible bug with root cause identified: OpenAIResponsesStreamedResponse retains the requested router alias instead of the served model from the terminal event. Evidence includes a runnable repro, public Logfire trace, and detailed analysis of the code path and merge-mode interaction. The proposed fix is localized and testable, with clear regression tests specified."
+  },
   "2a1e8b8b09990cef81ba381da8a91c897d908d99d612c1826a36375ee4d431e1": {
     "confidence": 0.85,
     "contradictions": [],
@@ -47391,6 +47425,39 @@
     ],
     "why": "Issue provides a clear root cause and minimal reproducer, but the fix requires coordination with upstream blockbuster and maintainer preference on test ordering vs. upstream patch. No existing PR, but the deterministic gate says HUMAN_REVIEW, so we wait for maintainer direction."
   },
+  "bc58acbf63f6d0dda3c46f9624709a588612ec8a649e7b7bb69a0ffcbec98dbd": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue claims rejection-sampling artifact; maintainer Sunt-ing argues it is a cudagraph/TurboQuant issue; maintainer vadiklyutiy argues it is generation-side state corruption, not sampler or parser.",
+      "Issue claims prompt_lookup_min=8 fixes corruption via unique suffix matching; vadiklyutiy shows it only works by disabling speculation on tool-call prompts."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/spec_decode/ngram_proposer.py",
+      "vllm/config/model.py",
+      "docs/features/speculative_decoding.md"
+    ],
+    "risks": [
+      "The exact root cause is disputed: one maintainer attributes corruption to TurboQuant-cudagraph interaction rather than rejection sampling; another shows prompt_lookup_min=8 only works by suppressing speculation, not by fixing the underlying state corruption.",
+      "Existing PR #40738 may partially overlap; need to compare implementation boundaries to avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided reproducer with default prompt_lookup_min=2 on Qwen3.6-35B-A3B-FP8 and assert clean rate < 100%; then apply fix and assert clean rate reaches 100% or matches no-spec baseline.",
+      "Add a regression test that constructs a prompt with repetitive XML tool-call template fragments and verifies ngram drafting does not produce corrupted tool-call tokens."
+    ],
+    "unknowns": [
+      "Whether the maintainers prefer Option A (default change), B (per-request opt-out), C (context-aware ngram), or D (documentation only).",
+      "Whether the root cause is in ngram proposer logic, TurboQuant attention, or model runner state management."
+    ],
+    "why": "Issue provides a concrete root cause (ngram suffix matching on repetitive XML template fragments) with token-level traces, empirical clean-rate table, and a config-only workaround. Multiple maintainers reproduced on different hardware, confirming the bug is real and ngram-specific on hybrid GDN models. The proposed fix (Option A/C) is actionable and testable via the provided reproducer."
+  },
   "bc602dcdfefdbf38fb72eea05670dba3d82d554ca6b985dea4f51f2eb3f9aec4": {
     "confidence": 0.85,
     "contradictions": [
@@ -58959,6 +59026,33 @@
     ],
     "why": "Issue provides a minimal, self-contained repro with no external dependencies, clearly isolating the bug to the approval/resume path when a context is supplied. The root cause is likely in approval-key derivation or context handling during resume, and the issue explicitly rules out common red herrings. No competing PR exists, and the maintainer has not yet responded, but the evidence is strong enough to start work."
   },
+  "e52e634d5ab39d1e7b7f844ff37a73bc5e114bb963efe2af919f0fa3866c34af": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/common_request_processing.py",
+      "Bedrock passthrough response handling"
+    ],
+    "risks": [
+      "Potential overlap with PR #40091; need to compare implementation boundaries"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided curl command and verify non-empty body",
+      "Add regression test for non-streaming /converse passthrough"
+    ],
+    "unknowns": [
+      "Whether PR #40091 already fixes this issue"
+    ],
+    "why": "Issue provides a clear root cause: non-streaming Bedrock passthrough returns HTTP 200 with empty body due to Content-Length mismatch in response assembly. Evidence includes stack trace, reproduction steps, and version matrix. The bug is user-visible and actionable."
+  },
   "e559a233716476565ce6dc3bd132e2fd861becf18770756f633aedbe2a82c08e": {
     "confidence": 0.85,
     "contradictions": [
@@ -61389,6 +61483,39 @@
       "Whether PR #36115 fully resolves the issue and maintainer preference on approach"
     ],
     "why": "Issue clearly identifies a runtime validation gap causing silent group failure, but existing PR #36115 overlaps semantically and requires maintainer review to avoid duplicate work."
+  },
+  "ed02fdb6071ccd1bcbfa64cd1f5964701d04303f982770f9c449212377ba2ec5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue body suggests hidden-state handoff failure, but comment identifies BF16 scale bug; both point to draft model path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Fix scale-convention mismatch in BF16 emulation in dflash_sm70.py and qwen3_dflash2.py",
+      "Add regression test for SM70 BF16 emulation alignment"
+    ],
+    "risks": [
+      "Fix may affect performance or numerical stability on other SM70 models",
+      "Potential overlap with PR #405 or issue #534 requires manual review"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with VLLM_SPEC_DUMP_ALIGNMENT=1 on V100 TP4; verify overlap rate >90% and no NaN when BF16 emulation enabled",
+      "Add unit test comparing draft logits with/without BF16 emulation on SM70"
+    ],
+    "unknowns": [
+      "Exact code change needed and whether PR #405 already fixes it"
+    ],
+    "why": "Issue reports acceptance=0 on V100 TP4 with DFlash2; recent comment provides detailed root cause: SM70 BF16-emulation scale mismatch in dflash_sm70.py vs qwen3_dflash2.py, with evidence from alignment dumps and controlled experiments. This is a concrete LLM algorithm bug with clear validation path."
   },
   "ed283a5ae8c477d09f5848ad6bc22adb561ee9a427334b6cf06434607f3117b2": {
     "confidence": 0.95,
