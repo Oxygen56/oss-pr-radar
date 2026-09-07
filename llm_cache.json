@@ -29402,6 +29402,36 @@
     ],
     "why": "Issue clearly identifies missing pass-through of ElevenLabs diarization parameters in LiteLLM's speech-to-text provider, with concrete expected fields and a reproducible request shape. No duplicate PR or issue found, and the issue remains open with recent confirmation that it is still broken."
   },
+  "72595925fda90429c7e9b37e6e266c8fa62ea27984ef9010378b4a2662db84d8": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue states crash not proven to be caused by hiredis, but recommends bump as safe minimum"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Update dependency constraint for hiredis to >=3.4.1",
+      "Add regression test for nested RESP parsing or crash scenario"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach",
+      "Dependency bump may affect other parts of the system"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with hiredis 3.4.0 and a crafted nested reply to trigger stack overflow",
+      "Run existing test suite with updated dependency to ensure no regressions"
+    ],
+    "unknowns": [
+      "Exact root cause of the SIGSEGV remains unconfirmed due to missing core dump"
+    ],
+    "why": "Issue provides a concrete crash scenario with traceback frames and a clear dependency fix (raise hiredis minimum to 3.4.1). Existing PR #39768 is draft and lacks root-cause coverage, leaving room for a more complete contribution."
+  },
   "725df2130f6bf992b13b1b56864298a43c6feab710a86d552bc1077ead5d91c0": {
     "confidence": 0.85,
     "contradictions": [
@@ -35079,6 +35109,32 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly identifies a bug in dataset.startExperiment dropping expectedTrajectory, with minimal repro and root cause. However, an open PR #20136 by a maintainer overlaps semantically and touches the same code paths, requiring manual comparison to avoid duplicate work."
+  },
+  "8926e0b190f96ff535f0a66ab77dfef92496e6bf3701040faab8bb526cd9924a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/kernels/linear/mixed_precision/cpu.py",
+      "csrc/cpu/torch_bindings.cpp"
+    ],
+    "risks": [
+      "Implementing a scalar fallback may introduce numerical differences; need tolerance tests."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided repro on an AVX2-only CPU to confirm AttributeError; after fix, verify clear error message or successful fallback execution."
+    ],
+    "unknowns": [
+      "No maintainer confirmation on preferred approach (error vs fallback)."
+    ],
+    "why": "Issue identifies a concrete kernel availability bug: AVX2-only CPUs lack the AVX-512-gated cpu_gemm_wna16 op, causing AttributeError at runtime. Root cause is clearly located in code guards and can_implement() logic, with a reproducible example and a clear validation path via CPU tests."
   },
   "8932a0a8548495b6a967987e3db8c6c73aa627f309cec85450c95a6d74f12b98": {
     "confidence": 0.8,
@@ -64818,6 +64874,35 @@
     ],
     "wait_reason": "ASSIGNMENT",
     "why": "Issue clearly identifies a bug in provider configuration detection with a concrete root cause and reproduction steps, but the repository requires assignment and the gate decision is HUMAN_REVIEW, so work should not start without maintainer assignment."
+  },
+  "f885f88aa0dbe62287eaff14cf72f43c55759aec87d3c7e20a438691cabfc6e8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "torchtitan initialization path to avoid or work around the PyTorch trunc_normal_ bug",
+      "dependency version bump or pin to a PyTorch version containing the fix"
+    ],
+    "risks": [
+      "The fix may be upstream-only, requiring a PyTorch version bump that could introduce other regressions",
+      "Workaround in torchtitan might be unnecessary if the upstream fix is merged quickly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided minimal torch repro to confirm the hang and verify the fix",
+      "Run the full torchtitan config with CPU offloading and fixed seed to ensure initialization completes",
+      "Add a regression test that initializes a model with trunc_normal_ under CPU offload and checks it does not hang"
+    ],
+    "unknowns": [
+      "Whether the upstream PyTorch PR will be merged and in which release",
+      "Whether torchtitan maintainers prefer a workaround or a dependency bump"
+    ],
+    "why": "The issue identifies a concrete root cause: a PyTorch bug in trunc_normal_ under CPU offloading causes RNG state reset and infinite loop during initialization. It provides a minimal torch repro and a full torchtitan config, enabling a clear validation path. The fix is upstream in PyTorch, but torchtitan may need a workaround or dependency update, making it actionable."
   },
   "f8952447ed80bf24583db4eed8f998d1d0c2576dda16bba0c2e87ba5bdc9d446": {
     "confidence": 0.8,
