@@ -9980,6 +9980,29 @@
     ],
     "why": "The issue provides a precise root cause for two regressions in the checkpoint converter, with exact code locations, a reproducible command, and expected vs actual behavior. The proposed fixes are concrete and local to tools/checkpoint. The track is llm_algorithm, and the issue involves distributed training process group initialization and weight-shard argument handling, which are algorithmically relevant. The presence of open PRs with semantic overlap requires review but does not block actionability."
   },
+  "2a9e81d925c77fd7c61c6af79882c098a6930e133e4bee8e53318524d877e180": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "libs/checkpoint/langgraph/store/memory/__init__.py: implement deep copy on put/get/search boundaries"
+    ],
+    "risks": [
+      "Performance overhead on large values, though measurements show still faster than persistent backends."
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests that mutate returned values and verify stored data remains unchanged, comparing InMemoryStore with SqliteStore behavior."
+    ],
+    "unknowns": [
+      "Maintainer preference on implementation details, but not blocking."
+    ],
+    "why": "Issue provides a clear root cause (live references in InMemoryStore), a minimal reproduction showing divergence from SqliteStore, and a concrete fix with performance measurements and regression tests. The fix is actionable and aligns with the store's JSON-serializable contract."
+  },
   "2ac54972f8f7a33492bce2863b84a5b6ac53801210785ca7dd8935689c9a73ac": {
     "confidence": 0.85,
     "contradictions": [],
@@ -26313,6 +26336,30 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue is a support request about shared developer token quota, not a code bug. The maintainer's comment already provides a workaround (custom auth config with own developer token). No code change is proposed or clearly needed; the actionable path is documentation or feature request, which is not a code contribution."
   },
+  "689da7b8f5af4f764902b70a6187b48fe70f75cf6a0f9e33d8360145b66bd96e": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: implement merge-and-reinitialize or rename feature; fix tie handling with exact index selection"
+    ],
+    "risks": [
+      "Maintainer decision needed between two fix options; potential complexity with quantized/distributed/streamed layers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test for tie handling ensuring exact keep count and non-zero gradients; add test for effective linear map preservation across merge/reinit"
+    ],
+    "unknowns": [
+      "No explicit confirmation of which fix option will be accepted, but issue provides clear alternatives and maintainer preference for full restart."
+    ],
+    "why": "Issue provides concrete root cause with code-level evidence: ReLoRA callback prunes adapters without merging, causing function discontinuity, and strict thresholding can zero both factors on ties, killing gradients. Maintainer confirmed both claims with reproductions. Clear fix options and acceptance criteria are given."
+  },
   "68a1a94f2e7d74537e4e53817c0e559b66f8ee730478b9553a825b6e8421ea28": {
     "confidence": 0.85,
     "contradictions": [],
@@ -28323,6 +28370,34 @@
       "Exact maintainer preference for filtering approach (metadata vs text matching) is not yet confirmed."
     ],
     "why": "Issue provides a clear root cause (OM observer includes working-memory state signals as user-authored history), a concrete reproduction with expected/actual behavior, and a suggested fix with regression test steps. Maintainer bot confirms the bug and proposes a narrow fix. No duplicate PR or issue found."
+  },
+  "6def428eca918f977af4886a9262a4bce096f44489bcb76248e39e327b54ec04": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #23194 is marked CLOSED but references the issue; no direct code overlap confirmed."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "CLI package-manager detection logic",
+      "update command generation for peer dependency hints"
+    ],
+    "risks": [
+      "Potential behavior change in monorepo detection could affect existing users; maintainer design preference may differ."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for nested pnpm/yarn workspaces, closest-lockfile precedence, and npm fallback when no lockfile exists."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different implementation or have design constraints not stated in the issue."
+    ],
+    "why": "The issue provides a clear root cause (detectPackageManager only checks cwd for lockfiles), a concrete reproduction (nested pnpm workspace returns npm), and a specific fix (ancestor walk with precedence). A related PR (#23194) exists but is closed and lacks root-cause coverage, so the issue remains actionable."
   },
   "6dfc471f4e2b749a397d415d6aefd7c5b3134a8105548e3c8180836cc3ba104d": {
     "confidence": 0.85,
