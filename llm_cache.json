@@ -20545,6 +20545,35 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Root cause is confirmed with a concrete code path and a reference implementation exists, but the maintainer explicitly requires a design decision between forced native-call retry and surfaced provider error. The reference fix is offered as a proof-of-concept, not a final implementation, and must be ported to current master. The deterministic gate is HUMAN_REVIEW, so no upgrade is allowed."
   },
+  "53b7e263f8f14c276e7402936688f583ac31a08328547da24e49db04ac022307": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py",
+      "ReLoRA callback merge/reinitialize logic",
+      "tie-handling mask selection"
+    ],
+    "risks": [
+      "Maintainer decision between implementing full ReLoRA restarts vs renaming feature; incomplete support for quantized/distributed/streamed cases"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test for tie handling ensuring exact keep count and non-zero gradients",
+      "Add test verifying effective linear map preserved across merge/reinitialize to numerical tolerance"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers full ReLoRA restarts or renaming feature; production frequency of tie scenario"
+    ],
+    "why": "Issue provides concrete algorithm-conformance bug with root cause: ReLoRA callback prunes adapters without merging, and tie-handling can zero both factors. Maintainer confirmed both claims with reproducible evidence and clear acceptance criteria."
+  },
   "53d950a5b046494851fa50c7ca77ecc413da27b51ed680746bb5cfc30906150f": {
     "confidence": 0.7,
     "contradictions": [],
@@ -62703,6 +62732,37 @@
       "Maintainer's preferred design for handling invalid_encrypted_content"
     ],
     "why": "Issue provides a clear, reproducible failure scenario with concrete error, affected sessions, and a workaround. It identifies a plausible root cause (replaying stale reasoning metadata) and suggests a minimal fix. The track is agent_ai_infra, and the issue is actionable for a maintainer to implement a targeted fix."
+  },
+  "efb4627a7e19b270264eaa7a9482db7f621f2647a02da0f9985c43f519fcd1e1": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "mamba cache checkpoint write logic",
+      "prefix-cache restore path",
+      "block boundary alignment handling"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #52244, #54076, #55868; need to verify they don't already fix this",
+      "Numerical flakiness may require careful tolerance setting"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided two-request sequence and assert no NaN logits",
+      "Add regression test for prefill ending 4-10 tokens past block boundary",
+      "Compare logits against CPU reference for boundary cases"
+    ],
+    "unknowns": [
+      "Whether existing PRs fully cover this root cause",
+      "Exact mechanism causing bad checkpoint (numerical vs logic)"
+    ],
+    "why": "Issue provides a concrete, reproducible LLM algorithm bug with clear numerical symptoms (NaN logits) tied to hybrid GDN prefix-cache alignment. Root cause is localized to checkpoint writing at block boundaries, with detailed reproduction steps and controls. Validation path is clear via reference implementation and numerical tolerance tests."
   },
   "efd0dff793ac377145ad1d916fc41b51113162e65a8c4c3d10e29e7547554b3d": {
     "confidence": 0.85,
