@@ -1412,6 +1412,32 @@
     ],
     "why": "Issue provides a clear root cause (hardcoded provider whitelist in webSearchEnabled) with concrete reproduction steps and MITM evidence. An open PR (#44343) exists but lacks root-cause coverage and full validation, leaving room for a more complete fix. The change is actionable and testable."
   },
+  "069046334a5178dbddd5521f5ecef41f7c8f4d6b47b9615cd86541a9c3f887db": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "harness loop-detection logic",
+      "tool-call emission handling"
+    ],
+    "risks": [
+      "Hard-stop may interrupt legitimate repeated reads; need configurable threshold.",
+      "Root cause may be model-side, requiring different fix."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a mock agent session that emits identical Read calls repeatedly; verify hard-stop triggers after N calls.",
+      "Add regression test using wire.jsonl if provided."
+    ],
+    "unknowns": [
+      "Exact model name and wire log not provided; root cause not confirmed."
+    ],
+    "why": "Issue describes a user-visible agent loop with concrete symptoms and a proposed hard-stop mechanism, but lacks a reliable reproduction and root cause is speculative. The suggested fix (hard-stop after N identical calls) is actionable and testable."
+  },
   "069537ccff0377072030476af57f7a7f691e08c0334ce5129f9d9b2c11f37993": {
     "confidence": 0.85,
     "contradictions": [],
@@ -1910,6 +1936,31 @@
       "Whether an existing open PR already addresses this issue, as the open PR lookup failed due to rate limiting."
     ],
     "why": "The issue is a well-evidenced provider compatibility bug with a clear root cause: OpenCodex's repairOrphanedInputItems only checks pair presence, not contiguity, so interleaved developer messages between function_call and function_call_output are forwarded to DeepSeek, which rejects them. The maintainer has confirmed the mechanism and proposed a bounded fix (ordering normalization), but explicitly requested design confirmation on blast radius and semantic impact before patching. The open PR lookup failed due to rate limiting, so duplicate work cannot be excluded. This is a concrete, actionable bug fix in the adapter layer, but requires maintainer confirmation and duplicate check."
+  },
+  "0779db82aa9b9aad67257c8a3f152b89144ab3ac0b9d74b8e82d82734f08843d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Model routing logic in litellm/llms/bedrock/chat/converse_transformation.py",
+      "AmazonBedrockOpenAIConfig handling for global.openai.* patterns"
+    ],
+    "risks": [
+      "Potential unintended routing changes for other models matching the pattern; need to ensure only GPT-5.6 models are affected."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that sends an image request to a bedrock/global.openai.gpt-5.6-* model and asserts it is routed to the OpenAI-compatible endpoint, not Converse."
+    ],
+    "unknowns": [
+      "Exact routing logic location and whether maintainers prefer the suggested fix or an alternative."
+    ],
+    "why": "Issue provides a clear root cause (routing through Converse instead of OpenAI-compatible endpoint for cross-region GPT-5.6 models), reproduction steps, and a suggested fix. Code anchors are specific, and the fix is actionable."
   },
   "07bfee077669e7ab51a5fae983ad8a5b168956f797df5a3919941f3f6d061e03": {
     "confidence": 0.85,
@@ -8491,6 +8542,33 @@
     ],
     "why": "Issue reports a clear failure when using ModelSlim W8A8 main model with MTP speculative decoding on NPU, where MTP layers are stored as FLOAT and rejected by get_moe_scheme. The proposed fix (support mixed quantization) is plausible but requires design confirmation on whether MTP layers should fall back to FP/BF16 and how to handle quantization config sharing. Existing PR #32754 has semantic overlap but is not directly linked; maintainer review is needed to avoid duplicate work."
   },
+  "245c214625be762d188d0010eddb439e4d7d763dcdb5ddcb2fb690f4b27377aa": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #41979 claims to fix the same issue but lacks root-cause coverage; issue states sorting IN list is insufficient, PR may not address that."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "api/core/rag/retrieval/dataset_retrieval.py: modify hit-count update to lock rows in stable order and retry on deadlock"
+    ],
+    "risks": [
+      "Potential performance impact of row locking; need to ensure retry logic is bounded and does not mask other errors."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a test that simulates concurrent retrieval requests with overlapping segment IDs and asserts no deadlock and all increments are applied."
+    ],
+    "unknowns": [
+      "Whether the open PR #41979 already implements the proposed robust fix; maintainer preference on approach."
+    ],
+    "why": "Issue provides a clear root cause (concurrent multi-row UPDATE on overlapping segment sets causing deadlocks), a concrete reproduction path (concurrent requests with overlapping segments), and a proposed fix (lock rows in stable order and retry on deadlock). The code anchor is identified. Although an open PR exists, it lacks root-cause coverage, leaving room for a more robust fix."
+  },
   "2473bd5cfda4fcf0f32c1bc075975f8008b4ce0a186cab47eb690af9631e142d": {
     "confidence": 0.9,
     "contradictions": [],
@@ -10441,6 +10519,38 @@
       "Whether the existing open PRs fully resolve the issue or if a new contribution is needed; the maintainer's preferred approach is unknown."
     ],
     "why": "The issue provides a detailed, reproducible bug with clear root-cause evidence: MTP speculative decoding with turboquant KV cache on sm120 causes repetition collapse, while fp8 KV works. The evidence includes exact reproduction commands, a table of results, and ruled-out hypotheses. The track is llm_algorithm with concrete mechanisms (model_architecture, numerics_quantization, kernel_algorithm) and a validation path via reference-vs-implementation comparison. Although there are open PRs that may overlap, the issue itself is actionable and not blocked by missing facts."
+  },
+  "2b6b2b4aec6e4488a8a260472a0351fdff0fed99ddb006530cac82e7118794c5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue notes LibSQLStore did not reproduce, but related issues suggest a LibSQLStore-specific variant."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/agent.ts",
+      "packages/core/src/memory/memory.ts",
+      "packages/core/src/agent/message-list.ts"
+    ],
+    "risks": [
+      "Potential design preference on where to capture reasoning items (stream event vs response parsing).",
+      "Storage-specific behavior may require separate handling for PostgresStore and LibSQLStore."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided repro steps to create a failing test that asserts reasoning items are persisted and replayed correctly on second turn.",
+      "Run targeted unit tests for memory and agent packages."
+    ],
+    "unknowns": [
+      "Exact code path where reasoning item is dropped during stream processing."
+    ],
+    "why": "Issue provides a detailed, reproducible bug with root cause localized to persistence of OpenAI reasoning items in memory stores, and a concrete validation path via the provided repro steps."
   },
   "2b9b6f0638984c3e7112427ba619d77bdc81b6623ddba576605eaf1c8252beb6": {
     "confidence": 0.85,
@@ -24237,6 +24347,38 @@
       "Exact root cause of the 0.9 GiB gap on the original issue vs 0.59 GiB in follow-up"
     ],
     "why": "Issue provides strong evidence of a real bug: MRv2 reports more available KV memory than runtime can back, causing OOM under load; root cause is likely CUDA graph capture headroom accounting, but not fully confirmed. Existing draft PR #49233 attempts a fix but is incomplete and has failed CI. Maintainer direction is unclear; issue needs maintainer confirmation before work starts."
+  },
+  "603df7cc2eebd092e6fcd84c156d108b9bbb8d5aad9b84a9db3aa41b0ca79408": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #37607 is closed and draft, not directly covering this issue; #37587 is open and semantically overlapping but does not explicitly reference issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/model_executor/forward_batch_info.py: prepare_mlp_sync_batch alignment to lcm(A,D)",
+      "Dummy request handling in convolution/recurrent/fused KDA kernels"
+    ],
+    "risks": [
+      "Distinguishing mathematical layout error from numerical/random variation; need fixed seed and tolerance",
+      "Dummy request handling may introduce state/metadata access bugs if not carefully implemented"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run provided reproduction with Qwen3.5-35B-A3B on 8xH20, concurrency 38, graph limit 32, running limit 64; expect all requests succeed",
+      "Add unit test for batch geometry with B=38, D=6, A=8 ensuring physical rows divisible by D and dummy rows initialized"
+    ],
+    "unknowns": [
+      "Whether #37587 fully resolves the issue without regressions; current main not rerun end-to-end at latest commit"
+    ],
+    "why": "Issue provides a concrete root cause: eager hybrid target verify fails when TP padding (aligned to A) leaves physical token count not divisible by fixed-width D, causing invalid reshape. Reproduction commands, controls, and code anchor (prepare_mlp_sync_batch) are supplied. Fix boundary is clear: align to lcm(A,D) and handle dummy requests. Open PR #37587 addresses this at shared boundary with tests. No material unknowns block actionability."
   },
   "60633d9390e80b4d20226fc480b36d0a03c84907f1ddf07d502418bdc2fa1a43": {
     "confidence": 0.85,
