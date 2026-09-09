@@ -17548,6 +17548,35 @@
     ],
     "why": "Issue provides a precise root cause (operator precedence in validation condition), a deterministic CPU-only reproduction with expected/actual pairs, and a concrete fix with regression tests. This is a clear, actionable bug in the SFT training control flow."
   },
+  "492fd162b461fdb69c1f76beaaac803fcddf05b405aaf844f1071eb0e4054d47": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "examples/backends/tritonserver/src/tritonworker.py",
+      "lib/llm/src/protocols/tensor.rs",
+      "examples/backends/tritonserver/model_repo/identity/config.pbtxt"
+    ],
+    "risks": [
+      "Potential overlap with PR #14524; need to ensure distinct improvements.",
+      "Changing wire format or accessor usage may affect other backends."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sends a BYTES tensor to the tritonserver example and asserts correct reshape and output decoding.",
+      "Run existing tritonserver example tests and unit tests for tensor serialization."
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix implementation vs PR #14524."
+    ],
+    "why": "Issue provides detailed root cause with code anchors, reproduction steps, and a concrete fix path. Existing PR #14524 lacks tests and full root-cause coverage, leaving room for a competitive contribution."
+  },
   "4944fbc0144194155c39e2d510a9b6901b096286f8d461aeb1bb56fbf3aaa8c0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -33962,6 +33991,40 @@
       "Whether PR #6929 fully resolves the issue or requires additional changes"
     ],
     "why": "Issue provides a concrete reproduction with ordered steps, existing tests, and a clear root cause (stale import cache). PR #6929 offers a proposed fix and regression test, but requires maintainer review to confirm scope and avoid duplicate work."
+  },
+  "834a9e0293ee618a0823e65f931ec211ff58e8e95aaa5cd96ab345834f5d60bc": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue reports hang at ~245K context, but commenter reports similar hang at lower context with TP=4, suggesting context length may not be the sole trigger"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "DSPARK speculative decoding sampling synchronization across TP ranks",
+      "Batch composition and prefix-match consistency across ranks",
+      "Potential NCCL communication shape alignment"
+    ],
+    "risks": [
+      "Fix may introduce communication overhead or affect throughput",
+      "Root cause may involve multiple interacting factors requiring broader changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run multi-rank DSPARK inference with fixed seed and synthetic long-context batch to reproduce hang",
+      "Verify fix by comparing token outputs across ranks for determinism",
+      "Add regression test for multi-rank DSPARK with EOS sampling and prefix-match divergence"
+    ],
+    "unknowns": [
+      "Exact code path where sampling divergence occurs",
+      "Whether PR #33614 fully resolves the issue for all reported configurations"
+    ],
+    "why": "Issue reports a reproducible distributed-training hang with all ranks spinning at 100% util and low power, consistent with a collective desync. Contributor identifies root cause as per-rank sampling divergence in DSPARK leading to divergent batch composition and NCCL shape mismatch. A concrete fix PR #33614 is referenced, and the issue includes detailed logs, environment, and a willingness to run bisection experiments, providing a clear validation path."
   },
   "83864425fd83c6e9cd9ef02a1dbe7154481c38b16980935f89025323fb6e4841": {
     "confidence": 0.8,
@@ -63163,6 +63226,44 @@
       "Exact code path where close() is skipped; maintainer confirmation of proposed fix."
     ],
     "why": "Issue provides a concrete reproduction with expected/actual client counts, identifies the Schedule Trigger path, and a maintainer bot traced the likely leak to early return in _to_blocking_response() preventing pubsub.close(). This is a clear, actionable bug with a validation path."
+  },
+  "f0d4cc6d4b240a4d5327e1a950967915d28c524cb53f52ea239ee75ba11c2a89": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue reports degenerate output on vLLM 0.26.0, but a commenter reports no reproduction on vLLM 0.28.0 with similar hardware, suggesting a version-dependent fix."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/models/deepseek_v4/attention.py",
+      "vllm/models/deepseek_v4/common/ops/cache_utils.py",
+      "vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py",
+      "vllm/models/deepseek_v4/compressor.py"
+    ],
+    "risks": [
+      "Root cause may be in a different code path than the overlapping PR, requiring additional investigation.",
+      "Hardware-specific (SM120) may limit reproduction to specific GPUs.",
+      "Potential duplicate with PR #54851 or other unlinked fixes."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided command and curl request on SM120 hardware, verifying identical token/logprob signature.",
+      "Run a numerical regression test comparing logprob distributions across decode positions for a fixed prompt and seed, expecting non-degenerate outputs.",
+      "If PR #54851 is merged, test with its fix to see if it resolves the issue."
+    ],
+    "unknowns": [
+      "Whether PR #54851 actually fixes this issue, as it is not directly linked.",
+      "Exact root cause in the attention/decode path.",
+      "Whether the bug reproduces on vLLM 0.28.0 or later versions."
+    ],
+    "why": "Issue reports a reproducible degenerate-output bug on SM120 with DeepSeek-V4-Flash, providing detailed environment, reproduction steps, and isolation results. The symptom (identical token and logprob at every decode position) suggests a broken forward pass in the attention/decode path, aligning with algorithm mechanisms (model architecture, kernel algorithm, numerics). However, root cause is not yet identified, and an open PR (#54851) with semantic overlap may already address a related issue, requiring manual comparison."
   },
   "f0de309411bf797fea9f94c5b698250563f23c83efe3fb49d7255a787e77fb1e": {
     "confidence": 0.85,
