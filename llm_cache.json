@@ -3126,6 +3126,32 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a reproducible MTP speculative decoding corruption at concurrency >=4, with strong evidence of a mixed-batch indexing bug. However, the supplied evidence indicates a potential duplicate issue #50427 sharing stack failure signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not fully confirmed, and maintainer investigation is not active."
   },
+  "0c9208174bdac6dcfb4e3e83fb81954e6d2a7b1febf44e2f3fbc725e7cd5260d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "compaction trigger logic in CLI/provider layer",
+      "Ollama provider context window handling"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #12643 and #13275 that touch auto-compaction; need to ensure no duplicate fix."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Set up native Ollama with qwen3.6:64k and contextWindow 32768, run multi-turn conversation to exceed threshold, assert compaction_executed or compaction_skipped is logged."
+    ],
+    "unknowns": [
+      "Exact code path where compaction trigger is skipped; whether enableAgentTeams bypasses prepareTurn compaction."
+    ],
+    "why": "Issue provides detailed reproduction steps, environment, and evidence that auto-compaction fails on native Ollama despite configured contextWindow and overflow warnings. Root cause is likely a mismatch between overflow diagnostic and compaction trigger estimators or provider-specific handling. Actionable with clear validation path."
+  },
   "0cb924446706b1d811c308f13f72a0944c24f5b1a247fa479d361bb6ad4618ae": {
     "confidence": 0.85,
     "contradictions": [],
@@ -13473,6 +13499,42 @@
     ],
     "why": "Issue provides a clear root cause (missing `choices` key in metadata-only SSE frames) and a detailed reproducer with multiple cases. Existing PR #10942 is weak: it lacks regression tests and may not handle the mid-tool-call case correctly. A materially better PR with comprehensive tests and the suggested Option-based fix is plausible."
   },
+  "363f1d3f441b0aaad5eeb79a5be6632a2305d6dec5a5a1b6e5ef9ef4628eb775": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue labels include 'bug' and 'enhancement' but the readiness bot states neither label is present",
+      "Reproduction steps contain a placeholder command 'podman system service -- crun?' that is later corrected"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "runtime image Dockerfile",
+      "tmux dependency handling",
+      "documentation for Podman support"
+    ],
+    "risks": [
+      "Changing tmux compilation may affect functionality or increase build complexity",
+      "Documentation-only fix may not satisfy users needing a working build",
+      "Potential maintainer preference for a different approach (e.g., prebuilt image) could lead to rework"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the build failure using the provided steps in a rootless Podman environment without subuid/subgid",
+      "Apply the fix (e.g., compile tmux with --disable-utempter or adjust ownership handling) and verify the runtime image builds successfully",
+      "Run existing runtime image build tests and smoke tests to ensure no regression"
+    ],
+    "unknowns": [
+      "Exact Podman/Buildah versions are not provided",
+      "Whether maintainers intend to support this configuration or prefer documentation-only is unclear",
+      "No maintainer confirmation on the preferred fix approach"
+    ],
+    "why": "Issue provides a clear root cause: rootless Podman without subuid/subgid cannot map image ownership for libutempter0/tmux, causing dpkg failure. Reproduction steps and environment are concrete, and the expected behavior offers actionable options. The fix is local to the runtime image build and can be validated by building the image in the described environment."
+  },
   "364284e27aaa2dc9ffe3e76cda3966adb4d607ea867545fe15f90e273e6e02b1": {
     "confidence": 0.8,
     "contradictions": [],
@@ -19412,6 +19474,35 @@
     ],
     "why": "Issue provides a precise root cause: orgID is not stamped onto the context passed to removeLegacyHelixOrgMCPs, causing inproc client to fail. The fix is a minimal, well-scoped change (add WithOrgID) with clear code anchors and a reproducible scenario. The intermittent recovery is explained by the ErrNotFound skip and in-memory flag, consistent with the root cause. No competing PRs or issues found."
   },
+  "4c0a8bba45fca470eb5d4be790519f6085d31547e6af29beeca7d112bdfae927": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #40375 claims fix but lacks tests and root-cause coverage; issue suggests additional secondary fix not in PR"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/responses/litellm_completion_transformation/custom_tools.py",
+      "litellm/responses/litellm_completion_transformation/transformation.py"
+    ],
+    "risks": [
+      "Changing default may affect streaming paths; must avoid defaulting at non-terminal sites as noted in issue"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test for empty tool call arguments producing valid JSON '{}' in the Responses-to-Chat bridge",
+      "Add test for empty custom-tool input defaulting to '{\"content\": \"\"}'"
+    ],
+    "unknowns": [
+      "Whether PR #40375 will be updated to include tests and secondary fix; maintainer preference on implementation"
+    ],
+    "why": "Issue identifies a concrete root cause (empty-string default for serialize_tool_call_arguments) with code anchors and a one-line fix, plus a secondary empty-input bug. An open PR #40375 directly addresses the primary fix but lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
   "4c728b16da8895875ffe531b59aa389f90d1798fa6fca5ba8b857b0eef0ef09d": {
     "confidence": 0.7,
     "contradictions": [
@@ -23351,6 +23442,35 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue describes a real silent-failure bug in Go EPP scorers with a clear root cause (missing worker-ID header on FFI error) and a concrete repro path. However, open PR #13365 overlaps semantically and touches the same code paths, and the issue itself notes an in-flight migration to Rust EPP that may change the fix location. The exact trigger for multimodal requests is unconfirmed, requiring maintainer input or logs. Given the overlapping PR and unresolved design questions, a new PR should not be started without maintainer review."
+  },
+  "58ae9458fb8f800837e9965c6059d3fefb55d49b5060c4ce21f3b6f71c59e162": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "McpAsyncServer list handlers (tools, prompts, resources, resourceTemplates) to read cursor and set nextCursor",
+      "McpServer.AsyncSpecification/SyncSpecification to allow custom list handler registration"
+    ],
+    "risks": [
+      "API design changes may require maintainer input",
+      "Potential behavior change if pagination is enabled by default"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit tests that send a cursor and verify nextCursor is set and pagination works",
+      "Add tests that register a custom list handler and verify it is invoked instead of default"
+    ],
+    "unknowns": [
+      "Maintainer preference for pagination vs handler hook",
+      "Whether issue is already addressed in a newer version or planned for 3.0"
+    ],
+    "why": "Issue clearly identifies a missing capability in server-side list handlers: they ignore cursor and never set nextCursor, and there is no hook to replace handlers. Root cause is well-documented with code references and a concrete use case. The request is actionable: either implement pagination or provide a handler override hook."
   },
   "58c23f0deb3dc5ec949899d6b9bd5cbc10bff5a9eba175ae38a7b99afc34a12d": {
     "confidence": 0.85,
@@ -47826,6 +47946,34 @@
       "Exact implementation details of existing PR #3260 to avoid duplication."
     ],
     "why": "The issue clearly identifies a client-side bug where expired DCR client secrets are never invalidated, causing permanent auth failure. The existing PR #3260 is a draft with incomplete evidence and lacks a deterministic reproduction, leaving room for a stronger PR with a failing test and robust fix."
+  },
+  "b69b1d513c5008d6e327f4dbf3e3275ae2fde96b1ec8f4d3d4a213f90797b0e8": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "extensions/vscode/src/util/FileSearch.ts: add file count cap and chunked indexing",
+      "possibly use vscode.workspace.findFiles for remote workspaces"
+    ],
+    "risks": [
+      "Changing indexing behavior may affect @file completion functionality if cap is too low",
+      "Remote-specific handling may introduce platform-dependent behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a unit test with a mocked IDE returning a large file list to verify indexing is chunked and yields event loop",
+      "Add integration test with a large workspace to ensure no renderer block"
+    ],
+    "unknowns": [
+      "Exact maintainer preference for fix approach (cap vs lazy indexing)"
+    ],
+    "why": "Issue provides detailed root cause with code anchors, CPU profiles, and a concrete fix direction (cap file count, chunk indexing, use remote-aware APIs). Comment confirms root cause and suggests a minimal fix using existing walkDirs maxFiles parameter. No competing PR or duplicate found."
   },
   "b6c8a12af76a2d77524de709c34433c9963be250d04bcb61bc77c0a03619a6ed": {
     "confidence": 0.85,
