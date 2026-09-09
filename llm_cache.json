@@ -1065,6 +1065,34 @@
     ],
     "why": "The issue provides a clear, reproducible bug on Windows with a specific root cause in fileURLToPath handling of relative file:// paths. The fix is localized to path resolution in HTTP provider multipart handling, and the expected behavior is well-defined. No competing PR or related issue exists, and the maintainer has not yet engaged, but the bug is user-visible and actionable."
   },
+  "050b8940d1d5024fcdf2906032e6a02ac5d0527389b39369f452b81b84e44e7b": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py",
+      "ReLoRA callback pruning logic",
+      "magnitude_prune_tensor tie handling"
+    ],
+    "risks": [
+      "Maintainer decision between implementing full ReLoRA restarts vs renaming feature; partial fix may be rejected",
+      "Handling quantized/distributed/streamed cases requires explicit support or rejection"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce effective-map discontinuity with random LoRA factors and verify merge-then-reset control preserves map",
+      "Test tie handling with constant tensors and prune_ratio=0.9 to ensure exact keep count and non-zero gradients"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers full ReLoRA restart implementation or renaming feature"
+    ],
+    "why": "Issue provides concrete algorithm-conformance bug with root cause (missing merge/reinit in ReLoRA callback) and deterministic tie-handling bug, both confirmed by maintainer with numerical evidence. Includes clear acceptance criteria and test path."
+  },
   "0521dcb3aa3a1a9b932ce9e10bcf39a0e07f647dda455f470e57de681dbda692": {
     "confidence": 0.85,
     "contradictions": [],
@@ -2516,6 +2544,40 @@
       "Whether the fix is already fully merged in main"
     ],
     "why": "The issue provides a clear root cause: a DeepGEMM revision regression between e21c821 and 8b1392b causes CUDA illegal memory access during CUDA graph capture on SM90/H20. The A/B test with controlled variables isolates the failure to the DeepGEMM pin, and the fix is confirmed in main and v0.28.0. This is a concrete, actionable algorithm/kernel bug with a clear validation path."
+  },
+  "0a11655e73f371ce73a9877f9b0b3433a8b05a8a23bb3e74f18680306882e115": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comment states not reproducible on default config, but issue describes a scenario with cancel_on_disconnect; this is a config-dependent bug, not a contradiction."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/llms/custom_httpx/llm_http_handler.py",
+      "litellm/llms/bedrock/chat/invoke_handler.py",
+      "litellm/proxy/common_request_processing.py",
+      "litellm/utils.py",
+      "litellm/proxy/_types.py"
+    ],
+    "risks": [
+      "Changing cancellation handling may affect other providers or streaming paths.",
+      "Potential behavior change in error reporting (499 vs success) could impact existing tests."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with cancel_on_disconnect enabled and a non-streaming Bedrock request; assert cost events are recorded after client disconnect.",
+      "Add regression test simulating client disconnect and verifying post-call logging completes or a shielded cleanup bills full cost."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific fix approach (e.g., shielded cleanup vs. logging in cancellation handler)."
+    ],
+    "why": "Issue provides a clear root cause (client disconnect cancels post-call logging for non-streaming Bedrock calls) with code anchors and a reproduction path. Recent comment confirms behavior and identifies a config flag dependency, but the core bug is actionable. No duplicate PR directly references the issue; semantic overlap is weak."
   },
   "0a38d37860c49596ab301d245c68f465e2bdbb2541888263035c06c32709cfb6": {
     "confidence": 0.85,
@@ -9231,6 +9293,35 @@
       "Whether an existing PR or issue already addresses this"
     ],
     "why": "The issue reports a deterministic null-pointer GPU fault in NVFP4 MoE path on GB10, with multiple independent reproductions and detailed device-level evidence. However, the root cause is not confirmed; comments suggest possible GDN kernel involvement and third-party kernel packages. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups failed, so duplicate work cannot be excluded."
+  },
+  "2626af332a787f029ba50b262f8847c8eb525c3362ab721d61457d1ad05decbe": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "frontend chat/completions model parsing",
+      "scheme-based adapter resolver registry",
+      "integration with existing LoRA manager"
+    ],
+    "risks": [
+      "Potential API behavior changes if parsing is too permissive",
+      "Need to ensure extensibility for future URI schemes without hard-coding"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing tests for bare scheme-prefixed adapter URI and base|adapter combined ID in chat/completions",
+      "Run targeted unit tests for model parsing and resolver dispatch",
+      "Verify existing base-model-only and pre-loaded adapter paths remain unchanged"
+    ],
+    "unknowns": [
+      "Maintainer design preference for resolver registry implementation"
+    ],
+    "why": "Issue provides a clear root cause (frontend rejects external adapter references in body.model before worker-side resolution), a concrete minimal reproduction with expected/actual pairs, and acceptance criteria. The proposed scheme-based resolution aligns with native vLLM behavior and is technically actionable."
   },
   "262c67f4c44af4c0ddc325a06e834a7466f287ff004ed5f276f46bdaa2d01119": {
     "confidence": 0.6,
@@ -39459,6 +39550,31 @@
     ],
     "why": "The issue provides a clear root cause (token underestimation in count_tokens), concrete reproduction steps, and benchmark data comparing estimates to actual usage. The proposed fix is to improve token counting accuracy, which is a concrete algorithmic improvement with a clear validation path."
   },
+  "96f2593bdfdd9a2018f61cbca52f8374b0b36ef07aa76bddfde4588f362461bf": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "storage-maintenance.js vacuum logic",
+      "libsql store connection handling"
+    ],
+    "risks": [
+      "Potential behavior change if refusing to vacuum when sessions are live; need to ensure no regression in normal vacuum operation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by running /prune vacuum while an idle WAL connection is open, then check /proc for deleted sidecars and run integrity_check."
+    ],
+    "unknowns": [
+      "Maintainer design preference on which suggested fix to adopt."
+    ],
+    "why": "Issue provides detailed root cause (TOCTOU race in vacuum swap), reproduction steps, and concrete code anchors. The suggested fixes are actionable and testable."
+  },
   "970c75a2b94268ef77f267dc9c65ea1ba7255bb5b0ff506211600ebde4d3fb0d": {
     "confidence": 0.85,
     "contradictions": [],
@@ -40394,6 +40510,33 @@
       "Whether maintainer intends to support old syntax or provide migration path"
     ],
     "why": "Issue reports a regression in Cline 4.1.x where tool syntax changed, breaking local OLLAMA/Qwen setups. Multiple users confirm the problem, and maintainer requested testing on 4.1.7 Next. Root cause is likely the new tool syntax or compact prompt default, with clear reproduction steps. The request for documentation is secondary; the core issue is a functional regression with actionable fix path."
+  },
+  "9a51cab18b0427a153f4be92d38b4c1a4c451d5c3fbfee01553d6bcf9b2545d0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "docker/Dockerfile.database",
+      "docker image digest pins for LITELLM_BUILD_IMAGE and LITELLM_RUNTIME_IMAGE"
+    ],
+    "risks": [
+      "Bumping base image digest may introduce other package incompatibilities.",
+      "The fix may need to be repeated as Wolfi packages drift again."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run docker build -f docker/Dockerfile.database -t litellm-test . on linux/amd64 to reproduce the failure.",
+      "After fix, build the image and run a container to verify /app/.venv/bin/python resolves and import litellm works."
+    ],
+    "unknowns": [
+      "Exact current wolfi-base digest to use is not specified, but can be determined from registry."
+    ],
+    "why": "The issue provides a clear root cause: pinned wolfi-base digest has drifted from apk packages, causing build failures and broken runtime images. It includes reproduction steps, specific error messages, and a suggested fix (bump base image digests). This is actionable for an infrastructure fix."
   },
   "9a67175af28a510de7cfa61b4afc89916cd610b2743033df5a44840afea5ee10": {
     "confidence": 0.7,
