@@ -1324,6 +1324,34 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a silent correctness failure in LMCache P/D disaggregation with a concrete reproduction and a plausible root-cause hypothesis from a contributor (token-count mismatch in the adapter). However, the supplied evidence indicates a potential duplicate issue #52620 sharing stack signatures, and the deterministic gate is HUMAN_REVIEW. The candidate is algorithmically relevant (KV-cache correctness, distributed inference) but requires maintainer confirmation of the duplicate and root-cause ownership before implementation."
   },
+  "05f4d2b870d883a6f63a07bd14d84d0ad470bdb97ff9f2c282d5c00cd35d16e4": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue reports bug, but recent comment claims fix in #40209; issue remains open."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/llms/openai/chat/gpt_5_transformation.py",
+      "litellm/main.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #31884 or merged fix #40209; need to verify current state before duplicating work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression tests for gpt-6-astra with max_tokens and function tools, verifying max_tokens is remapped to max_completion_tokens and responses bridge fires."
+    ],
+    "unknowns": [
+      "Whether the fix in #40209 fully resolves the issue and is present in the target branch."
+    ],
+    "why": "Issue provides a clear root cause (substring check for 'gpt-5' misses 'gpt-6' family), concrete failing examples, and a suggested fix. A recent comment indicates a fix may already be merged (#40209), but the issue remains open and the fix's completeness is unverified. The code paths are well-anchored, making the contribution actionable."
+  },
   "0611b49e9b5505e5bfdf7607a94c7adb98deb13db4c434a6e499cc84aabfce4f": {
     "confidence": 0.7,
     "contradictions": [
@@ -5956,6 +5984,32 @@
     ],
     "why": "Issue clearly identifies a validation asymmetry: on_checkpoint_save return value is not validated at save time, causing late restore failures. Root cause is localized in _runner.py with a concrete repro and code anchors. No duplicate issue found; open PR #7757 overlaps in checkpoint area but targets a different race condition, not this validation gap."
   },
+  "19880265ea0d255f8d69b9c7c068b892cdc56426f1ce6c5d303077aa9b0f03b7": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "mcp/server/lowlevel/server.py: pkg_version function to guard against None return"
+    ],
+    "risks": [
+      "Potential overlap with open PR #2499 which touches similar code paths; need to compare to avoid duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit test mocking importlib.metadata.version to return None and assert pkg_version returns 'unknown'",
+      "Run existing test suite for mcp.server.lowlevel"
+    ],
+    "unknowns": [
+      "Whether PR #2499 already fixes this exact issue; maintainer preference on implementation details"
+    ],
+    "why": "Issue provides a clear root cause (pkg_version can return None) and a concrete reproduction traceback. The suggested fix is minimal and aligns with existing error-handling contract. No contradictory evidence."
+  },
   "199eeece6509dafa6d3643c1a1ed0572c7dfb71f49fc2fde3ffd8d436aea1762": {
     "confidence": 0.7,
     "contradictions": [
@@ -8342,6 +8396,39 @@
     ],
     "why": "The issue provides a clear reproduction with expected vs actual streaming chunks, identifies the specific transition from content to tool_calls, and suggests a concrete fix (flush pending text before tool_calls). The related PR #34458 (merged) addresses chunk-invariant parsing for DeepSeek-V4, but the issue remains open and the root cause coverage is not confirmed, so the contribution is still actionable."
   },
+  "22988038a5d9ab061362d86ddb5fdf96befcdda4b6bfc3c5dc642d589dc1e6e1": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue body has a typo in step 3 command but later corrects it",
+      "Automated comment says issue lacks bug/enhancement label despite labels field showing bug"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "runtime image Dockerfile or build scripts to avoid libutempter0/tmux dependency or handle single-UID builds",
+      "documentation for supported Podman configurations"
+    ],
+    "risks": [
+      "Changing runtime dependencies may affect other environments or require maintainer design decisions",
+      "Documentation-only fix may not satisfy users needing functional support"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with rootless Podman without subuid/subgid using provided steps and confirm build failure",
+      "Apply fix and rerun build to verify success",
+      "Run existing runtime image build tests if available"
+    ],
+    "unknowns": [
+      "Maintainer preference among the four proposed solutions",
+      "Whether a prebuilt runtime image compatible with single-UID Podman exists"
+    ],
+    "why": "Issue provides a clear root cause (single-ID rootless Podman cannot map required UIDs/GIDs during runtime image build) and a concrete reproduction path with commands and observed errors. The expected behavior options and workaround suggestions make the fix actionable, though maintainer design preference is unknown."
+  },
   "22bc58af1de3779e4e8f58253e1fa0ba42f0419b36bb3fe52e67ba066ea5beae": {
     "confidence": 0.7,
     "contradictions": [
@@ -8369,6 +8456,34 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The issue describes a real, recurring bug in agent tool-surface handling with concrete reproduction steps and multiple occurrences, but the proposed fix is documentation/prompt-level and the maintainer has not confirmed the desired design. The issue is labeled needs-maintainer-review and needs-design-confirmation, and the maintainer has not approved or actively investigated. The fix direction is plausible but requires maintainer confirmation on whether to patch the prompt, the orchestrator routing, or both."
+  },
+  "22bd5cdc25ab8fecbb5a6ae74c80e9eab22c58e59d61ada3a702f91bd5be4584": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Comment in issue suggests PR #13774 may fix the issue, but PR #13774 does not reference the issue and lacks direct code overlap."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "examples/backends/tritonserver/src/tritonworker.py",
+      "lib/llm/src/protocols/tensor.rs"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #14524; need to ensure fix is complementary and includes tests."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sends a BYTES tensor to the tritonserver example and asserts correct reshape and output decoding."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific implementation approach or have additional design constraints."
+    ],
+    "why": "Issue provides detailed root cause with code anchors and reproduction steps, and a concrete fix path. Existing PR #14524 lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
   "22cec6b71fe5192a3d5124e1f2ed1d6aa47907424bf0acbe89de6d75c06604de": {
     "confidence": 0.7,
@@ -10431,6 +10546,40 @@
       "Whether the open PRs #7027 and #7028 fully resolve the issue or only partially; requires manual comparison."
     ],
     "why": "The issue provides a precise root cause for two regressions in the checkpoint converter, with exact code locations, a reproducible command, and expected vs actual behavior. The proposed fixes are concrete and local to tools/checkpoint. The track is llm_algorithm, and the issue involves distributed training process group initialization and weight-shard argument handling, which are algorithmically relevant. The presence of open PRs with semantic overlap requires review but does not block actionability."
+  },
+  "2a909e1de21078d830ee3f5c8cf243bfb26f2b7e1602e5809ec1ed9d1d57e94d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "One comment says a specific commit fixes the issue, but the reporter later says the same error occurs on that commit."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vLLM startup memory management",
+      "model loading or compilation path",
+      "possibly multiproc_executor or worker initialization"
+    ],
+    "risks": [
+      "The issue may be environment-specific (e.g., flashinfer CUBIN compilation) and not reproducible in CI.",
+      "The fix might involve disabling or caching compilation, which could affect performance or correctness."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided command and model on a system with limited host memory; monitor host memory usage and process count during startup.",
+      "Compare memory usage between vLLM 0.27.1 and 0.28.0+ to confirm regression.",
+      "Add a regression test that starts the server with a small model and asserts host memory stays below a threshold."
+    ],
+    "unknowns": [
+      "Exact code change between 0.27.1 and 0.28.0 that introduced the regression.",
+      "Whether the issue is specific to the model's NVFP4 quantization or the flashinfer backend."
+    ],
+    "why": "The issue reports a reproducible host memory exhaustion during vLLM startup with a specific model and flags, with evidence of excessive cicc/nvcc compilation processes consuming all RAM. The root cause is likely an unintended compilation or caching behavior in the vLLM 0.28.0+ code path, possibly related to model loading or kernel autotuning. The report includes a clear regression from 0.27.1 and a concrete reproduction command, enabling a targeted fix and regression test."
   },
   "2a9e81d925c77fd7c61c6af79882c098a6930e133e4bee8e53318524d877e180": {
     "confidence": 0.9,
@@ -15151,6 +15300,35 @@
     ],
     "why": "Issue provides a clear root cause (drafter fc built with quant_config despite unquantized MTP weights), a concrete reproducer, and suggested fix directions. The code path is identified (qwen3_5_mtp.py). The bug is user-visible and actionable."
   },
+  "3d933d217de131fa18b219afafbbc4202a0ffa576e42f80e08d9d46ab5856583": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #40375 claims to fix the issue but lacks tests and root-cause coverage; issue suggests additional secondary fix not addressed by PR"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/responses/litellm_completion_transformation/custom_tools.py",
+      "litellm/responses/litellm_completion_transformation/transformation.py"
+    ],
+    "risks": [
+      "Changing default to '{}' may affect streaming paths if not limited to terminal serialization points; must avoid sites where truthy default shadows accumulated arguments"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that simulates an empty tool call through the /responses to /chat/completions bridge and asserts arguments are '{}' not ''",
+      "Add a test for empty custom-tool input ensuring default is json.dumps({\"content\": \"\"})"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different default value or approach; whether PR #40375 will be updated with tests and secondary fix"
+    ],
+    "why": "Issue provides a precise root cause (default empty string in serialize_tool_call_arguments) with code references and a concrete one-line fix, plus a secondary issue and sites to avoid. An open PR #40375 directly addresses the primary fix but lacks tests and root-cause coverage, leaving room for a more complete contribution."
+  },
   "3da258d1b102fb2932f4bfcee6765694c11ea464a48afcf6acd1e93f68c0e262": {
     "confidence": 0.85,
     "contradictions": [
@@ -15763,6 +15941,35 @@
       "Whether the existing open PR #13785 already implements the same fix, requiring manual comparison to avoid duplicate work."
     ],
     "why": "The issue provides a precise root cause in StreamingPostProcessor's flush condition, a concrete reproduction with timing measurements, and a suggested minimal fix. The evidence includes code anchors and a validation path via offline parser comparison and production patching results."
+  },
+  "409c1fb92fda5744106e5961fa983064e89f5687738fa6452ce8755648537972": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "compaction trigger logic in CLI",
+      "provider-specific context window handling for Ollama"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #12643 and #13275, though they are not directly related; maintainer may prefer a different fix approach."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test that simulates native Ollama with contextWindow set and estimatedInputTokens exceeding threshold, asserting compaction_executed or compaction_skipped is emitted.",
+      "Run existing unit tests for compaction and provider modules."
+    ],
+    "unknowns": [
+      "Exact code path where compaction decision is made and whether agent teams bypass prepareTurn; maintainer design preferences."
+    ],
+    "why": "Issue provides detailed reproduction steps, environment specifics, and evidence that auto-compaction never triggers despite overflow warnings, indicating a clear bug in the compaction trigger logic for native Ollama. Root cause is likely a mismatch between the estimator used for overflow diagnostics and the one used for compaction decisions, or a bypass due to agent teams. Actionable with a concrete test path."
   },
   "40ad962269698172e44078a70005acb7baa10cfa208866a52ca8b3254d9e9233": {
     "confidence": 0.7,
@@ -18560,6 +18767,30 @@
       "Whether the proposed fix will be accepted without assignment is pending."
     ],
     "why": "Issue identifies a concrete bug: streamed OpenAI Responses retains the requested router alias instead of the served model from the terminal event. Root cause is clear (model_name not refreshed from response.completed), with a runnable repro and public trace. A contributor has proposed a fix and tests, and a maintainer bot has confirmed the behavior and requested only a test file path. The fix is localized but touches shared merge logic; however, the issue is actionable with a clear validation path."
+  },
+  "4afcdd9cf1bd59bf7fc38669015b75defd0ae012d3fb96bf8ddf9b59fdc6ecc2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "extensions/vscode/src/util/FileSearch.ts: add file count cap, chunk addAll, handle remote workspaces, improve ignore list"
+    ],
+    "risks": [
+      "Changing FileSearch behavior may affect @file completion functionality; need to ensure lazy loading or cap does not degrade UX."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a test with a large synthetic workspace to verify FileSearch initialization does not block event loop and respects cap; possibly use profiling or timeout assertions."
+    ],
+    "unknowns": [
+      "No maintainer confirmation on preferred fix approach; but multiple reasonable options exist and normal implementation uncertainty is acceptable."
+    ],
+    "why": "Issue provides detailed root cause with code anchors, profiling evidence, and concrete suggested fixes. The problem is a clear performance bug in FileSearch initialization that can crash the renderer on large remote workspaces. The proposed changes are actionable and testable."
   },
   "4afef72f7faab589c64235738ae45e53d02e3da49950703caefc8301617da865": {
     "confidence": 0.9,
@@ -64167,6 +64398,32 @@
       "Exact mechanism causing bad checkpoint (numerical vs logic)"
     ],
     "why": "Issue provides a concrete, reproducible LLM algorithm bug with clear numerical symptoms (NaN logits) tied to hybrid GDN prefix-cache alignment. Root cause is localized to checkpoint writing at block boundaries, with detailed reproduction steps and controls. Validation path is clear via reference implementation and numerical tolerance tests."
+  },
+  "efc99955f95369b2dff3f4080d8e807742fa03f2a0105af2ab7b0b2c8924f88c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "CLI startup session initialization",
+      "agent team auto-creation logic"
+    ],
+    "risks": [
+      "Fix may affect agent team initialization behavior; need to ensure no regression in normal team usage."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with steps in issue: run CLI with cwd=$HOME and no prompt, monitor RSS growth; add regression test for memory usage during startup with no user input."
+    ],
+    "unknowns": [
+      "Exact code path causing unbounded allocation; whether fix should disable auto team creation or cap memory."
+    ],
+    "why": "Issue provides detailed reproduction steps, logs, and a suspected root cause (automatic agent-team initialization) with a workaround flag. The evidence supports a concrete validation path and actionable fix."
   },
   "efd0dff793ac377145ad1d916fc41b51113162e65a8c4c3d10e29e7547554b3d": {
     "confidence": 0.85,
