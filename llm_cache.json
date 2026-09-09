@@ -332,6 +332,32 @@
     ],
     "why": "Issue provides a precise root cause (compile-time vs runtime ABI mismatch for cudaMemcpyBatchAsync in JIT path), a concrete reproduction with dual-toolchain setup, and a clear fix direction (runtime dispatch). The bug is user-visible and affects a key inference path. No material unknowns block actionability."
   },
+  "023c7fcb7ee93e20748c019b85c055b2fa53187893d3fb183adff65b394b0810": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "streaming chunk builder",
+      "usage propagation in proxy streaming"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #40282; need to ensure distinct implementation or improvements."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with provided curl command and config; assert final usage matches upstream counts and reasoning_tokens <= completion_tokens."
+    ],
+    "unknowns": [
+      "Exact code location and root cause not yet identified; maintainer design preference unknown."
+    ],
+    "why": "Issue provides detailed reproduction steps, exact configuration, and captured usage data showing inconsistent token counts in chained streaming proxies. Root cause localized to streaming processing at the outer proxy, with clear expected behavior. Existing PR #40282 is incomplete and lacks root-cause coverage, leaving room for a competitive fix."
+  },
   "0267b19c4abd19e443e2f3eeab6be2707ab6c0860b3e08ef6d22f2e39c27ae60": {
     "confidence": 0.7,
     "contradictions": [
@@ -5755,6 +5781,38 @@
     ],
     "wait_reason": null,
     "why": "Issue identifies a concrete bug in MCP auto-execute logic that breaks client-side tools for agentic clients. Root cause is clearly traced to specific code lines and functions, with a clear expected behavior and a minimal fix path. No competing PR or related issue found."
+  },
+  "1950e854387fed2e1360c14a5835f5d3727f63867f1b1426f8547cdc4eafda3f": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #7757 has semantic overlap but targets a different root cause (file storage race), not the executor state validation issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Add isinstance check in _save_executor_states in _runner.py to raise WorkflowCheckpointException on non-dict return",
+      "Add regression test in test_checkpoint.py or test_agent_executor.py covering non-dict on_checkpoint_save return"
+    ],
+    "risks": [
+      "Potential behavior change for existing executors that incorrectly return non-dict but never restore; now they will fail at save time",
+      "Need to ensure the check does not break valid dict subclasses or other allowed types"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Use the provided standalone repro to confirm current failure at restore time",
+      "Add a unit test that calls _save_executor_states with an executor returning a list and asserts WorkflowCheckpointException is raised immediately",
+      "Run targeted tests in python/packages/core/tests/workflow/"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a different validation location or error type",
+      "Exact scope of tests to be added"
+    ],
+    "why": "Issue clearly identifies a validation asymmetry: on_checkpoint_save return value is not validated at save time, causing late restore failures. Root cause is localized in _runner.py with a concrete repro and code anchors. No duplicate issue found; open PR #7757 overlaps in checkpoint area but targets a different race condition, not this validation gap."
   },
   "199eeece6509dafa6d3643c1a1ed0572c7dfb71f49fc2fde3ffd8d436aea1762": {
     "confidence": 0.7,
@@ -20230,6 +20288,39 @@
     ],
     "why": "The issue provides a clear root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm and the issue involves model architecture and distributed training mechanisms, with a clear validation path via numerical regression or runtime assertion tests."
   },
+  "524d14ce0867b45b8fa764265d8a176ce6ae4875a0403053e757baf28c3921e5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "simple-sun reports allocator state divergence on TP0, while maintainer attributes to sampling divergence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "DSPARK sampling determinism across TP ranks",
+      "EAGLE sampling determinism across TP ranks",
+      "NCCL collective shape consistency"
+    ],
+    "risks": [
+      "Fix may not cover all divergence sources (e.g., allocator state differences)",
+      "Requires H20 or multi-GPU environment for validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run multi-rank TP>1 decode with fixed seed and long context to reproduce hang",
+      "Verify deterministic sampling produces identical tokens across ranks",
+      "Regression test with EOS sampled on one rank to ensure batch composition stays consistent"
+    ],
+    "unknowns": [
+      "Whether PR #33614 fully resolves the issue in latest version"
+    ],
+    "why": "Issue reports a reproducible distributed-training hang in DSPARK/DSV4 with TP>1, and maintainer comment identifies root cause as per-rank sampling divergence leading to NCCL shape mismatch. Concrete fix PR #33614 and prior #22458 are referenced, providing a clear validation path."
+  },
   "524d7f6b2d083abe7dcb9d5dfac96b74453a109d1725ac5a3e2cadd64e2c9377": {
     "confidence": 0.6,
     "contradictions": [],
@@ -23192,6 +23283,30 @@
       "Maintainer's design preference for fix not known"
     ],
     "why": "Issue reports a clear bug: nested Pydantic models in dicts ignore serialize_by_alias=False. Repro is provided, but root cause is not identified and no maintainer confirmation exists. The gate decision is HUMAN_REVIEW, so we must wait for maintainer input."
+  },
+  "5ae17d07ff4813e9d1058db9c2fc739cf0031e4544caf9da94e71cee13036f29": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: implement merge-and-reinitialize restart or rename feature; fix tie-handling pruning to exact count"
+    ],
+    "risks": [
+      "Maintainer decision between two fix options; need to handle quantized/distributed/streamed cases explicitly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test for tie handling ensuring exact keep count and non-zero gradients; add test for merge preserving effective linear map to numerical tolerance"
+    ],
+    "unknowns": [
+      "Which fix option maintainer prefers; production frequency of tie case"
+    ],
+    "why": "Issue provides concrete algorithmic bug with root cause, reproduction, and maintainer confirmation. Track llm_algorithm satisfied via parameter-efficient finetuning (LoRA/ReLoRA) with clear numerical validation path."
   },
   "5ae7c392b8464dde7f4295b7e9f0df8c9037e1bac69845b11d93345f84294c3d": {
     "confidence": 0.8,
@@ -33408,6 +33523,31 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue describes a concrete LLM algorithm bug (int16 overflow at position 32768 in GDN/MTP speculative decoding) with a clear reproducer and metrics, but the supplied evidence flags a potential duplicate issue #37035 sharing stack signatures and an open PR #48792 with semantic overlap on gdn_attn.py. The deterministic gate is HUMAN_REVIEW, and the candidate's own assessment requires manual comparison before action. No maintainer approval or assignment is present, and the root cause is hypothesized but not confirmed."
   },
+  "8104d17ad6dcf3d4728bc247484b41165889229c90b5dda85e4c2900807f8668": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/commands/build/BuildBundler.ts",
+      "packages/cli/src/commands/build/BuildBundler.test.ts"
+    ],
+    "risks": [
+      "Changing externals normalization may affect existing behavior for non-workspace packages; need to preserve default externals:true behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the provided minimal fixture as a build regression test, asserting that the external workspace package's implementation is absent from bundled output and remains a runtime dependency."
+    ],
+    "unknowns": [
+      "Maintainer design preference for the fix approach is not yet confirmed, but this does not block implementation."
+    ],
+    "why": "The issue provides a complete minimal reproduction, identifies the likely root cause in BuildBundler.getUserBundlerOptions, and specifies concrete acceptance criteria and a regression test. The bug is user-visible and actionable without maintainer pre-approval."
+  },
   "811580dbec57b0c5aaecf3a0702132258e6bf6c914b6aa5a28a7b416860e8e5b": {
     "confidence": 0.7,
     "contradictions": [],
@@ -36188,6 +36328,30 @@
       "Whether a specific transformers version resolves the traceability issue."
     ],
     "why": "The issue provides a clear root cause: the sequential pipeline FX-traces the vision tower even when it is in the ignore list, and Qwen3-VL's rot_pos_emb is not FX-traceable, causing a CUDA driver error. It includes a minimal reproduction script and environment details, and the failure is isolated to the calibration/tracing path (RTN works). This is a concrete, actionable bug in an LLM quantization algorithm."
+  },
+  "8b84c49267f134f2a3ad402d4cd0a5341ec3a7aa6864f0f188474b917e6dc1c2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/util/fetch/errors.ts: add credit_balance_exhausted to HARD_QUOTA_ERROR_CODES and/or fallback to error.type when code is empty"
+    ],
+    "risks": [
+      "Potential behavior change if other providers use same code differently; need to ensure no false positives."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test for extractRateLimitErrorCode with a 429 body containing code credit_balance_exhausted and type insufficient_quota, asserting it is classified as hard quota."
+    ],
+    "unknowns": [
+      "No maintainer confirmation on preferred fix approach (add code vs fallback to type)."
+    ],
+    "why": "Issue clearly identifies a missing error code in HARD_QUOTA_ERROR_CODES causing long retries; root cause and fix location are explicit."
   },
   "8b9923bb1590650217c32977350aa94792c07010a44ca43e9c406e60c5182c31": {
     "confidence": 0.85,
