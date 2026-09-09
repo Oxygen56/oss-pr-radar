@@ -36857,6 +36857,31 @@
     ],
     "why": "Issue reports a flaky CUDA graph capture failure in a vLLM fullgraph test, but the root cause is unknown and the reporter explicitly asks for duplicate confirmation. A contributor attempted reproduction on H100 and failed, noting the CI uses H200 and cross-test state may matter. No maintainer assignment or design confirmation exists, and open PR lookup failed due to rate limit, so duplicate work cannot be excluded."
   },
+  "8b747795015532eef874ee5151d57ac2c4e8ee4e95b952cf8365ffb2f27c727c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "extensions/vscode/src/util/FileSearch.ts",
+      "Add file index cap, chunked indexing, remote workspace handling"
+    ],
+    "risks": [
+      "Potential behavior change for users relying on full workspace indexing; need to ensure cap and chunking do not degrade search quality"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a test with a large mocked workspace to verify indexing is bounded and event loop remains responsive; add regression test for remote workspace path using findFiles or lazy init"
+    ],
+    "unknowns": [
+      "Maintainer design preference for fix approach (cap vs lazy vs findFiles)"
+    ],
+    "why": "Issue provides detailed root cause analysis with code anchors, profiling evidence, and concrete reproduction steps. The proposed fixes are actionable and align with the repository's agent/inference/RAG infrastructure."
+  },
   "8b795226153c2cec09bf9bf695d0b6ebcdb7e760c11f87fc1e1447f60de558bd": {
     "confidence": 0.85,
     "contradictions": [],
@@ -56193,6 +56218,33 @@
       "maintainer design preference for fix location"
     ],
     "why": "Issue describes a real streaming bug with a plausible code-level mechanism (id dropped on ThinkingPartDelta), but exact failure point unconfirmed without provider key; fix surface is an open architectural decision with no maintainer precedent. Gate requires HUMAN_REVIEW."
+  },
+  "d733ccb894edee2950cf9971c95b762860a522eb5db2f0942853955cf7fea7b0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/chat/converse_transformation.py",
+      "litellm/responses/litellm_completion_transformation/transformation.py"
+    ],
+    "risks": [
+      "Changing the inflation convention may affect existing cost reporting or downstream consumers expecting cache-inclusive input_tokens.",
+      "The fix may require maintainer decision on which convention to adopt, potentially leading to a design discussion."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that constructs a Usage object with non-inflated prompt_tokens and cached_tokens > prompt_tokens, then run the Responses bridge transformation and assert cached_tokens <= input_tokens.",
+      "Add an end-to-end test against a mocked Bedrock Converse response to verify the bridge output maintains a consistent basis."
+    ],
+    "unknowns": [
+      "Maintainer preference on the token basis convention (cache-inclusive vs cache-exclusive) is not yet decided, but the issue explicitly acknowledges this and offers to follow maintainer direction, so it does not block implementation."
+    ],
+    "why": "Issue provides a clear root cause (inconsistent token basis between Bedrock Converse inflation and Responses bridge pass-through), a minimal arithmetic reproduction, and a concrete validation path (assert cached_tokens <= input_tokens). The suggested fix is actionable and scoped to specific transformation files."
   },
   "d74892feb9bc84de4ca56b7d9ee2f99ade78bbe3f11c8e820388f15389ffd240": {
     "confidence": 0.85,
