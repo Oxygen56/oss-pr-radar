@@ -27423,6 +27423,33 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly identifies error suppression in hgctl upgrade/uninstall and has maintainer approval, but a design conflict remains: strict fail-closed semantics would break local-docker installs without kubeconfig. The maintainer requires Design #4403 revision and approval before implementation."
   },
+  "6938627053caec0c835d588a64b5a22c7acef03c2d8d43851a7ca047c54567bd": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Documentation note in agent-framework-openai about potential upstream reasoning_tokens corruption",
+      "Potential routing to Azure OpenAI service owners"
+    ],
+    "risks": [
+      "Maintainer may prefer to close as upstream without documentation",
+      "No code change may be required, reducing contribution value"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "No code change expected; validate by reproducing with provided raw OpenAI client snippet and confirming the issue is upstream"
+    ],
+    "unknowns": [
+      "Whether maintainers want a documentation change or will close as upstream"
+    ],
+    "why": "Issue provides a clear, reproducible upstream bug with detailed evidence, including raw wire data and a minimal reproduction using the OpenAI client. The framework's role is to faithfully surface the incorrect field, and the issue suggests documentation or routing. This is actionable for a maintainer to decide on documentation or upstream routing."
+  },
   "695e0483c5e282989838d125db8ab471b64a90af2196c06afcb8d25236038bd8": {
     "confidence": 0.85,
     "contradictions": [],
@@ -35163,6 +35190,33 @@
       "Status of PR #33525 and its failing checks"
     ],
     "why": "Issue clearly identifies a shallow update in get_config causing recursive override failure, with a concrete reproduction. However, an existing PR #33525 directly addresses this but lacks tests and has failing CI, and the deterministic gate requires HUMAN_REVIEW. Maintainer design preference is unconfirmed."
+  },
+  "8606193b070f198890f2ba4dbcba0cdac6f90ff6735192e1a3c612440a1e8bc0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm_integration/kv_cache_utils.py",
+      "nixl_connector.py",
+      "vLLM backend guide"
+    ],
+    "risks": [
+      "Potential design decision needed: whether to support hybrid models via NixlConnector or fail fast; maintainer preference may affect implementation."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with Qwen/Qwen3.5-35B-A3B-FP8 under disaggregated 1P1D with --kv-transfer-config; verify init failure. Then apply fix (e.g., make NixlConnector subclass SupportsHMA or add fail-fast) and rerun to confirm successful init and prefill/decode request."
+    ],
+    "unknowns": [
+      "Whether the issue still reproduces on current Dynamo/vLLM versions; maintainers have requested retest confirmation."
+    ],
+    "why": "Issue provides a clear root cause (NixlConnector force-disables hybrid KV cache manager, causing unify_hybrid_kv_cache_specs to fail for hybrid models) and a concrete validation path (reproduce with Qwen hybrid model under disaggregated config; test with --no-disable-hybrid-kv-cache-manager). Maintainers are actively engaged and requesting retests, indicating actionable work."
   },
   "86137e61f81c74ebd688c0a2c30e38c172698a2d0cd631619464bd22fd2d5213": {
     "confidence": 0.85,
@@ -50721,6 +50775,36 @@
       "Maintainer preference on whether to abort on partial failure"
     ],
     "why": "Issue reports a concrete Windows installer failure during agent configuration with clear error messages and a workaround. Root cause is likely in config parsing/writing logic for multiple file formats. Actionable with a clear reproduction path."
+  },
+  "c45e7c1c24ace605559b276053ab0827dc60323e4e46011eb4f7ebe711f9edea": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose-providers/src/ollama.rs",
+      "crates/goose-provider-types/src/formats/openai.rs",
+      "crates/goose-providers/src/openai_compatible.rs",
+      "crates/goose-providers/src/openai.rs",
+      "crates/goose-provider-types/src/formats/ollama.rs"
+    ],
+    "risks": [
+      "Potential maintainer design preference for exposing the option via config vs env var; need to avoid breaking existing OpenAI-compatible behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that sends a request with 'think': false to the Ollama provider and asserts the request goes to /api/chat (or that the field is preserved).",
+      "Run targeted unit tests for the modified provider modules and static checks."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a config key, env var, or UI toggle for the 'think' option; exact API schema details for /api/chat translation."
+    ],
+    "why": "The issue clearly identifies a root cause: both Ollama provider paths use the OpenAI-compatible endpoint, which silently ignores the 'think' field, making hybrid-reasoning control unreachable. It provides a concrete reproduction and validation path via direct API comparison, and suggests a specific fix (route to /api/chat and expose think as a configurable option). The code anchors are specific, and no duplicate PR or issue was found."
   },
   "c46158808747bd687ff5a8e2af0cac20fd87944dad949fdfcf74ca6ded7d3094": {
     "confidence": 0.85,
@@ -66514,6 +66598,30 @@
       "Whether the proposed fix is already implemented in PR #53367 and if it is complete; the PR lacks tests and has CI failures."
     ],
     "why": "The issue clearly identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction, expected vs actual behavior, and a proposed fix. The track is llm_algorithm with a concrete mechanism (model_architecture, distributed_training) and a validation path via numerical regression or controlled experiment."
+  },
+  "f9c4ef1c1d0a79f36c9a367654e5fc1a072b845bb7c8261fb6ce31c9e99038e3": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "ContinueBrowserService.kt",
+      "plugin.xml or build configuration"
+    ],
+    "risks": [
+      "Potential dependency version mismatch or environment-specific issue."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by launching IntelliJ with the plugin and opening the tool window; verify no exception and JBCefApp is available."
+    ],
+    "unknowns": [
+      "Exact IntelliJ version and OS details are missing, but not blocking."
+    ],
+    "why": "The issue provides a clear stack trace showing NoClassDefFoundError for JBCefApp, indicating a missing dependency or classpath issue in the IntelliJ plugin. The root cause is identifiable and the fix is actionable."
   },
   "f9d42edbf321d592b6a3944529b7cb43cb35297eadc509d9782e2530f47ce7a4": {
     "confidence": 0.9,
