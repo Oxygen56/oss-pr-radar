@@ -5479,6 +5479,31 @@
     ],
     "why": "Issue provides a clear, reproducible bug with a suggested one-line fix, but an existing open PR (#7053) by a maintainer overlaps semantically with the same code path and may already address the root cause. The deterministic gate requires HUMAN_REVIEW, and the PR competition assessment indicates semantic overlap requiring manual comparison. Without maintainer confirmation or PR review, starting a new PR risks duplication."
   },
+  "172ae6ab92a0de63cf5a2c3175786e60bb99e5edf95efdf022e114ebe52394a0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "gateway request serialization for google/* models",
+      "parameter forwarding logic in inference LLM path"
+    ],
+    "risks": [
+      "Gateway may intentionally strip deprecated parameters for future Gemini models; fix must scope to models that still honor temperature"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run provided reproduction script to confirm temperature ignored for google/* but honored for openai/*",
+      "Add regression test asserting temperature is forwarded to upstream Gemini request"
+    ],
+    "unknowns": [
+      "Exact gateway code location and maintainer design preference for handling deprecated parameters"
+    ],
+    "why": "Issue provides concrete reproduction with distinct-output counts, identifies gateway dropping temperature for google/* models, and includes a minimal Python repro. Root cause is clear and actionable."
+  },
   "174dfb7855c7f3b18ed343acf956ee701aecbffdad210edf30f827dbb65c7dba": {
     "confidence": 0.9,
     "contradictions": [
@@ -11994,6 +12019,38 @@
       "Whether other index types need similar async overrides"
     ],
     "why": "The issue provides a clear root cause and a minimal reproduction for a real async bug in PropertyGraphIndex.ainsert_nodes. However, the deterministic gate requires HUMAN_REVIEW, and the fix requires design confirmation for adding an async _ainsert hook to BaseIndex, which affects the public API surface. No competing PR exists, but maintainer input is needed before implementation."
+  },
+  "32918e4068bd0e08e719d8bacbfc1c0fcafc7858363e4a217a4785b1a07406d0": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer hiasky argues current behavior is expected, while reporter and other contributors argue invite_only should allow registration via invite link."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "frontend/src/views/auth/Login.vue",
+      "frontend/src/router/index.ts",
+      "internal/handler/auth_register_by_invite.go",
+      "internal/handler/auth_register_invite_only_test.go"
+    ],
+    "risks": [
+      "Product expectation may change after maintainer confirmation; implementation might need to align with new design."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: under invite_only mode, visiting /register?token=<valid> shows registration form and allows registration via /auth/register-by-invite.",
+      "Run existing frontend unit tests and backend tests for auth_register_invite_only."
+    ],
+    "unknowns": [
+      "Maintainer's final product decision on invite_only semantics."
+    ],
+    "why": "Issue provides a clear root cause (frontend Login.vue forces isRegisterMode=false when invite_only, ignoring valid invite token) and a concrete validation path (reproduce with invite link under invite_only). Existing PR #3065 directly addresses the issue but lacks tests, leaving room for a more complete contribution. Maintainer discussion is ongoing but does not block implementation."
   },
   "32a58cf3a05d2eaf8c63098715a3acc057a5c6d2c60e237d5e5d201d77c36d13": {
     "confidence": 0.8,
@@ -34254,6 +34311,33 @@
     ],
     "why": "The issue provides a clear reproduction with expected vs actual streaming output, identifying a concrete bug in the streaming logic when both content and tool_calls are present. The root cause is likely in the parser or streaming buffer handling, and the suggested fix is actionable. Although the track is llm_algorithm, the issue involves model architecture and kernel algorithm aspects (DeepSeek-V4, FP4 experts, speculative decoding), and the validation path is concrete: reproduce with the provided curl command and verify complete content delivery. Existing PRs are incomplete or lack root cause coverage, leaving room for a competitive contribution."
   },
+  "82542bde0708d04ee9692e4503eead26ccb3e0f9538188238ebfef71ad2ccfd9": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Compaction trigger logic in CLI for native Ollama provider",
+      "Possibly the estimator or model.info handling for Ollama"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #12643 and #13275 that touch auto-compaction; need to ensure no duplicate fix."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided steps using native Ollama and a large MCP tool surface, then verify that compaction events are emitted when estimatedInputTokens exceeds 0.9*contextWindow."
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for compaction triggers; whether the issue is already being addressed by an unlinked PR."
+    ],
+    "why": "Issue provides a clear root cause: auto-compaction never triggers on native Ollama despite overflow warnings, with detailed reproduction steps and environment specifics. The expected behavior and actual behavior are well-defined, making it actionable."
+  },
   "827f1ee28e5e928b93426437b4ac29e5cc72dc250ae029f42c574ef741417ee3": {
     "confidence": 0.85,
     "contradictions": [],
@@ -38892,6 +38976,34 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports agent integrations hanging with local Qwen models, but comments indicate the root cause is large prompts exceeding context and long prefill times, not a bug in Ollama. No concrete code path or reproducible failure in Ollama is identified; the issue is likely usage/harness configuration. No maintainer confirmation or design direction."
+  },
+  "951319aa8d6af4ca0a56b5563d37417897cf3688bda29807c538073c66f72e12": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "McpAsyncServer list handlers",
+      "McpServer.AsyncSpecification/SyncSpecification API"
+    ],
+    "risks": [
+      "API design changes may require maintainer input",
+      "Potential breaking changes if handler replacement is added"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add unit tests that send a cursor and verify nextCursor is set and pagination works",
+      "Test that custom handler can be registered and invoked"
+    ],
+    "unknowns": [
+      "Maintainer preference for pagination vs handler override",
+      "Exact desired page size configuration"
+    ],
+    "why": "Issue clearly identifies a missing capability in server-side list handlers: cursor is ignored and nextCursor never set, with no way to replace handlers. Root cause is well-documented with code references and a concrete use case. The contribution is actionable: implement pagination or provide handler override."
   },
   "952f7819438c05b3bf8941221e4768e60d7936a8d87970bd0b2e5f161ca4c132": {
     "confidence": 0.85,
@@ -66453,6 +66565,36 @@
       "Open PR status and related issue status are unknown due to lookup timeouts; maintainer approval or design confirmation is missing."
     ],
     "why": "Issue provides a clear root cause and proposed fix for a user-visible bug, but the deterministic gate requires HUMAN_REVIEW and open PR/related issue lookups failed, so we cannot rule out duplicates or confirm maintainer intent."
+  },
+  "f9701cdff2c0e4d552b252df27ab5d6b63082384136283f9baf355eca7e098f5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Open PR #40284 title suggests guardrails work, but semantic overlap on cached_tokens/input_tokens is reported; direct code overlap is false."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/chat/converse_transformation.py",
+      "litellm/responses/litellm_completion_transformation/transformation.py"
+    ],
+    "risks": [
+      "Changing the token basis convention may affect downstream cost reporting and require documentation updates.",
+      "Potential overlap with open PR #40284 requires manual comparison to avoid duplicate work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that constructs Usage with prompt_tokens=6732 and cached_tokens=7411 and asserts the bridge output satisfies cached_tokens <= input_tokens.",
+      "Run existing test suite for the affected transformation modules."
+    ],
+    "unknowns": [
+      "Maintainer preference on which token convention to adopt (cache-inclusive vs cache-exclusive) is not yet decided."
+    ],
+    "why": "Issue provides a clear root cause (inconsistent token basis between Bedrock Converse inflation and Responses bridge pass-through), a minimal arithmetic reproduction, and a concrete validation path. The suggested fix is actionable and the maintainer decision point is explicitly identified."
   },
   "f97bcd65f4a2bcb8736128094bbc65ebe8eb1785a2e6001aeec72c0d3a990c16": {
     "confidence": 0.85,
