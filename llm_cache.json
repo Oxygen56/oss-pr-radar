@@ -61197,6 +61197,41 @@
     ],
     "why": "Issue describes a clear load-balancing bug with a concrete repro and root-cause analysis in comments, but the deterministic gate requires HUMAN_REVIEW and there are overlapping open PRs and related issues that need maintainer triage."
   },
+  "ea42056c197509181ce2445bb5451f5706455f900d86e3d2a2bb987ea68fbc00": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue claims all three findings unreported, but open PR #3604 and #3639 have semantic overlap; however, they do not directly address these specific bugs"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/peft/utils/hotswap.py",
+      "src/peft/tuners/lora/layer.py",
+      "src/peft/utils/save_and_load.py",
+      "src/peft/utils/other.py"
+    ],
+    "risks": [
+      "Potential overlap with existing PRs #3604, #3639, #3509 that touch similar code paths; need to compare implementation boundaries",
+      "Maintainer preference on semantics (raise vs auto-unmerge) for item 1, but items 2 and 3 have clear expected behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce item 2 with modules_to_save checkpoint and verify explicit error instead of KeyError",
+      "Reproduce item 3 with rank/alpha swap and verify peft_config update and successful reload",
+      "Add regression tests for both scenarios on CPU"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer explicit error or auto-unmerge for item 1, but items 2 and 3 are actionable without that decision"
+    ],
+    "why": "Issue provides concrete, reproducible bugs in PEFT hotswap with clear root causes and code references. Track=llm_algorithm is satisfied as it involves parameter-efficient fine-tuning mechanisms (LoRA adapter merging, scaling, config consistency) with a concrete validation path via numerical regression tests. Evidence shows root cause signal and code anchors, and recent comment confirms items 2 and 3 remain unfixed on main."
+  },
   "ea4c983757ffd430092d3f49c06ebe6d6ccad388b513876d396a7cdfe62def9a": {
     "confidence": 0.85,
     "contradictions": [],
