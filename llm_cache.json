@@ -7864,6 +7864,33 @@
     ],
     "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to re-check the chunk budget before scanning the waiting queue, causing unnecessary cache matching and host-cache load-back. Reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR #35645 addresses the same issue, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "21301dbd9a304f6fdfd008012e1eb9e92bb771bb9bfa92163c923e9d0e33c066": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/commands/train.py",
+      "src/soup_cli/experiment/tracker.py"
+    ],
+    "risks": [
+      "Potential behavior change for existing runs; migration or reconcile command needed for stale rows"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a test that patches the model loader to raise and asserts the tracker status is 'failed'",
+      "Add a test asserting pid is non-NULL after a run starts"
+    ],
+    "unknowns": [
+      "No maintainer confirmation or open PR; but not blocking as issue is actionable"
+    ],
+    "why": "The issue clearly identifies a root cause: run status remains 'running' because setup failures occur outside the try/except that marks runs failed, and pid is not recorded so the reconciler cannot act. Concrete code anchors and acceptance criteria provide a clear validation path."
+  },
   "21496647c773b13d6bb60fe8d8e5b309f7da0197175f637887b2320f1d3abe4e": {
     "confidence": 0.6,
     "contradictions": [],
@@ -14490,6 +14517,37 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports a user-visible bug in ACP child process spawning, but maintainer triage and collaborator analysis indicate the reported failure cannot originate from the installed version's own entry; the root cause is likely environment skew (stale entry, QWEN_CLI_ENTRY, or managed update pointer). The reporter's latest comment provides environment details but does not resolve the discrepancy between QWEN_CODE_CLI and actual execution path. The maintainer has requested more information and the issue is labeled status/need-information. The gate decision is HUMAN_REVIEW, and there is no maintainer approval or active investigation. The candidate is not yet actionable without further diagnosis."
   },
+  "3b25dbdaaf830c49ce1c0fba968ee395f903a719a248afd95e590893533ac364": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py",
+      "ReLoRA callback merge/reinit logic",
+      "magnitude pruning tie handling"
+    ],
+    "risks": [
+      "Maintainer decision between implementing full ReLoRA restarts vs renaming feature",
+      "Handling FSDP/DeepSpeed wrappers and checkpoint/resume correctly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test for tie handling ensuring exact keep count and non-zero gradients",
+      "Test that merge-then-reset preserves effective linear map to numerical tolerance",
+      "Test for unsupported quantized/distributed/streamed combinations failing clearly"
+    ],
+    "unknowns": [
+      "Exact production frequency of tie scenario, but not blocking as deterministic bug is confirmed"
+    ],
+    "why": "Issue provides concrete algorithm-conformance bug with root cause: ReLoRA callback prunes adapters without merging, and tie-handling can zero both factors. Owner confirmed both claims with reproducible evidence and clear acceptance criteria."
+  },
   "3b2b9b7c73213495c130b948d4923b71045d3de4581197c71dd6a24c291681a5": {
     "confidence": 0.85,
     "contradictions": [
@@ -15189,6 +15247,35 @@
       "Maintainer preference for server-side vs client-side fix"
     ],
     "why": "Issue reports a high-impact tool-call failure in server-filesystem after a schema rewrite, with strong evidence of client-side rejection of outputSchema/structuredContent. However, root cause is not fully confirmed: a maintainer fix is needed in the client or server, and the issue is primarily a bug report without a proposed code change. The workaround shim suggests a potential server-side fix, but design confirmation is required."
+  },
+  "3ea0709cd9def361c1de1077ba1f1a385c8e17e002533a686612f47cd1b3d785": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue suggests fix not yet applied, but comment says PR #40209 addressed it"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Update model detection functions in gpt_5_transformation.py to recognize gpt-6 family",
+      "Add regression tests for gpt-6-astra max_tokens mapping and responses bridge"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #40209; need to verify current state",
+      "Widening detection may affect other models unexpectedly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the reported error with gpt-6-astra and max_tokens, then verify fix maps to max_completion_tokens",
+      "Add unit tests for is_model_gpt_5_model and is_model_gpt_5_4_plus_model with gpt-6-astra variants"
+    ],
+    "unknowns": [
+      "Whether PR #40209 fully resolves all symptoms mentioned in the issue"
+    ],
+    "why": "Issue provides a clear root cause (substring check for 'gpt-5' fails for 'gpt-6-astra'), concrete reproduction (API call with max_tokens), and a suggested fix. A comment indicates a fix was already merged in PR #40209, but the issue remains open and the fix may not fully cover all related paths (e.g., responses bridge). The contribution is actionable and valuable."
   },
   "3ea0da8cc5b01d48dd205902299d649bbf0d19f0853667b0c70a91349c113350": {
     "confidence": 0.7,
@@ -32890,6 +32977,67 @@
       "Whether the issue is reproducible on upstream main is unknown"
     ],
     "why": "The issue describes a reproducible hang in a specific LLM serving configuration (DSA attention, EAGLE speculative decoding, PD-disaggregation) with a clear stack trace pointing to a lazy Triton kernel load inside cuModuleLoadData. However, the root cause is not definitively identified; it could be a missing warmup or a CUDA driver deadlock. The issue is from an internal fork, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The track is llm_algorithm, but the proposed fix (warmup or driver workaround) is operational rather than a new algorithm, and the evidence does not clearly support a reference-vs-implementation test."
+  },
+  "7c34b86feea61ae1f6b54e8a1d1b25c88aa23c08995aeed07d2f491552c1e004": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Issue states items are non-blocking follow-ups, but triage labels them as status/blocked due to PR #8169 being open",
+      "One item (provider-wizard overflow) is noted as independent of #8169 but is filed in the same tracking list"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Add explicit proxy hand-off assertions in embedding tests",
+      "Refactor duplicated resolveStreamGuardMs implementation",
+      "Map max_completion_tokens/max_new_tokens to output ceiling",
+      "Implement case-insensitive header merge for custom headers",
+      "Redact URL in debug statement before logging",
+      "Redact errBody attached fields in responseBody",
+      "Add Responses-specific env-resolution and mapping-drift tests",
+      "Add openai-responses to protocol-fallback and operation-name tables",
+      "Add base_url assertions for USE_OPENAI-positive and non-OpenAI cases",
+      "Fix multi-input embedding contract in extractTextFromContents/embedContent",
+      "Handle bare Part and Part[] values in text extraction",
+      "Support array-shaped system instructions on Responses conversion path",
+      "Pair legacy function calls/results with consistent IDs",
+      "Preserve encrypted reasoning signature when no visible thought text",
+      "Improve observability of one-shot reasoning replay recovery",
+      "Split out provider-wizard overflow into separate UI issue"
+    ],
+    "risks": [
+      "PR #8169 is still open and unmerged; changes to its branch may conflict with ongoing review",
+      "Some items depend on other open PRs (#8258, #8533) which may change direction",
+      "Refactoring shared helper redactProxyError could regress SDK error metadata for other callers",
+      "Splitting out the wizard overflow item requires creating a new issue and may be delayed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add explicit proxy hand-off assertion in embedding tests using makeCliConfig with getProxy returning a defined proxy",
+      "Add unit test for case-insensitive header merge ensuring lowercase authorization is overwritten",
+      "Add test for debug statement redaction when URL contains userinfo",
+      "Add test for errBody redaction in responseBody when custom fields are present",
+      "Add env-resolution test for Responses-specific credentials in core models and CLI modelConfigUtils",
+      "Add protocol-fallback and operation-name table entries for openai-responses",
+      "Add base_url assertion for USE_OPENAI-positive and non-OpenAI empty cases",
+      "Add test for multi-input embedding where multiple texts are passed and embeddings length matches",
+      "Add test for bare Part and Part[] values in extractTextFromContents",
+      "Add test for array-shaped system instructions on Responses conversion path",
+      "Add test for pairing legacy function calls/results with consistent IDs",
+      "Add test for preserving encrypted reasoning signature when thoughtText is empty",
+      "Add test for repeated reasoning recovery observability with debug-level logging"
+    ],
+    "unknowns": [
+      "Whether PR #8169 will be merged as-is or require further changes affecting the tracked items",
+      "Exact implementation details for some items (e.g., pairing rules for function calls) are not specified",
+      "Whether maintainers have approved the proposed fixes or prefer alternative approaches"
+    ],
+    "why": "The issue is a well-structured tracking list of concrete, actionable follow-ups from PR #8169, each with specific code references and test gaps. The root causes are clearly identified (e.g., missing test assertions, duplication, unredacted data, unmapped parameters). The evidence confirms the code anchors exist on the PR branch and the issues are real. Although the PR is not yet merged, the tracking issue is valuable for organizing deferred work and preventing regressions."
   },
   "7c932aa570e8ea50a5cd663dbcd42488ebe2670be00e7ba2333823c5a9594bfc": {
     "confidence": 0.85,
@@ -54095,6 +54243,38 @@
       "Whether maintainers have already planned a fix; whether the workaround is officially supported; open PR status."
     ],
     "why": "Issue reports a CLI argument parsing error for MiniMax-H3, but a comment suggests a workaround (adding --model-type diffusion). The root cause is likely missing model-type detection or default, but no maintainer confirmation or design preference is available. Open PR and related issue lookups failed, so duplicate work cannot be excluded."
+  },
+  "d0f68874afc89bf58161d077157e806f4d922252325c9549ae1d1cdcbe2918ca": {
+    "confidence": 0.85,
+    "contradictions": [
+      "The issue body contains a typo in the reproduction command (step 3) but later corrects it, which is not a substantive contradiction."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "runtime image build configuration",
+      "dependency selection in runtime template",
+      "documentation for Podman support"
+    ],
+    "risks": [
+      "Changing runtime dependencies may affect functionality or compatibility.",
+      "Documentation-only changes may not fully resolve the build failure for users."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Set up a rootless Podman environment without subuid/subgid ranges, configure VFS storage with ignore_chown_errors, and attempt to build the OpenHands runtime image to reproduce the failure.",
+      "After a fix, repeat the build to verify success or verify that a prebuilt image is used."
+    ],
+    "unknowns": [
+      "Whether maintainers intend to support this configuration or prefer to document it as unsupported.",
+      "Whether a prebuilt runtime image compatible with single-ID namespaces is already available."
+    ],
+    "why": "The issue provides a clear root cause: rootless Podman without subuid/subgid ranges cannot map the multiple UIDs/GIDs required by the runtime image's APT/dpkg and libutempter0/tmux dependencies. It includes detailed reproduction steps, environment configuration, and observed errors, making the problem actionable for a code fix."
   },
   "d107919dae54e1cf764f22cca6ab9e08ee2e8a401f6247e3758fb695bd0bc74f": {
     "confidence": 0.7,
