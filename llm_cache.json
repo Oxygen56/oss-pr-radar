@@ -5722,6 +5722,32 @@
     ],
     "why": "The issue identifies a concrete algorithmic root cause in vLLM's hybrid mamba/attention page alignment, with detailed measurements and a clear code path. The proposed fix (virtual splitting) is actionable and testable. Although an open PR (#50172) overlaps semantically, it is a draft and does not directly reference this issue, so the contribution remains valuable."
   },
+  "1888d0b6c00f43f81372ce41a748f9a32669e8f68dd89d3ea2b6b272d51f484a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "mx.distributed ring backend socket exchange",
+      "all_sum/average_gradients synchronization logic"
+    ],
+    "risks": [
+      "Fix may be complex due to low-level concurrency; risk of introducing new races or performance regressions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided cpu_stream_loop_repro.py at >=3 ranks for many iterations to reproduce the probabilistic deadlock",
+      "Add a regression test that stresses repeated all_sum calls with varied payload sizes and rank skews"
+    ],
+    "unknowns": [
+      "Exact code path in ring backend causing the race; maintainer confirmation of the bug"
+    ],
+    "why": "The issue provides a detailed, reproducible deadlock in the ring backend of mx.distributed, with root cause localized to socket-level exchange races. It includes minimal repro scripts, statistical failure rates, and stack traces from a second reporter, making it actionable for a kernel-level fix."
+  },
   "18ee1c2743e208f4c0beb3b6c8c52ae9be3acc5db0ccbed7248c9f81be7489a2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -17636,6 +17662,34 @@
     ],
     "why": "Issue provides a clear Windows-specific bug with reproduction steps, a working workaround, and maintainer confirmation that the gap is real and actionable. The root cause is likely PowerShell stdout capture failure when invoking the Electron/Node runtime directly, and the fix path is concrete."
   },
+  "48bc56c6536379467cd316dfbe4e64456831fc86b044157d7f6ea5fe7c5f5af5": {
+    "confidence": 0.85,
+    "contradictions": [
+      "PR #23197 is closed but has changes requested, conflicting with its technical completeness."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "@mastra/schema-compat",
+      "@mastra/core tool validation path"
+    ],
+    "risks": [
+      "Potential behavior change in schema validation for non-Cloudflare environments if fallback logic is altered."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a minimal Cloudflare Worker test with a ZodEffects schema and stub new Function to throw, verifying validation succeeds without AJV codegen."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a specific fix approach over the proposed PR."
+    ],
+    "why": "Issue provides a clear root cause: AJV v8 uses new Function() which is blocked in Cloudflare Workers, triggered when ZodEffects schemas fall back to JSON Schema conversion. Multiple user confirmations and a workaround validate the problem. A candidate PR (#23197) directly addresses the issue with tests, though it has changes requested and lacks maintainer approval."
+  },
   "491b714ffd6f704e1d3dfabe1d44b86d20c4f3347b52c54ef512f672371da8df": {
     "confidence": 0.9,
     "contradictions": [],
@@ -17970,6 +18024,35 @@
       "Maintainer preference for dependency pinning vs code fix"
     ],
     "why": "Issue reports a clear, user-visible 500 error caused by a version mismatch between browser_use and mcp SDK, with a stack trace pinpointing the exact failing call. No competing PR or issue exists, and the fix is a straightforward dependency pin/upgrade or compatibility shim."
+  },
+  "4a63478b93da21287b15def05fe4307aa7b22d618f1c2cee4cc240625155a705": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py",
+      "ReLoRA callback merge/reinit logic",
+      "magnitude_prune_tensor tie handling"
+    ],
+    "risks": [
+      "Maintainer decision between implementing full ReLoRA restarts vs renaming feature; need to handle quantized/distributed/streamed cases"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce MSE discontinuity with random LoRA factors and verify merge-then-reset control preserves map",
+      "Test constant-magnitude tensors with prune_ratio=0.9 to ensure exact keep count and non-zero gradients"
+    ],
+    "unknowns": [
+      "No full LLM training run; production frequency of tie scenario not measured"
+    ],
+    "why": "Issue provides concrete algorithm-conformance bug with root cause: ReLoRA callback prunes adapters without merging, and tie-handling can zero both factors. Owner confirmed both claims with reproducible evidence and clear acceptance criteria."
   },
   "4a7f159047763b921b726b7ef3f1b2652a9751689ebef8e71aa178910610ca46": {
     "confidence": 0.7,
@@ -24732,6 +24815,38 @@
     ],
     "why": "Issue clearly describes a race condition in workflow resume with a public repro and production evidence, but the fix requires design confirmation on storage-level atomic claim semantics and adapter compatibility. Existing PR #20512 is closed and insufficient, and maintainer input is explicitly requested."
   },
+  "606b7a722a3169e4c9bdff9527c3ef0861f1f080a00727db237390b5644d35a9": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Fix prefix-cache handling for non-trimmable RotatingKVCache layers in BatchedEngine",
+      "Ensure safe reuse or disable caching for sliding_attention models",
+      "Add regression tests for sequential requests with shared prefixes"
+    ],
+    "risks": [
+      "Fix may disable prefix caching entirely for gemma4 models, reducing performance",
+      "Potential for other cache-related bugs if partial reuse is attempted",
+      "Need to ensure fix works across different model sizes and configurations"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided repro script (tools.py + run_matrix.py) on v0.4.1 to confirm corruption, then on main HEAD to confirm fix",
+      "Add a regression test that sends two sequential requests with shared prefix and asserts correct output for the second request",
+      "Test with gemma4 models of different sizes and a negative control (Qwen3) to ensure no regression"
+    ],
+    "unknowns": [
+      "Exact store() behavior on main HEAD that prevents cache entries from being stored",
+      "Whether maintainers intend to enable safe partial reuse or permanently disable caching for such models"
+    ],
+    "why": "The issue provides a detailed root-cause analysis of KV-cache corruption in gemma4 models with sliding attention, including reproduction steps, expected vs actual behavior, and a trace showing LCP match causing contamination. It identifies the fix on main via PRs #680/#683/#691 and offers a concrete validation path comparing v0.4.1 vs main HEAD. This is a technically valuable, actionable bug report for an LLM algorithm repository."
+  },
   "60720a8aae85e4c6e38abfa77c6f636af542374e43f18147b1436b4a8cbdf95c": {
     "confidence": 0.85,
     "contradictions": [],
@@ -30084,6 +30199,41 @@
     ],
     "why": "Issue provides detailed root cause and repro, but existing PR #2078 is draft and may already address it; maintainer design preferences and PR quality need assessment before starting competing work."
   },
+  "72a3a9f00d64b2a3e4fc82df6f15126e5a6144bfc5a0a32fb3b7c80fda1dfcdb": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found in supplied evidence."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/parser/qwen3.py",
+      "vllm/tool_parsers/qwen3_engine_tool_parser.py",
+      "vllm/model_executor/models/mimo.py",
+      "vllm/model_executor/models/qwen3.py",
+      "speculative decoding ngram proposer logic"
+    ],
+    "risks": [
+      "Potential overlap with open PR #55562 which may already address part of the issue; need to compare implementation boundaries.",
+      "The bug may be specific to certain model versions or quantization (fp8), requiring careful baseline and tolerance setup."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the provided launch command and request, then run the same matrix with and without ngram speculative decoding to confirm the bug. Add a regression test that runs the qwen3_coder parser with ngram speculative decoding on a small model and asserts tool call arguments are not empty or mangled."
+    ],
+    "unknowns": [
+      "Whether open PR #55562 actually fixes this issue or only partially overlaps; needs manual comparison.",
+      "Whether other speculative methods (eagle, etc.) are affected; only ngram and mtp were tested."
+    ],
+    "why": "The issue provides a clear root cause: ngram speculative decoding corrupts tool-call parser output for Qwen3.x models, with controlled experiments isolating the cause and a concrete validation path. The track is llm_algorithm and the evidence includes evaluation methodology and numerical/quantization aspects, supporting a reference-vs-implementation test."
+  },
   "72ab4f5f6b62cbd2260045e539b44f991266f0232bcb4dc2398a8081bc4274b7": {
     "confidence": 0.85,
     "contradictions": [
@@ -32226,6 +32376,32 @@
       "Exact cause of CUDA graph hang (whether it's a kernel issue or memory allocation)"
     ],
     "why": "The issue provides a concrete, reproducible bug with detailed environment, commands, and multiple failure modes. It identifies specific code paths (gdn_backend.py, AWQ quantization) and a clear root cause: dtype mismatch in Mamba conv cache and CUDA graph capture hangs for hybrid GDN models. The track is llm_algorithm, and the issue involves quantization numerics and model architecture, satisfying the algorithm requirement. The validation path is clear: reproduce with provided commands, compare against llama.cpp baseline, and test fixes for dtype handling and graph capture."
+  },
+  "7ae3949d8b8eb363a6822296c328fa69e6bb8932bc101f891581f20f443a855a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "CLI startup agent-team initialization logic",
+      "session/agent lifecycle management"
+    ],
+    "risks": [
+      "Fix may require design decisions on agent-team auto-init; potential behavior changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with steps in issue, verify memory growth; run with --no-teams to confirm no leak; add regression test for startup memory usage"
+    ],
+    "unknowns": [
+      "Exact code path causing unbounded allocation not yet identified"
+    ],
+    "why": "Issue provides a detailed, reproducible memory leak with clear root-cause hypothesis (auto agent-team initialization) and concrete validation path (reproduce with --no-teams flag). No competing open PR or duplicate found."
   },
   "7b33dce06ba17798f573350dbca4a81ae0f69781d69baf5c665db927794703bd": {
     "confidence": 0.85,
@@ -39593,6 +39769,31 @@
     ],
     "why": "Issue provides a concrete root cause (streamed response model name not refreshed from terminal event), a runnable reproduction with observed vs expected output, and a clear fix location. Maintainer bot confirms behavior is real and wrong, with contract violation and no workaround. Existing PR #7916 is adjacent but does not cover this specific attribution bug, so no duplicate coverage."
   },
+  "99aa7c470201ab54633ba1c1de82415fb4b8e828c6135c5df734ea4ab6fd1cb2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/extensions/tools/executors/search.ts"
+    ],
+    "risks": [
+      "Adding many extensions may increase search scope and performance; need to confirm no unintended file types are included."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that creates a temporary directory with a .cs file containing a unique symbol and assert search_codebase returns that file."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a more configurable extension list rather than hardcoding .NET extensions."
+    ],
+    "why": "Issue provides a concrete root cause (missing .cs in DEFAULT_INCLUDE_EXTENSIONS), a clear reproduction path, and a specific code anchor in search.ts. The proposed fix is a straightforward extension list update with a validation path via existing search tests."
+  },
   "99eab2edc31a3ac702fff1d30cc640fad4373d496cb2224f9aac79f626043ab1": {
     "confidence": 0.85,
     "contradictions": [
@@ -46599,6 +46800,31 @@
       "Exact commit where regression introduced; whether maintainers have preferred fix approach."
     ],
     "why": "Issue provides a clear root cause: torch.split drops modality attribute on embeddings, causing get_mm_embedding_modalities to fail. Reproduction steps and traceback are supplied, and the code path is identified. The fix is localized and testable."
+  },
+  "b5ed67155492c7961340f767b812bf672905b7b08fde1e5243901cd75a70b44d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/util/fetch/errors.ts",
+      "possibly related error handling modules"
+    ],
+    "risks": [
+      "Potential maintainer preference for handling error.type fallback; risk of changing behavior for other error codes if not carefully scoped."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that simulates a 429 response with code credit_balance_exhausted and asserts immediate failure with the quota exceeded message."
+    ],
+    "unknowns": [
+      "Exact maintainer design preference for handling error.type vs code; whether there are other similar missing codes."
+    ],
+    "why": "Issue clearly identifies a missing error code in HARD_QUOTA_ERROR_CODES causing long retries, with a concrete reproduction and expected behavior."
   },
   "b5f521a0e73faa194655a2a0549b5efa891867be878acdb8024c633d09d977db": {
     "confidence": 0.7,
@@ -53984,6 +54210,37 @@
       "Exact maintainer design preference for the fix (minimal plumbing vs. broader run identity redesign) is not confirmed, but the issue is labeled and acknowledged, so work can start with a minimal fix."
     ],
     "why": "Issue provides a precise root cause: requestContextEntries is dropped in iteration state and LLM input mapping, causing silent fallback to empty context in durable agents. This is a high-impact bug with a clear code path and a concrete reproduction strategy."
+  },
+  "d1eca0db9a81c641108fee6134697c44a15a8f26ba252c2b63c79f5dc50464c8": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Existing PR #40282 claims to fix the issue but lacks root-cause coverage; issue states root cause not identified"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "streaming chunk builder in LiteLLM proxy",
+      "usage propagation logic for streamed responses"
+    ],
+    "risks": [
+      "Potential overlap with existing PR #40282; need to ensure distinct implementation or improvements",
+      "Changes may affect other streaming scenarios; need careful handling of chunk aggregation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with two-proxy setup and vLLM reasoning model, assert final usage object matches upstream counts and reasoning_tokens <= completion_tokens",
+      "Add regression test for streaming usage preservation with include_usage=true"
+    ],
+    "unknowns": [
+      "Exact code location of the corruption in the outer proxy",
+      "Whether maintainers prefer a specific fix approach"
+    ],
+    "why": "The issue provides a clear, reproducible bug with detailed evidence: streaming through two LiteLLM proxies corrupts usage token counts, with concrete examples showing reasoning_tokens exceeding completion_tokens. Root cause is localized to streaming processing at the outer proxy, and a validation path exists via comparing usage objects across proxies. The candidate is actionable despite an existing open PR, as that PR lacks root-cause coverage and complete validation."
   },
   "d22d3bb98213c468fc32cbfe3619a36c2db5dc5c7efd7ea9aa5c430921b987f3": {
     "confidence": 0.6,
