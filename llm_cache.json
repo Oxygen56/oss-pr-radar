@@ -10552,6 +10552,36 @@
     ],
     "why": "Issue provides a detailed, reproducible bug with root cause localized to persistence of OpenAI reasoning items in memory stores, and a concrete validation path via the provided repro steps."
   },
+  "2b792635969b704c11ab568f69da6710f56561627e04a9a68de61def0a5e0484": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py",
+      "ReLoRA callback pruning/restart logic",
+      "magnitude_prune_tensor tie handling"
+    ],
+    "risks": [
+      "Maintainer may prefer rename over full ReLoRA restart; implementation complexity for quantized/distributed/streamed cases"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce MSE discontinuity with random LoRA factors and verify merge-then-reset control preserves map",
+      "Test constant-magnitude tensors with prune_ratio=0.9 to ensure exact keep count and nonzero gradients",
+      "Add regression test that both A and B cannot be zeroed by prune_ratio < 1"
+    ],
+    "unknowns": [
+      "No explicit maintainer decision on which fix contract (merge-restart vs rename) is preferred"
+    ],
+    "why": "Issue provides concrete algorithm-conformance bug with root cause (missing merge/reinit, strict threshold mask), owner-confirmed reproduction, and clear acceptance criteria. Track=llm_algorithm is satisfied by the ReLoRA mechanism and numerical validation path."
+  },
   "2b9b6f0638984c3e7112427ba619d77bdc81b6623ddba576605eaf1c8252beb6": {
     "confidence": 0.85,
     "contradictions": [],
