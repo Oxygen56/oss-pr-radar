@@ -1206,6 +1206,32 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue requests a feature to allow independent variable initialization in Dify workflows. It lacks a concrete root cause, code anchors, or reproduction steps. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required. However, the feature touches workflow runtime semantics and requires design confirmation from maintainers. No competing PRs or related issues found, but the absence of maintainer input and the need for API behavior changes make it premature to start."
   },
+  "055c41a63316d11e27720beb19d21484342b32775649c27e9c2dd08d5bd0de7c": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Dockerfiles for TypeScript servers",
+      "package.json dependency adjustments or npm install flags"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different fix approach (e.g., pinning versions vs. using --omit=dev)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run docker build for each affected server with --no-cache to reproduce the failure",
+      "Add a regression test that runs npm install on the dependency set to ensure no crash"
+    ],
+    "unknowns": [
+      "Exact package causing the npm arborist bug is not confirmed, but not blocking since the fix can target the dependency set as a whole."
+    ],
+    "why": "Issue provides a clear root cause (devDependencies trigger npm arborist crash) and a concrete reproduction path via docker build. The affected code paths are identifiable in the Dockerfiles and package.json files. No contradictory evidence or blocking unknowns."
+  },
   "0567f2caf1118c2a6090b7bac66c38bddfa4934dd6b230bcfae13bad98fc7380": {
     "confidence": 0.9,
     "contradictions": [],
@@ -6441,6 +6467,36 @@
     ],
     "why": "The issue reports multiple structured-output backend failures for Kimi-K2.6 + EAGLE3, with a plausible root cause for xgrammar bitmask desync under speculative decoding, but lacks a concrete algorithm-level fix or validation path. The outlines thread-leak is a clear bug but is more of a resource-management issue than an LLM algorithm mechanism. The guidance tokenizer rejection is a compatibility limitation. No maintainer confirmation or design direction exists, and the issue is a bug report without a proposed code change."
   },
+  "1b10eee1edfd3ecf676d46f8e33ad5820fa6d17e8b8de7ba501e4410e0fdb10e": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Gemini response conversion to preserve finishReason when content is empty",
+      "OpenAI /chat/completions mapping to include finish_reason",
+      "Anthropic /v1/messages mapping to appropriate stop_reason",
+      "Responses API mapping to incomplete_details"
+    ],
+    "risks": [
+      "Mapping non-STOP Gemini finish reasons to OpenAI/Anthropic values may require design decisions",
+      "Potential impact on existing empty-choice handling introduced by PR #40294"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test using gemini-2.5-flash-image with text-only prompt to assert non-empty choices and finish_reason",
+      "Test /v1/messages returns correct stop_reason for NO_IMAGE",
+      "Test /v1/responses returns incomplete_details instead of completed"
+    ],
+    "unknowns": [
+      "Exact mapping choices for NO_IMAGE and other finish reasons are left to implementer; not blocking"
+    ],
+    "why": "Issue provides deterministic reproduction (gemini-2.5-flash-image with text-only prompt), concrete expected behavior across three API surfaces, and clear root cause: candidate with finishReason but no content is dropped, losing the reason. Evidence includes executable curl commands and exact responses, making the fix actionable."
+  },
   "1b3ab1dfad3f611f5e29f51bd2750310dfad5336a8e88a689e21a87f951d5d74": {
     "confidence": 0.85,
     "contradictions": [],
@@ -10011,6 +10067,33 @@
       "No maintainer approval or design confirmation yet; but that is not a blocker for actionability."
     ],
     "why": "Issue provides a precise root cause with code anchors and a concrete validation path (reproduce with MCP filesystem server). The proposed fix direction is sound and the triage confirms the behavior is intentional but enhancement-worthy. No blocking unknowns."
+  },
+  "2898e4a874dfc88933a890a90773e0a6bc8ffec64587715c1ac0fb12638a4e24": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/processors/index.ts",
+      "packages/core/src/llm/model/model-settings.ts"
+    ],
+    "risks": [
+      "Potential maintainer preference for a different type design (e.g., reusing AgentExecutionOptions modelSettings) could require adjustment."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided minimal reproduction (npm install --ignore-scripts && npm run check) to confirm the type errors are resolved.",
+      "Add a type-level regression test asserting that ProcessInputStepArgs/Result modelSettings accept timeout.stepMs."
+    ],
+    "unknowns": [
+      "Maintainer design preference for the exact type shape to use."
+    ],
+    "why": "Issue provides a minimal standalone type reproduction with exact expected errors, identifies the root cause as a type-surface inconsistency in processor modelSettings declarations, and includes runtime evidence that timeout.stepMs is consumed. The fix is a concrete type change with a clear validation path."
   },
   "28c1dcbb30293846510b755c7907e6e5856fc32c9dff56ab14017967d892fb22": {
     "confidence": 0.9,
@@ -19902,6 +19985,31 @@
       "Open PR status and related issue status due to timeouts"
     ],
     "why": "Issue reports a real crash but a collaborator claims it is fixed in v0.5.15 via #30274 and #33581, with a code-level trace. The reporter used v0.5.14 and has not confirmed on newer versions. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer confirmation is needed before starting a fix."
+  },
+  "4db24b0a58c535a875ba487d3f0bde1cef65c69dcfbfc7c3a73b3d8c9f98b857": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/llms/vertex_ai/gemini/vertex_and_google_ai_studio_gemini.py",
+      "litellm/main.py"
+    ],
+    "risks": [
+      "Potential overlap with open PR #40249; must compare implementation boundaries before proceeding."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run provided reproduction script to confirm ValueError, then add regression test asserting UnsupportedParamsError/BadRequestError with status 400 and accepted values in message."
+    ],
+    "unknowns": [
+      "Whether PR #40249 already fixes this exact issue; maintainer design preference for exception type."
+    ],
+    "why": "Issue provides a clear root cause: bare ValueError raised in reasoning_effort mappers for Gemini/Vertex, leading to HTTP 500 instead of 400. Reproduction steps and expected behavior are concrete. Code anchors and validation path are supplied."
   },
   "4db6fb065e7fe90289cbae872760babc49a6ba29f23bcb2d1c298e7848c266e2": {
     "confidence": 0.85,
@@ -46624,6 +46732,37 @@
       "Maintainer decision on accepting the behavior change is pending"
     ],
     "why": "Issue provides a precise root cause with code anchors, a concrete reproduction using a public MCP server, and a clear expected behavior. The triage confirms the static analysis and identifies implementation dependencies. The proposed fix direction is sound and actionable."
+  },
+  "b19b08f258f4f5fb097b60100cb5467b69fb195c267b5266819a7335ca7117d8": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Maintainer comment suggests eval tests pass, conflicting with reported bug"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "Assistant message construction to include pre-tool content",
+      "Tool call ID generation to ensure uniqueness"
+    ],
+    "risks": [
+      "Potential API behavior changes affecting existing integrations",
+      "Need to align with maintainer's design preferences on message aggregation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a failing test reproducing the double-talk scenario with a mock LLM that returns text before a tool call",
+      "Create a test with multiple tool calls to verify unique IDs and correct result mapping"
+    ],
+    "unknowns": [
+      "Exact LLM and model used in reproduction",
+      "Specific code paths for message aggregation and tool ID generation"
+    ],
+    "why": "Issue identifies two concrete root causes (missing content in tool_calls message and non-unique tool IDs) with expected vs actual behavior and reproduction steps. Maintainer comment requests clarification but does not invalidate the reported bugs. The contribution is actionable for an agent_ai_infra track."
   },
   "b1c6494aa96b09d470c299f70f37830f3ab1289a4eacfa3d6d900fcf1af222e4": {
     "confidence": 0.85,
