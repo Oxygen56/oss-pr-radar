@@ -34896,6 +34896,37 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly describes a silent correctness bug in Valkey vector store reset/delete_col, with root cause and reproduction. However, multiple PRs (#6996, #7013, #7023) already exist and are closed pending issue acceptance; maintainer BCathcart is actively involved. The issue is not yet accepted, and the correct next step is to review existing PRs rather than start new work."
   },
+  "86976bd4484163f48ba922d4a6f0fd71ead5e4a7215ae952d38df109c0de8382": {
+    "confidence": 0.85,
+    "contradictions": [
+      "None found."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "swift/template/base.py",
+      "swift/infer_engine/vllm_engine.py"
+    ],
+    "risks": [
+      "Potential token alignment changes if decoding/re-tokenization is used; fix must preserve raw token IDs.",
+      "Existing PR #10029 may already address the issue; need to compare implementations to avoid duplication."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a unit test with a mixed [str, dict] response to verify suffix inspection uses token_ids from the dict and encoding preserves raw tokens.",
+      "Run the reproduction scenario with a small model and synthetic tool-call dataset to confirm the fix resolves the HTTP 500."
+    ],
+    "unknowns": [
+      "Whether PR #10029 fully resolves the issue or requires additional changes."
+    ],
+    "why": "Issue provides a clear traceback and root cause: _swift_encode assumes a list of token IDs but receives a mixed list of string and dict, causing a TypeError. Expected behavior and a proposed fix (#10029) are described, with a concrete reproduction path via teacher deployment and GKD training."
+  },
   "86ad73ceb9cfe16be7833bf006c8a2a7473b3b53e278f40ed19107d894ac2f71": {
     "confidence": 0.7,
     "contradictions": [],
@@ -61901,6 +61932,40 @@
       "Exact fix implementation details and maintainer preference."
     ],
     "why": "The issue reports a concrete KV cache size regression for Gemma4 between v0.25.1 and v0.26.0, with detailed reproduction commands and logs. A commenter traced the root cause to PR #47728's async scheduling change, providing a precise calculation of the increased block allocation. This is a clear, actionable algorithm-level bug with a specific validation path."
+  },
+  "ec9ced678809478481fe671cb3e05c344705192378ecab8341e07bc2ca43be42": {
+    "confidence": 0.85,
+    "contradictions": [
+      "Earlier comment claimed accumulate keeps first segment's model_name, later corrected to keep new segment's model_name."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "models/openai.py: refresh model_name on terminal events",
+      "_continuation.py: narrow replace-new heuristic to require provider_response_id",
+      "tests/models/test_openai_responses.py: add regression tests for created!=completed and fallback cases"
+    ],
+    "risks": [
+      "Changing merge_mode heuristic could affect FallbackModel or Anthropic paths, though analysis indicates they are unaffected.",
+      "Potential behavior change in cost attribution when model_name differs between segments; needs pinning test for usage.cost transition."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add integration regression test in tests/models/test_openai_responses.py using MockOpenAIResponses.create_mock_stream with created model 'model-router' and completed model 'gpt-5-mini-2025-08-07', asserting final ModelResponse.model_name is the served model.",
+      "Add variant with created==completed to ensure no behavior change.",
+      "Add ResponseFailedEvent variant to cover failed path.",
+      "Run existing test_continuation_stream.py and test_fallback.py to ensure merge-mode change does not regress."
+    ],
+    "unknowns": [
+      "No maintainer has explicitly approved the approach or assigned the issue; assignment is required per policy."
+    ],
+    "why": "Issue reports a real user-visible bug with a concrete reproduction and expected behavior. Root cause is clearly identified: OpenAIResponsesStreamedResponse initializes model_name from response.created and never refreshes from terminal events. Discussion confirms the fix location and adds a necessary shared merge-mode adjustment to avoid dropping parts on resumed streams. Tests are specified and a contributor has a locally proven branch."
   },
   "ec9f83ed4bdeb5e8eef46a9e2a7e580cb4a6c448e892d97006784fb336a77bc3": {
     "confidence": 0.7,
