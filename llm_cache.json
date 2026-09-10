@@ -3148,6 +3148,32 @@
     ],
     "why": "Issue identifies a real bug in embedding cache merge with a clear repro, but a recent comment reveals a second root cause (remaining_list not reaching provider) that invalidates the proposed fix's sufficiency. Existing PR #29288 is stale and incomplete. Maintainer input is needed to confirm the intended fix scope and avoid duplicate/conflicting work."
   },
+  "0c6d391b5534c6c98730e09cd6f947993231eacbf3995c72435c99901da7ae47": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue title frames this as an open bug, but the body states it is already fixed on main and unreproducible there."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Implementing a 'fix' would duplicate already-merged work (#680/#683/#691/#642) and risk regressing the fail-closed behavior for non-trimmable RotatingKVCache layers.",
+      "The 'silent no-op' follow-up is explicitly unverified (fetch() only instrumented, store() path untraced), so any code change would be speculative."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No new code test is warranted; if pursued, verify on main HEAD that gemma4 sliding_attention models under --use-paged-cache --continuous-batching show zero cache reuse and confirm whether store() is invoked before proposing any change."
+    ],
+    "unknowns": [
+      "Whether maintainers want a doc/release-note change versus a new partial-reuse implementation for non-trimmable RotatingKVCache layers."
+    ],
+    "why": "The issue itself states the bug is already fixed on main by #680/#683/#691/#642 and that the reporter cannot reproduce it on main HEAD; the only remaining actionable item is a release-note/doc suggestion plus an unverified 'cache is a silent no-op' observation. No code change is required, so this is a covered/low-value opportunity rather than an actionable contribution."
+  },
   "0c7336474bb3be084a7da8e3f13b26accd404dadfc1a9c96ae12e5afa04535e8": {
     "confidence": 0.7,
     "contradictions": [
@@ -5718,6 +5744,40 @@
     ],
     "why": "Issue provides a clear, reproducible bug with a suggested one-line fix, but an existing open PR (#7053) by a maintainer overlaps semantically with the same code path and may already address the root cause. The deterministic gate requires HUMAN_REVIEW, and the PR competition assessment indicates semantic overlap requiring manual comparison. Without maintainer confirmation or PR review, starting a new PR risks duplication."
   },
+  "16a68a20c07cbdc4fbb6435a1bdde93fa99e5d43269fa54c2c69de4f70779c92": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "verl/experimental/separation/ray_trainer.py: use critic_cfg.engine instead of critic.model.fsdp_config",
+      "verl/workers/config/critic.py: resolve dead FSDPCriticModelCfg (instantiate or remove)",
+      "handle fsdp2 strategy in the critic engine-config branch"
+    ],
+    "risks": [
+      "Choosing between critic_cfg.engine and instantiating FSDPCriticModelCfg is a design call the maintainer should confirm",
+      "fsdp2 strategy currently hits NotImplementedError and needs a decision",
+      "Fixing only the attribute may expose the downstream loss_fn/reset() issue in one_step_off_policy and fully_async trainers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "CPU unit test asserting HFModelConfig has no fsdp_config and that _create_critic_class uses critic_cfg.engine",
+      "Drive _create_critic_class with a stub self and RayClassWithInitArgs patched, mirroring tests/workers/test_nccl_timeout_wiring_on_cpu.py",
+      "Regression: minimal PPO separation-family run with a critic starts without AttributeError"
+    ],
+    "unknowns": [
+      "Maintainer preference between critic_cfg.engine and FSDPCriticModelCfg",
+      "Whether fsdp2 critic support is in scope for the same change"
+    ],
+    "why": "Issue pinpoints a concrete AttributeError: SeparateRayPPOTrainer._create_critic_class reads critic.model.fsdp_config, but critic.model is HFModelConfig which has no fsdp_config field; the default strategy=fsdp takes this branch, so separation-family trainers cannot build a critic. Code anchors and a CPU-testable validation path are supplied."
+  },
   "172ae6ab92a0de63cf5a2c3175786e60bb99e5edf95efdf022e114ebe52394a0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -6908,6 +6968,40 @@
       "Exact transformers version pinning strategy for CI."
     ],
     "why": "Issue provides a clear root cause (transformers main injects 'embedding_rowwise' into tp_plan for tied-embedding models, DeepSpeed's strict allowlist rejects it) and a concrete executable reproducer. The semantic note outlines policy options and the need for a deliberate fix. Although an open PR (#8241) overlaps in test paths, it does not cover the root cause, so the issue remains actionable."
+  },
+  "1c11f00be7ff9cc505b5a7089525d3450be514c92d9774e87490cda3e9e74e58": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/qwen3_5.py: guard in_proj_ba quantization when checkpoint provides .weight but no .qweight",
+      "python/sglang/srt/layers/quantization/gptq/gptq.py and gptq_marlin.py: honor GPTQModel dynamic negative rules in get_quant_method",
+      "regression test covering bf16 linear-attn projections in a GPTQ checkpoint"
+    ],
+    "risks": [
+      "Fix (b) may silently skip quantization for genuinely quantized checkpoints if detection logic is too broad",
+      "Fix (a) depends on checkpoint config correctness, which the reporter notes is itself buggy",
+      "Open PR #38870 touches Qwen3.5 quantization semantics and may overlap; needs comparison before implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the supplied docker command against XReyRobert/Qwopus3.6-27B-v2-GPTQ-Pro-v1 and confirm the 96 missing-param warnings and size_n=96 repack failure",
+      "After fix, verify in_proj_ba is instantiated unquantized and the server loads without gptq_marlin_repack error",
+      "Add a unit test with a synthetic GPTQ config where in_proj_a/b are bf16 and assert no quantization is applied to in_proj_ba"
+    ],
+    "unknowns": [
+      "Whether PR #38870 (Fix Qwen3.5 MTP partial MXFP4 quantization) already addresses the same in_proj_ba quantization path",
+      "Whether maintainers prefer config-driven (a) or model-side (b) fix"
+    ],
+    "why": "Issue provides a deterministic, fully specified root cause: Qwen3_5GatedDeltaNet builds in_proj_ba as a GPTQ layer unconditionally, while the checkpoint stores in_proj_a/b as bf16, so 96 'not found in params_dict' warnings occur and gptq_marlin_repack fails on size_n=96. Concrete code anchors, checkpoint evidence, and two viable fix paths (honor GPTQModel dynamic negative rules, or generalize the modelopt_fp4 guard) are supplied, with a reproducible docker command and traceback."
   },
   "1c29c8f7c77e5baad1dea1341a1beb0eb1d72dc394531f00f270c11a4a5a1045": {
     "confidence": 0.7,
@@ -31075,6 +31169,39 @@
     ],
     "why": "The issue precisely identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction (two server launches with different k values) and a clear expected behavior (distinct cache keys). The proposed fix is minimal and directly addresses the root cause. Although an open PR #53367 exists with a similar fix, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "70dc8b7e9e153c99663d791fc859b7ed63ae2921c4cf37831d94d3accd438222": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: _prune_and_reset merge/reinitialize semantics or rename+docstring correction",
+      "src/soup_cli/utils/relora.py: magnitude_prune_tensor exact-count mask (topk/stable order) instead of strict '>' threshold",
+      "regression tests for effective-map preservation and non-zero survivor count"
+    ],
+    "risks": [
+      "Claim A fix is a maintainer contract decision (real restart vs rename); implementing half could be rejected",
+      "Quantized/FSDP/DeepSpeed/streaming/checkpoint-resume interactions need explicit support or loud rejection",
+      "Tie-case production frequency is unmeasured; fix must not regress non-tied pruning behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reference test: build small peft LoRA model, capture effective linear map, run callback, assert MSE ~0 for merge-then-reset path",
+      "Tie test: constant-magnitude A/B with prune_ratio=0.9, assert exactly requested keep count and non-zero gradient norms for both factors",
+      "Kernel unit test: ones(10) and arange(1..10) with prune_ratio=0.9 both keep exactly 1 entry"
+    ],
+    "unknowns": [
+      "Which of the two contracts (real ReLoRA restart vs rename) maintainers will accept for Claim A"
+    ],
+    "why": "Issue identifies two concrete, separable defects in ReLoRACallback._prune_and_reset: (A) adapter weights are magnitude-pruned without merging B@A into the base, changing the effective linear map (MSE 142.12 vs 8.77e-13 for merge-then-reset control), contradicting the module docstring's ReLoRA conformance claim; (B) strict '>' thresholding in magnitude_prune_tensor wipes all entries on ties, zeroing both factors and producing zero gradients. Owner confirmed both claims with real peft LoRA model runs on 2edc063, and the fix path (merge/reinit or rename+docstring, plus exact-count topk mask) is concrete and testable."
+  },
   "713b7f53871159ecf64b9d112afc33617674b73019e58e00dead20668f25d7d8": {
     "confidence": 0.85,
     "contradictions": [
@@ -32387,6 +32514,28 @@
     ],
     "why": "Issue describes a real fallback failure for non-JSON-RPC 400 bodies, but root cause is not pinpointed and existing PR #1791 likely overlaps. Maintainer review is needed to avoid duplicate work."
   },
+  "761c88393d4fd3dbab9f99578af8df8a25dcf42873c594fcb00f1d558e4dfe9b": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.why claims a PEFT/algorithm mechanism, but the issue and code anchors describe Feishu message parsing only; algorithm_evidence matched only the generic token 'adapter'."
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Misclassification risk: treating a channel-parsing bug as an LLM algorithm task would produce a low-value duplicate of PR #11563."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [],
+    "why": "The issue is a well-evidenced Feishu channel integration bug (rich-post parsing drops images/links/code, quoted file/image references return no content), but it is ordinary channel/API plumbing in a messaging adapter, not an LLM algorithm contribution. The supplied algorithm_evidence only matched the generic term 'adapter' and mislabeled it as parameter_efficient_finetuning; there is no training objective, model mechanism, distributed invariant, quantization/numerical method, kernel, or evaluation methodology. Additionally, PR #11563 by a collaborator already covers the same code path (FeishuAdapter.ts) with tests and CI, so the opportunity is largely covered."
+  },
   "762cf2305b4b37a8f61882d4c8f68dd26f9a5d1a90456ca0b6e2a011e24c3609": {
     "confidence": 0.8,
     "contradictions": [
@@ -32969,6 +33118,37 @@
       "Whether --renderer-num-workers > 1 recovers the gap; whether the regression still reproduces on current main."
     ],
     "why": "The issue provides a reproducible ~18% pooling throughput regression, bisected to the v0.19→v0.20 window, with a concrete root-cause hypothesis (shared single-thread renderer executor serializing preprocessing/postprocessing) supported by code references and prior art (#43444, #49019). A clear validation path exists via --renderer-num-workers and current-main reproduction."
+  },
+  "787021622d1d7afebd8c5140c1f8c51f0876700c7f96538746d9f8e69a5ed3a4": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Reporter is unsure whether discrepancy is a bug or intended different statistical calibers"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Trace elapsed_time aggregation logic",
+      "Conversation duration display/calculation"
+    ],
+    "risks": [
+      "Fixing aggregation may change API/UI semantics without maintainer design confirmation",
+      "May be intended different calibers rather than a bug"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a trace-enabled conversation, sum node elapsed_time, compare to UI duration",
+      "Add regression test asserting the chosen metric semantics"
+    ],
+    "unknowns": [
+      "Whether trace elapsed_time and UI duration are intended to represent the same metric",
+      "Which code path computes each value and whether double/missing counting occurs"
+    ],
+    "why": "Issue reports a discrepancy between summed trace elapsed_time and UI conversation duration, but the reporter explicitly states it is unclear whether this is a counting bug or merely different statistical calibers. No root cause is established, and the expected behavior is conditional ('if same metric... if different...')."
   },
   "7880bebb8bfab06abfa35696c2a4a4cdd88dcd998dd9bde05ec6d4b73dbaaa01": {
     "confidence": 0.85,
@@ -45201,6 +45381,41 @@
       "No existing PR or related issue found, but maintainer preferences on detection strategy are unknown."
     ],
     "why": "The issue clearly identifies a bug in Windows GPU detection where WMI AdapterRAM is misinterpreted as dedicated VRAM for integrated Intel GPUs, leading to incorrect SYCL backend selection and unrealistic performance estimates. The root cause is well-defined and the fix is actionable: improve detection logic to distinguish integrated vs discrete GPUs and validate SYCL support."
+  },
+  "a8378460c2b696cd274b9915139f8f4b782de4013905df9959303c117e8b5269": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MCP tool schema normalization/compatibility layer that strips or omits unsupported regex lookaround patterns from a cloned provider-facing schema while preserving the original MCP schema",
+      "Recursive handling of nested schemas (arrays, batch inputs) and references",
+      "Error attribution to server/tool/schema path instead of misleading model-connection guidance",
+      "Regression tests covering Resend/Zod-style email lookaheads, nested arrays, required-field preservation, and unaffected-tool recovery"
+    ],
+    "risks": [
+      "Over-broad stripping of validation keywords could weaken model-side constraints; execution-side validation must remain intact",
+      "Draft PR #14019 overlaps in intent but is not merged and does not reference the issue, so it is not a blocking duplicate",
+      "Provider-specific supported-regex subsets may vary, requiring careful scoping of what is considered unsupported"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build a failing test using the issue's minimal reproduction: a tool schema with `pattern` containing negative lookaheads, assert the provider-facing schema no longer contains lookarounds",
+      "Assert original MCP schema is unchanged and required fields/format are preserved",
+      "Add nested-array/batch-input cases (e.g. `send-batch-emails` paths) to verify recursive normalization",
+      "Run targeted package unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer normalization vs. tool-exclusion recovery path",
+      "Exact set of providers whose schema validators reject lookarounds"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: Resend MCP (Zod 4.4.3) exports JSON Schema `pattern` values with negative lookaheads that the target provider rejects, blocking all chat before streaming. Exact tool paths and a locally tested normalization approach are supplied, and the fix is a bounded schema-compatibility change at the MCP-to-model boundary."
   },
   "a8a463e4038338c629f57588967dee491476170b0f47c4b1479eb62f647f1a36": {
     "confidence": 0.8,
