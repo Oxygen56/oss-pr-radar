@@ -19886,6 +19886,40 @@
     ],
     "why": "Issue provides a clear root cause: the fixed Triton persistent-matmul config exceeds SM89 shared memory, causing startup crash. Multiple independent reproductions and local mitigations confirm the fix direction. Existing PR #13023 is a draft with broad scope and no direct link, leaving room for a focused, well-tested fix."
   },
+  "4bd443e6dd2df4704e5d93cd5ba2d09182748da5243e46b66f779d3b0314b028": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "deepspeed/runtime/utils.py: replace local-norm averaging with replica-weighted sum of squared gradients, DP all-reduce, then single sqrt for the FP32 L2 clipping path",
+      "deepspeed/module_inject/auto_ep_layer.py: record EP size / ownership metadata on AutoEP expert parameters",
+      "tests/unit/v1/moe/test_autoep_grad_parity.py: add TestAutoEPFP32Clipping parity coverage for replicated vs owner-sharded layouts"
+    ],
+    "risks": [
+      "Scope is validated only for ZeRO-0, mpu=None, L2 clipping; other ZeRO stages, mpu paths, or clipping types may need separate handling",
+      "Replica-count weighting must not double-count dense parameters that are replicated across all DP ranks",
+      "Floating-point tolerance and seed must be fixed to distinguish the real semantic error from numerical noise"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the two-process CPU/Gloo regression from PR #8470 comparing replicated (EP=1) and owner-sharded (EP=2) layouts of the same unique expert gradients against an independent unique-gradient L2 reference; expect coefficient difference 0 with repair and ~0.2 without",
+      "Confirm the fully replicated control still yields 0 difference and that dense parameters are counted once despite replication",
+      "Verify the owner-sharded case fails on unmodified 0166cc87 and passes with the patch across all eight cases"
+    ],
+    "unknowns": [
+      "Whether PR #8380's overlapping test file changes already cover or conflict with the proposed fix",
+      "Whether the fix generalizes beyond the validated ZeRO-0/mpu=None/L2 scope"
+    ],
+    "why": "Issue identifies a concrete distributed-training numerical bug: clip_grad_norm_ averages rank-local norms, which is invalid when AutoEP shards experts across ranks, so the global L2 norm and clipping coefficient depend on expert layout. Root cause, proposed reduction (sum squared grads locally weighted by replica count, all-reduce, single sqrt), and a two-process CPU/Gloo reference-vs-implementation regression are all supplied."
+  },
   "4bdd27eb4168d48526563ce725f651ceb0e4bd9ed9648660d187300ad6e34200": {
     "confidence": 0.85,
     "contradictions": [],
@@ -40486,6 +40520,40 @@
     ],
     "why": "Issue reports a user-visible bug with a plausible root cause (Gemini 3.5 API change) and a public repro, but the deterministic gate requires HUMAN_REVIEW and existing PR #36292 overlaps semantically. Need maintainer confirmation on desired API mapping and whether to extend generateContent or adopt Interactions API."
   },
+  "942eab1b291c400663e8c68bf57474dc249a73e3ee67621c3ba6ffd642eaac59": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py dummy-run propose path",
+      "vllm/v1/worker/gpu/spec_decode/dspark/speculator.py _generate_draft/_run_model num_tokens_across_dp handling",
+      "vllm/forward_context.py set_forward_context DP metadata path"
+    ],
+    "risks": [
+      "Fix must not break the normal propose path's DP sync semantics",
+      "Distinguishing the dummy-run path from real decode may require care to avoid masking genuine DP mismatches",
+      "Requires multi-GPU hardware to validate"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with DP>1 + EP + dspark speculative decoding and confirm the AssertionError in DPMetadata.make during profile_run",
+      "Add a regression test exercising the dummy-run speculator path with data_parallel_size>1 asserting no DP collective is issued and num_tokens_across_dp is consistent",
+      "Verify the normal (non-dummy) propose path still builds a correct uniform-batch DP sync tensor"
+    ],
+    "unknowns": [
+      "Whether the merged PR #54856 already covers this dummy-run regression or leaves it open",
+      "Whether the repository's AI disclosure policy blocks an automated public contribution"
+    ],
+    "why": "Issue provides a concrete reproduction command, a full call-chain root-cause analysis, and a specific code anchor (forward_context.py:96 assertion) showing the dummy-run path passes num_tokens_across_dp=None, triggering an inconsistent DP all_reduce. This is a distributed-training invariant bug with a clear reference-vs-implementation validation path."
+  },
   "948a22ec4e5bb7b2cdb92397ae8741ff428ce5bd171d7e25ee177d920066e365": {
     "confidence": 0.85,
     "contradictions": [],
@@ -47082,6 +47150,40 @@
       "No unknown blocking facts; implementation choice is maintainer preference, not blocker"
     ],
     "why": "Issue provides concrete root cause with code-level evidence: ReLoRA callback prunes adapters without merging, causing function discontinuity; tie-handling bug deterministically zeroes both factors. Maintainer confirmed both claims with reproduction. Clear acceptance criteria and test path."
+  },
+  "aec7fad800a6a29131f79d56ac5de056170542026f7ff1bc786574ec63f05c97": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "megatron/core/transformer/moe/router.py: track cumulative valid-token count alongside global_tokens_per_expert and normalize running counts by it",
+      "reset_global_aux_loss_tracker: reset the new cumulative counter",
+      "tests/unit_tests/transformer/moe/test_aux_loss.py: add uneven-token-count regression coverage"
+    ],
+    "risks": [
+      "Distinguishing true mathematical denominator error from floating-point/random variation requires fixed seed, tolerance, and hardware baseline",
+      "Open PR #6967 touches the same router.py and test_aux_loss.py paths with overlapping global_aux_loss semantics; implementation boundary must be compared before duplicating work",
+      "Regression test requires CUDA/distributed setup and has not been run on the reporter's CPU host"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with fixed routing fixture: same 12 ordered valid tokens, balanced [4,4,4] vs uneven [6,2,4] microbatches padded to 6 positions, single SGD step, compare router gradients",
+      "Assert balanced vs uneven relative L2 difference drops from ~0.25 to numerical tolerance (~1e-7) and matches an independent FP64 reference",
+      "Include equal-token-count control and a second window after reset_global_aux_loss_tracker"
+    ],
+    "unknowns": [
+      "Whether PR #6967 already covers this specific denominator root cause or only the determinism/fusion-flag concern",
+      "Whether the pinned-commit discrepancy reproduces unchanged on current main (d4550898)"
+    ],
+    "why": "Issue identifies a concrete algorithmic defect in MoE global_aux_loss: accumulated expert counts are normalized by ga_steps * current_num_tokens instead of the cumulative valid-token count, producing a measurable router-gradient discrepancy (relative L2 0.25 vs 2.25e-7 after repair, 1.33e-15 FP64 reference). Root cause, code anchor (router.py _apply_global_aux_loss), proposed fix, and a reference-vs-implementation numerical regression path are all supplied."
   },
   "aec8e8275ae264821204d0cb976635cd662ef17257656851fc667ee7abbfd1ca": {
     "confidence": 0.9,
