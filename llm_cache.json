@@ -30792,6 +30792,41 @@
     ],
     "why": "Issue describes a real fallback failure for non-JSON-RPC 400 bodies during server/discover, but the exact throw site is unconfirmed and an existing PR (#1791) overlaps semantically, requiring maintainer comparison before new work."
   },
+  "6e55e56a7101ed368deefdec54c253e91894650b951b7073fe37d92bc0566c8a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge B@A into base weight and reinitialize A/B (Kaiming/zeros) for true ReLoRA restart, or rename feature and correct docstring",
+      "src/soup_cli/utils/relora.py: replace strict '>' threshold mask with deterministic exact-count topk/stable-order selection so prune_ratio<1 never zeroes a factor",
+      "Optimizer-state reset should target optimizer moments rather than learned adapter weights",
+      "Explicit rejection or support for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A is partly a maintainer contract decision (implement restarts vs rename); a partial fix could leave docstring/behavior inconsistent",
+      "Tie scenario is constructed; production frequency depends on zero-initialized lora_B and relora_steps interval",
+      "Quantized/distributed/streamed combinations may partially apply a restart without explicit rejection"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reference-vs-implementation test: assert effective linear map is preserved across merge/reinitialize to numerical tolerance (control MSE ~1e-13)",
+      "Regression test with constant-magnitude A/B and prune_ratio=0.9 asserting exactly the requested keep count and nonzero A and B",
+      "Gradient-norm test proving both factors cannot be zeroed into a zero-gradient branch",
+      "Accumulation test that successive low-rank updates accumulate in the base model"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers full ReLoRA restart implementation or rename-and-document path (both are actionable, so not blocking)"
+    ],
+    "why": "Issue identifies two concrete, separable algorithm defects in ReLoRACallback._prune_and_reset: (A) adapter weights are pruned without merging B@A into the base, changing the effective linear map (MSE 142.12 vs control 8.77e-13), contradicting the module docstring's ReLoRA conformance claim; (B) strict '>' thresholding wipes all entries on ties, zeroing both factors and killing gradients (measured 0.0). Maintainer confirmed both halves with real peft model evidence and code anchors (relora.py, lora_A/lora_B, magnitude_prune_tensor)."
+  },
   "6e81f3267f11a69ea8771502bc372e461bfc2443c4454f0f265d1e248b868373": {
     "confidence": 0.7,
     "contradictions": [],
@@ -40201,6 +40236,40 @@
       "Whether maintainers prefer a different migration approach (e.g., separate PostgreSQL script) or if PR #18641 already includes migration changes."
     ],
     "why": "Issue provides a clear root cause (migration creates integer columns for hex IDs), a verified SQL workaround, and a concrete reproduction path. The fix is actionable: adjust migration logic for PostgreSQL. Existing PR #18641 may overlap but does not cover the migration root cause, so this remains a distinct, valuable contribution."
+  },
+  "92d730b291be30c36a5d64ade19c9f4e0d29c8c4d33d7425d3a015fe9318d823": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Gemini/Vertex response translation: stop dropping candidates that have finishReason but no content",
+      "Map Gemini finishReason (NO_IMAGE, MALFORMED_FUNCTION_CALL, OTHER, MAX_TOKENS) to OpenAI finish_reason, Anthropic stop_reason, and Responses incomplete_details",
+      "Preserve raw Gemini finishReason in provider-specific fields",
+      "Streaming path for /v1/messages must emit the mapped stop_reason instead of end_turn"
+    ],
+    "risks": [
+      "Mapping choices for NO_IMAGE and other non-STOP reasons are a design decision that should be recorded with alternatives in the PR",
+      "Overlap with the MAX_TOKENS/no-content case (#36881, PRs #36870/#38301/#40252) risks duplicate or conflicting fixes if not coordinated",
+      "Changing empty-choices behavior could affect clients that currently rely on choices: []"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that feeds a Gemini response with a candidate containing finishReason NO_IMAGE and no parts through the translation layer and asserts one choice with empty content and a mapped finish_reason",
+      "Assert /v1/messages returns the mapped stop_reason and /v1/responses returns matching incomplete_details for the same fixture",
+      "Run the targeted Gemini/Vertex translation unit tests and the proxy endpoint tests for chat/completions, messages, and responses"
+    ],
+    "unknowns": [
+      "Which specific OpenAI finish_reason and Anthropic stop_reason values the maintainers want for NO_IMAGE and other non-STOP reasons",
+      "Whether the fix should be layered on one of the open MAX_TOKENS PRs (#36870/#38301/#40252) or implemented independently"
+    ],
+    "why": "Issue provides a deterministic reproduction (gemini-2.5-flash-image with modalities:[\"image\"] and a text-only prompt yields finishReason NO_IMAGE with no content), exact curl commands for /v1/chat/completions, /v1/messages (stream and non-stream), and /v1/responses, and identifies the drop of candidates lacking content as the root cause. The fix surface is concrete: preserve the candidate, emit an empty assistant message, and map Gemini finishReason to OpenAI finish_reason, Anthropic stop_reason, and Responses incomplete_details. No open PR directly covers this issue; the only related PR (#40294) is merged and merely stopped the 500, leaving the missing reason unaddressed. The issue also correctly flags the overlapping MAX_TOKENS/no-content case (#36881, PRs #36870/#38301/#40252) as a dependency to build on rather than duplicate."
   },
   "92f2a8ef8fd06da4f7ec58d6febdfa2a7c69ae2d8bc0ecdfbec94a38bcf03a3f": {
     "confidence": 0.85,
@@ -51060,6 +51129,36 @@
       "Root cause not identified"
     ],
     "why": "Issue reports a severe hang in dsv4/DSPARK at long context with TP=8, but lacks deterministic reproducer and root cause. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer input needed for design and bisection guidance."
+  },
+  "bd4241664e994ed0491016e0ca553e243b96d80c7faf1e6e0097a8e8c81b453a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py: distinguish 'model cannot reason at all' from 'param merely unsupported' so drop_params does not silently swallow reasoning_effort",
+      "drop_params handling in get_optional_params: raise UnsupportedParamsError (or forward param) for non-reasoning models instead of dropping"
+    ],
+    "risks": [
+      "Behavior change may break callers relying on silent drop for non-reasoning models; scope the change narrowly to reasoning_effort on models that cannot reason",
+      "Maintainer may prefer forwarding the param to let the provider reject it rather than raising locally"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing unit test asserting get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) raises UnsupportedParamsError rather than returning {'stream': False, 'extra_body': {}}",
+      "Add equivalent azure-provider regression test",
+      "Run targeted litellm unit tests for get_optional_params and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer raising UnsupportedParamsError vs forwarding the param to the provider"
+    ],
+    "why": "Issue provides a concrete, executable reproduction (get_optional_params with drop_params=True silently drops reasoning_effort for gpt-4.1/gpt-4o on openai and azure), a code anchor (get_supported_openai_params), and a provider-side validation path (direct OpenAI 400). Root cause is clear: drop_params converts an explicit provider rejection into a silent behavior change. No duplicate/merged fix covers this path; the three open PRs are keyword-overlap only with no direct code overlap."
   },
   "bd5a73de009425adbcd42771b7624589266513c2a0f2ec130e58a7729635a813": {
     "confidence": 0.7,
