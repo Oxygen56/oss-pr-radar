@@ -14473,6 +14473,42 @@
     ],
     "why": "The issue identifies specific unreferenced asyncio tasks in multiple files, but lacks a concrete reproduction or test. An existing PR #33048 partially addresses the same pattern and is open, so a new PR may duplicate or conflict. Maintainer confirmation is needed."
   },
+  "38fb317aee4bf9dc2d77fe8983ac459d84a2eaea9c0dac54f730317293facb18": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter sees degenerate output on vLLM 0.26.0/flashinfer 0.6.14, while a commenter on vLLM 0.28.0/flashinfer 0.6.18 reports no degeneracy, so the failure may be version-specific rather than a current bug."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/models/deepseek_v4/attention.py",
+      "vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py",
+      "vllm/models/deepseek_v4/common/ops/cache_utils.py"
+    ],
+    "risks": [
+      "Root cause may already be fixed between 0.26.0 and 0.28.0, making a new code change unnecessary.",
+      "SM120 Max-Q Workstation 4-GPU hardware may be required to reproduce, limiting validation.",
+      "Open PR #53577 has semantic overlap (dsv4, sm120) and may already cover the affected path."
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Re-run the exact reproduction (temperature=0, logprobs=true, top_logprobs=1, max_tokens=10) on vLLM 0.28.0 / flashinfer 0.6.18 with the same model revision and FLASHINFER_MLA_SPARSE_DSV4; count distinct tokens and distinct logprob values per response.",
+      "If still degenerate, bisect between 0.26.0 and 0.28.0 on the sparse-MLA decode path and add a numerical regression comparing decode logits against a CPU/single-GPU reference."
+    ],
+    "unknowns": [
+      "Whether the bug still reproduces on vLLM 0.28.0 / flashinfer 0.6.18 with the reporter's exact configuration.",
+      "Which specific code path (sparse-MLA decode kernel, cache addressing, or MoE expert path) produces the frozen token/logprob.",
+      "Whether open PR #53577 already addresses the same root cause."
+    ],
+    "why": "Issue reports a concrete degenerate-decode signature (identical argmax token and identical logprob to 15 decimals at every position) on DeepSeek-V4-Flash/SM120 with FLASHINFER_MLA_SPARSE_DSV4, but no root cause is identified; the reporter explicitly rules out several known bugs and notes the closest known stride fix is already present. A non-reproducing report on newer vLLM 0.28.0/flashinfer 0.6.18 leaves the version gap as the cheapest untested variable, so the actionable code change is not yet determined."
+  },
   "392a1f7c70cd2a17ec96bb15a6e1c29f82f891852d154c395fa635548a01552f": {
     "confidence": 0.85,
     "contradictions": [],
@@ -14616,6 +14652,40 @@
       "Maintainer preference on approach (prefix broadening vs explicit flag)"
     ],
     "why": "Issue provides a clear root cause and repro for a real resource leak, but existing PRs #5416 and #5417 overlap semantically and may already address the fix. The deterministic gate requires HUMAN_REVIEW, and the open PR assessment indicates semantic overlap requiring manual comparison. No maintainer approval or active investigation is present, so starting new work risks duplication."
+  },
+  "39cc01bf81bf4e83840ea0cbd0c40977f34f5a5e982edb281b87f6a47ba97c3a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with design_confirmation wait reason, while the issue itself contains no maintainer design discussion or approval evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Experiment launch-from-UI flow: add name/description input fields",
+      "Experiment overview table and/or detail view: add edit affordance for name/description",
+      "Backend/API mutation path for updating experiment name and description"
+    ],
+    "risks": [
+      "Scope may span both frontend UI and backend API, making a minimal fix ambiguous",
+      "Prior issue #6728 was closed without a fix, suggesting possible maintainer design preferences or deprioritization",
+      "No code anchors means the exact module to change is unverified"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Locate the experiment creation and update API endpoints and add a failing test that sets name/description on creation and updates them afterward",
+      "Add a UI-level regression test that verifies the edit affordance appears and persists changes in the experiment overview"
+    ],
+    "unknowns": [
+      "Which repository modules own experiment creation and update",
+      "Whether an existing API already supports name/description mutation",
+      "Whether maintainers have a preferred UX or API design for this change"
+    ],
+    "why": "The issue describes a missing UI affordance for setting/editing experiment name and description, but supplies no code anchors, no reproduction evidence, and no root-cause signal. The candidate's own actionability evidence marks probe_ready=false, root_cause_signal=false, and needs_confirmation=true, so the concrete code surface and validation path are not established."
   },
   "39d40e229e78df184ebd90028d268f52022987045d2f3e7c3a7dff2f4f975b40": {
     "confidence": 0.7,
@@ -20170,6 +20240,42 @@
       "Open PR status and related issue status due to timeouts"
     ],
     "why": "Issue reports a real crash but a collaborator claims it is fixed in v0.5.15 via #30274 and #33581, with a code-level trace. The reporter used v0.5.14 and has not confirmed on newer versions. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer confirmation is needed before starting a fix."
+  },
+  "4d9ca41fb67fa202e3f87e77e6b37577bfecaf6672697a132085b113e1f6ec52": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims a validated fix and PR incoming, while open PR #431 already ports the same #343 drain to the SM120 kernel"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "csrc/jit_kernels/impls/sm120_fp8_fp4_gemm_1d1d.cuh group-switch tensormap drain",
+      "tests/test_fp8_fp4.py regression coverage for k_grouped NT contiguous"
+    ],
+    "risks": [
+      "Duplicate/overlapping open PR #431 may already cover the same fix, making an independent contribution redundant",
+      "Potential duplicate issue #365 shares the same non-deterministic k_grouped_fp8_gemm_nt_contiguous behavior",
+      "SM120 hardware required for reproduction and validation; no SM120 CI runner noted"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run test_k_grouped_gemm_contiguous on SM120 hardware with fixed seeds and confirm diff drops below 0.001 threshold",
+      "Repeat 3+ fresh runs to verify bit-identical/non-deterministic behavior is eliminated",
+      "Run full k_grouped and m_grouped suites plus a soak to check no regression"
+    ],
+    "unknowns": [
+      "Whether PR #431 fully resolves issue #430 or leaves independent implementation space",
+      "Whether issue #365 is the same defect or a distinct SM90/SM120 variant",
+      "Whether maintainers require SM120 hardware validation before accepting the fix"
+    ],
+    "why": "Issue #430 provides a concrete SM120 kernel race root cause (missing tensormap drain in sm120_fp8_fp4_gemm_1d1d.cuh group-switch) with a validated fix and numerical regression path, but the supplied evidence shows an open PR #431 that directly references this issue and ports the same #343 drain to the same SM120 kernel, plus a potential duplicate issue #365. Coverage by an existing open PR is a materially blocking unknown for independent implementation space."
   },
   "4db24b0a58c535a875ba487d3f0bde1cef65c69dcfbfc7c3a73b3d8c9f98b857": {
     "confidence": 0.85,
@@ -49795,6 +49901,37 @@
     ],
     "why": "Issue provides a precise root cause (EventedAgent.executeWorkflow never calls deleteRunSnapshots), a concrete reproduction path, and a suggested fix direction with a clear validation path. The bug is user-visible and impactful, and the evidence is sufficient to make the work actionable."
   },
+  "bad7c41131eeab631317d27b52bf5312bdd8f57d79444c073ab1716d49788a9e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/layers/quantization/modelopt_quant.py: make NVFP4 MoE dispatch guards (flashinfer_cutlass/cutedsl/trtllm) use the per-layer cached moe_runner_backend instead of live-global properties"
+    ],
+    "risks": [
+      "Changing guards to the cached backend could alter behavior for layers intentionally relying on the live global; need to confirm per-layer cache is authoritative",
+      "Requires B300/sm_103 + NVFP4 checkpoint to fully validate; CPU/mock coverage is limited",
+      "Open PRs #38649/#38080 touch overlapping NVFP4/MoE paths and may conflict"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with NVFP4 modelopt_fp4 MoE + --moe-runner-backend flashinfer_cutlass + --speculative-adaptive --speculative-moe-runner-backend triton on sm_103; confirm adaptive CUDA-graph capture no longer raises NotImplementedError",
+      "Regression: same config without --speculative-adaptive still boots and serves",
+      "Unit-level: assert apply() branch selection and error message both derive from the same backend value when global and cached backends differ"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the per-layer cached backend the intended source of truth for dispatch guards",
+      "Whether any open PR directly fixes this issue (none reference it)"
+    ],
+    "why": "Issue provides a concrete traceback, exact repro command, and a specific root cause: ModelOptNvFp4FusedMoEMethod.apply() dispatch guards read the live global moe_runner_backend via properties while the error message and cache use the per-layer cached value, so under --speculative-adaptive (speculative backend triton) the guard is False and the error prints the backend already in use. Suggested fix (use the local moe_runner_backend in the guards) is concrete and testable. Open PRs are only semantic-overlap references, not direct fixes for this issue, so no duplicate coverage is established."
+  },
   "baf84b37b45525f1717459a1d77d898ac45108686753c576c32e760588cd5979": {
     "confidence": 0.7,
     "contradictions": [
@@ -52357,6 +52494,42 @@
     ],
     "why": "The issue provides a clear, reproducible bug with a detailed root cause analysis and a suggested fix direction. However, the deterministic gate requires HUMAN_REVIEW, and the issue explicitly requests design confirmation. The existing PR #7546 is not a direct competitor, but maintainer input is needed to avoid conflicting with ongoing work."
   },
+  "c435f9f0792c8c95be094967d145c667e4a9224f2a4542d0f407affa310680ac": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims deterministic divergence at token 30 with a stable target-only baseline, while the recent comment reports DFlash2 thinking output is not stable across server restarts on the same engine image, with accept-length swings correlating with divergence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "DFlash2 speculative decoding verify/accept path for Qwen3.8 hybrid (Mamba/GDN) state with thinking enabled",
+      "Numerical determinism of the DFlash2 draft/verify pipeline across server restarts"
+    ],
+    "risks": [
+      "Cross-process numerical nondeterminism may be the actual cause, making the reported A/B divergence a methodology artifact rather than a DFlash2 bug",
+      "Open PRs #38351/#38170/#37462 may already cover or conflict with the fix, risking duplicate work",
+      "Requires 4x RTX 3090 or equivalent multi-GPU hardware and the specific dev image, limiting independent reproduction"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run A/A per profile: two fresh server starts for target-only and two for DFlash2, comparing token sequences within and across starts to isolate cross-process nondeterminism from a DFlash2-specific bug",
+      "If A/A is stable, reproduce the token-30 divergence with fixed seed, temperature=0, logprobs=true, and compare choices[0].logprobs.content[*].token between target-only and DFlash2",
+      "Log meta_info/accept length per request to correlate divergence with accepted-length changes"
+    ],
+    "unknowns": [
+      "Whether target-only decoding is also unstable across server restarts in this build, which determines whether the A/B comparison is valid",
+      "Whether any of the overlapping open PRs (#38351, #38170, #37462) actually fixes the reported divergence",
+      "The specific code path (verify window, hybrid state handling, or numerical accumulation) responsible for the divergence"
+    ],
+    "why": "The issue reports a deterministic greedy divergence between DFlash2 speculative decoding and target-only decoding for Qwen3.8-27B with thinking enabled, with a concrete reproduction (fixed seed, temperature=0, token-level comparison, attached JSON artifacts). However, the supplied evidence does not establish a root cause: the candidate's own actionability evidence has root_cause_signal=false, and the recent comment on the same engine image reports that DFlash2 thinking output is not stable across server restarts, with accept-length swings (2.5-3.5 vs 4.4-6.2 tokens/step) correlating with divergence. That directly undermines the A/B comparison methodology (target-only from one server start vs DFlash2 from another), so it is unresolved whether the divergence is a DFlash2 correctness bug or cross-process numerical nondeterminism. Additionally, three open PRs (#38351, #38170, #37462) show semantic overlap with the DFlash2/Qwen3.8 path but none references the issue and none is confirmed to cover the root cause, leaving duplicate/coverage status unresolved."
+  },
   "c45d572a8c6df113b59bbed3104eae27a46a4d21b69a17d3938067d60d7bcf19": {
     "confidence": 0.85,
     "contradictions": [],
@@ -53350,6 +53523,38 @@
     ],
     "why": "The issue provides a detailed root cause and a minimal deterministic repro for a real bug in the DSPy sandbox, but the supplied gate decision is HUMAN_REVIEW and there are open PRs with semantic overlap (e.g., #9295) that may already address the root cause. The track is llm_algorithm, yet the core fix is in the interpreter's JSON-RPC handling, not an algorithm mechanism; the evaluation_method evidence is weak. Actionability is high, but competition and maintainer review are needed."
   },
+  "c767628f49494865bbaa6d67692470d0d8eea9222d150ea20fbb99808427e82b": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm SAP AI Core streaming/logprobs handling",
+      "core utils logprobs assignment guard",
+      "regression test for streaming tool-call path"
+    ],
+    "risks": [
+      "Scope ambiguity between SAP-specific fix and generic core fix could cause maintainer rework",
+      "Broadening the core logprobs guard may affect other providers' streaming behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce POST /v1/messages?beta=true with streaming tool call and assert HTTP 200, no mid-stream error event, and terminal message_stop",
+      "Add unit test covering empty/null logprobs serialization to prevent MockValSer/SchemaSerializer TypeError"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the SAP-scoped fix (#34900) or the generic core fix (#33549)",
+      "Exact code location producing the MockValSer instance mismatch"
+    ],
+    "why": "Issue reports a concrete user-visible streaming failure (MockValSer/SchemaSerializer TypeError) with a reproducible proxy path, pass/fail criteria, and named candidate fixes (#34900 SAP-side, #33549 core logprobs defense). Track is agent_ai_infra, not llm_algorithm, so the algorithm gate does not apply. Root cause is plausibly identified (null/empty logprobs on SAP path) but the issue itself leaves the SAP-vs-core scope question open, which is a normal implementation-choice uncertainty rather than a blocker."
+  },
   "c7739c1b2ec4b855316c3c5ca8266698cd6c42875334aa3bcb7d55cbbe3bdd53": {
     "confidence": 0.85,
     "contradictions": [],
@@ -54055,6 +54260,39 @@
       "Whether the proxy-Wasm SDK can inject synchronous dispatch errors and observe resume counts; if not, the verification plan requires maintainer decision."
     ],
     "why": "The issue clearly identifies a race condition in the response-cache Wasm plugin where header-key requests are forwarded before asynchronous Redis lookup completes. The design provides a concrete fix (return HeaderStopAllIterationAndWatermark after successful dispatch) with a detailed verification plan including unit tests and real Envoy red-green testing. Maintainer approval is present, and the implementation task is well-defined."
+  },
+  "ca0acfc63e0d27b3c8a683de07e03d68db48ba544aba4a7b9a7ae26918c98c33": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/*/Dockerfile builder stages: avoid dev-dependency resolution during image build (e.g. npm install --omit=dev / --production, or a dedicated production install step)",
+      "package.json / lockfile hygiene if the offending dev dependency tree must be pinned or pruned",
+      "CI or build validation ensuring docker build succeeds for all four TypeScript servers"
+    ],
+    "risks": [
+      "Omitting devDependencies may break Dockerfiles that rely on build-time tooling (e.g. typescript/prettier/shx) during the image build",
+      "The exact offending dev dependency is not confirmed, so a broad `--omit=dev` change could mask a deeper lockfile/version incompatibility",
+      "npm version bundled with node:22.12-alpine may differ from maintainers' environment, so the fix should be validated against the documented base image"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on unmodified main: `docker builder prune -f` then `docker build --no-cache -f src/everything/Dockerfile .` and confirm the `edgesOut` npm error",
+      "Apply the Dockerfile install change and re-run the same no-cache build for everything, filesystem, memory, and sequentialthinking",
+      "Run the target package's unit tests and static checks to confirm runtime deps are unaffected by omitting dev deps at image build time"
+    ],
+    "unknowns": [
+      "Which specific dev dependency (candidate: @vitest/coverage-v8) triggers the npm arborist crash",
+      "Whether maintainers prefer `--omit=dev` in the builder stage versus a separate production install or lockfile pin"
+    ],
+    "why": "Issue provides a concrete, bisected root cause: the Docker builder stages run plain `npm install`, and adding the devDependencies set (likely @vitest/coverage-v8's tree) triggers npm's `edgesOut` arborist crash on node:22.12-alpine/npm 10.9.0. Reproduction is explicit (`docker build -f src/everything/Dockerfile .`), and the fix surface is narrow (Dockerfile builder stages / dependency install strategy). No duplicate or merged fix is identified; PR #4783 is keyword-only overlap with no code-path or mechanism overlap."
   },
   "ca135e4e909adc9515585f89c7720fa67ac5b04452219ecef5111f0d49667fcf": {
     "confidence": 0.95,
@@ -56869,6 +57107,38 @@
       "Actual root cause of engine core initialization failure; environment details beyond provided logs."
     ],
     "why": "The issue is a usage/support request for a runtime initialization failure, not a concrete algorithm bug. It lacks a clear root cause, minimal reproduction, or actionable code path. The track requires a concrete algorithm mechanism and validation path, which are absent."
+  },
+  "d44e07faa38435521f7d99f702f9182cb534440869598f17e744ab665a581d72": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims function-call behavior is broken while maintainer says eval tests indicate it works as expected"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "assistant message aggregation to include pre-tool content",
+      "tool_call_id generation to be unique per call"
+    ],
+    "risks": [
+      "Without provider/model and exact repro, the reported behavior may be provider-specific or already handled",
+      "Changing tool_call_id generation could affect downstream result matching"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the specific LLM/model and a minimal script that emits text before a tool call, asserting no duplicated pre-tool text",
+      "Reproduce multiple tool calls in one turn and assert distinct tool_call_ids and non-overwritten results"
+    ],
+    "unknowns": [
+      "Exact LLM provider and model used",
+      "Minimal reproducible script or logs",
+      "Which code path/function produces the aggregated assistant message and tool_call_id"
+    ],
+    "why": "Issue describes two plausible bugs (missing pre-tool content in tool_calls assistant message, non-unique tool_call_id) but the maintainer explicitly asks for an exact repro and which LLM/model is used, and states eval tests pass. The supplied evidence lacks a concrete reproduction path, provider/model, or code anchor, so it is not yet established whether code work is actionable."
   },
   "d45312f433e952269a5d0fea2b448335f79f81da7a019c2d727babaf8fd4a4b3": {
     "confidence": 0.85,
