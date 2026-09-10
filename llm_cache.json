@@ -3625,6 +3625,39 @@
     ],
     "why": "Issue provides a clear user-visible bug with detailed reproduction steps, expected vs actual behavior, and a specific root cause: cancellation state is not propagated from the original HTTP context to the remote Prefill context, and the SGLang cancellation monitor cannot abort before the first output. The proposed lifecycle fix is concrete and testable."
   },
+  "0edf75809f0b428c5b4619787c7b894246e2f4d1fe8f05fd74aec09a8f1c0e90": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/evals/hooks.ts: make runScorer accept the wrapped Mastra instance's owner token for native tracing proxies while still rejecting foreign owners",
+      "packages/core/src/evals/hooks.ts: use resolveExportedSpanId instead of currentSpan.id in createOnScorerHook so scores reference stored agent-run spans",
+      "Add regression tests for owner-token inheritance, foreign-owner rejection, nested-proxy controls, and span-ID correlation"
+    ],
+    "risks": [
+      "Owner-token inheritance change could accidentally accept foreign-owner scores if the proxy check is too broad.",
+      "Span-ID resolution change could alter legacy span behavior or drop scores when no exportable ancestor exists.",
+      "Local scripted-provider proof does not certify semantic quality, complete trace metrics, hosted deployment, or overall reliability."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with createDurableAgent, AgentController, InMemoryStore, EventEmitterPubSub, Memory, MockLanguageModelV3, and six native checks at sampling rate 1 with tracing enabled; confirm zero live scorer rows before fix.",
+      "After fix, run the 16-case local native AgentController Session matrix covering ordinary/durable execution, tracing on/off, and success/returned-error/thrown-error/mixed tool outcomes; expect 128 expected live scores and all 64 traced scores referencing actual stored agent-run spans.",
+      "Run sampling-never controls to confirm no scores or traces are saved.",
+      "Run focused source tests (84 expected passing), type checks, build, scoped lint, and frozen installation."
+    ],
+    "unknowns": [
+      "Maintainer triage/approval status remains pending; bot comment requests waiting for triage before opening a PR.",
+      "No upstream PR exists yet, so merge likelihood and maintainer design preference are unconfirmed."
+    ],
+    "why": "Issue provides a concrete, source-backed root cause for durable agent live scores disappearing when tracing is enabled: tracing Proxy owner-token mismatch in runScorer plus wrong span ID via currentSpan.id instead of resolveExportedSpanId. It includes a proposed source commit, before/after regression evidence, and a deterministic local native AgentController Session matrix. This is a user-visible bug on a critical agent runtime path with a clear validation path."
+  },
   "0f2905dac6a2fbf512716e16963ebd90ed414d21ac4935497eed803de93bbb25": {
     "confidence": 0.85,
     "contradictions": [
@@ -12120,6 +12153,37 @@
     ],
     "why": "The issue provides a clear reproduction with exact commands and traceback, identifying the root cause as the generated CLI wrapping optional string parameters in json.loads(). The expected behavior is explicitly stated, making the fix actionable."
   },
+  "2fbbc13c2e6e0403f7892ba6a2135ca3d6c4a8fcfcaa18a8d3a3ba9be423b5c4": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims function-call behavior is broken while maintainer states eval tests indicate function calls work as expected"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "assistant message aggregation to include pre-tool content",
+      "tool_call_id generation to be unique per call"
+    ],
+    "risks": [
+      "Without a confirmed repro the asserted root cause may be wrong or environment-specific",
+      "Fix could alter aggregation behavior for other providers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a minimal failing test with a specific LLM/model that emits text before a tool call and multiple tool calls, asserting no duplicated pre-tool text and distinct tool_call_ids"
+    ],
+    "unknowns": [
+      "Exact LLM/model and provider used",
+      "Precise minimal reproduction steps",
+      "Whether the bug is in pipecat aggregation or the provider integration"
+    ],
+    "why": "Issue describes two plausible bugs (missing pre-tool content in assistant tool_calls message, non-unique tool_call_id) with expected/actual JSON, but the reproduction is vague ('Have it respond with text before calling a tool') and a maintainer explicitly asked for the exact LLM/model and a precise repro, noting eval tests pass. The root cause is asserted rather than demonstrated, and no code anchors or failing test are supplied."
+  },
   "2fc03263343004d924a94050c508c9bb409b19ce931473ab6835e5259282b8ac": {
     "confidence": 0.85,
     "contradictions": [
@@ -17613,6 +17677,40 @@
     ],
     "why": "The issue provides a clear root cause: ChatModelBase.count_tokens uses a bytes/4 heuristic that underestimates tokens for non-ASCII, numeric, and structured content, leading to context overflow and HTTP 400. It includes benchmark data, reproduction steps, and a concrete validation path comparing estimates to actual usage.input_tokens. The open PR #2397 is incomplete (lacks root-cause coverage), leaving room for a competitive contribution."
   },
+  "45c0576315c8bd9effab78d1af2ec2137014ef1aa57a8f69138a6ff40f51f36a": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/evals/types.ts: extractTrajectory must retain output-error tool invocations and merge parts-only calls without losing order",
+      "packages/core/src/evals/types.ts: extractTrajectoryFromTrace must resolve tool step names from entityId, then entityName, then span.name fallback"
+    ],
+    "risks": [
+      "Changing message extraction merge behavior could alter ordering for existing consumers relying on legacy array preference",
+      "Replacing a test that expected dropping a distinct parts-only call may mask a legitimate prior behavior if not reviewed",
+      "Trace name resolution fallback order must not regress older records lacking entityId/entityName"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided repro.mjs against stock @mastra/core@1.63.2 to confirm both failures (empty messageSteps, display-label trace name)",
+      "Add regression tests asserting a thrown tool call yields one failed step named save_result and a traced step uses canonical entityId name",
+      "Run the 110 relevant source tests, Core type-check, package build, and scoped lint",
+      "Re-run the eight-case native runEvals probe with and without native observability to confirm all pass"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for message-form merging order",
+      "Whether the referenced candidate commit is intended to become the PR or is only illustrative"
+    ],
+    "why": "Issue provides a concrete, self-contained reproduction with no external dependencies, identifies exact code anchors in packages/core/src/evals/types.ts, and specifies two clear defects: message extraction dropping output-error tool calls and trace extraction using display labels instead of canonical entityId/entityName. A candidate fix and regression tests are referenced with validation evidence. This is a user-visible correctness bug on the agent trajectory/eval path with a clear reference-vs-implementation test."
+  },
   "45c51892d3ea8839e32398457955dabfe756c996ca719662ed66f48463a9abab": {
     "confidence": 0.7,
     "contradictions": [
@@ -19719,6 +19817,37 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue describes a clear client-triggerable engine crash with a concrete root-cause hypothesis and reproduction. However, the supplied gate decision is HUMAN_REVIEW and the open PR assessment flags semantic overlap with PR #52097 and #52132, requiring manual comparison before creating a new task. The candidate is actionable but blocked by the need to review existing PRs and maintainer input."
+  },
+  "4d0a81234059835bdc63577253689d7417f56db303bf701b6cee108ca1f29597": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Experiment launch-from-UI form to accept name/description",
+      "Experiment table/detail view edit affordance and mutation endpoint for name/description"
+    ],
+    "risks": [
+      "No code anchors means the exact module and API surface are unknown",
+      "Maintainer design preference for edit UX and API shape is unresolved",
+      "Scope may expand into API behavior changes beyond a minimal fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing UI/component test asserting name/description can be set at launch and edited post-creation",
+      "Run targeted frontend tests and static checks for the experiments module"
+    ],
+    "unknowns": [
+      "Which frontend/backend modules own experiment name/description mutation",
+      "Whether an existing API endpoint already supports updating these fields",
+      "Maintainer-preferred UX and API design for editing"
+    ],
+    "why": "The issue requests UI affordances to set/edit experiment name and description, but supplies no code anchors, no reproduction evidence, and no root-cause signal; the pre-task evidence itself flags no_code_surface and reproduction_or_validation_missing, and the only wait reason is DESIGN_CONFIRMATION. This is a UI/API plumbing enhancement rather than an algorithm or infra mechanism, and the missing code surface plus unresolved design preference materially block an actionable code contribution."
   },
   "4d461c5ccac9c63dd3d4dbce29de147554d9e39a4ec960d229ae384932d1bca3": {
     "confidence": 0.8,
@@ -37037,6 +37166,34 @@
     ],
     "why": "The issue reports a concrete crash in DeepEP-V2 with deep_gemm and cudagraph mode, with a clear assertion failure in deep_gemm_utils.py. The code path is identified and the bug is likely in the handling of expert_start_loc shape during cudagraph execution. This is a kernel/algorithm-level bug with a reproducible traceback."
   },
+  "896280f785b309293340f312e881062af19b4934f5f591795e41471c860a3652": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter states the model backend works via the desktop app while CLI auth fails, yet also suggests a shared account billing mis-flag as root cause."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Root cause may be entirely server-side/account-specific, making any client-side PR speculative or incorrect.",
+      "No code surface or failing test can be established from the supplied evidence."
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "No repository-level reproduction is available; the failure occurs in a server token-exchange endpoint, not in CLI code."
+    ],
+    "unknowns": [
+      "Whether the 500 originates in server-side token exchange or in CLI request construction.",
+      "Whether the account billing state is actually mis-flagged server-side.",
+      "Any repository code path involved in the failing exchange."
+    ],
+    "why": "Issue reports a server-side HTTP 500 during device-auth token exchange, with no code anchors, no reproduction path in the repository, and the reporter themselves suspects an account-specific server-side billing mis-flag. No actionable client-side code change is identified."
+  },
   "8973767f066076f152fb689087ee643d6b1ca7eb07c701ed22e17f09a1b6b5f7": {
     "confidence": 0.8,
     "contradictions": [],
@@ -39488,6 +39645,44 @@
     ],
     "why": "The issue clearly identifies a user-visible bug: LLM config is frozen at conversation creation, causing permanent authentication failures after key rotation. The proposed fix is actionable and includes a concrete repro and multiple solution levels. No competing PR or issue found."
   },
+  "930bf439b3a8f25e9b2e5ff0c71f4d84885a3a95aefc731075d40681fe788bc4": {
+    "confidence": 0.6,
+    "contradictions": [
+      "The issue reports a deterministic degenerate signature on SM120, while a commenter on a newer stack reports 27-39 distinct tokens and 30-60 distinct logprobs per response on the same model and compute capability."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py (sparse-MLA decode kernel dispatch/stride handling)",
+      "vllm/models/deepseek_v4/common/ops/cache_utils.py (packed block span / index remap)",
+      "vllm/models/deepseek_v4/attention.py (fp8_ds_mla layout and attention backend selection)"
+    ],
+    "risks": [
+      "Root cause is unconfirmed; the fix could be in the kernel, the cache layout, or the backend dispatch, so a patch may not address the actual defect.",
+      "The non-reproducing report differs on GPU SKU (Max-Q Workstation vs Server Edition), GPU count (4 vs 2), and the entire software stack, so the responsible variable is unidentified.",
+      "The repository has an AI-disclosure conflict policy, which constrains how any resulting contribution may be submitted."
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Re-run the exact reproduction (temperature=0, logprobs=true, top_logprobs=1, max_tokens=10) on vLLM 0.28.0 / flashinfer 0.6.18 with the same model revision and TP=4; if the frozen token+logprob disappears, bisect the 0.26.0..0.28.0 range for the fixing commit.",
+      "If it still reproduces, build a CPU/single-GPU reference forward pass for the same prompt and compare per-position logits against the SM120 sparse-MLA decode path to localize whether the attention context is zeroed/constant.",
+      "Add a numerical regression that asserts distinct argmax tokens and distinct logprobs across decode positions for a fixed seed and synthetic batch on the affected backend."
+    ],
+    "unknowns": [
+      "Whether the bug still reproduces on vLLM 0.28.0 / flashinfer 0.6.18, which would distinguish an already-fixed issue from an unfixed edge case.",
+      "Which specific component (sparse-MLA decode kernel, packed-KV-cache addressing, or backend dispatch) produces the constant attention context.",
+      "Whether the Max-Q Workstation SKU or the 4-GPU topology is a necessary condition for the failure."
+    ],
+    "why": "The issue reports a concrete, reproducible degenerate-output signature (identical argmax token and identical logprob at every decode position) on SM120 with FLASHINFER_MLA_SPARSE_DSV4, and supplies ordered reproduction steps plus code anchors. However, the supplied evidence does not establish a root cause: root_cause_signal is false, no formula/experiment signal is present, and the reporter's own isolation table leaves the mechanism unidentified. A non-reproducing comment on a newer stack (vLLM 0.28.0 / flashinfer 0.6.18 / torch 2.13) shows the failure is not intrinsic to sm_120 + DeepSeek-V4-Flash + TP, and the reporter has not yet re-tested on 0.28.0. That version-gap test is the cheapest discriminator between an already-fixed bug and an unfixed edge case, and its outcome determines whether any code work is actionable."
+  },
   "931398cc91de276c9cf96146a936ddc95a1b1263f00b563e847ca30e8f313f0a": {
     "confidence": 0.85,
     "contradictions": [],
@@ -41198,6 +41393,39 @@
     ],
     "why": "Issue provides a precise root cause (Pydantic JSON mode serializes non-finite floats as null, failing client schema validation), a minimal reproduction, and a clear fix direction (reject non-finite floats at return with a clear message, matching existing practice). This is a concrete, actionable bug in the MCP SDK's core tool-call path."
   },
+  "9a9f47c5fb22dc86f13467e3fb0a1cc6fc60034b70383f63cddf00a8f864f472": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "compaction trigger path in CLI runtime (prepareTurn / auto-compaction gate)",
+      "token estimation used by overflow diagnostic vs compaction trigger",
+      "provider/model.info handling for native Ollama contextWindow/num_ctx"
+    ],
+    "risks": [
+      "Estimator mismatch between overflow diagnostic and compaction trigger may require touching shared token-counting code",
+      "enableAgentTeams/team_lead path may bypass prepareTurn, widening the fix surface",
+      "Agentic summarizer using the same local model could hang, complicating end-to-end validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing regression test that drives a multi-turn loop with a small contextWindow and asserts task.compaction_executed or task.compaction_skipped is emitted once estimatedInputTokens >= 0.9 * contextWindow",
+      "Reproduce with native Ollama (baseUrl without /v1), contextWindow=32768, --compaction agentic, and confirm compact lifecycle events appear in cline.log",
+      "Run targeted unit tests for the compaction trigger and token-estimation modules plus static checks"
+    ],
+    "unknowns": [
+      "Whether the compaction trigger and overflow diagnostic share the same estimator/model.info",
+      "Whether enableAgentTeams/team_lead bypasses prepareTurn compaction"
+    ],
+    "why": "Issue provides a concrete, reproducible operator failure on native Ollama CLI: overflow warning fires with the configured contextWindow yet no task.compaction_executed/task.compaction_skipped events occur, and the next turn is sent uncompacted. Reproduction steps, environment, and log evidence are supplied, and the issue explicitly distinguishes itself from #7772. Root cause is not fully pinned (estimator mismatch vs prepareTurn bypass under agent teams), but the failure is well-scoped and testable."
+  },
   "9aa5e8d129c9ce797a0c75966a4a1647a7308ac3c4f8b92f534c811cd2473557": {
     "confidence": 0.85,
     "contradictions": [
@@ -42866,6 +43094,42 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a reproducible host memory leak in V2 runner with Qwen3 models, with strong evidence and a concrete reproduction path. However, the supplied data indicates a potential duplicate issue #49224 sharing stack/failure signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not yet identified, and maintainer investigation is not active. The candidate is actionable but requires duplicate review and maintainer confirmation before work starts."
+  },
+  "a08332f3fb0e157748b7d701d6217c94a53ba78d86122b63ee046a115fde398a": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER and pre-review 'no_code_surface' vs actionability_evidence root_cause_signal=true and probe_ready=true"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm SAP AI Core streaming/logprobs handling",
+      "core utils logprobs assignment guard",
+      "schema/serializer validation path for streaming chunks"
+    ],
+    "risks": [
+      "Two competing fix scopes (#34900 vs #33549) may conflict; choosing wrong layer could cause provider-wide behavior change",
+      "Legal/CLA confirmation is a submission-policy gate, not a technical blocker, but must be resolved before PR",
+      "Pre-review flagged no_code_surface, so code anchors may need re-verification"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce via POST /v1/messages?beta=true with stream=true and a tool-call prompt; assert HTTP 200, no mid-stream error event, and terminal message_stop",
+      "Add regression test asserting empty logprobs ({}) does not trigger MockValSer/SchemaSerializer TypeError",
+      "Run targeted unit tests for the affected provider and core utils modules"
+    ],
+    "unknowns": [
+      "Which fix layer maintainers prefer (SAP-specific vs core utils)",
+      "Whether #34900/#33549 are still open and mergeable",
+      "Exact code anchor for the serializer mismatch beyond the cited message_stop"
+    ],
+    "why": "Issue reports a concrete user-visible streaming failure (MockValSer/SchemaSerializer TypeError) with a reproducible proxy path and pass/fail criteria, and explicitly references two candidate fix PRs (#34900 SAP-side, #33549 core logprobs defense). This is a real code-surface bug in the streaming/structured-output path, not docs or plumbing. However, the issue itself frames the open question as scope (SAP-specific vs generic), and the candidate's own pre-review flagged 'no_code_surface' and policy 'legal_confirmation', so the exact fix location is not yet settled."
   },
   "a085e03d1f08d5e571fc1a291113199310a17cad9cb689caf1467743ac571d8a": {
     "confidence": 0.7,
@@ -65045,6 +65309,40 @@
       "Maintainer preference among the three suggested options is not confirmed; however, Option 1 is clearly the smallest change and the issue provides sufficient direction."
     ],
     "why": "Issue provides a clear root cause (owner impersonation in service API token validation), a concrete reproduction with expected/actual pairs, and a suggested minimal fix (Option 1) that aligns list and direct GET behavior. The evidence includes code anchors and a maintainer bot confirming the analysis."
+  },
+  "f019650fb01c88a2c6a7a83fc4ed83150f1c8b0401e44418bf8689f890173008": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MCP tool schema export/validation boundary: recursively detect provider-unsupported regex constructs (lookarounds) across nested schemas",
+      "Provider-facing schema normalization: clone and omit unsupported `pattern` while preserving original MCP schema and server-side validation",
+      "Error attribution: surface MCP server/tool/schema path instead of generic model-connection/sign-in message",
+      "Recovery path: allow excluding affected tools or disabling the specific server for the session"
+    ],
+    "risks": [
+      "Normalization relaxes model-side constraints; execution must still validate server-side to avoid accepting invalid inputs",
+      "Over-broad stripping of validation keywords could weaken schemas beyond the lookaround case",
+      "Provider-specific supported-subset list may drift; needs maintainable capability mapping"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: feed a Resend/Zod-style schema with negative lookahead in `$.properties.email.pattern` and assert detection + normalization",
+      "Regression test: nested array/batch inputs (`send-email` `to/cc/bcc.items.pattern`, `batch-add-suppressions` `emails.items.pattern`) are handled",
+      "Assertion: after normalization, `create-contact` retains `type: string`, `format: email`, and required fields; original schema unchanged",
+      "Error-message test: schema rejection is attributed to server/tool/path, not auth/connectivity"
+    ],
+    "unknowns": [
+      "Exact provider capability matrix for supported regex constructs is not enumerated",
+      "Whether maintainers prefer normalization vs. tool-exclusion recovery as the primary fix"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: Resend MCP 2.19.1 (Zod 4.4.3) exports JSON Schema `pattern` values containing negative lookaheads (e.g. `create-contact` `$.properties.email.pattern`), which the selected provider rejects with a 400 before streaming, blocking all chat. Exact affected tools/paths and a local normalization experiment (removing 18 lookaround patterns across 103 tools) are supplied, giving a clear reference-vs-implementation validation path. No open PR or duplicate issue covers this."
   },
   "f01e8ed94cb606bd2d116a807536da5306da0fa0c1e9d6d0460c8807fd351727": {
     "confidence": 0.85,
