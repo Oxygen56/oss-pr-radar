@@ -5266,6 +5266,40 @@
     ],
     "why": "The issue provides a clear bug description with reproduction steps, expected vs actual behavior, and a detailed code-path analysis identifying two lifecycle gaps. The root cause is well-defined: cancellation state is not shared between the original HTTP context and the remote Prefill context, and the SGLang cancellation monitor cannot abort before the first output because it learns the request ID only from the first response. This is a concrete, actionable bug fix opportunity."
   },
+  "1473a4a066770da258ab0b5289b854f8b217589f0c96e24c6457ac7c178cd28d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "verl/trainer/ppo/core_algos.py: compute KL-Cov covariance statistics and selected-token mask once over the optimizer minibatch, then slice per microbatch",
+      "Preserve other supported loss terms (entropy_coeff, use_kl_loss) when moving selection out of the microbatch loop"
+    ],
+    "risks": [
+      "Distinguishing mathematical selection error from floating-point/random noise requires fixed seed, baseline, and tolerance",
+      "Extra forward-only prepass adds compute cost and must not break gradient flow or other loss terms",
+      "Open PR #6538 touches the same file and kl_cov semantics; implementation boundary must be compared before duplicating work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "CPU/single-GPU reference test with frozen 64x128 response sequences, fixed seed, fixed advantages and old logprobs; compare one 8192-token microbatch vs eight 1024-token microbatches",
+      "Assert selected-token mask and quota are identical across microbatch splits (full_minibatch=1 vs eight_microbatches=8 currently)",
+      "Numerical regression: relative L2 parameter-update difference should drop to the penalty-disabled control level (~3.6e-6) with fixed tolerance",
+      "Verify entropy_coeff and use_kl_loss paths still behave correctly after the change"
+    ],
+    "unknowns": [
+      "Whether PR #6538 already covers this exact root cause or only adjacent ratio stabilization",
+      "Whether the pinned-commit reproduction still holds on current main (source inspection only, not rerun)"
+    ],
+    "why": "Issue identifies a concrete algorithmic invariant violation in compute_policy_loss_kl_cov: KL-Cov top-k token selection and covariance statistics are computed per microbatch, so microbatch size changes the effective objective. Root cause is anchored to core_algos.py, a quota formula is given, and a controlled reference-vs-implementation experiment (one microbatch vs eight, with penalty-disabled control) shows 7.006e-3 vs 3.625e-6 relative L2 difference, reproduced on two hosts. This is a genuine post-training objective correctness issue with a concrete validation path."
+  },
   "149186126a654c01d756afbaa84ae2cc5975a5897fd145ff4579e1c2ec2039b1": {
     "confidence": 0.85,
     "contradictions": [
@@ -21728,6 +21762,38 @@
     ],
     "why": "Issue reports a high-impact streaming tool-call truncation bug with a clear repro, but root cause is not isolated. Existing PR #6632 likely addresses the same code path but is not linked to the issue and lacks maintainer confirmation. Gate requires HUMAN_REVIEW."
   },
+  "527da83e36c8aae7249cfdb73e872454f176323d9a0e95242b1eea1bae5efdb5": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "bitsandbytes/optim/optimizer.py: base state-precision and quantization-block decisions on original parameter identity/size, carrying mapping through flattening and sharding",
+      "Add multi-rank FSDP1 regression covering both wrapping layouts and state-eligibility checks"
+    ],
+    "risks": [
+      "Reference repair replicates shadow state and is not a mergeable sharded implementation; metadata interface and efficient sharded path remain open",
+      "Distinguishing true numerical semantics error from floating-point/random variation requires fixed seed, tolerance, and hardware",
+      "PR #2081 is a WIP draft with no tests and does not reference the issue, so overlap must be compared before parallel work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run torchrun --standalone --nproc-per-node=2 examples/fsdp1_original_parameter_state.py --device cpu from PR #2081 checkout and confirm native full update-vector max difference drops from ~6.15e-5 to zero",
+      "Add a fixed-seed two-rank FSDP1 FULL_SHARD test with four 2048-element params and min_8bit_size=4096, asserting FP32 state under one-unit-per-parameter and 8-bit under combined unit, plus exact state-eligibility match",
+      "Compare against full-precision AdamW as a zero-difference control"
+    ],
+    "unknowns": [
+      "Whether PR #2081 will be completed or superseded, and whether maintainers intend min_8bit_size to be defined on local flat shards"
+    ],
+    "why": "Issue identifies a concrete numerical/algorithmic defect: Optimizer2State.init_state applies min_8bit_size to the local flattened FSDP1 shard rather than original parameters, so wrapping policy alone changes AdamW8bit state precision and quantization-block layout. Reproduction, root cause, and a reference-vs-implementation validation path are supplied."
+  },
   "52966f6d772149e0b57e33490b6f31498a77b9c803d48a3a9238e0777026c934": {
     "confidence": 0.85,
     "contradictions": [],
@@ -27107,6 +27173,35 @@
       "Whether the split issues already have open PRs or active work."
     ],
     "why": "Issue clearly describes a real gap: mid-stream provider errors bypass retry and are unclassifiable, with concrete repro and production evidence. However, the issue is a feature request that has already been split into two sub-issues (#18668, #18669) by the factory bot, and the deterministic gate is HUMAN_REVIEW. No maintainer approval or design confirmation is present, and the proposed solutions (stream-level retry, onError retry signal, typed errors) require design decisions. The split issues likely already cover the work, so starting a new PR would duplicate effort."
+  },
+  "6331bb1f2778965d5bc9f0931e726fa0ff5ccbffaeeedfabf96e1c717a483705": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/controllers/openapi/auth/pipeline.py: translate InvalidBearerError from authenticate() into a 401 response instead of an unhandled 500",
+      "api/libs/oauth_bearer.py: confirm InvalidBearerError semantics for expired/invalid tokens"
+    ],
+    "risks": [
+      "Repository has an AI disclosure conflict policy that may restrict automated public contributions",
+      "Changing error mapping could affect other openapi auth callers if not scoped narrowly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test hitting an openapi endpoint with an invalid/expired bearer token and assert 401 rather than 500",
+      "Run targeted api tests for openapi auth pipeline and oauth_bearer modules"
+    ],
+    "unknowns": [
+      "Whether maintainers accept the proposed 401 mapping versus another error-handling approach"
+    ],
+    "why": "Issue provides a concrete reproduction (difyctl get app returns 500), a full traceback anchoring the failure to PipelineRouter._execute calling BearerAuthenticator.authenticate() which raises InvalidBearerError, and a contributor comment identifying the missing error translation to 401. This is a narrow, actionable backend fix with a clear validation path."
   },
   "6334a243ebd880e82940cc8b07aa749f28a1c261b0eae4a4343d86c7c2071b2c": {
     "confidence": 0.7,
@@ -39763,6 +39858,42 @@
       "Exact root cause not yet identified; maintainer input on design preferences may be needed."
     ],
     "why": "Issue provides detailed reproduction attempts, multiple configurations, and evidence isolating the problem to shared audio routing infrastructure. Root cause is narrowed to AudioRecognition or STT stream lifecycle, with clear code anchors and a reproducible pattern (freeze after successful turns). This is a high-impact bug affecting production deployments, and the issue is actionable for a maintainer or contributor to investigate and fix."
+  },
+  "915b5f7434597bc604d00cb1b528b65d33c3332229d3c1ed9c6d41b430304106": {
+    "confidence": 0.72,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal is false while the issue body clearly identifies the cooldown root cause and cites PR #8668",
+      "preTaskEvidence.reproductionPathPlan is false while the issue body contains an executable reproduction command"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Docs: fallbacks page note that single-deployment groups are not cooled down unless allowed_fails/allowed_fail_policy and cooldown_time are set, with a one-line config example",
+      "Router cooldown logic: optionally consider cooling a single deployment after its fallback is used N times in a window (design question, not required for the docs fix)",
+      "Regression test asserting single-deployment group cooldown behavior with and without allowed_fails"
+    ],
+    "risks": [
+      "Changing default cooldown behavior for single-deployment groups is a behavioral/API change that maintainers may reject; the docs clarification is the low-risk portion",
+      "Merged PR #8668 already covers the allowed_fails/allowed_fail_policy cooldown path, so any code change must avoid duplicating or regressing that logic",
+      "The issue's second ask is a design proposal, not a confirmed defect, so scope creep beyond docs/tests is possible"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the failoverbench harness: run S15 with defaults and with allowed_fails=1, cooldown_time=30, and confirm primary attempt counts drop from ~3 per request to ~1",
+      "Add a router unit test that a single-deployment group with fallbacks is not cooled down by default and is cooled down when allowed_fails/cooldown_time are set",
+      "Run targeted router cooldown/fallback tests and static checks for the touched package"
+    ],
+    "unknowns": [
+      "Whether maintainers want the docs-only clarification or also a default-behavior change for single-deployment groups",
+      "Whether the merged PR #8668 fully covers the documented gap or leaves a residual docs/test gap"
+    ],
+    "why": "Issue documents a concrete, reproducible router behavior: single-deployment model groups are never cooled down unless allowed_fails/allowed_fail_policy is set, so every request during an outage burns num_retries+1 primary attempts before falling back. Root cause is anchored to the cooldown logic referenced by merged PR #8668, and the issue supplies an executable reproduction plus before/after latency numbers. The ask is primarily a docs clarification plus a design question about default cooldown behavior, which is actionable as a minimal docs/test change."
   },
   "9162b01c4797a3fad35e9a971badcf80343a8805473df3b0b4f6d5cb5ac69ef0": {
     "confidence": 0.85,
@@ -63195,6 +63326,39 @@
     ],
     "why": "Issue provides a clear root cause (regression from revert #34160), a concrete reproduction with commands, and a suggested fix with code changes. The problem is user-visible and impactful, and the fix is actionable."
   },
+  "e6a614683fe713ef36000588c7b42aaf5355f278ed08cc7ea0ef01fb248b81eb": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports failure on vLLM 0.20.1, while maintainers state upstream HMA-capability configuration and GDN transfer support have landed and the current pin is vLLM 0.28.0"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "NixlConnector HMA capability declaration (SupportsHMA) or fail-fast validation for hybrid/Mamba models",
+      "vLLM-backend documentation of hybrid-model disaggregation limitation"
+    ],
+    "risks": [
+      "Fixing a possibly already-resolved upstream issue would duplicate landed HMA/GDN transfer support",
+      "Changing NixlConnector to SupportsHMA may require SSM-state layout and MTP handling beyond the reported scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Retest original 1P1D NixlConnector topology with Qwen3.5-35B-A3B-FP8 on current Dynamo/vLLM 0.28.0, with and without --no-disable-hybrid-kv-cache-manager, and confirm both successful init and an actual prefill/decode request",
+      "If failure persists, capture the current first-error traceback and add a regression test around hybrid KV spec unification under disaggregation"
+    ],
+    "unknowns": [
+      "Whether the init failure still reproduces on current Dynamo/vLLM 0.28.0",
+      "Whether --no-disable-hybrid-kv-cache-manager changes the result on current builds",
+      "Whether maintainers intend generic hybrid NixlConnector support or a fail-fast path"
+    ],
+    "why": "The issue reports a concrete init failure (hybrid KV cache manager force-disabled by NixlConnector, unify_hybrid_kv_cache_specs raising), but the supplied evidence shows the report is stale: it was filed against vLLM 0.20.1, and maintainers state upstream HMA-capability-based configuration and GDN transfer support have since landed, with the current pin at vLLM 0.28.0. Multiple contributors are explicitly asked to retest on current Dynamo and confirm whether the failure still reproduces; no retest result is supplied. Whether any code work is actionable depends on that unresolved reproduction status."
+  },
   "e6c0780c8bc9b33d47b2d8154c6a0bbdc011b81968b5440bcbbf4e52d4293817": {
     "confidence": 0.6,
     "contradictions": [
@@ -70396,6 +70560,44 @@
       "Whether PR #36268 already addresses this issue"
     ],
     "why": "Issue reports a real bug but root cause is unconfirmed; maintainer confirmation needed to avoid conflicting with existing PRs."
+  },
+  "febdb6c3e50f21d087f034232b455d1456914f01b4863b81cbf8e9d3b6a42994": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge B@A into base weight and reinitialize A/B (Kaiming/zeros) for canonical ReLoRA restart, or rename feature and correct docstring",
+      "src/soup_cli/utils/relora.py: replace strict threshold mask with deterministic exact-count topk/stable-order selection honoring prune_ratio under ties",
+      "Optimizer-state pruning/reset should target optimizer moments rather than learned adapter weights",
+      "Explicit compatibility rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, checkpoint/resume"
+    ],
+    "risks": [
+      "Tie scenario is constructed; production frequency of the all-zeros lora_B tie is unverified, though PEFT zero-init makes it plausible",
+      "Claim A fix is a maintainer design decision (implement restarts vs rename feature); partial implementation could be worse than either",
+      "Numerical tolerance must be fixed with seed and hardware to distinguish math error from float noise",
+      "Quantized/distributed/streamed combinations may partially apply restarts without explicit rejection"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reference-vs-implementation test: assert effective linear map is preserved across merge/reinit to numerical tolerance (MSE ~1e-12) versus current MSE ~142",
+      "Regression test with constant-magnitude lora_A/lora_B and prune_ratio=0.9 asserting exactly the requested keep count and nonzero survivors in each factor",
+      "Gradient test asserting lora_A and lora_B gradient norms are nonzero after callback with prune_ratio < 1",
+      "Kernel-level test: ones(10) with prune_ratio=0.9 keeps 1 entry; arange(1..10) keeps 1 entry",
+      "Accumulation test: successive restarts accumulate low-rank updates in the base model"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers full ReLoRA restart implementation or feature rename/docstring correction",
+      "Actual production frequency of the tie-induced total-pruning path"
+    ],
+    "why": "Issue identifies two concrete, separable algorithm defects in ReLoRA restart logic: (1) _prune_and_reset never merges B@A into the frozen base before pruning/reinit, so the learned adapter contribution is discarded (base weight delta = 0, effective map MSE 142.12 vs merge-control 8.77e-13); (2) strict threshold mask (abs(t) > threshold) with kthvalue wipes all entries on ties, zeroing both lora_A and lora_B and producing zero gradients (measured 0.000000), permanently killing the branch. Owner confirmed both claims against a real peft LoRA model with a merge-then-reset control, and the code anchors (relora.py, lora_A/lora_B, magnitude_prune_tensor) plus pinned SHA support a reference-vs-implementation numerical regression."
   },
   "fef210b8fbedfd153948cdd669ad10e66fbded690622287e4ced4161e0bc2995": {
     "confidence": 0.8,
