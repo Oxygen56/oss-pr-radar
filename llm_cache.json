@@ -2880,6 +2880,39 @@
     ],
     "why": "Issue provides a detailed experiment matrix isolating the bug to speculative decoding with any KV connector attached, even with zero retrieved tokens, and identifies a suspected code path. Recent comments confirm the corruption persists after applying a known fix, narrowing the root cause to connector presence interacting with spec-verify rollback. The issue includes concrete reproduction steps and code anchors, making it actionable."
   },
+  "0b6ce72b97fd4c5bdf3c42233899d83a9eaf7f9d97b842ed4f670e0df2dfa18e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "CLI compaction trigger path (prepareTurn / auto-compact gating) for native Ollama provider",
+      "Consistency between overflow-diagnostic estimator and compaction-trigger estimator / model.info contextWindow",
+      "Emit task.compaction_skipped with a reason when compaction is bypassed"
+    ],
+    "risks": [
+      "enableAgentTeams/team_lead may bypass prepareTurn compaction (reporter marks unconfirmed) — fix scope may need to cover agent-team path",
+      "Agentic summarizer using the same local model may hang, so a fix could surface a second failure mode",
+      "Changing compaction gating could alter request behavior for other providers if the estimator is shared"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build a failing regression test that drives a multi-turn loop with a small contextWindow and asserts task.compaction_executed or task.compaction_skipped is emitted once estimatedInputTokens >= 0.9 * contextWindow",
+      "Reproduce with native Ollama (baseUrl without /v1), contextWindow 32768, --compaction agentic, and confirm the overflow line plus absence of compact events before the fix",
+      "Run targeted CLI/core package unit tests and static checks after the minimal fix"
+    ],
+    "unknowns": [
+      "Whether the compaction trigger and overflow diagnostic use different estimators or different model.info fields (reporter's hypothesis, unconfirmed)",
+      "Whether team_lead/enableAgentTeams bypasses prepareTurn compaction"
+    ],
+    "why": "Issue provides a concrete, reproducible operator failure on native Ollama CLI: overflow warning fires with the configured contextWindow while zero task.compaction_executed/task.compaction_skipped events are emitted, across 64k/32k/16k windows. Code anchors (task.compaction_executed, task.compaction_skipped, num_ctx, contextWindow) point at the compaction trigger path, and the reporter explicitly distinguishes this from #7772's 128k-default explanation. No duplicate/merged fix covers it (best PR overlap is keyword-only, no code-path or semantic overlap)."
+  },
   "0b843c25785449fc52f4f4c82f486ae158019b361169280e169554d766fd3d2f": {
     "confidence": 0.85,
     "contradictions": [],
@@ -5863,6 +5896,29 @@
       "Current state of the codebase after recent commits mentioned in comments."
     ],
     "why": "Issue clearly identifies a bug where max_end_user_budget_id is not persisted to DB, causing budget reset to fail. However, an existing PR (#25387) directly addresses this issue but is closed with failing CI and no tests, and a newer PR (#36328) may partially overlap. Maintainer confirmation is needed to decide whether to revive, supersede, or create a new PR."
+  },
+  "17db2bb256066e3e0430df34097be84ed1465ecdd545c45992640c7f2d7a267f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Glob tool output bounding and pagination"
+    ],
+    "risks": [
+      "Duplicating an already-open, technically complete PR"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce with >200 matching files and assert bounded output plus truncation notice"
+    ],
+    "unknowns": [],
+    "why": "Issue describes a concrete, reproducible unbounded-output bug in the Glob tool, but an open PR #2572 already implements the exact proposed fix (default limit 200, hard cap 1000, limit/offset pagination, truncation notice, regression tests) and is technically complete with passing checks. The remaining gap is only root-cause coverage depth, which is a normal review concern, not a distinct contribution opportunity."
   },
   "18219dc3ad2e1d0f504c001fb7f70911dff35e46a8fa56958ee5e1ff77fb55be": {
     "confidence": 0.8,
@@ -35722,6 +35778,44 @@
     ],
     "why": "The issue describes a concrete user-visible bug with a clear repro and expected behavior, but the recent collaborator comment reveals a critical gap: the shared-tier path does not honor clientMessageId, so the proposed idempotent retry is not currently safe. This requires design confirmation on server-side deduplication before implementation. The issue is actionable but not cleanly startable without maintainer input."
   },
+  "8411266fb1b12c9538013e6f615befdec57203cf0f7b6b3f68d34ae7efaab927": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate 'why' describes PEFT/LoRA adapter parameter semantics, but the issue body describes a CUDA invalid-argument failure in custom_all_reduce.cuh:164",
+      "algorithm_evidence lists parameter_efficient_finetuning/model_architecture mechanisms that are not present in the issue content"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "csrc/custom_all_reduce.cuh (line 164 launch/argument validation)",
+      "custom all-reduce backend selection/dispatch for sm_120 + expandable_segments",
+      "possibly vllm/distributed/device_communicators/custom_all_reduce.py guard logic"
+    ],
+    "risks": [
+      "Root cause may be environment-specific (Blackwell sm_120 + expandable_segments + custom all-reduce) and not reproducible on standard CI hardware",
+      "PR #56193 may already fix the same root cause, making a new contribution duplicative",
+      "Repository AI-disclosure policy conflict may block automated contribution regardless of technical merit"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on sm_120 (RTX 5090) with PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True and TP=2, capturing the full traceback and the exact kernel launch arguments at custom_all_reduce.cuh:164",
+      "Compare against PR #56193's diff to determine whether the same root cause is already addressed",
+      "Add a regression test that exercises custom all-reduce init/launch under expandable_segments on supported hardware, or a unit test asserting the guard path is taken"
+    ],
+    "unknowns": [
+      "Full traceback and the specific kernel launch arguments at custom_all_reduce.cuh:164",
+      "Whether PR #56193 covers the same root cause (direct_code_overlap=false, root_cause_coverage=false)",
+      "Whether the failure reproduces without expandable_segments or on non-Blackwell hardware",
+      "Resolution of the repository ai_disclosure_conflict policy status"
+    ],
+    "why": "The issue is a launch-time CUDA 'invalid argument' failure in custom_all_reduce.cuh:164 on an RTX 5090/Blackwell (sm_120) setup with expandable_segments enabled. The supplied evidence does not establish a root cause: the traceback frame is truncated mid-log, no minimal reproduction is provided, and the environment is a heavily customized Qwen3.5/MTP/fp8/FlashInfer stack. The candidate's own 'why' text claims PEFT/LoRA adapter semantics, which contradicts the actual issue content (custom all-reduce kernel launch), so the semantic evidence is internally inconsistent. Additionally, PR #56193 ('Don't abort custom allreduce when expandable_segments is enabled') has strong distinctive overlap (cuda, workspace/csrc/custom_all_reduce.cuh) and may already cover the root cause, but the overlap is unresolved ('semantic_overlap_requires_review', direct_code_overlap=false, root_cause_coverage=false). The repository also has an unresolved ai_disclosure_conflict policy status. These are materially blocking unknowns, not normal implementation uncertainty."
+  },
   "841871ae9fb9c3e69741fc459f04463c4eb77958cf3c72ad4736b667d24abfab": {
     "confidence": 0.85,
     "contradictions": [
@@ -43413,6 +43507,43 @@
     ],
     "why": "The issue provides a detailed root cause analysis with code anchors and measured impact, establishing a clear bug in retract mode's KV release. The suggested fix is concrete and testable, and the existing PRs are incomplete, leaving room for a valuable contribution."
   },
+  "a15a518c58fd63f579f3c5e429487a7166417d550c5acb9eb6deff6c5cc8d6c8": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Reporter suspects automatic agent-team/team_lead initialization; maintainer attributes it to @ file mentions in a problematic workspace",
+      "Merged PR #13960 addresses home/root file indexing but is not linked to this issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "apps/cli/src/session/session.ts",
+      "sdk/packages/core/src/types/session.ts",
+      "file-index/workspace-root handling for $HOME cwd"
+    ],
+    "risks": [
+      "Fixing the wrong path (agent-team init vs @ file mention indexing) leaves the leak",
+      "Merged PR #13960 may already cover the file-index variant, making a new fix redundant",
+      "Reproduction depends on large $HOME and memory pressure, complicating deterministic CI validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with cwd=$HOME and no prompt, measure RSS growth over several minutes",
+      "Regression test asserting no unbounded file-index or agent-team allocation at session start",
+      "Verify --no-teams and a bounded workspace root both stop the growth"
+    ],
+    "unknowns": [
+      "Which code path actually causes the unbounded allocation",
+      "Whether merged PR #13960 already resolves this issue",
+      "Whether the leak reproduces without a large $HOME workspace root"
+    ],
+    "why": "The issue reports a severe startup memory blowup (~18 GB RSS) with kernel OOM evidence and a plausible suspect (auto agent-team init), but the only maintainer comment attributes it to '@ file mentions in a problematic workspace' — a different mechanism than the reporter's suspected agent-team initialization. The supplied evidence does not resolve which path is responsible, and the merged PR #13960 (do not build a file index for home/root) is semantically adjacent but explicitly not linked to this issue, leaving unresolved duplicate/merged-fix coverage."
+  },
   "a160d4a34a405ef96ed00009e26b819a2c6dea4d75a9f906979ca5b662233233": {
     "confidence": 0.85,
     "contradictions": [],
@@ -43780,6 +43911,39 @@
       "Whether maintainers have a preferred fix direction"
     ],
     "why": "Issue reports a regression in tool syntax handling for local Ollama/Qwen3.6 after Cline 4.1.x, but the root cause is not clearly identified. Existing PRs (e.g., #11486, #11937) have semantic overlap but none directly reference this issue, and the issue's primary request is documentation (.clinerules example), which is not a code fix. The deterministic gate is HUMAN_REVIEW, and maintainer design confirmation is needed."
+  },
+  "a2f64fbb09631449f630032a28f86acd9a2a4b2ce82d798a907bc2d47fc35171": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue proposes a one-line default flip, but open PR #40375 already implements the same change, leaving independent contribution space unclear"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/responses/litellm_completion_transformation/custom_tools.py default value",
+      "litellm/responses/litellm_completion_transformation/transformation.py call sites 1554/1604/2582 and custom-tool input default"
+    ],
+    "risks": [
+      "Over-defaulting non-terminal sites could shadow accumulated streamed arguments",
+      "Changing custom-tool empty input to \"{}\" may silently alter unwrap_custom_tool_arguments behavior",
+      "Existing open PR #40375 may already cover the fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting empty tool-call arguments serialize to valid JSON (\"{}\") through the Responses→Chat bridge",
+      "Verify streaming FunctionCallArgumentsDoneEvent emits valid JSON arguments",
+      "Confirm non-terminal sites (streaming_iterator fn_args, completion_extras fallback) are not defaulted"
+    ],
+    "unknowns": [
+      "Whether PR #40375 fully resolves the issue or leaves gaps (e.g., missing regression tests) that justify a separate contribution",
+      "Maintainer preference on the intended default and scope"
+    ],
+    "why": "Issue gives a clear root cause (serialize_tool_call_arguments defaulting to \"\") and concrete code anchors, but an open PR #40375 already directly covers the same code identifier and paths, and the duplicate/coverage status is explicitly human_review_required. Whether independent implementation space remains is unresolved, which materially determines actionability."
   },
   "a31971538e9da5f54868d6462e75893dea2da10bf0e6f938553865de6297cab0": {
     "confidence": 0.85,
