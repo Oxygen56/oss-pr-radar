@@ -31380,6 +31380,40 @@
     ],
     "why": "The issue reports a concrete bug with a traced root cause, but recent comments indicate the root cause may already be fixed on the default branch by merged PR #26871. The open PR #36831 also overlaps semantically. This creates material uncertainty about whether the work is still actionable or already covered."
   },
+  "6d684423a61e1da520c4c5b946f4649d701424b7a35d7693791705c44c1b7d00": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "dspy/streaming/streamify.py: handle GeneratorExit/early close so async_streamer exits without wrapping GeneratorExit in an exception group",
+      "streaming cleanup path: ensure task-group cancellation/exit is treated as normal early-close behavior",
+      "add regression test for partially consuming and aclose()-ing a streamify async stream"
+    ],
+    "risks": [
+      "Fix must not swallow genuine exceptions from the task group or mask real streaming errors.",
+      "Behavior change could affect consumers relying on current exception propagation semantics.",
+      "Maintainer may have a preferred design for task-group lifecycle handling."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's minimal script using a real or mocked LM: consume one StreamResponse, call await stream.aclose(), assert no BaseExceptionGroup and clean exit.",
+      "Add a regression test that partially consumes dspy.streamify output and closes it, asserting no GeneratorExit/BaseExceptionGroup is raised.",
+      "Run targeted dspy streaming tests and static checks for the changed module."
+    ],
+    "unknowns": [
+      "Exact intended semantics for early-close cleanup (normal close vs. cancellation) is not specified by a maintainer.",
+      "Whether a maintainer has an existing design preference for the task-group lifecycle fix."
+    ],
+    "why": "Issue provides a concrete, real-provider reproduction and a specific root cause: async_streamer yields inside an AnyIO task group, so GeneratorExit from aclose() is wrapped in a BaseExceptionGroup. Code anchor dspy/streaming/streamify.py is identified, no duplicate open PR/issue is reported, and a targeted regression test is feasible."
+  },
   "6d72ecbd052e2f464a50a83414e06798ddfde8f7546dde6aa07ee7fa60a20349": {
     "confidence": 0.7,
     "contradictions": [
@@ -59356,6 +59390,37 @@
       "Exact root cause (sampling vs logits vs model code) not yet identified; maintainer preference for fix approach unknown."
     ],
     "why": "Issue provides a clear regression: 0.5.17 breaks generation for Qwen3.5-arch model, while 0.5.6.dev works. Detailed repro steps and isolation (with/without DFLASH, parser, tools) confirm a generation-level bug independent of speculative decoding. Code anchors point to qwen3 model files. Actionable fix path: add failing test and debug logits/sampling path."
+  },
+  "d38468962b55ad6afda6bce9a3a2a15e5957b5fb557717b3c272877bb0cbd241": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue reports GELU_TANH unsupported in CPU fused MoE, while collaborator comment states merged #42027 already added it to _CPU_MOE_ACT_FN"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new change warranted for the reported CPU fused-MoE GELU_TANH assertion; it is covered by merged #42027"
+    ],
+    "risks": [
+      "Duplicating already-merged fix #42027",
+      "Acting on unverified INT8/XPU claims from a non-maintainer comment",
+      "Repository AI disclosure conflict blocks public submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If pursuing residual INT8/XPU gaps, first reproduce GELU_TANH failure in moe_int8.cpp / XPU fused_moe_interface on current main before writing code"
+    ],
+    "unknowns": [
+      "Whether INT8 moe_int8.cpp and XPU fused_moe_interface still lack GELU_TANH on current main",
+      "Whether the Phi-mini-MoE dtype mismatch is already tracked"
+    ],
+    "why": "The issue's root cause is clear (missing MoEActivation.GELU_TANH in the CPU fused-MoE dispatch table), but a collaborator comment states it was already fixed by merged PR #42027, which added GELU_TANH to _CPU_MOE_ACT_FN plus CUTLASS/WNA16 backends. The remaining INT8/XPU gaps are speculative and not established by the supplied evidence, so the original opportunity is covered."
   },
   "d3943dd9d9136a25c506cd10e06699af7511947b89b3e64728e7608c1a025883": {
     "confidence": 0.85,
