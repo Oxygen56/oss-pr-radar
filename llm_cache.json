@@ -11591,6 +11591,40 @@
     ],
     "why": "Issue clearly identifies a user-visible bug where manual thread renames are overwritten by Observational Memory's auto-generated titles. Root cause is precisely located in three OM strategies that unconditionally update titles, with no distinction between manual and generated titles. Proposed fix is concrete: add a pinned flag in thread metadata, set it on rename, clear on regenerate, and centralize title-update logic. Test surface is specified. No blocking unknowns; open PR #23039 has only semantic overlap on one file and does not cover the root cause."
   },
+  "2bc6e7e39fe1b427ce26ba10ca9574c0e1f4be80df8e41c67a7b5956539a9ae3": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge adapter delta into base weight and reinitialize A/B (Kaiming/zeros) for a true ReLoRA restart, or rename the feature and correct the docstring",
+      "src/soup_cli/utils/relora.py: replace strict threshold mask with deterministic exact-count selection (topk/stable-order) so prune_ratio < 1 always retains the requested entries",
+      "Optimizer-state reset should target optimizer moments rather than learned adapter weights"
+    ],
+    "risks": [
+      "Claim A is partly a maintainer contract decision (implement real restarts vs rename feature); a partial fix implementing only half of the restart would be worse than either option",
+      "Tie scenario is constructed; production frequency of Claim B is unmeasured, though freshly-initialized all-zero lora_B is a natural tie",
+      "Quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume need explicit support or loud rejection to avoid partial restarts"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: with random non-zero LoRA factors, assert the effective linear map is preserved across merge/reinitialization to numerical tolerance (control MSE ~1e-13)",
+      "Unit test: constant-magnitude A and B with prune_ratio=0.9 must retain exactly the requested keep count and leave both factors non-zero",
+      "Regression test: assert grad-norm of lora_A and lora_B is non-zero after a restart, proving the branch cannot be zeroed into a dead state",
+      "Kernel-level test: ones(10) with prune_ratio=0.9 must yield 1 survivor, matching arange(1..10) behavior"
+    ],
+    "unknowns": [
+      "Which of the two coherent contracts (real ReLoRA restart vs rename to periodic LoRA weight pruning) the maintainer will accept, since the issue explicitly leaves this open"
+    ],
+    "why": "Issue identifies two concrete, separable defects in src/soup_cli/utils/relora.py: (A) _prune_and_reset prunes lora_A/lora_B without merging B@A into the base weight, contradicting the module docstring's ReLoRA conformance claim; (B) strict threshold comparison (abs(t) > threshold) can zero both factors under ties, producing a dead zero-gradient branch. Maintainer confirmed both claims with measured evidence (base weight delta 0, effective-map MSE 142.12 vs 8.77e-13 control; nonzero A/B = 0 with grad-norm 0.0)."
+  },
   "2bd27863d39fa51332d0dac529218d24971ac99bb7012d10abf057dd4fb06ae0": {
     "confidence": 0.7,
     "contradictions": [],
@@ -27042,6 +27076,42 @@
     "wait_reason": null,
     "why": "Issue clearly identifies a missing event emission for scheduled turns in ACP, with a concrete reproduction timeline and two actionable fix options. No competing PR or issue found; PR #2906 is keyword-only and not a material competitor. The fix is a targeted runtime behavior change with a clear test path."
   },
+  "61b1f46e018ac0cfe9572a453b5b5eb0e07f1ac72f39f29b83b2549644a42d71": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/trainer/sft.py: invoke shared v028 helper after LoRA application, avoiding duplicate Cut-CE/FP8 application",
+      "src/soup_cli/utils/v028_features.py: optionally split pre-load/post-load halves or add skip flag for SFT",
+      "src/soup_cli/config/schema.py: add nvfp4 (and explicit fp8_attention) to supports_v028_features offender list so unsupported tasks reject at parse",
+      "tests/test_trainer_coverage_v035.py: replace two-feature SFT exemption with per-flag coverage assertion"
+    ],
+    "risks": [
+      "Cut-CE double application if the helper is called post-load without skipping SFT's pre-load patch",
+      "Vision/audio/streaming SFT branches may need separate handling or explicit rejection",
+      "Potential overlap with issue #826 (nvfp4/torchao class-name lookup) could cause scope confusion, though #826 addresses a different failure mode (torchao export names) and does not cover the SFT wiring gap"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: run SFTTrainerWrapper setup on a tiny CPU model with apply_nvfp4/apply_fp8_attention monkeypatched to record calls; assert both are called (fails on current main).",
+      "Regression: count apply_cut_ce invocations on SFT to assert exactly-once application.",
+      "Config-load test: nvfp4: true on task: distill (and other non-applying tasks) must fail at load with a message naming the task.",
+      "Coverage test: for each flag read by the helper, every supported trainer must reach the helper or read the flag itself."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer splitting the helper vs. a skip flag for SFT",
+      "Whether vision/audio/streaming SFT branches should be wired or rejected"
+    ],
+    "why": "Issue pinpoints a concrete wiring defect: apply_v028_speed_memory is the sole reader of training.nvfp4/fp8_attention/kernel_auto_compose, is called by 11 trainers, but not by trainer/sft.py (the default task), so the flags are silently accepted and never applied. It supplies grep evidence, line anchors, a config-load reproduction showing nvfp4 accepted on 7 tasks that never apply it, and a stale test exemption that only checks two of the helper's features. This is a verifiable mechanism-level defect with a concrete reference-vs-implementation validation path (patch apply_nvfp4/apply_fp8_attention to record calls, assert invocation on tiny CPU model; count apply_cut_ce calls to prevent double application)."
+  },
   "61b53de0524adf45e1eeff4664cfbce37dc6ce3544f8b6266b8211d5d2395f0a": {
     "confidence": 0.85,
     "contradictions": [],
@@ -32112,6 +32182,40 @@
       "Exact code location where the router constructs the request model name; whether the fix should strip the user. prefix or align the router to use the full served name."
     ],
     "why": "The issue clearly identifies a model name mismatch between the vLLM subprocess (served-model-name with user. prefix) and the lemonade router forwarding requests with the bare model name, causing 404 and silent failure. This is a concrete, reproducible bug with logs and multiple user confirmations."
+  },
+  "72801ad5b35e97bc10a2278b035ba90f4d64768c9e6ec563c2038abd10c5d2b7": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/peft_wiring.py: make build_lora_config_kwargs the single LoRA construction path",
+      "src/soup_cli/trainer/*.py: route dpo, kto, grpo, orpo, simpo, ipo, bco, asr, classifier, reward_model, embedding, distill, ppo, unlearn, stream_setup, vision/audio SFT through the shared builder",
+      "src/soup_cli/schema.py: reject rank_pattern/alpha_pattern on paths that cannot honour them, mirroring _validate_lora_target_parameters_scope"
+    ],
+    "risks": [
+      "Refactoring 18 construction sites risks changing task_type or target-module resolution per wrapper",
+      "unlearn.py already drops target_modules/DoRA/rsLoRA, so its fix may require rejection rather than wiring",
+      "Behavior change for users who relied on uniform rank on DPO/GRPO"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build DPO LoRA on a tiny random-init CPU model with rank_pattern {q_proj: 4} and assert q_proj.lora_A has 4 rows (currently 16)",
+      "Add a source scan over trainer/*.py failing when LoraConfig( is constructed outside the shared builder",
+      "Regression: SFT text path still honours rank_pattern/alpha_pattern after refactor",
+      "Config-load test asserting a clear rejection message for paths that cannot honour the pattern"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer wiring all paths versus rejecting the fields on non-SFT tasks",
+      "Whether any of the 18 sites has a documented reason to omit patterns"
+    ],
+    "why": "Issue pinpoints a concrete wiring defect: build_lora_config_kwargs forwards rank_pattern/alpha_pattern but is only called by SFT text and pretrain paths, while 18 other trainer sites construct peft.LoraConfig by hand, so DPO/KTO silently train q_proj at r=16 despite config r=4. Reproduction with tiny CPU Llama and adapter-shape inspection is supplied, and the sibling target_parameters validator shows the intended scope-gating pattern."
   },
   "728fd9dfee48442beceb511650a5e8f905a21872d61ac0ece3b1f88a92d1ef48": {
     "confidence": 0.85,
@@ -37832,6 +37936,42 @@
       "Exact workflow file and checkout configuration details"
     ],
     "why": "Issue identifies a real intermittent CI failure with a clear root cause (uv resolution due to missing git tags) and a proposed fix (fetch tags or promote pre-warm warning to error). However, the deterministic gate requires HUMAN_REVIEW, and the issue is a bug report without maintainer confirmation or assignment. Existing PRs are merged but do not address the root cause, so a new PR could be valuable, but maintainer direction is needed."
+  },
+  "872d8dcf44d298b5fc45743865509c7a6a0affcf876412d9feb54880f09c39c0": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/core/openaiResponsesContentGenerator/responses-converter.ts: treat reasoning+function_call as an atomic unit in cleanOrphanedFunctionCalls",
+      "packages/core/src/core/openaiResponsesContentGenerator/responses-reasoning-rejection.ts: keep or remove the following function_call when downgrading/removing reasoning items",
+      "packages/core/src/core/openaiResponsesContentGenerator/responses-pipeline.ts: ensure recovery retry does not emit dangling reasoning or function_call items"
+    ],
+    "risks": [
+      "Behavior change in request rewriting could affect other provider paths if the atomicity rule is applied too broadly",
+      "Maintainer may prefer a different representation for the reasoning/function_call pairing",
+      "Existing test at responses-pipeline.test.ts:2151 currently pins the dangling shape as correct and must be updated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test for orphan cleanup of [reasoning, function_call] when the call output is missing",
+      "Add ID-rejection recovery tests for reasoning with visible summary and signature-only reasoning",
+      "Add encrypted-content rejection recovery tests for the same two shapes",
+      "Add control tests for unaffected reasoning/message and complete reasoning/call/output sequences",
+      "Run targeted unit tests for responses-converter and responses-pipeline plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference for how reasoning/function_call atomicity should be modeled",
+      "Whether the merged PR #8169 base dependency introduces any additional constraints on the fix"
+    ],
+    "why": "Issue pinpoints two concrete transformations in the OpenAI Responses pipeline (cleanOrphanedFunctionCalls and downgradeRejectedReasoningItems/downgradeEncryptedReasoningItems) that independently drop one half of the reasoning/function_call adjacency pair, with exact file/line anchors verified against main. Root cause is a single shared invariant violation, and the issue supplies a deterministic loopback probe plus a clear regression matrix (orphan cleanup, ID-rejection, encrypted-rejection, and unaffected controls)."
   },
   "87635905c09f900974b97c2f375ea1e4e856bf9f2724a1d78dc0320829d3afad": {
     "confidence": 0.82,
@@ -44095,6 +44235,32 @@
     ],
     "why": "Issue clearly identifies a bug in BedrockEmbedding where additional_kwargs are ignored for Cohere models, with a concrete repro and root cause in _get_request_body. However, the deterministic gate requires HUMAN_REVIEW and design confirmation is needed, so work should wait for maintainer guidance."
   },
+  "9f0cdf04137a0537eb9cd4d1f24114e7636651298badf9f451c3dd78593a9199": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate expected_changes describes streaming chunk/finish/tool-call state propagation, which does not match the reported non-streaming max_tokens rejection."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Attempting an SDK-side workaround (e.g. silently capping or rewriting maxOutputTokens) would mask a backend regression and change documented API behavior."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No in-repo regression test is possible; the failing behavior is served by the hosted gateway backend, not by SDK code paths."
+    ],
+    "unknowns": [
+      "Whether the gateway backend source is available in any repository this workflow can modify."
+    ],
+    "why": "The supplied reproduction evidence establishes the defect lies in the Vercel AI Gateway backend (ai-gateway.vercel.sh), not in the vercel/ai SDK repository: gateway-language-model.ts forwards maxOutputTokens unchanged and create-gateway-error.ts merely maps the backend's invalid_request_error. Raw curl reproduces the 400 without the SDK, and direct Anthropic calls succeed, so no actionable code change exists in this repo."
+  },
   "9f0d606c4a53adc4578c9a4403b2fd8f18586eef56cc188ded6a4fc79e162de2": {
     "confidence": 0.7,
     "contradictions": [],
@@ -47999,6 +48165,38 @@
       "Whether maintainers will provide the required artifacts and legal audio; no active assignee or confirmed provisioning plan."
     ],
     "why": "The issue is an evidence/ops completion task, not a code contribution. The implementation gap is already closed by commit 23b875ff7f8, and the remaining work requires human-provided artifacts (ASR bundle, fused library) and legal audio staging. No new code change is actionable without those prerequisites."
+  },
+  "af14f7d278c0511e454d90474ac89e2b78725dca9ee80b647b1debe84075f05c": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/mocker.rs: gate model-card publication on engine startup completion / generate endpoint readiness",
+      "lib/llm/src/http/service/generate.rs: ensure /v1/models listing reflects readiness state",
+      "discovery/model-card publication path: reuse existing NotReady→Ready transition instead of publishing at engine creation"
+    ],
+    "risks": [
+      "Changing publication timing could affect non-disagg or non-mocker deployments if the gate is applied too broadly",
+      "Maintainer may prefer a different readiness signal or a frontend-side filter rather than gating publication in the mocker",
+      "Existing tests may assume immediate model listing after engine creation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a mocker disagg decode with a nonzero startup-time and asserts the model is absent from /v1/models until startup completes",
+      "Assert requests sent before startup completion do not hang/timeout once listing is gated",
+      "Run targeted unit tests for the mocker and generate service packages plus static checks"
+    ],
+    "unknowns": [
+      "Exact code location where model-card publication is triggered relative to engine startup in the current base SHA",
+      "Whether maintainers want the gate in the mocker, the discovery layer, or the frontend"
+    ],
+    "why": "Issue provides a concrete, reproducible readiness-contract bug in disaggregated mocker mode: model card is published at engine creation before the decode worker's startup simulation completes, so /v1/models advertises a model that cannot serve. Root cause is clearly identified (publication not gated on the existing NotReady→Ready transition), with a detailed timeline, repro steps, and code anchors (mocker.rs, generate.rs, discovery paths). This is a runtime/readiness behavior fix, not an algorithm contribution, so the llm_algorithm exclusion does not apply."
   },
   "af2972684a884a641f4ac0773b64caa129e783914c0659ab52bfb1b4a8ab0ac7": {
     "confidence": 0.85,
@@ -56276,6 +56474,42 @@
     ],
     "why": "The issue identifies a concrete root cause: a data-dependent RuntimeError in _adjust_embedding_length during multimodal chunked prefill kills the entire scheduler process via SIGQUIT, amplified by client retries across nodes. The proposed fix (abort request instead of server) is actionable and testable, with clear reproduction evidence and a related issue (#37968) pointing to a specific offset bug."
   },
+  "cc9accb934572a0bd63827dfbf2a1349b149640ceaa235668b082b7599f3bc63": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims no root cause, yet candidate.actionability_evidence sets root_cause_signal=true",
+      "Issue states no PR is being opened, while open_pr_assessment lists overlapping open PRs on the same file"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/dflash.py (DFlash2DraftModel / CandidateSelector weight loading)",
+      "python/sglang/srt/arg_groups/serving_hook.py (draft quantization defaulting / warning)"
+    ],
+    "risks": [
+      "Root cause may be in compressed-tensors loading rather than DFlash2 code, changing the fix location",
+      "PR #37462 touches the same dflash.py path and may already cover or conflict with the fix",
+      "Acceptance-rate collapse could be confounded by the serving_hook quantization-default footgun rather than a loading bug"
+    ],
+    "root_cause_clarity": "low",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the two listed drafters (BF16 z-lab vs compressed-tensors syvai) at fixed seed and compare accept len/rate counters",
+      "Add a numerical regression asserting CandidateSelector codebook/hidden_projection values match the unquantized reference after load"
+    ],
+    "unknowns": [
+      "Whether PR #37462 or #38383 already fixes or subsumes the quantized-draft acceptance failure",
+      "Whether the failure is in compressed-tensors weight loading or in the serving_hook quantization default",
+      "Whether the CandidateSelector codebooks are actually loaded incorrectly (hypothesis untested)"
+    ],
+    "why": "Issue is a read-only report explicitly stating the author has not root-caused the failure; the leading hypothesis (compressed-tensors loading of CandidateSelector codebooks/hidden_projection) is untested, and the suggested mitigation is only a boot warning. The supplied duplicate assessment also flags PR #37462 (LiLiCorr reranker, overlapping python/sglang/srt/models/dflash.py) as semantic overlap requiring review, so coverage of the root cause is unresolved."
+  },
   "ccc29486782af47e01b7954a01d003571797600e189a59dc7788e2a161a9deee": {
     "confidence": 0.85,
     "contradictions": [
@@ -60707,6 +60941,44 @@
     ],
     "wait_reason": null,
     "why": "Issue reports a concrete streaming protocol violation (missing finish_reason and [DONE]) with a clear repro and expected/actual pair, affecting agentic clients. No competing PR addresses it; the suggested fix is actionable and testable."
+  },
+  "daf42d80e29e33752751252aa061efc33ea626806894b828aee561273221b7b9": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue asserts the proxy lacks a DSML extractor, while the maintainer comment frames it as a model-side known issue under investigation",
+      "Candidate marks probe_ready=true and reproduction evidence present, yet root_cause_signal=false and rootCauseCoverage=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Hosted proxy / OpenAI-compatible wrapper DSML extraction path",
+      "DeepSeek variant token normalization (full-width vs ASCII DSML envelopes)",
+      "Tool-call payload mapping before delivery to the extension client"
+    ],
+    "risks": [
+      "The proxy layer may be closed-source/out of this repository, making the fix non-actionable here",
+      "Maintainer indicates the model itself emits malformed tool calls, so a client-side parser fix may be partial",
+      "Closed PR #13939 may already cover or supersede this work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with cline:deepseek-v4-flash-0731 in Act Mode and capture raw streamed deltas to confirm DSML leakage",
+      "Add a parser unit test feeding raw <｜DSML｜tool_calls> and <||DSML||...> variant envelopes and asserting valid tool_calls output",
+      "Verify against the closed PR #13939 to determine whether the fix is already covered or was rejected"
+    ],
+    "unknowns": [
+      "Whether the api.cline.bot proxy/parser code lives in this repository or is closed-source",
+      "Whether closed PR #13939 already implements or was rejected as the fix",
+      "Which exact code path handles DSML extraction for the hosted provider"
+    ],
+    "why": "The issue describes a plausible DSML tool-call parsing failure on the hosted api.cline.bot proxy, but the root cause is not established: the reporter's diagnosis (missing --tool-call-parser deepseek_v4 on the proxy) is speculative, and a maintainer comment states this is 'partially a known issue' where the model itself generates strange tool-call output and that they are investigating. The candidate's own actionability evidence has root_cause_signal=false and rootCauseCoverage=false, and the codePathsPlan points at unrelated node.ts files rather than the proxy/parser path. Additionally, PR #13939 ('fix(llms): parse leaked DeepSeek DSML tool calls') is CLOSED with reference_relation=COVERAGE and semantic_overlap_count=8, so duplicate/merged-fix coverage is unresolved and requires human review."
   },
   "daf4ffc1bc6eb9675dd230a152a99f7179e46868bb6766f233747dced2ffea11": {
     "confidence": 0.8,
