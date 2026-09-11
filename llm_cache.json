@@ -39735,6 +39735,39 @@
     ],
     "why": "Issue identifies two concrete, separable defects in ReLoRACallback._prune_and_reset: (A) adapters are pruned without merging B@A into the base, changing the effective linear map (MSE 142.12 vs control 8.77e-13), contradicting the module docstring's ReLoRA conformance claim; (B) strict '>' thresholding wipes tied magnitudes, zeroing both factors and producing zero gradients. Maintainer confirmed both halves with real peft model evidence and labeled bug/help wanted, unclaimed."
   },
+  "8d5a206effdbcd6d048ecac487da859a88e0e99060ca3bfd7306d952a485e341": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "lib/llm/src/mocker.rs: gate model-card publication on engine startup completion / generate endpoint readiness",
+      "lib/llm/src/http/service/generate.rs: ensure /v1/models listing reflects endpoint health status",
+      "lib/llm/src/protocols/openai/generate.rs and sglang/generate.rs: model card discovery timing if applicable"
+    ],
+    "risks": [
+      "Changing publication timing could affect non-disagg or prefill model discovery behavior",
+      "Existing tests may assume immediate model-card publication at engine creation",
+      "Draft PR #14 (maintainer-owned) touches the same v1_models area and may overlap"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a mocker disagg decode with a nonzero startup_time and asserts the model is absent from /v1/models until startup completes",
+      "Assert requests sent before startup completion do not hang past client timeout once listing is gated",
+      "Run targeted unit tests for the mocker and frontend discovery packages plus static checks"
+    ],
+    "unknowns": [
+      "Whether draft PR #14 will be merged and supersede this work",
+      "Exact code location where model-card publication is triggered relative to endpoint health"
+    ],
+    "why": "Issue provides a concrete, reproducible readiness-contract bug in dynamo.mocker disaggregated mode: model card is published at engine creation before the decode worker's startup simulation completes, so /v1/models advertises a model that cannot serve. Root cause is identified (publication not gated on the existing NotReady->Ready endpoint health transition), with a clear repro timeline and suggested fix. This is runtime/discovery plumbing in an inference infra repo, not an llm_algorithm track, so the algorithm gate does not apply."
+  },
   "8d73ab97940c4a949d426b6c2547f627eb612d9ae52cefc5d21fe5356a74234b": {
     "confidence": 0.7,
     "contradictions": [
@@ -46353,6 +46386,29 @@
       "Whether the issue is a bug in quantization implementation or expected model behavior; maintainer's stance on desired fix."
     ],
     "why": "Issue reports q4_0 KV cache causing degenerate output on small models, but root cause is not confirmed; maintainer suggests it may be model unsuitability and points to a PR for per-model overrides. No concrete code path or algorithm change is proposed."
+  },
+  "a776595f434d29112b31bcc0c29d5068ad291450307bf03b9e74a202f028fc7e": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate labels this as an open actionable bug, but the reporter's comment states it is resolved by upgrading past 0.27.1."
+    ],
+    "evidence_ids": [
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Any new PR would duplicate already-merged fix #51413 and the overlapping open PR #56319."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No new test needed; reporter verified on 0.29.0 that 'Total CPU offloaded parameters: 8.02' is logged and the model loads."
+    ],
+    "unknowns": [],
+    "why": "Issue is self-resolved by the reporter: root cause was a missing set_offloader call in the 0.27.1 release, already fixed by PR #51413 and verified working on 0.29.0. Reporter explicitly says 'Fine to close.' No remaining code work is actionable."
   },
   "a7b1b1eb06f03cefedb27ecd538e5fac8c5d5dd6009430917791d62430acd750": {
     "confidence": 0.85,
