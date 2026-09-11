@@ -100,6 +100,38 @@
     ],
     "why": "The issue describes a streaming truncation bug in the chat completion API when both content and tool_calls are present. It is a usage/API behavior issue, not an LLM algorithm mechanism. The suggested fix is to flush pending text tokens before switching to tool calls, which is a streaming logic fix, not a training objective, model mechanism, or numerical method. The track requires concrete algorithm validation, which is absent."
   },
+  "00b72d490b233d05f8026529233e1a9bd3c92c7c17e37b5d4daba37bd48e3657": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/mocker.rs: gate model-card publication on engine startup completion / generate endpoint readiness",
+      "lib/llm/src/http/service/generate.rs: ensure /v1/models listing reflects readiness state",
+      "lib/llm/src/protocols/openai/generate.rs and sglang/generate.rs: propagate readiness into model-card discovery"
+    ],
+    "risks": [
+      "Changing model-card publication timing could affect frontend discovery/rolling-update behavior beyond the mocker path",
+      "Readiness gating must not deadlock or permanently hide models if the health transition never fires",
+      "Maintainer may prefer a different gating point (worker registration vs. endpoint health)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a mocker disagg decode with a nonzero --startup-time and asserts the model is absent from /v1/models until startup completes, then present afterward",
+      "Reproduce manually: deploy mocker 2P1D with decode --startup-time 300, poll /v1/models, confirm it appears only after the NotReady→Ready transition",
+      "Run targeted unit tests for the mocker and frontend discovery packages plus static checks"
+    ],
+    "unknowns": [
+      "Exact code location where model-card publication is triggered relative to engine creation is not shown in the supplied evidence"
+    ],
+    "why": "Issue provides a concrete, reproducible readiness-contract bug: mocker publishes the model card at engine creation, before the decode worker's --startup-time simulation completes, so /v1/models advertises a model that cannot serve. Root cause is identified (model-card publication not gated on the existing NotReady→Ready generate-endpoint health transition), with a timestamped timeline, ordered repro steps, and code anchors (dynamo.mocker, startup_time, generate). No open PR directly covers the fix; the only overlapping PR is a draft with no code-path overlap."
+  },
   "00c9397a1dee8e1b96a6c6b79f2e6fa2efbda282b40ad9f0b446776f367ea63e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -36224,6 +36256,38 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue describes a concrete LLM algorithm bug (int16 overflow at position 32768 in GDN/MTP speculative decoding) with a clear reproducer and metrics, but the supplied evidence flags a potential duplicate issue #37035 sharing stack signatures and an open PR #48792 with semantic overlap on gdn_attn.py. The deterministic gate is HUMAN_REVIEW, and the candidate's own assessment requires manual comparison before action. No maintainer approval or assignment is present, and the root cause is hypothesized but not confirmed."
   },
+  "8051dc1b2f6d994f34f39197502da2191080677782508897114fd7ea19497579": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue body presents GELU_TANH as missing/unsupported, while collaborator comment says merged #42027 already added it to _CPU_MOE_ACT_FN"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new code work justified for the Python CPU fused-MoE dispatch table; it is already covered by merged #42027"
+    ],
+    "risks": [
+      "Duplicating already-merged fix #42027",
+      "Speculative INT8/XPU claims from an unverified comment could lead to wasted or incorrect work",
+      "Repository AI-disclosure policy conflict blocks automated public action"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If pursuing residual INT8/XPU gaps, first verify whether moe_int8.cpp and XPU fused_moe_interface still lack GELU_TANH on current main, then add a targeted activation-mapping test"
+    ],
+    "unknowns": [
+      "Whether INT8 (moe_int8.cpp) and XPU fused_moe_interface still lack GELU_TANH on current main",
+      "Whether the issue has been formally closed as fixed-by-#42027"
+    ],
+    "why": "The issue's root cause is clear (missing MoEActivation.GELU_TANH in _CPU_MOE_ACT_FN), but a collaborator comment states it was already fixed by merged PR #42027, which added GELU_TANH to the CPU fused-MoE dispatch table plus CUTLASS/WNA16 backends. The remaining INT8/XPU gaps are speculative and not established by supplied evidence. This is a covered, low-value opportunity."
+  },
   "8104d17ad6dcf3d4728bc247484b41165889229c90b5dda85e4c2900807f8668": {
     "confidence": 0.85,
     "contradictions": [],
@@ -59706,6 +59770,37 @@
     ],
     "why": "Issue describes a real user-visible bug with a concrete repro and expected behavior, but the proposed fix (client-side bounded retry) is undermined by a collaborator's finding that the shared-tier path does not honor clientMessageId, so idempotency is not guaranteed. This requires design confirmation on server-side deduplication or a narrower retry scope before implementation."
   },
+  "d62b1ffbeebd81201f62c415ca190b3b6e6242d08161303ee76aa79cb549f747": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docker/Dockerfile.database: bump LITELLM_BUILD_IMAGE and LITELLM_RUNTIME_IMAGE wolfi-base digests",
+      "docker/Dockerfile.database: optionally add UV_PYTHON_DOWNLOADS=never to make interpreter selection fail fast"
+    ],
+    "risks": [
+      "Digest bump may pull in other Wolfi package changes requiring further pinning",
+      "UV_PYTHON_DOWNLOADS=never could break environments relying on uv-managed interpreters",
+      "Runtime image digest must stay consistent with build image to avoid new glibc drift"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run `docker build -f docker/Dockerfile.database -t litellm-test .` on linux/amd64 and confirm apk add and uv sync succeed",
+      "Run the built image and verify `/app/.venv/bin/python` resolves and `import litellm` succeeds",
+      "Compare venv python symlink target against published litellm-database:v1.96.0 image"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer digest bump vs. pinning apk package versions",
+      "Whether UV_PYTHON_DOWNLOADS=never is acceptable as a default in this Dockerfile"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: pinned wolfi-base digest has drifted from current apk python3 packages, causing both the apk trigger failure and the uvloop source-build failure; the suggested fix (bump LITELLM_BUILD_IMAGE/LITELLM_RUNTIME_IMAGE digests, optionally set UV_PYTHON_DOWNLOADS=never) is specific and testable via docker build and runtime import check."
+  },
   "d670f8b9eb6f0a067b371f5892a1b2560c051ac6fbc7ba970acf731461c052fe": {
     "confidence": 0.7,
     "contradictions": [
@@ -62951,6 +63046,41 @@
       "No public reproduction script is provided, but the code path is clear and testable."
     ],
     "why": "The issue precisely identifies a gap in the FC agent runner where a terminal answer with zero tool calls is accepted when tools were offered, and the code path is confirmed by maintainer bot with exact line references. The proposed fix (detect empty tool_responses and function_call_state False with non-empty prompt_messages_tools, then error or retry) is actionable and testable."
+  },
+  "e0a4717c102e647a9d8bf5314b402c8f11e5070cfe17357337960445a679a0ca": {
+    "confidence": 0.6,
+    "contradictions": [
+      "candidate.open_pr_assessment reports semantic_overlap_requires_review while candidate.actionability_evidence reports root_cause_signal=false and probe_ready=true"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py: reasoning_effort handling for gpt-4.1/gpt-4o families",
+      "drop_params behavior in get_optional_params for unsupported reasoning_effort"
+    ],
+    "risks": [
+      "PR #40732 may already implement the same fix, making this a duplicate",
+      "Changing drop_params semantics could affect other unsupported-param cases",
+      "base_sha_changed indicates the branch base is stale"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) and assert current silent drop",
+      "Add regression test asserting UnsupportedParamsError or forwarded param for gpt-4.1/gpt-4o under drop_params",
+      "Run targeted unit tests for get_supported_openai_params and drop_params paths"
+    ],
+    "unknowns": [
+      "Whether PR #40732 actually fixes the gpt-4.1/gpt-4o reasoning_effort drop or only the OCI path",
+      "Whether maintainers have a preferred behavior (forward vs raise) for this case",
+      "Current base SHA after base_sha_changed"
+    ],
+    "why": "Issue describes a concrete user-visible defect with reproduction steps and code anchors, but the supplied evidence contains a materially blocking unknown: an open PR (#40732) with semantic overlap on reasoning_effort/gpt-4o and no direct issue reference, so it is unresolved whether that PR already covers the root cause. The candidate's own duplicate status is 'semantic_overlap_requires_review', and the pre-review gate failed with base_sha_changed, so actionability cannot be confirmed from the supplied evidence alone."
   },
   "e0edf25a86ce5e6ecc5454c4789fd4418f598e652db461da93374e83682d103b": {
     "confidence": 0.85,
