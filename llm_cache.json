@@ -6228,6 +6228,40 @@
     ],
     "why": "The issue provides a detailed, reproducible deadlock in the ring backend of mx.distributed, with root cause localized to socket-level exchange races. It includes minimal repro scripts, statistical failure rates, and stack traces from a second reporter, making it actionable for a kernel-level fix."
   },
+  "18cb596a8951369b2a8cc9b7c513bd20234ee9e6c95f9f92055675c883e4c4fb": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "mlx/distributed/ring backend socket exchange / collective synchronization",
+      "mlx/distributed/utils.cpp chunking or rendezvous logic",
+      "python/mlx/utils.py average_gradients communication_stream handling"
+    ],
+    "risks": [
+      "Deadlock is probabilistic (~3-4%/collective), so a passing short test does not prove the fix",
+      "Distinguishing a genuine ring-backend race from Metal watchdog timing requires multi-host hardware",
+      "Fix may need to touch both CPU-stream and GPU-stream paths"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run cpu_stream_loop_repro.py at >=3 ranks with fixed seed and synthetic gradient tree; loop hundreds of collectives and assert no hang within a bounded timeout",
+      "Run gpu_stream_repro.py with injected rank skew and confirm no kIOGPUCommandBufferCallbackErrorTimeout",
+      "Add a regression test that repeats all_sum/average_gradients in a loop at >=3 ranks and fails on timeout"
+    ],
+    "unknowns": [
+      "Exact root cause inside the ring socket exchange is not yet isolated to a specific code line",
+      "Whether the mlx_lm.server _share_object hang and the training-loop hang share one underlying defect"
+    ],
+    "why": "Issue reports a reproducible probabilistic deadlock in the ring backend's socket-level all_sum exchange for large payloads, with two independent reproductions (self-contained synthetic-gradient script and a py-spy stack trace from mlx_lm.server) both parking inside mx.distributed.all_sum. This is a concrete distributed-training invariant failure with a clear validation path (loop the collective at >=3 ranks and detect the hang), not installation/CLI/docs plumbing."
+  },
   "18ee1c2743e208f4c0beb3b6c8c52ae9be3acc5db0ccbed7248c9f81be7489a2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -14389,6 +14423,34 @@
     ],
     "why": "Issue clearly identifies a platform-conditional bug in MiniMAXGemmaRMSNorm with a concrete root cause and reproduction. However, a maintainer comment indicates the current per-platform design is intentional, and the existing PR #45881 is a draft with missing tests. The proposed fix (shared fallback) requires design confirmation from maintainers, making it not yet actionable."
   },
+  "3745213ee29fded825c8fbbe4465a4933d6fec506ebad659bb3f01d354e7e0cf": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Gate model-card publication / /v1/models listing on engine startup completion and generate-endpoint health (NotReady→Ready) in the mocker/discovery path",
+      "Add a regression test asserting the model is absent from /v1/models until startup completes"
+    ],
+    "risks": [
+      "Changing listing semantics could affect other discovery consumers or rolling-update behavior",
+      "Maintainer may prefer a different gating mechanism than the suggested NotReady→Ready reuse"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Deploy mocker disagg 2P1D with decode --startup-time 300; poll /v1/models and assert the model is not listed until the decode logs startup completion",
+      "Send inference requests during the startup window and assert they do not hang/time out once the fix gates listing",
+      "Run targeted unit tests for the mocker/discovery module and static checks"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a concrete, reproducible readiness-contract bug: mocker publishes the model card at engine creation, before the decode worker's startup simulation completes, so /v1/models advertises a model that cannot serve. Root cause is identified (publication not gated on the existing NotReady→Ready transition), code anchors and a step-by-step repro are supplied, and a minimal fix path exists. No duplicate/merged fix covers it; the only overlapping PR is an unrelated draft."
+  },
   "374ec8d80e93166ae01417cf18575a81b5e5bb88146b7fd31afcb7dc4da85612": {
     "confidence": 0.6,
     "contradictions": [],
@@ -17894,6 +17956,40 @@
       "Exact maintainer preference on whether to include schema_path/json_path or just validator; whether the fix should be applied to both v1 and v2 branches."
     ],
     "why": "The issue clearly identifies a root cause: Server.call_tool() discards structured jsonschema.ValidationError fields, leaving only a free-text message. The suggested fix is concrete and actionable: forward e.validator, e.schema_path, and e.json_path into a structured data field in the error result. This is a local fix in the SDK's error handling, with a clear validation path via unit tests and a provided repro offer."
+  },
+  "43a954a299ee89b821e25ed621f1590475079d2582c0263404b3d635e2809d85": {
+    "confidence": 0.6,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue body provides a clear code path and reproduction",
+      "open_pr_assessment reports semantic overlap requiring review while duplicate status is unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py: decide whether reasoning_effort should be forwarded or raise UnsupportedParamsError under drop_params for non-reasoning models",
+      "drop_params handling path for openai/azure chat completions"
+    ],
+    "risks": [
+      "Open PR #40732 may already implement the same fix, making a new PR duplicative",
+      "Changing drop_params semantics could broaden API behavior beyond the reported models",
+      "Legal/CLA confirmation still required per submission policy"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test asserting get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) does not silently drop the param",
+      "Add equivalent azure test and a regression test confirming supported reasoning models still accept reasoning_effort"
+    ],
+    "unknowns": [
+      "Whether PR #40732 actually fixes the openai/azure gpt-4.1/gpt-4o drop_params behavior or only the OCI path",
+      "Maintainer preference between forwarding the param vs raising UnsupportedParamsError under drop_params"
+    ],
+    "why": "Issue describes a concrete user-visible defect with reproduction steps and code anchors, but the supplied evidence contains a materially blocking unknown: an open PR (#40732) semantically overlaps on reasoning_effort/gpt-4o and may already cover the root cause, and the duplicate status is explicitly 'semantic_overlap_requires_review'. The candidate's own risk notes also flag '现有 PR 可能已覆盖根因，需先比较实现边界' and pre-review failed with duplicate_changed. Until the overlap is resolved, it is not established whether independent code work is actionable."
   },
   "43b85cbfd8a56a96ce7346ad4db4256d41eb69ab954667b06ca89ec2462e020a": {
     "confidence": 0.85,
@@ -41239,6 +41335,44 @@
       "Whether maintainers have preferred design for token refresh"
     ],
     "why": "Issue clearly describes a user-visible bug: OAuth tokens for MCP servers are not refreshed, causing failures and invalid callback URL errors. Root cause is identified as missing refresh token handling and callback URL mismatch. Concrete reproduction steps and expected behavior are provided, making the fix actionable."
+  },
+  "9315f47a0f21eb683696b7ce4adf614d70eee3c4aac53af5f74e912043e4a755": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports PR #8487 as technically_complete with tests but root_cause_coverage false, while the issue body itself supplies the root cause; the PR's coverage gap is asserted rather than demonstrated"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Make wait() idempotent on AllGatherHandle and NoGatherHandle, re-checking INFLIGHT/status before re-running the body",
+      "Ensure a second wait on a released parameter leaves it NOT_AVAILABLE so the next fetch re-gathers from ds_tensor",
+      "Add multi-rank regression coverage for the sequential all-gather and cross-process-group gather-group configurations"
+    ],
+    "risks": [
+      "Distinguishing the idempotency fix from the existing draft PR #8487, which already targets wait() idempotency but lacks root-cause coverage",
+      "Fixing only the two handle classes may leave MultipleAllGatherHandles sub-handle delegation behavior unverified",
+      "Floating-point/random variation must be controlled with fixed seed and tolerance in any numerical regression"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Handle-level 2-GPU reproduction: all_gather_coalesced([victim, other]), wait, release victim, wait again; assert victim is NOT_AVAILABLE with empty data, not AVAILABLE",
+      "Run with stage3_allgather_sequential: true and two ordinary 4096x4096 weights in one process group",
+      "Run gather group spanning two process groups with victim alone in its bucket (AutoEP ep_size>1 shape)",
+      "Regression controls: two weights in one process group, three weights in one process group, mixed bf16/fp32 group must remain correct",
+      "End-to-end ZeRO-3 bf16 small-model run above stage3_param_persistence_threshold to confirm no empty-weight matmul"
+    ],
+    "unknowns": [
+      "Whether PR #8487's draft implementation actually resolves the idempotency root cause or only masks the symptom",
+      "Whether maintainers consider the handle-level reproduction sufficient without an end-to-end model run"
+    ],
+    "why": "Issue provides a concrete ZeRO-3 distributed-training invariant violation: wait() is non-idempotent on AllGatherHandle/NoGatherHandle, so a released parameter can be marked AVAILABLE over empty storage and the next matmul runs on a zero-element weight. Root cause is anchored to specific classes and code paths, with a handle-level 2-GPU reproduction and controls. This is a distributed-training mechanism, not plumbing."
   },
   "93229d36c23acd26501f5b4d3e38be3dae04e5ef671a28c50d309b2f1534c60b": {
     "confidence": 0.85,
