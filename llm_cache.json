@@ -6650,6 +6650,38 @@
     ],
     "why": "The issue reports multiple structured-output backend failures for Kimi-K2.6 + EAGLE3, with a plausible root cause for xgrammar bitmask desync under speculative decoding, but lacks a concrete algorithm-level fix or validation path. The outlines thread-leak is a clear bug but is more of a resource-management issue than an LLM algorithm mechanism. The guidance tokenizer rejection is a compatibility limitation. No maintainer confirmation or design direction exists, and the issue is a bug report without a proposed code change."
   },
+  "1b1052a5560661bd5c65319e176959170cc820bb50cbb9cc1326b1a6c21037c4": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unknown until the failing workflow job and error are identified; could be pyproject.toml dependency floor bump or a code fix in the affected module"
+    ],
+    "risks": [
+      "Fixing the wrong cause (e.g., bumping ty floor when the failure is an MCP SDK breaking change) would not resolve the CI failure",
+      "Dependency floor bumps can mask real code issues"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Inspect workflow run #885 logs to identify the failing job",
+      "Reproduce with `uv sync --upgrade && uv run prek run --all-files && uv run pytest -n auto`",
+      "Add a targeted regression test once the specific failure is isolated"
+    ],
+    "unknowns": [
+      "Which workflow job failed (static analysis vs tests)",
+      "The actual error output from workflow run #885",
+      "Which dependency (ty, ruff, or mcp) introduced the breakage",
+      "Whether the failure is reproducible locally"
+    ],
+    "why": "The issue is an auto-generated CI failure report for the upgrade-checks workflow on main. It lists three possible causes (ty, ruff, MCP SDK) but does not identify which job failed, which dependency broke, or what the actual error is. No root cause is established and no concrete code change is determined."
+  },
   "1b10eee1edfd3ecf676d46f8e33ad5820fa6d17e8b8de7ba501e4410e0fdb10e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -16730,6 +16762,37 @@
       "Maintainer interest and assignment"
     ],
     "why": "Issue reports a silent regression in v0.27.0 for Kimi-K3-NVFP4 on 8xB300, but root cause is unknown; cross-model report suggests a release-level issue. Existing PR #50617 has semantic overlap but does not reference the issue, and its scope (FP8_PB layers) may not address the root cause. No maintainer confirmation or design direction."
+  },
+  "410990f482c22b2fc215dcc28916452c6f728545e2aabbecb972f1028bf891b2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints/anthropic/api_router.py non-streaming /v1/messages serialization so stop_sequence (and stop_reason when null) are emitted as explicit nulls",
+      "AnthropicMessagesResponse serialization behavior for required-nullable fields without re-adding pruned extension fields (kv_transfer_params, ec_transfer_params) or inapplicable content-block members"
+    ],
+    "risks": [
+      "Broadening the change to a global exclude_none removal could leak vLLM extension fields or inapplicable content-block members onto the wire",
+      "Repository policy flags an AI-disclosure conflict (aiDisclosureConflict=true), which may constrain public submission even though it does not affect technical merit",
+      "Open PR #56259 addresses the streaming message_delta twin, not this non-streaming path, so it is not a duplicate fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build the /v1/messages FastAPI route with a mocked handler returning AnthropicMessagesResponse(stop_reason='end_turn'), POST with stream=false, and assert 'stop_sequence' is present and null in response.json()",
+      "Regression test asserting stop_reason is present as null when null, and that kv_transfer_params/ec_transfer_params and non-applicable content-block fields remain absent",
+      "Run the targeted anthropic entrypoint unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a targeted field-level serialization override versus a broader response-model change"
+    ],
+    "why": "Issue pinpoints the exact serialization defect: vllm/entrypoints/anthropic/api_router.py uses model_dump(exclude_none=True) on AnthropicMessagesResponse, dropping required-nullable stop_sequence/stop_reason from the non-streaming /v1/messages wire response. Reproduction is concrete and GPU-free (mock handler + response.json() key check), and the fix scope is bounded to serialization while preserving pruning of vLLM extension fields."
   },
   "4111656fa37d997665c3f2f84b6f9df85087ace15862ed97f005ac7bf55788a0": {
     "confidence": 0.7,
@@ -59040,6 +59103,67 @@
     "wait_reason": null,
     "why": "Issue reports a user-visible intermittent bug in streaming usage telemetry with a concrete repro script and clear expected behavior. No competing PR directly addresses this issue; existing PRs are keyword-overlap only. The bug is actionable: likely a truthy-value check dropping cached_tokens=0 during streaming usage reconstruction. Root cause is not fully confirmed (upstream vs proxy), but the issue provides a clear test path and the fix is scoped."
   },
+  "d7cf6ebe73390ffa5f23bab299e8d1a3bc8595e29daf1bf376ef6363fde0bd00": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.algorithm_evidence claims qualified=true with high depth and four algorithm mechanisms, but the issue describes a response-conversion bug rather than an algorithm mechanism"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/responses/litellm_completion_transformation/transformation.py: preserve raw reasoning_text as Chat reasoning_content in streaming and non-streaming conversions"
+    ],
+    "risks": [
+      "Existing open PR #28899 touches the same transformation file and may already cover part of the root cause",
+      "Distinguishing raw reasoning_text from summary text without duplicating content requires careful mapping"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Add regression tests covering raw reasoning with empty summaries, summary-only output, and mixed content/summary output to avoid duplicate text"
+    ],
+    "unknowns": [
+      "Whether PR #28899 already fixes the raw reasoning_text loss or only adjacent stream fields"
+    ],
+    "why": "The issue is a LiteLLM proxy response-conversion bug: the Responses-to-Chat bridge drops raw reasoning_text in streaming and non-streaming results. Although the issue body is detailed and reproducible, the work is ordinary API plumbing/response transformation in a provider-integration layer, not an LLM algorithm contribution. The track=llm_algorithm gate requires a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology; the matched terms (chat template, fp4, logprobs, moe, quantization) are incidental to the vLLM serving recipe in the reproduction environment, not the subject of the fix. The actual change would be in litellm/responses/litellm_completion_transformation/transformation.py, which is response-format plumbing."
+  },
+  "d7defee2b7204420564aeae01f0d9033072fc3421434c90e166e00f1e1aabdc9": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Triage comment states PR #23531 'should be reopened once triage clears' while open_pr_assessment lists #23531 as CLOSED and #23560 as the open competing PR"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/processors/index.ts: widen ProcessInputStepArgs/ProcessInputStepResult modelSettings to MastraModelSettings",
+      "packages/core/src/processors/step-schema.ts: align type fields and z.custom annotations",
+      "add a type-level regression test for timeout.stepMs"
+    ],
+    "risks": [
+      "Existing open PR #23560 may already cover the fix, making a new contribution redundant",
+      "Widening to MastraModelSettings also exposes reasoning/totalMs whose post-step semantics were not independently verified"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's standalone tsc reproduction (gist) against the patched build and confirm TS2353/TS2339 disappear",
+      "Add a type-level test asserting inline { modelSettings: { timeout: { stepMs } } } compiles and args.modelSettings?.timeout is readable"
+    ],
+    "unknowns": [
+      "Whether open PR #23560 is technically complete or will be merged, which determines if independent implementation space exists"
+    ],
+    "why": "The issue is a well-evidenced type-surface bug with a traced root cause and a concrete fix, but the supplied duplicate assessment shows an open PR #23560 and a closed PR #23531 that already make the same change to the same files (packages/core/src/processors/index.ts, step-schema.ts). The duplicate status is explicitly 'human_review_required', so whether independent code work remains actionable is unresolved."
+  },
   "d7f3ef61dbd9936139ae1ddfc657e1ce6df11f23d2c1ebcdb3c9ea77b58563eb": {
     "confidence": 0.7,
     "contradictions": [],
@@ -59440,6 +59564,35 @@
       "Whether the suggested fix has been implemented in any existing PR; the issue does not reference a specific PR, and the open PR assessment is inconclusive."
     ],
     "why": "The issue provides a detailed root cause analysis with code-level trace, a minimal reproduction template, and a concrete fix suggestion. The problem is a genuine LLM parser algorithm bug affecting reasoning/content separation, with a clear validation path via a two-line Jinja template and curl command. The track is llm_algorithm and the issue qualifies as it involves a model mechanism (reasoning parser state machine) and evaluation methodology (reference vs implementation)."
+  },
+  "d8e24258312a6d52bc3088a684af24d8c54ddd82c799c47440def7469375f373": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/router_strategy/adaptive_router/signals.py: emit dedicated routing_decision fields for stall escalation (e.g. stall_escalated, stall_escalation_branch, stall_escalation_original_tier) instead of relying on the redaction-dropped 'stall_escalation' signal string",
+      "Ensure the new fields survive message redaction and are exposed to logging integrations / Datadog metric dimensions"
+    ],
+    "risks": [
+      "Adding new routing_decision fields is a schema/observability surface change; maintainers may prefer a specific field naming or placement convention",
+      "Branch discrimination (repeat vs tool-error) requires the detector to expose which branch fired, which may need a small refactor of the stall detector"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's config and stalled.json: confirm record #2 (redaction on) currently matches record #3 (never escalated) on all fields",
+      "After fix, assert the escalated request carries stall_escalated=true, the correct branch (repeat vs tool-error), and the pre-bump tier, while the plain MEDIUM request does not",
+      "Run targeted unit tests for the adaptive router signals module and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing naming/schema convention for these routing_decision fields that the implementation should follow"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: stall escalation is only recorded as the string 'stall_escalation' inside routing_decision.signals, which is classified as prompt-quoting and dropped under redaction, so escalated requests are indistinguishable from ordinary tier placements. The issue includes a full config, decision_logger, request bodies, and curl outputs showing records #2 and #3 identical under redaction, plus contrast with keyword escalation's dedicated 'escalated'/'escalation_keyword' fields and context escalation's 'context_escalated'/'context_escalation_original_tier' pattern. This is a well-scoped observability/attribution feature with a clear validation path."
   },
   "d8e4cee836982fbd787012f3120cb1f3937d5561b3efd4f253a3507f414c868c": {
     "confidence": 0.85,
@@ -64077,6 +64230,35 @@
       "Whether an existing PR already addresses this; maintainer preference on the fix approach."
     ],
     "why": "Issue identifies a likely typo in attribute name causing DSPARK to ignore min_tokens, with a concrete patch and repro. However, open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference is unknown."
+  },
+  "e75d7ef0bb5e2cc5953f5af4dbda4ae1a93cea7587cf929b5594ed965f81669f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Gate model-card publication / /v1/models listing on engine startup completion and generate endpoint health",
+      "Reuse existing NotReady→Ready transition in dynamo.mocker / runtime discovery path"
+    ],
+    "risks": [
+      "Changing discovery/readiness gating could affect non-disagg or non-mocker deployments if applied too broadly",
+      "Maintainer may prefer a different gating layer (frontend vs runtime) than the suggested fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Deploy mocker disagg 2P1D with decode --startup-time 300 and assert model does not appear in /v1/models until startup completes",
+      "Send inference requests during startup window and verify they are not routed to the not-ready decode worker",
+      "Regression test that model appears in /v1/models immediately after NotReady→Ready transition"
+    ],
+    "unknowns": [
+      "Exact intended gating layer (frontend discovery vs runtime model-card publication) is not confirmed by maintainers"
+    ],
+    "why": "Issue provides a concrete, reproducible readiness-contract bug: model card is published at engine creation before the decode worker's startup simulation completes, so /v1/models advertises a model that cannot serve. Root cause is identified (publication not gated on the existing NotReady→Ready transition), with a clear timeline, repro steps, and code anchors in the mocker/generate paths."
   },
   "e76172b60f1b9591da21eeb4a217fd494af10bb87e29c1175a4a5bbee74d3a27": {
     "confidence": 0.7,
