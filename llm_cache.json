@@ -11677,6 +11677,41 @@
     ],
     "why": "Issue provides a precise root cause in three code paths, a minimal reproduction, and a clear regression from a recent commit. No competing PR or issue exists, and the fix is well-scoped."
   },
+  "2b5517d03df9f8a62004f7f313ab011678aae79cbb06bb180a297e536d0e3e8e": {
+    "confidence": 0.72,
+    "contradictions": [
+      "open_pr_assessment marks root_cause_coverage=false while the PR title and issue body describe the same root cause and fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "RealtimeAgent.send / text-input path: reconnect before push_text when provider supports text input",
+      "state.context handling: do not persist undelivered text on failure",
+      "ControlFrameType.TEXT handling in the realtime transport path"
+    ],
+    "risks": [
+      "PR #2591 already implements the same fix; a competing PR may be redundant",
+      "Behavior change to context persistence on failure could affect other callers",
+      "Reconnect semantics for text vs audio may need maintainer design confirmation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the scripted realtime-model double: mark agent disconnected, call agent.send('hello'), assert reconnect occurs and message is delivered exactly once",
+      "Assert agent.state.context does not contain the undelivered message when push_text fails",
+      "Run the realtime package's targeted unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #2591's tests actually cover the stale-context assertion or only the reconnect path",
+      "Whether maintainers have a preferred design for text reconnect vs audio reconnect"
+    ],
+    "why": "Issue provides a concrete, ordered reproduction (connect, simulate SessionEndedEvent, call agent.send, observe ModelDisconnectedError and stale context entry) and names the exact code anchors (RealtimeAgent.send, state.context, model.push_text, ControlFrameType.TEXT). The root cause is plausibly identified: text path bypasses the reconnect logic used by the audio path and appends to context before delivery. This is an actionable runtime bug with a deterministic test path using the existing scripted realtime-model double. However, the open PR #2591 already targets the same fix ('reconnect before sending text input') with tests and passing checks, so the marginal value of a competing implementation is limited unless it adds root-cause coverage or key-path coverage that the existing PR lacks."
+  },
   "2b581163a854ce6537510a34a30a8eb859e42c637fd868c2510927b6a5a2403a": {
     "confidence": 0.85,
     "contradictions": [],
@@ -30618,6 +30653,38 @@
     ],
     "why": "The issue provides a deterministic 5-request reproducer, a clear workaround (--enforce-eager), and a stack trace pointing to CUDA graph replay on sm110. It identifies a concrete numerical/kernel path (NVFP4, Mamba-2, CUDA graphs) with a reference-vs-implementation test (eager vs graph mode). The related PR #55184 overlaps semantically but does not directly reference the issue, so a new fix is actionable."
   },
+  "6b1e57766aaa939697f803b31bc25ba55b1129748026e47d05bcf1b4ff2cfe10": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "dspy/streaming/streamify.py: handle GeneratorExit/BaseExceptionGroup around the task group enclosing async_streamer yields so early aclose() does not raise",
+      "Add streaming regression tests covering partial aclose, full consumption, and in-task exceptions"
+    ],
+    "risks": [
+      "Naive unwrapping of the exception group may swallow real task-group errors or cause hangs, as the commenter observed in a toy extension",
+      "Ownership details in async_streamer (passing send_stream to start_soon, returning on Prediction) differ from the toy and must be preserved",
+      "Behavior change could affect other streamify consumers if not scoped narrowly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test using the AnyIO-only repro (no API key) that breaks after the first yielded item and asserts aclose() returns cleanly",
+      "Add a test that fully consumes the stream to the final Prediction and asserts unchanged behavior",
+      "Add a test that raises inside the task-group task and asserts the exception still reaches the caller and is not swallowed by GeneratorExit unwrapping"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix shape for the exception-group unwrapping",
+      "Whether the hang observed in the commenter's toy also occurs in the real async_streamer"
+    ],
+    "why": "Issue provides a concrete, real-provider reproduction and a minimal AnyIO-only repro in comments; root cause is clearly identified as GeneratorExit propagating through create_task_group().__aexit__ around the yield in dspy/streaming/streamify.py. A commenter offers a concrete three-case validation plan (partial aclose, full consumption, in-task exception) and notes a candidate fix direction, so the work is actionable without maintainer pre-approval."
+  },
   "6b3bb9794dfe202f061c90a589c07c6159ab171efad48765f233f76902848c41": {
     "confidence": 0.85,
     "contradictions": [
@@ -46636,6 +46703,42 @@
       "Whether any existing PR is considered viable for revival"
     ],
     "why": "Issue clearly identifies a user-visible bug in mem0 v3: ADD-only extraction causes stale/contradictory facts to accumulate, with a concrete reproduction scenario. However, the deterministic gate requires HUMAN_REVIEW, and multiple PRs already attempt to address this issue (#4969, #4965, #5240), all closed without merge. Maintainer design direction is still being clarified (append-only vs CRUD), as seen in comments. This requires maintainer confirmation before new work."
+  },
+  "a3e09721ef670e2deec6b2c085d1939dd960a16885bedbb40210d38bc7728678": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue proposes two mutually exclusive conventions without resolution",
+      "PR #39122 flagged as semantic overlap but does not reference this issue and has no direct code overlap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/chat/converse_transformation.py usage assembly",
+      "litellm/responses/litellm_completion_transformation/transformation.py input_tokens mapping",
+      "usage invariant validation for cached_tokens <= input_tokens"
+    ],
+    "risks": [
+      "Changing input_tokens basis could alter cost/spend reporting for existing users",
+      "Fix location depends on unresolved convention decision and may conflict with PR #39122",
+      "Broad API behavior change if applied at the wrong layer"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a unit test constructing Usage(prompt_tokens=6732) with prompt_tokens_details.cached_tokens=7411 and assert the bridge output keeps cached_tokens <= input_tokens",
+      "Regression test comparing /v1/responses and /v1/messages usage bases for the same Bedrock prompt-cache request"
+    ],
+    "unknowns": [
+      "Which convention maintainers want (cache-inclusive vs cache-exclusive input_tokens)",
+      "Whether PR #39122 already covers the same root cause",
+      "Whether the fix belongs in Bedrock Converse or the Responses bridge"
+    ],
+    "why": "Issue describes a plausible cached_tokens > input_tokens basis mismatch between Bedrock Converse inflation and the Responses bridge passthrough, with a concrete arithmetic repro. However the issue itself states the convention question (cache-inclusive vs cache-exclusive input_tokens) is a maintainer call that determines which side the fix belongs on, and the duplicate assessment flags PR #39122 as semantic overlap requiring human comparison. These unresolved facts determine whether code work is actionable and where it belongs."
   },
   "a40fcf451b2a351f160f05141e4b361fa3027f8dd5a39dd75afb2aceaa747789": {
     "confidence": 0.85,
@@ -71545,6 +71648,41 @@
       "Whether maintainers prefer option 1, 2, or 3 for handling embedding_rowwise; this affects implementation details but not actionability."
     ],
     "why": "Issue provides a clear root cause: transformers main injects 'embedding_rowwise' into tp_plan for tied-embedding models, which DeepSpeed's strict allowlist rejects. A concrete reproducer and failing test are supplied, and the fix is actionable (map to supported behavior or fall back to replicated)."
+  },
+  "f7f1790992b39c6b76c9ecdc652eb87efc2975b0f175c783e4d9ca26f3617bb2": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter states root cause is not pinned, while candidate.actionability_evidence lists root_cause_signal=false but algorithm_evidence claims high depth"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/cudagraph_utils.py: synchronise output_copy_stream against graph replay",
+      "vllm/v1/worker/gpu/async_utils.py: ensure main stream waits on copy_event before replay"
+    ],
+    "risks": [
+      "Root cause is a hypothesis, not confirmed; fix may not address the actual race",
+      "Overlapping open PRs may already cover the root cause",
+      "AI disclosure conflict blocks automated public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the provided vllm serve command and max_tokens ladder 1/2/3 on ROCm MI355X TP4",
+      "Confirm --no-async-scheduling eliminates the segfault",
+      "Add a regression test asserting no segfault across the 3rd decode token with FULL_DECODE_ONLY"
+    ],
+    "unknowns": [
+      "Whether any of the overlapping open PRs (#952, #56342, #56258) actually fixes this root cause",
+      "Whether the ai_disclosure_conflict policy permits any contribution",
+      "Whether the race hypothesis is correct without a pinned root cause"
+    ],
+    "why": "Issue reports a deterministic ROCm segfault on the 3rd decode token with FULL_DECODE_ONLY graphs, with a concrete reproducer and a plausible unsynchronised-access hypothesis (output_copy_stream not synchronised against graph replay). However, the root cause is explicitly 'not pinned' by the reporter, and the supplied open-PR assessment shows multiple semantically overlapping open PRs (#952, #56342, #56258) that are not directly linked to this issue, so duplicate/coverage status is unresolved. The pre-task policy status is ai_disclosure_conflict, which is a materially blocking disclosure requirement."
   },
   "f8122bafd61a2361d6818b4a82762ec887b2100c42008903a167637ee50bb763": {
     "confidence": 0.9,
