@@ -22468,6 +22468,38 @@
     ],
     "why": "The issue is a well-documented ROCm segfault with a concrete reproducer and a plausible unsynchronised-access hypothesis, but the root cause is explicitly 'not pinned' and the candidate's own actionability evidence records root_cause_signal=false. The strongest lead (output_copy_stream not synchronised against graph replay) is a hypothesis, not a confirmed defect, and the duplicate assessment flags semantic overlap with open PRs #952 and #56342 that may already cover the same ROCm/DSv4.1 FULL_DECODE_ONLY path. Under the llm_algorithm track, the issue is a runtime/runner synchronization bug rather than a training objective, model mechanism, numerical method, or evaluation methodology, so it does not meet the algorithm-track bar. The unresolved duplicate coverage and unconfirmed root cause are materially blocking unknowns."
   },
+  "51d0a451caf43b6647d10b7b0c635ae9a2b16ee30c0b4b4ca8732cac6fc87a55": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue body claims sm120_fp8_paged_mqa_logits asserts head_dim==128, but the author's later comment corrects this: the assert belongs to the fp4 paged variant only"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "No new code work: fix already covered by open PR #379 (dense + paged) and PR #434 (dense)",
+      "At most, evidence/regression-test contribution to the existing PRs"
+    ],
+    "risks": [
+      "Duplicate implementation work against open PRs #379/#434",
+      "Paged fp8 variant correction (no head_dim==128 assert) means a dense-only fix would be incomplete",
+      "SM120-only hardware (5090-class) required for validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If pursuing the residual test gap: add a bitwise self-consistency + accuracy-vs-reference regression for fp8 D=32/64 dense and paged MQA logits on SM120, since paged corruption is bit-stable and only accuracy comparison exposes it"
+    ],
+    "unknowns": [
+      "Whether PR #379/#434 will be merged or need the paged-variant coverage and regression test added"
+    ],
+    "why": "The issue itself is technically strong and well-evidenced (hardcoded kSwizzleMode=128 vs per-head_dim TMA swizzle in sm120_fp8_mqa_logits.cuh, 189/384 self-consistency failures, one-line fix), but the author's own comment states the identical bug and essentially identical fix were already posted as open PR #379 (dense + paged, bot-approved), and PR #434 also directly covers this issue. The remaining value is documentation/evidence only, not an independent code contribution."
+  },
   "51d87afaf092458d78b1ac07988e63149990bf661331435205153c8cb9da853f": {
     "confidence": 0.7,
     "contradictions": [],
@@ -31746,6 +31778,44 @@
     ],
     "why": "The issue precisely identifies a logic bug in tool-mode detection: output-level tool_mode is misinterpreted as capability, causing _enable_tool_mode to never refuse and produce impossible outputs. It provides a concrete repro and a clear suggested fix (drop output-side fallback, serialize add_tool_output). No competing PR addresses this; existing PRs are unrelated or only keyword-overlap."
   },
+  "6d7d0e34415093f5268379155b305271540b4deaca3bf441631be6ae878aa535": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue Impact claims (Temporal payloads, persisted-history reload, message_history re-feed) are contradicted by the bot status comment's producer census showing both construction sites are response-side and durable execution never invokes ModelMessagesTypeAdapter",
+      "Issue claims the fix is a straightforward one-line union addition, while the status comment states the same arm was closed twice by review and requires a maintainer design call"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/_messages.py ModelRequestPart union (only if request-side reachability is confirmed)",
+      "pydantic_ai_slim/pydantic_ai/ui/_messages_builder.py dispatch (if request-side native returns are to be supported)"
+    ],
+    "risks": [
+      "Fixing an unreachable hand-constructed shape may add a union arm that conflicts with the intended request-side design contract",
+      "Prior PRs with the same fix shape were closed unmerged on substantive review objections (request-first dispatch reclassification; Anthropic assert_never replay crash)",
+      "Duplicate/overlap with open issue #8234 and open PR #7933 requires comparison before any code work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce dump→validate on ModelRequest(parts=[NativeToolSearchReturnPart(...)]) and confirm union_tag_invalid",
+      "Trace every construction site of NativeToolSearchReturnPart and confirm whether any supported path places it on ModelRequest.parts",
+      "If reachability is confirmed, add a request-side round-trip regression test in tests/test_messages.py"
+    ],
+    "unknowns": [
+      "Whether any supported production path can place NativeToolSearchReturnPart on ModelRequest.parts",
+      "Whether maintainers intend request-side native tool-search returns to be legal at all",
+      "Whether open PR #7933 or issue #8234 already covers this exact union gap"
+    ],
+    "why": "The issue's own reproduction is a hand-constructed ModelRequest(parts=[NativeToolSearchReturnPart(...)]) graph, and the bot status comment reports a producer census finding only two construction sites, both response-side (models/openai.py, models/anthropic.py), with zero references in ui/, durable_exec/, or clai/. That directly contradicts the issue's Impact claims (Temporal payloads, persisted-history reload, message_history re-feed). The same defect chain was reportedly filed four times with prior fixes closed unmerged on substantive review objections, and the proposed one-line union arm is described as a maintainer design call. This is a materially blocking unknown: whether any supported path can produce the failing shape, which determines whether code work is actionable at all."
+  },
   "6d95875e7a42a68b4b749d4df17d12ff5ae59c83c4f87a6b5ea8b5177d1b0cbd": {
     "confidence": 0.6,
     "contradictions": [],
@@ -32400,6 +32470,44 @@
       "Whether maintainers prefer a different implementation approach, but this is normal design choice and not blocking"
     ],
     "why": "Issue provides a clear root cause: OpenAIResponsesStreamedResponse initializes model_name from response.created and never refreshes from response.completed, causing final ModelResponse.model_name to retain the router alias. A concrete reproduction with expected vs actual output and a Logfire trace is supplied. The fix is localized and a regression test is specified. Existing PR #7916 overlaps in code path but does not cover this specific attribution issue, so no duplicate coverage is confirmed."
+  },
+  "6f8bed066d10c8719c44b7a0f14a84e54117966cb99e2a1d9035378f27813083": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue states PR #12100 is not an ancestor of tag v1.4.2, while open_pr_assessment lists #12100 as MERGED with semantic overlap on lib/llm/src/http/service/openai.rs; this is consistent with a backport gap but means main-branch coverage is already partially addressed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/http/service/openai.rs: stop selecting only response.data.first() for raw WAV speech responses; deliver all aggregated audio chunks or correctly concatenate waveform payloads",
+      "lib/llm/src/protocols/openai/audios/aggregator.rs: ensure multi-chunk audio aggregation preserves complete waveform data rather than only extending the data list",
+      "Versioned support boundary/backport decision for 1.4.2 images (frontend + worker compatibility)",
+      "Regression test covering multiple audio chunks with a silent first chunk and valid WAV framing"
+    ],
+    "risks": [
+      "Issue is explicitly a 1.4.2 qualification/backport report; maintainers may decide the correct action is documentation of the support boundary rather than a code backport",
+      "PR #12100 already merged speech-streaming work on main, so a naive re-fix could duplicate or conflict with existing main behavior",
+      "Changing raw WAV response assembly could affect streaming vs non-streaming response semantics and other audio response formats",
+      "Requires H100 GPU and specific 1.4.2 images to reproduce end-to-end"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's DGD on 1.4.2 images: POST /v1/audio/speech with the saved request.json and confirm output.wav is 3884 bytes / 0.08s silent (SHA-256 056e096196265b3e34608224a2e81e7c607daf5cadb366f5cd84d00c302b3350)",
+      "After fix, rerun the same request and assert the returned WAV contains the full non-silent utterance (non-zero RMS, expected duration) rather than only the first chunk",
+      "Add a unit/integration test that feeds multiple audio chunks with a silent first chunk through the frontend speech handler and asserts complete delivery and valid WAV framing",
+      "Test frontend/worker compatibility together rather than replacing only one side"
+    ],
+    "unknowns": [
+      "Whether maintainers want a code backport to 1.4.2 or only a documented support-boundary/limitation note",
+      "Whether the merged #12100 changes on main already fully fix this path, making the remaining work purely release/backport qualification"
+    ],
+    "why": "Issue provides a concrete, reproducible 1.4.2 failure: frontend folds the speech stream and selects response.data.first(), so only the initial 0.08s silent WAV chunk reaches the HTTP caller while the worker emits three chunks. Root cause is anchored to lib/llm/src/http/service/openai.rs and the audio aggregator, with byte-level evidence (3884 bytes, RMS 0, matching SHA-256) and a direct-to-worker comparison proving later non-silent audio exists. The issue itself scopes this as a 1.4.2 qualification/backport/support-boundary report and explicitly notes PR #12100 is not an ancestor of tag v1.4.2, so the actionable work is a backport/versioned fix plus regression coverage, not a novel main-branch fix."
   },
   "7057df55bbf9160940e8f467b3f36babb514c682390f79fe14e6fdde100d2afa": {
     "confidence": 0.7,
@@ -48898,6 +49006,48 @@
       "Whether maintainers prefer self-contained retract vs. separate flush; whether existing PRs will be merged and supersede this work."
     ],
     "why": "Issue provides a clear root cause (retract only decrements lock refs for radix-owned prefix, leaving KV resident), measured impact (old-weight KV reuse causing logprob difference), and a concrete validation path (instrument prefix matching, compare logprobs). The suggested fix is actionable and aligns with documented retract semantics."
+  },
+  "adbae76bb3e4d18d5d698aa9d0fa389dda347f24d2fe1e4cc586c225b92c9802": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Commenters disagree on whether BF16 verification path is inherently different (chenWULUQI) or fixable kernel defects (jschmied, wickist)",
+      "Issue claims K=1 and --enforce-eager still diverge, while wickist attributes it to #51812 already landed in v0.28.0"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Speculative decode verification path for hybrid GDN/DeltaNet/Mamba targets",
+      "Gather alignment of a/b gate rows with mixed_qkv in GDN spec-verify kernel",
+      "Numerical regression test comparing target-only vs DFlash2 greedy token sequences"
+    ],
+    "risks": [
+      "Multiple plausible root causes (numerical BF16 path, GDN gate misalignment, block-size seeding, persistent_topk) are not yet discriminated",
+      "Existing PR #52487 has semantic overlap and may already address the root cause",
+      "Repository policy status ai_disclosure_conflict blocks automated public action",
+      "Reproduction requires 4x RTX 3090 BF16 TP=4 hardware not available to all contributors"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the provided aislar_dflash2_equivalencia.sh repro on the reported BF16 TP=4 setup and confirm divergence at token 30",
+      "Cherry-pick #51812 or test on v0.28.0 and rerun the same repro to see if token 30 still diverges",
+      "Compare target-only logits vs block-verification logits at token 29/30 and inspect top-1/top-2 margin",
+      "Rerun with target verification in FP32 to separate numerical-path from state-update causes"
+    ],
+    "unknowns": [
+      "Whether #51812 fix or v0.28.0 resolves the reported divergence",
+      "Whether PR #52487 already covers the same root cause",
+      "Whether the ai_disclosure_conflict policy can be satisfied for this contribution",
+      "Which of the competing root causes is the actual one for the reported BF16 TP=4 configuration"
+    ],
+    "why": "Issue reports a concrete, reproducible greedy-divergence at token 30 for DFlash2 speculative decoding on Qwen3.8-27B, with expected/actual pairs, an executable repro script, and logprobs. However, supplied evidence contains multiple competing root-cause hypotheses (BF16 numerical path differences, GDN gate row misalignment fixed by #51812, mamba/GDN block-size seeding, persistent_topk instability, batch-shape dependence) and an unresolved semantic-overlap PR (#52487) that may already cover the root cause. The pre-task policy status is ai_disclosure_conflict, which is a materially blocking disclosure requirement for public action."
   },
   "adc0d91f431f7f67cf1115c8bd03f67883d8510f5fbcb8e619087e36951abe2a": {
     "confidence": 0.85,
