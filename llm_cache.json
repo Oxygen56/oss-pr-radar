@@ -331,6 +331,36 @@
     "wait_reason": null,
     "why": "Issue provides a clear, reproducible bug with source-verified root cause: ProxyException not caught by MCP handlers, causing 500 instead of 401. Fix is localized and testable."
   },
+  "020d40ea07e6d0c5a8839261392a859a81007633e6164cc664eb22ce3f71e79e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims deterministic failure on a build that commenters show predates the merged fix #53046; later comments confirm the guard is absent in the reporter's build and in v0.28.0."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new code change is justified until the reporter confirms the bug persists on a build containing #53046 (c6e19b3be243 or later)."
+    ],
+    "risks": [
+      "The reported failure may be a pre-fix artifact rather than a live bug, so any new PR could duplicate #53046.",
+      "The issue's own environment string (g3406ec1da) is a PR-head build, not merged main, which undermines the reproduction's validity."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Rebuild from merged main containing c6e19b3be243 and re-run the 3/3 json_object trigger loop; if FSM errors disappear, the issue is covered by #53046."
+    ],
+    "unknowns": [
+      "Whether the FSM error still reproduces on a build containing #53046 (c6e19b3be243 or later).",
+      "Whether the reporter's build actually includes the merged fix despite the version string."
+    ],
+    "why": "The issue reports a deterministic 'Failed to advance FSM' error under DFlash2 spec decode + xgrammar json_object grammar, but the supplied evidence strongly indicates the reported build predates the merged fix #53046 (commit c6e19b3be243), and multiple commenters show the validate_tokens guard is absent in the reporter's build and in v0.28.0. The root cause is therefore likely already covered by an existing merged fix, making the candidate a duplicate/covered opportunity rather than a distinct actionable code contribution."
+  },
   "023a70ca5c5b859365d35687116f0f6a4676d6edd92a1f4ca4f7103565ce217e": {
     "confidence": 0.85,
     "contradictions": [
@@ -5639,6 +5669,36 @@
     ],
     "why": "Issue clearly identifies root cause: Codex filters env vars matching *KEY*, *SECRET*, *TOKEN* before MCP startup, and the plugin hardcodes MEM0_API_KEY. However, maintainers explicitly request design confirmation on the credential contract (rename vs. allowlist), and an existing PR #6792 partially addresses it but lacks tests. Work should wait for maintainer direction to avoid wasted effort."
   },
+  "156834cfe31ebb72dd859620b01172d5c3d8c3bf582c4666a1dc865913e85ac8": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py: reasoning_effort handling for gpt-4.1/gpt-4o families",
+      "drop_params path in get_optional_params: raise UnsupportedParamsError or forward param instead of silently dropping"
+    ],
+    "risks": [
+      "Changing drop_params semantics could affect other params or providers relying on silent dropping",
+      "Maintainer may prefer forwarding the param over raising UnsupportedParamsError, altering the exact expected behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test asserting get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) does not silently return without reasoning_effort",
+      "Repeat for custom_llm_provider='azure' and for gpt-4o/gpt-4o-mini",
+      "Regression test that drop_params=True still drops genuinely optional unsupported params for models that do support reasoning"
+    ],
+    "unknowns": [
+      "Which of the two proposed behaviors (forward param vs raise UnsupportedParamsError) maintainers prefer"
+    ],
+    "why": "Issue provides a concrete, executable reproduction (get_optional_params with drop_params=True silently drops reasoning_effort for gpt-4.1/gpt-4o on openai and azure), a clear code anchor (get_supported_openai_params omitting reasoning_effort), and a provider-side 400 confirming the drop hides a real rejection. The fix is a bounded behavior change in the param-filtering path with a clear reference-vs-implementation test. No duplicate or merged fix covers this path; the three open PRs only share the reasoning_effort keyword and target unrelated providers (oci, dashscope, zai)."
+  },
   "1568e9802f322a9e1cb944b6c89d0b12f8c7c275db5dcb3edd75ad28f81724a0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -6414,6 +6474,44 @@
       "Exact scope of tests to be added"
     ],
     "why": "Issue clearly identifies a validation asymmetry: on_checkpoint_save return value is not validated at save time, causing late restore failures. Root cause is localized in _runner.py with a concrete repro and code anchors. No duplicate issue found; open PR #7757 overlaps in checkpoint area but targets a different race condition, not this validation gap."
+  },
+  "195b042555d8b39063c92a15a170f6278b135b0c91702c5474a2b2fcde03ad7e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "commands/train.py: gate use_flash_attn/use_liger availability checks behind the task condition that actually consumes them",
+      "autopilot/decisions.py: make decide_performance_flags task-aware so it never emits flags the chosen task ignores",
+      "trainer/sft.py or other trainers: optionally wire attn_implementation/Liger patch where the model is loaded, or reject the flags at config load for non-consuming tasks",
+      "config/schema.py: shrink reasoning_effort/train_on_eot allowlist to tasks that call build_format_row (sft, distill)"
+    ],
+    "risks": [
+      "Choosing between wiring the flags into all trainers vs rejecting them at config load is a design decision that may need maintainer input",
+      "Autopilot behavior change could alter existing user configs; regression coverage needed",
+      "Some tasks may partially consume these flags through shared code paths not captured by the grep, so the consumer set must be verified before narrowing validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build DPO and GRPO models on a tiny CPU model with use_flash_attn: true and a stubbed get_attn_implementation returning 'sdpa'; assert the kwarg reaches from_pretrained (fails today) or that config load rejects the flag",
+      "Call build_soup_config(goal='alignment') on a compute capability 8.0+ profile and assert no emitted flag is ignored by the resulting task",
+      "Assert soup train does not exit 1 over a missing liger-kernel/flash-attn for a task that does not read the flag",
+      "Assert reasoning_effort/train_on_eot on task: pretrain are applied or rejected at load"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer wiring the flags into all trainers or rejecting them at config load (issue proposes either)",
+      "Whether any non-SFT trainer indirectly consumes use_flash_attn/use_liger through shared model-loading helpers"
+    ],
+    "why": "Issue pinpoints a concrete config/validation mismatch: use_flash_attn and use_liger are consumed only by SFT's _setup_transformers (trainer/sft.py:1293, 882, 1351-1356) yet validated for every task (commands/train.py:1192-1214) and auto-enabled by autopilot for DPO/GRPO/pretrain (autopilot/decisions.py:344-346). Reproduction with build_soup_config and validator output is supplied, and acceptance criteria give a concrete reference-vs-implementation test (stub get_attn_implementation, assert kwarg reaches from_pretrained)."
   },
   "19880265ea0d255f8d69b9c7c068b892cdc56426f1ce6c5d303077aa9b0f03b7": {
     "confidence": 0.85,
@@ -22195,6 +22293,45 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides detailed root-cause analysis and reproducible steps for a real bug, but existing PR #36599 overlaps semantically and touches the same code path, requiring manual comparison before new work."
   },
+  "51bf6ffb62b46b2059eb5499a842a746dc31b592f4131d66a9a4fcf224642298": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body claims a likely unsynchronised access in run_fullgraph/output_copy_stream, but actionability_evidence.root_cause_signal is false",
+      "Candidate is tagged track=llm_algorithm with algorithm_evidence.qualified=true, yet the issue describes a runtime/runner synchronization bug, not an algorithm mechanism"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/cudagraph_utils.py: add stream synchronization between output D2H copies and graph replay",
+      "vllm/v1/worker/gpu/async_utils.py: ensure copy_event is awaited on the main stream before replay"
+    ],
+    "risks": [
+      "Root cause is unconfirmed; the proposed output_copy_stream/replay race may not be the actual defect",
+      "Open PRs #952 and #56342 may already address the same ROCm/DSv4.1 FULL_DECODE_ONLY path, making a new fix duplicative",
+      "Repository policy status is ai_disclosure_conflict, which may block automated public action",
+      "Fix may be ROCm-specific or may affect CUDA paths that were not tested"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's curl ladder (max_tokens 1/2/3) on 4x MI355X TP4 with FULL_DECODE_ONLY and confirm the 3rd-token segfault",
+      "Re-run the same ladder with --no-async-scheduling and with cudagraph_mode=NONE to confirm the failure disappears",
+      "Add a regression test that replays a captured graph while a prior output D2H copy is still in flight and asserts no buffer corruption"
+    ],
+    "unknowns": [
+      "Whether the output_copy_stream/replay race is the actual root cause",
+      "Whether open PRs #952 or #56342 already fix or supersede this issue",
+      "Whether the failure reproduces on NVIDIA/CUDA as the issue author suspects",
+      "Whether the repository's ai_disclosure_conflict policy permits an automated contribution"
+    ],
+    "why": "The issue is a well-documented ROCm segfault with a concrete reproducer and a plausible unsynchronised-access hypothesis, but the root cause is explicitly 'not pinned' and the candidate's own actionability evidence records root_cause_signal=false. The strongest lead (output_copy_stream not synchronised against graph replay) is a hypothesis, not a confirmed defect, and the duplicate assessment flags semantic overlap with open PRs #952 and #56342 that may already cover the same ROCm/DSv4.1 FULL_DECODE_ONLY path. Under the llm_algorithm track, the issue is a runtime/runner synchronization bug rather than a training objective, model mechanism, numerical method, or evaluation methodology, so it does not meet the algorithm-track bar. The unresolved duplicate coverage and unconfirmed root cause are materially blocking unknowns."
+  },
   "51d87afaf092458d78b1ac07988e63149990bf661331435205153c8cb9da853f": {
     "confidence": 0.7,
     "contradictions": [],
@@ -30312,6 +30449,37 @@
       "Whether PR #36549 already fixes the root cause; whether issue #36830 is truly duplicate"
     ],
     "why": "Issue provides a concrete root cause (index-K cache sized per-rank but accessed with virtual locs under DCP), a validated diff, and a clear reproduction path with quality comparison. It targets a real LLM algorithm mechanism (distributed training, kernel algorithm) and is actionable despite potential overlap with PR #36549 and duplicate issue #36830, which require manual review but do not block actionability."
+  },
+  "6b51d5425b3241248fd2b45278c02bbcdf7f3150efb74bca03b9d34625fead45": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/peft_wiring.py: extend shared builder to carry rank_pattern/alpha_pattern for all callers",
+      "src/soup_cli/trainer/{dpo,kto,grpo,orpo,simpo,ipo,bco,asr,classifier,distill,ppo,reward_model,embedding,unlearn,stream_setup}.py: route LoraConfig construction through the shared builder or reject unsupported fields",
+      "src/soup_cli/schema.py: add scope validation for rank_pattern/alpha_pattern mirroring _validate_lora_target_parameters_scope"
+    ],
+    "risks": [
+      "Unlearn's hand-rolled loop may not be able to honor patterns and needs explicit rejection rather than silent drop",
+      "Streamed paths (stream_setup.py:814) may construct adapters lazily, complicating a single-builder refactor",
+      "Behavior change for users who currently rely on uniform rank despite setting rank_pattern"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build DPO LoRA on tiny random-init CPU model with rank_pattern={q_proj:4}, alpha_pattern={q_proj:8}; assert q_proj.lora_A has 4 rows (currently 16)",
+      "Repeat for KTO/GRPO/ORPO to confirm uniform behavior across non-SFT trainers",
+      "Add source scan over trainer/*.py failing when LoraConfig( is constructed without the shared builder",
+      "Verify config-load rejection message names the offending path for trainers that cannot honor the fields (e.g. unlearn)"
+    ],
+    "unknowns": [],
+    "why": "Issue pinpoints a concrete wiring defect: build_lora_config_kwargs (peft_wiring.py:106-129) is the only path forwarding rank_pattern/alpha_pattern, and only SFT/pretrain text paths call it; 18 other LoraConfig construction sites (dpo.py:317, kto.py:278, grpo.py:621, etc.) silently drop the fields. Reproduction with tiny CPU Llama shows sft q_proj.lora_A.r=4 vs dpo/kto r=16, and the sibling target_parameters field already has a scope validator (schema.py:5109) proving the intended contract. This is a PEFT adapter-construction mechanism with a concrete reference-vs-implementation test (assert lora_A rows == rank_pattern value) and a source-scan regression guard."
   },
   "6b556e05eecc4d9a409dc17c3330b7b4ef6da56228ad59da3d54513b0a6a19ed": {
     "confidence": 0.9,
@@ -40677,6 +40845,42 @@
     ],
     "why": "Issue reports a regression in tool syntax handling for local Ollama/Qwen after Cline 4.1.x, but the root cause is not clearly identified. Existing PRs (#11486, #11937, #11341) overlap semantically but none directly reference the issue, and the gate requires HUMAN_REVIEW. The issue also requests documentation, which is not a code fix. Need maintainer confirmation on intended behavior and comparison with existing PRs."
   },
+  "8f4b64bf05f2b53a0cbebd9649c7edb3fb3c26ad985e51ec7ef21a4f7fb0337f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue states PR #12100 is merged and present on the tested example branch but not an ancestor of v1.4.2, while the candidate is framed as a fixable bug on the default branch"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/http/service/openai.rs speech handler selecting response.data.first()",
+      "lib/llm/src/protocols/openai/audios/aggregator.rs waveform concatenation",
+      "release/backport or documented support boundary for 1.4.2 images"
+    ],
+    "risks": [
+      "The fix may already be covered by merged PR #12100, making a new main-branch PR redundant",
+      "Backporting to 1.4.2 may not be an accepted policy, so the correct outcome could be documentation only",
+      "Changing the aggregator to concatenate waveforms could alter streaming/API behavior beyond the reported case"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the supplied DGD and curl request against 1.4.2 images, asserting the returned WAV contains all worker chunks and is non-silent",
+      "Add regression coverage with a silent first chunk followed by multiple non-silent chunks, verifying complete WAV framing",
+      "Run frontend/worker compatibility test rather than replacing only one side"
+    ],
+    "unknowns": [
+      "Whether maintainers want a backport to 1.4.2 or only a documented support boundary",
+      "Whether any code change is still needed on current main after PR #12100",
+      "Whether the pre-review failures (base_sha_changed, duplicate_changed) reflect a stale base or an actual duplicate"
+    ],
+    "why": "The issue is a release-qualification report for stock 1.4.2 images, and the reporter explicitly states the fix (PR #12100, commit a97afd2d) is already merged on main but not an ancestor of tag v1.4.2. The remaining work is a backport/support-boundary decision, not a new code contribution on main; the supplied evidence does not establish that a code change against the default branch is actionable."
+  },
   "8f7046b6e90b49bf680a1ab4fd6120eb84210219a558c08e6a495b21ab825b0a": {
     "confidence": 0.85,
     "contradictions": [
@@ -42719,6 +42923,43 @@
       "Whether issue #4838 is truly duplicate"
     ],
     "why": "Issue is a real bug with clear root cause and workaround, but an open PR #5742 already addresses it with a proposed fix. The PR has failing CI and lacks complete evidence, so a better PR could be competitive, but maintainer review is needed to confirm direction and avoid duplicate work."
+  },
+  "97da3f17f45244a756d742e3254f8a4eb3290de80c11c8e73642351048382647": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: implement merge-then-reinitialize restart (merge B@A into base, reinit A Kaiming / B zeros, reset optimizer moments, re-warm LR) or rename feature and correct docstring",
+      "src/soup_cli/utils/relora.py: replace strict '>' kthvalue mask with exact-count deterministic topk/stable-order selection honoring prune_ratio and guaranteeing >=1 survivor per non-trivial factor",
+      "src/soup_cli/utils/relora.py: explicit support or loud rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A is a maintainer design decision (real restart vs rename); a partial implementation of only one half could be rejected",
+      "Tie frequency in production is unverified; maintainer notes freshly-initialized lora_B is all zeros by PEFT convention, which may make the tie case non-constructed",
+      "Numerical tolerance and seed/hardware must be fixed to distinguish math error from float noise",
+      "Quantized/FSDP/DeepSpeed/streaming support scope may expand the change beyond a minimal fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reference-vs-implementation test: build small peft LoRA model with fixed seed, capture effective linear map before/after callback, assert MSE within numerical tolerance for merge-then-reset path",
+      "Regression test: constant-magnitude A and B with prune_ratio=0.9 must retain exactly the requested keep count and leave nonzero gradient norm on both factors",
+      "Kernel unit test: ones(10) and arange(1..10) with prune_ratio=0.9 both yield exactly 1 survivor",
+      "Accumulation test: successive restarts accumulate low-rank updates in the base weight",
+      "Compatibility test: unsupported quantized/distributed/streamed configs fail clearly rather than partially applying a restart"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers full ReLoRA restart implementation or rename-and-document contract (explicitly left open in the confirmation comment)",
+      "Actual production frequency of the tie case after initial lora_B zeros"
+    ],
+    "why": "Issue identifies two concrete, code-anchored defects in relora.py: (A) _prune_and_reset never merges B@A into the frozen base before pruning, so the learned adapter contribution is discarded (base weight delta 0, effective-map MSE 142.12 vs merge-then-reset control 8.77e-13); (B) strict '>' thresholding against kthvalue wipes all entries on ties, zeroing both factors and producing zero gradients. Maintainer independently reproduced both halves on 2edc063 and confirmed the module docstring conformance gap. This is a genuine algorithm-conformance/numerics defect with a concrete reference-vs-implementation validation path."
   },
   "97ec112b5446f06fde429a8a1fd884175dd822eb1d2c30a31e4078133f506b72": {
     "confidence": 0.7,
@@ -47164,6 +47405,40 @@
       "Exact maintainer preference on the operational trade-off (prewarm vs. raise timeout) is not known, but this does not block actionability as it is a normal decision point"
     ],
     "why": "The issue is an auto-filed workflow failure report with a clear root cause: the sweep timed out by design due to the two-phase timeout contract from merged PR #6509, and the residual issue is an operational trade-off (dependency installs consuming most of the budget). The maintainer bot's analysis confirms this is not a library bug and provides a concrete validation path (reproducing the timeout signature and comparing with the trusted run log)."
+  },
+  "a90614d6cc4665410f18b7da89fbc6ed4c8756fb54eac1f3728790478ebc93c2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "trainer/prm.py and trainer/mole_routing.py: pass optimizer/scheduler/warmup/weight_decay/max_grad_norm/gradient_checkpointing and resolve batch_size:auto",
+      "trainer/ppo.py: add the same fields to ppo_kwargs with capability probing",
+      "trainer/unlearn.py: honour weight_decay, max_grad_norm, scheduler/warmup, gradient_accumulation_steps, data.max_length, quantization and full LoRA config, or reject unsupported fields at load",
+      "shared training_arguments_kwargs helper to prevent recurrence"
+    ],
+    "risks": [
+      "Distinguishing genuine config-plumbing defect from intended per-trainer defaults",
+      "Unlearn custom loop changes may affect NPO/RMU numerical behavior",
+      "PPO capability probing must not break older trl versions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build prm/moe_lora_routing trainer on a tiny CPU model with scheduler:cosine, warmup_ratio:0.1, weight_decay:0.1, max_grad_norm:0.3, optimizer:adafactor and assert each value on trainer.args",
+      "Assert batch_size:auto is estimated or refused, not silently 1",
+      "Assert PPOConfig receives non-default values so trl fallback cannot pass",
+      "Assert unlearn configured weight_decay reaches optimizer param groups and max_grad_norm clips; unsupported fields refused at load"
+    ],
+    "unknowns": [
+      "Whether maintainers consider these omissions intentional for the affected trainers"
+    ],
+    "why": "Issue identifies a concrete, code-anchored defect: prm/moe_lora_routing/unlearn/ppo trainers omit optimizer, scheduler, warmup, weight_decay, max_grad_norm and related fields, so TrainingConfig defaults never reach training; batch_size:auto silently becomes 1. Root cause is located at specific lines with explicit fallback values, and acceptance criteria define reference-vs-implementation assertions on trainer.args/PPOConfig and optimizer param groups."
   },
   "a90efe340535e1de58e128adc432e9d91684e1dd540eb5ffe6bebf272a64cf7d": {
     "confidence": 0.8,
@@ -60272,6 +60547,41 @@
       "Whether maintainers prefer the scoping fix or the defensive refusal; whether PR #50514's failed CI is related and will be fixed."
     ],
     "why": "Issue reports a deterministic deadlock in fastsafetensors ParallelLoader when loading draft models under pipeline parallelism, with a clear root cause (hard-coded WORLD group) and a suggested fix. However, the deterministic gate is HUMAN_REVIEW, and there is an existing PR (#50514) with failed CI that may already address the area. Maintainer has acknowledged the issue but no design confirmation or assignment yet."
+  },
+  "d74e0fbfed67527de43d7b5ed1a1a0f9f1f51017da785d4ccbecb4318e2bf046": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue asserts a concrete root cause and code path, but explicitly defers the convention decision to maintainers, so the correct fix side is unresolved",
+      "Duplicate assessment reports semantic overlap with open PRs while also stating no direct code overlap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/chat/converse_transformation.py (input_tokens inflation basis)",
+      "litellm/responses/litellm_completion_transformation/transformation.py (input_tokens mapping)",
+      "usage invariant/validation where usage is assembled"
+    ],
+    "risks": [
+      "Choosing the wrong convention side changes public usage semantics for all Bedrock/Responses consumers",
+      "Open PRs #39325/#40617/#40714 may already touch cached_tokens/input_tokens handling and could conflict or duplicate"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting cached_tokens <= input_tokens for the Responses bridge given a non-inflated prompt_tokens plus populated cached_tokens",
+      "Compare /v1/responses vs /v1/messages usage basis for the same Bedrock prompt-caching request"
+    ],
+    "unknowns": [
+      "Which convention maintainers want (cache-inclusive vs cache-exclusive input_tokens)",
+      "Whether any open PR already resolves this exact basis mismatch",
+      "Whether the live >100% measurement stems from the described bridge path or a different upstream usage shape"
+    ],
+    "why": "Issue describes a plausible arithmetic inconsistency (cached_tokens > input_tokens) with code anchors and a synthetic repro, but the fix location is explicitly undecided: the reporter states the convention question (cache-inclusive vs cache-exclusive input_tokens) is a maintainer call that determines which side the fix belongs on. Supplied duplicate assessment also flags semantic overlap with open PRs (#39325, #40617, #40714) requiring manual comparison, and no maintainer direction is recorded."
   },
   "d7522115c97ad9e8a7d62e8968e6c464aed2309cae2b0c59605fdf22bf026176": {
     "confidence": 0.7,
