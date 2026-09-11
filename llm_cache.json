@@ -4569,6 +4569,39 @@
     ],
     "why": "The issue describes a concrete bug in the AI Gateway's provider translation layer: valid Anthropic computer use tool fields are not mapped correctly for Bedrock/Vertex fallbacks, causing HTTP 400 errors. A public reproduction via curl is provided, and no competing PR or issue exists. The fix is a targeted schema mapping correction in the translation adapter."
   },
+  "11caf4d676a30d6a029906cc4f993afecbe73ed5680a622ef28149749128e527": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/token_counter.py: make `_format_type` handle missing/null/non-dict `items` defensively",
+      "litellm/router.py: ensure token-count-dependent prechecks do not silently skip context-window filtering when counting fails",
+      "Add model-agnostic unit tests for array schemas without `items`"
+    ],
+    "risks": [
+      "Behavior change scope: decide whether to estimate defensively or return an intentional validation error",
+      "Non-dict `items` values must also be handled, not just missing/null",
+      "Router precheck fallback semantics could mask other counting failures if broadened too far"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's curl against a local proxy and confirm HTTP 500 before fix",
+      "Add unit test calling litellm.token_counter with a tool whose array property lacks `items` and assert no KeyError",
+      "Run the control request with `items` present and assert unchanged token count",
+      "Run targeted token_counter and router unit tests plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer defensive estimation vs. explicit validation error for malformed array schemas"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: `_format_type` in litellm/litellm_core_utils/token_counter.py directly indexes `props['items']`, raising KeyError for array schemas without `items`, causing HTTP 500 on /utils/token_counter and None-returning router prechecks. Reproduction is executable and includes a control case. Track is agent_ai_infra, not llm_algorithm, so algorithm-specific gating does not apply. Open PRs #40677/#40486 overlap only semantically on `context_window`/router.py and do not cover the token_counter root cause, so they are not blocking duplicates."
+  },
   "11d6859a58112aa490f491da8c8686e0217382f35bea8742b012184c5e11299f": {
     "confidence": 0.85,
     "contradictions": [
@@ -21399,6 +21432,42 @@
       "Whether PR #6635 actually fixes this issue"
     ],
     "why": "Issue reports a deterministic py311-only migration data-loss bug with a clear repro and test failure, but the root cause (which dependency introduces getattr in pickles) is not bisected. An open PR #6635 overlaps semantically but does not reference this issue and may not address the migration unpickler. Gate requires HUMAN_REVIEW, so no autonomous action."
+  },
+  "5052c09ece57e864d8789ccb8d53aba50a801c0e0df19676ca7b591952b484bb": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue title/body assert a specific kernel failure path"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/fused_moe/router/dsv4_topk.py kernel bounds/shape handling",
+      "possible scheduler/config validation for max_num_seqs upper bound"
+    ],
+    "risks": [
+      "Root cause may be a scheduler/config issue rather than the Triton kernel, making a kernel patch ineffective",
+      "Requires H20/SM90 hardware and DeepSeek-V4.1-Flash weights, limiting independent validation",
+      "Repository policy flags an AI disclosure conflict, which is a submission-policy blocker for public action"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on 8x H20 SM90 with TP=8/EP=8 and DSpark, sweeping max_num_seqs around 256 to find the failing threshold",
+      "Add a kernel-level test with synthetic token counts at and above the failing bound to check for out-of-bounds indexing"
+    ],
+    "unknowns": [
+      "The exact failing max_num_seqs value and whether the crash is deterministic at a specific token count",
+      "Whether the failure is an out-of-bounds kernel index, a launch-config issue, or a scheduler/config validation gap",
+      "vLLM version/build used in the failing deployment"
+    ],
+    "why": "Issue reports a Triton dsv4_topk illegal memory access under high concurrency, mitigated by max_num_seqs=256, with traceback and ordered repro steps. However no root cause is established: the failing max_num_seqs value is explicitly unknown, no kernel bounds/shape analysis is provided, and the report itself asks whether a bounds check is missing. The only concrete anchor is a concurrency threshold, which is not sufficient to determine whether the fix is a kernel bounds check, scheduler validation, or config handling."
   },
   "509321caa5e4851d799328957ef2fd9f358d913bd1752e98eb3d91e3387cca18": {
     "confidence": 0.7,
@@ -39184,6 +39253,39 @@
     ],
     "why": "Issue clearly describes mid-stream provider errors bypassing retries and being unclassifiable, with concrete repro and production evidence. However, the deterministic gate is HUMAN_REVIEW, and the issue has been split into two sub-issues (#18668, #18669) requiring design confirmation. Two open PRs (#18671, #18672) exist with overlapping intent but are not directly linked, so maintainer guidance is needed to avoid duplicate or conflicting work."
   },
+  "8d4348c9f38a4988e65b8ca2df2140fbbfa1a35ac6e58df3676e08d9d8bad003": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: implement merge-then-reinitialize restart (merge B@A into base, reinit A/B, prune optimizer moments, re-warm LR) or rename feature and correct docstring",
+      "src/soup_cli/utils/relora.py: replace strict threshold mask with deterministic exact-count topk/stable-order selection honoring prune_ratio under ties",
+      "Add regression tests for effective-map preservation and non-zero gradient after pruning"
+    ],
+    "risks": [
+      "Claim A fix requires a maintainer decision between full ReLoRA restart vs rename; partial implementation could be worse than either",
+      "Quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume need explicit support or loud rejection",
+      "Tie frequency in production is unmeasured; freshly-initialized lora_B being all zeros may make it more common than the constructed case suggests"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: apply callback to a small peft LoRA model with fixed seed; assert max|delta| of base weight equals merged B@A and MSE(effective map before/after) is within numerical tolerance",
+      "Unit test: constant-magnitude A/B with prune_ratio=0.9; assert exactly requested keep count survives and grad-norm of both factors is non-zero",
+      "Kernel-level test: ones(10) with prune_ratio=0.9 keeps 1 entry; arange(1..10) keeps 1 entry"
+    ],
+    "unknowns": [
+      "Which of the two separable fixes (A or B) the contributor will take, per maintainer's request to declare scope before opening a PR"
+    ],
+    "why": "Issue identifies two concrete, separable defects in ReLoRACallback._prune_and_reset: (A) adapters are pruned without merging B@A into the base, changing the effective linear map (MSE 142.12 vs control 8.77e-13), contradicting the module docstring's ReLoRA conformance claim; (B) strict '>' thresholding wipes tied magnitudes, zeroing both factors and producing zero gradients. Maintainer confirmed both halves with real peft model evidence and labeled bug/help wanted, unclaimed."
+  },
   "8d73ab97940c4a949d426b6c2547f627eb612d9ae52cefc5d21fe5356a74234b": {
     "confidence": 0.7,
     "contradictions": [
@@ -48096,6 +48198,44 @@
       "Maintainer preference on whether to revive #25387 or accept a new PR."
     ],
     "why": "Issue clearly identifies a real bug with root cause and reproduction, but an existing PR (#25387) directly targets the same code paths and is closed with CI failures and no tests. Maintainer review is needed to decide whether to revive that PR or accept a new one."
+  },
+  "b0f15a187e8c4e717495b5d6a0daaf109ceefa89ac06aab513a5628e0441f7f8": {
+    "confidence": 0.7,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap false and root_cause_coverage false for PR #42126, yet the PR title and issue comment indicate it addresses the same bug",
+      "candidate.actionability_evidence root_cause_signal is false while issue body provides detailed root-cause description"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Agent plugin tool output handling to persist BLOB outputs via storage backend",
+      "ToolReturn.metadata to carry saved file IDs and compact references",
+      "Agents log response and log detail page to include persisted attachments"
+    ],
+    "risks": [
+      "Overlap with open PR #42126 may make a separate PR redundant or conflicting",
+      "Repository AI disclosure policy conflict may block automated public submission",
+      "Broad changes across upload, metadata, and log rendering paths risk unintended API behavior changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a plugin tool returning a BLOB image and assert the tool observation contains a file reference rather than raw bytes",
+      "Regression test that generated file is persisted, attached to the assistant message, and returned in Agents log responses",
+      "Verify signed URL refresh when reopening persisted messages"
+    ],
+    "unknowns": [
+      "Whether PR #42126 already fully covers the described fix or leaves a concrete gap",
+      "Whether maintainers require assignment or prefer collaboration on #42126 before independent work",
+      "Whether the AI disclosure conflict permits any public contribution path"
+    ],
+    "why": "Issue describes a concrete user-visible bug (BLOB tool outputs stringified, attachments missing from Agents logs) with reproduction steps and a candidate fix, but the supplied evidence shows an open PR #42126 that already references this issue with 10 changed files, 3 test files, and 521 additions, while root_cause_coverage is false and semantic_overlap is false. The duplicate/coverage status is unresolved: it is unclear whether #42126 already covers the same fix or leaves a genuine gap, which materially determines whether independent code work is actionable."
   },
   "b1318133216fb102c7f4f670025f31230a8502660a12c3784a0c5193fc160834": {
     "confidence": 0.85,
