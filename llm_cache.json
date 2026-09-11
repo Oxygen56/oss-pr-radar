@@ -18319,6 +18319,39 @@
     ],
     "why": "The issue provides a clear root cause: ChatModelBase.count_tokens uses a bytes/4 heuristic that underestimates tokens for non-ASCII, numeric, and structured content, leading to context overflow and HTTP 400. It includes benchmark data, reproduction steps, and a concrete validation path comparing estimates to actual usage.input_tokens. The open PR #2397 is incomplete (lacks root-cause coverage), leaving room for a competitive contribution."
   },
+  "45a2031c07cbcfaae5d3f039a31d422c6b364a54d88cf888e00491cbac391db3": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/tool.ts: relax createTool generic constraints from nominal PublicSchema union to shallow structural discriminators while preserving input/output/suspend/resume/request-context inference",
+      "Runtime schema validation/conversion boundary kept accepting Zod 3, Zod 4, AI SDK schemas, JSON Schema, and Standard Schema",
+      "Add a stress regression test with many createTool definitions"
+    ],
+    "risks": [
+      "Relaxing the constraint could weaken type inference or accept unsupported schema shapes at compile time",
+      "Maintainers may have a preferred design for the public type surface, requiring iteration",
+      "Type-level changes can have subtle downstream effects on Tool/ToolAction consumers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Clone the public gist reproduction and run npm run typecheck:low-memory to confirm OOM before the fix",
+      "After the fix, run the same low-memory typecheck and confirm it passes with reduced instantiations",
+      "Run TOOL_COUNT=50 and TOOL_COUNT=220 scaling checks to confirm sublinear memory growth",
+      "Run targeted unit tests for createTool type inference and runtime schema acceptance across Zod 3, Zod 4, AI SDK, JSON Schema, and Standard Schema"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference for the PublicSchema replacement",
+      "Exact scope of the stress regression test expected by maintainers"
+    ],
+    "why": "Issue provides a concrete root cause (createTool generic parameters constrained to the nominal PublicSchema union causing deep structural comparisons), a public minimal reproduction with executable commands, scaling controls, and a prototype shim demonstrating ~43% instantiation reduction. This is a type-level performance fix in the core tool API, not ordinary plumbing, and the validation path (stress regression with many createTool definitions plus existing typecheck) is concrete."
+  },
   "45c0576315c8bd9effab78d1af2ec2137014ef1aa57a8f69138a6ff40f51f36a": {
     "confidence": 0.82,
     "contradictions": [],
@@ -63377,6 +63410,43 @@
       "Whether maintainers prefer self-contained retract release or separate flush; exact test environment for reproduction."
     ],
     "why": "The issue provides a detailed root cause analysis with code-level anchors and measured impact, making it actionable. Although there are existing PRs, they lack tests or are drafts, leaving room for a complete fix with regression tests."
+  },
+  "e28eb4acadd153aae7b5f66ad5f6d56f7ed740dd11325da256e86b77e7ddd10b": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims root cause for defect A is clear (missing assignment), but actionability_evidence.root_cause_signal is false",
+      "Open PR #13707 overlaps the same code paths and 'base64' semantics yet is not linked to this issue, leaving duplicate coverage unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/omni/omni_handler.py: pass response_format=req.response_format into EngineInputs for video generation",
+      "components/src/dynamo/vllm/omni/output_formatter.py: honor b64_json vs url delivery",
+      "runtime image build/FFmpeg configuration for the color corruption path (ownership unresolved)"
+    ],
+    "risks": [
+      "PR #13707 may already cover the same handler/formatter change, making a new PR duplicative",
+      "FFmpeg color defect may be an upstream/build-configuration issue not fixable in this repository",
+      "Changing response_format handling could alter existing URL delivery behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting that a request with response_format=b64_json yields nonempty data[0].b64_json and no file:// URL",
+      "Add a model-free RGB quadrant encode/decode round-trip test asserting pixel correctness through encode_to_video_bytes",
+      "Verify URL delivery still works when external media storage is configured"
+    ],
+    "unknowns": [
+      "Whether PR #13707 already implements the response_format propagation fix",
+      "Whether the FFmpeg color corruption is in scope for this repository or must be fixed in the runtime image build",
+      "Whether maintainers consider the two defects one issue or separate workstreams"
+    ],
+    "why": "Issue reports two defects: (A) missing response_format propagation in omni_handler.py with a concrete one-line diff, and (B) bundled FFmpeg MMXEXT color corruption. Defect A is actionable, but defect B's root cause is attributed to an upstream FFmpeg build/guard issue outside this repo, and the supplied evidence does not establish whether the fix belongs in dynamo or in the runtime image build. Additionally, open PR #13707 overlaps the same omni_handler.py/output_formatter.py paths and 'base64' semantics but is not linked to this issue, so duplicate coverage is unresolved."
   },
   "e29d8c9cea5577e1eeab5a533673e8069891f767a32d654aa4d9fa750dc2adab": {
     "confidence": 0.85,
