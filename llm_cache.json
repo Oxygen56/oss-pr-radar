@@ -15610,6 +15610,41 @@
     ],
     "why": "Issue clearly describes a user-visible bug during rolling upgrades due to codec mismatch between v1.4 frontend and v1.2 workers. Existing PR #12658 addresses the issue but lacks regression tests and has a large change surface, leaving room for a more focused, well-tested fix."
   },
+  "3a8e098a89aea1281fd24f8548f372ac596b0e6e5fb56591642cc8ea8aeb845a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims durable-execution/persisted-history reachability, but the bot comment reports zero ModelMessagesTypeAdapter references in durable execution and side-respecting replay",
+      "Issue frames the omission as an oversight, while the bot comment reports the same fix shape was closed twice on review objections"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pydantic_ai/_messages.py ModelRequestPart union (only if maintainer decides request-side native returns are supported)",
+      "MessagesBuilder dispatch and request-side narrowing if the design contract is changed"
+    ],
+    "risks": [
+      "Reopening a twice-rejected fix shape without maintainer design approval",
+      "Changing the request-side union contract without corresponding dispatch/replay handling",
+      "Duplicate triage load from a fourth filing of the same closed-chain defect"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a request-side round-trip test only after a supported producer path is demonstrated",
+      "Run tests/test_messages.py and tests/test_tool_search.py round-trip cases"
+    ],
+    "unknowns": [
+      "Whether a maintainer intends to support request-side native tool-search returns",
+      "Whether any supported producer path actually places NativeToolSearchReturnPart on ModelRequest.parts"
+    ],
+    "why": "The issue's own reproduction is concrete and the union gap is real, but the supplied bot status comment establishes that the failing shape is unreachable on any supported path: both construction sites build NativeToolSearchReturnPart on ModelResponse, durable execution never invokes ModelMessagesTypeAdapter, and the AG-UI reachability lead is refuted by MessagesBuilder isinstance dispatch. The proposed one-line union arm was reportedly closed twice on substantive review objections, and the defect is a fourth filing of a closed chain. This makes the contribution low-value/covered rather than actionable code work."
+  },
   "3aa18d1f932dd845459094cae49ad29f02181841efe4c6747ac0f82dc1f8333a": {
     "confidence": 0.75,
     "contradictions": [
@@ -29859,6 +29894,41 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue provides a precise root cause (ChatMiddlewareLayer copies the message list, breaking compaction's in-place mutation invariant) with a minimal public repro and bisect. However, the proposed fixes have trade-offs (e.g., write-back changes middleware behavior) and no maintainer has confirmed the preferred design. The gate decision is HUMAN_REVIEW, and design confirmation is required before implementation."
   },
+  "68ffae558bef4fe9ab18d21982aaf8d2fd5c1cafac364c307deec2385f6ed12e": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue body asserts consumer production host is daily-cloudcode-pa.googleapis.com, while the commenter states the official IDE uses daily-cloudcode-pa.sandbox.googleapis.com"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Antigravity provider endpoint selection/routing for consumer accounts (auth/antigravity.rs, provider/antigravity.rs)",
+      "Account classification via loadCodeAssist to distinguish consumer vs enterprise/GCP-managed",
+      "429 diagnostics to distinguish quota exhaustion from endpoint entitlement denial"
+    ],
+    "risks": [
+      "Changing the production endpoint for an entire account class could regress enterprise/GCP-managed accounts if classification is wrong",
+      "The correct consumer host is disputed (daily-cloudcode-pa vs daily-cloudcode-pa.sandbox), so a wrong choice may still 429",
+      "paidTier/project_id are explicitly not enterprise signals; misusing them would recreate the bug"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a Google AI Pro consumer account: login --provider antigravity, then auth-test --provider antigravity; confirm 429 on cloudcode-pa and 200 on the daily endpoint",
+      "Add a regression test asserting consumer-class accounts (project_id=aicode-consumers, gcpManaged=false) resolve to the daily endpoint and enterprise accounts remain on cloudcode-pa",
+      "Run provider-doctor antigravity --tier full and targeted unit tests for the endpoint resolution logic"
+    ],
+    "unknowns": [
+      "Which exact daily endpoint is correct for consumer production accounts",
+      "Whether the commenter's branch is verified against a real Google AI Pro account or only sandbox"
+    ],
+    "why": "Issue provides a concrete reproduction (login succeeds, generateContent 429s on cloudcode-pa), a specific root-cause hypothesis (consumer accounts must route to daily-cloudcode-pa), and external corroboration. A commenter claims independent confirmation and a tested branch, but the exact production host is contested (daily-cloudcode-pa vs daily-cloudcode-pa.sandbox), so the precise fix is not fully settled. This is normal implementation uncertainty, not a blocker: a reference-vs-implementation test against a Google AI Pro account can validate the routing change."
+  },
   "690be9858b0cb0d433f144c4740d6492bb0ba2d2f6cbe04714654c2b35f47f02": {
     "confidence": 0.9,
     "contradictions": [],
@@ -35828,6 +35898,44 @@
       "Exact integration points for the chunked kernel in the existing backend"
     ],
     "why": "Issue identifies a concrete kernel gap: rope-free sparse-MLA (qk_rope_head_dim=0) has no SM120 path, with three failure modes and a precise shape guard. Commenter provides a working kernel implementation and validation against a torch reference, establishing a clear fix path."
+  },
+  "7cded3e5b15a9b96dbed28517c2d5aa7ee44aef8db756c090496167067d7332b": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate labels the issue as hitting verifiable LLM algorithm mechanisms (distributed_training, numerics_quantization) while the issue itself is a runner-level CUDA-graph/async-scheduling race, not an algorithm correctness problem",
+      "Candidate category WAIT_MAINTAINER with no wait_reasons and maintainer_approved=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/cudagraph_utils.py: add replay-vs-output-copy synchronisation",
+      "vllm/v1/worker/gpu/async_utils.py: make main stream wait on copy_event before replay"
+    ],
+    "risks": [
+      "Root cause is explicitly unpinned; the proposed sync fix may not address the actual fault",
+      "Open PRs #952/#56342 may already cover the same root cause, risking duplicate work",
+      "ai_disclosure_conflict policy status is unresolved and may block public contribution",
+      "Requires specific AMD MI355X/gfx950 hardware to validate"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the max_tokens=1/2/3 ladder on 4x MI355X TP4 with FULL_DECODE_ONLY and confirm the 3rd-token segfault",
+      "Re-run the same ladder with --no-async-scheduling and with cudagraph_mode=NONE to confirm the failure disappears",
+      "Add a regression test that replays a captured graph while a prior D2H output copy is still in flight and asserts no buffer corruption"
+    ],
+    "unknowns": [
+      "Whether the output_copy_stream/replay race is the actual root cause or only a correlated symptom",
+      "Whether open PRs #952 or #56342 already fix this specific segfault",
+      "Whether the ai_disclosure_conflict policy permits an external contribution at all"
+    ],
+    "why": "Issue is a detailed ROCm segfault report with a concrete reproducer and a plausible unsynchronised-replay hypothesis, but the reporter explicitly states the root cause is 'not pinned' and offers a report rather than a patch. The candidate's own evidence records root_cause_signal=false, and the strongest lead (missing sync of output_copy_stream against graph replay) is a hypothesis, not an established defect. Additionally, the candidate is flagged with an unresolved ai_disclosure_conflict policy status, and open PRs #952/#56342 show semantic overlap on the same distinctive terms (deepseek_v4_1, full_decode_only, no_async_scheduling) without direct code overlap, so duplicate/coverage status is unresolved."
   },
   "7ce34cb84c64dd25da9de07be55d738ebb6558915635681053a42f751a0f12bd": {
     "confidence": 0.7,
@@ -59676,6 +59784,42 @@
     ],
     "why": "The issue clearly identifies a root cause: Server.call_tool() discards structured jsonschema.ValidationError fields, leaving only a free-text message. The suggested fix is concrete and actionable: forward e.validator, e.schema_path, and e.json_path into a structured data field. The validation path is clear: add a test that triggers a validation error and asserts the structured fields are present in the CallToolResult. No contradictory evidence or missing facts block actionability."
   },
+  "d3dd2fda318dcaa80d3f1d4ed44ece317d19c8aefe7a5cf1230e7852fb51e3af": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims a clear root cause and offers a PR, but also states the convention decision is a maintainer call that determines which side the fix belongs on",
+      "Open PR #39122 is flagged as semantic overlap on cached_tokens yet has no direct code overlap and does not reference this issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/chat/converse_transformation.py usage assembly",
+      "litellm/responses/litellm_completion_transformation/transformation.py input_tokens mapping",
+      "usage invariant/validation for cached_tokens <= input_tokens"
+    ],
+    "risks": [
+      "Fixing on the wrong side changes public usage semantics for all Bedrock/Responses consumers",
+      "Overlap with PR #39122 may already cover the cache-token handling, causing duplicate work",
+      "Clamping cached_tokens could mask upstream provider bugs rather than fixing the basis mismatch"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a unit test constructing Usage(prompt_tokens=6732, prompt_tokens_details.cached_tokens=7411) and assert the bridge output satisfies cached_tokens <= input_tokens",
+      "Regression test comparing /v1/responses and /v1/messages usage bases for the same Bedrock prompt-cache request"
+    ],
+    "unknowns": [
+      "Which convention maintainers want for input_tokens (cache-inclusive vs cache-exclusive)",
+      "Whether PR #39122 or another open PR already resolves this root cause",
+      "Whether the fix belongs in the Bedrock Converse transformation or the Responses bridge"
+    ],
+    "why": "Issue describes a concrete arithmetic inconsistency (cached_tokens > input_tokens) with code anchors and a no-network reproduction, but the author explicitly states the fix direction depends on an unresolved maintainer convention decision (cache-inclusive vs cache-exclusive input_tokens). The supplied evidence also flags semantic overlap with open PR #39122 (cached_tokens, cache_control handling) that is not directly linked to this issue, so duplicate/coverage status is unresolved. These are materially blocking unknowns for choosing an actionable implementation."
+  },
   "d3fd2440a660b5cc7a01e8fe71ce0ff3611d6c4ac5c79f5c9022015680329bb4": {
     "confidence": 0.6,
     "contradictions": [],
@@ -72357,6 +72501,46 @@
       "Whether PR #30967 or #32691 resolves this specific failure"
     ],
     "why": "Issue reports a reproducible CUDA illegal memory access near context boundary with NEXTN on Qwen3.5-397B, but root cause is unconfirmed and may relate to existing PR #32691 or #30967. The supplied gate says HUMAN_REVIEW, and open PRs overlap semantically, requiring maintainer comparison before new work."
+  },
+  "fa5db78981e87470ac8a1c48fbf83f41c0efa3fef3ebdee50269c4ea75f15eb2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/resources/extensions/gsd/task-settle.ts",
+      "src/resources/extensions/gsd/tools/replan-slice.ts",
+      "src/resources/extensions/gsd/auto/task-execution-cutover.ts",
+      "src/resources/extensions/gsd/escalation.ts",
+      "src/resources/extensions/gsd/task-recovery-domain-operation.ts",
+      "src/resources/extensions/gsd/db/lifecycle-shadow-comparison.ts",
+      "src/resources/extensions/gsd/status-guards.ts",
+      "src/resources/extensions/gsd/tools/workflow-tool-executors.ts"
+    ],
+    "risks": [
+      "New terminal status must be added to canonical vocabulary without breaking lifecycle-shadow-comparison or status guards.",
+      "Atomic-resume invariant (successor Attempt claimed/created or durably queued dispatch) must be folded in without regressing #2190 semantics.",
+      "AI disclosure conflict policy may restrict automated public submission actions."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce residual state: settled failed/blocker-discovered Attempt, no running Attempt, status in_progress; assert gsd_task_settle and reconcileLifecycle reject as documented.",
+      "Add regression test for blocker-accepted closeout: task moves to new terminal status accepted by replan gate, blocker provenance recorded in canonical plan, terminal route decision prevents re-routing.",
+      "Verify failed Attempt/Result and recovery history remain immutable, no passing Technical Verdict is invented, and no new Attempt is authorized.",
+      "Run targeted task-settle and replan-slice unit tests plus static checks."
+    ],
+    "unknowns": [
+      "Exact name and final semantics of the new terminal status are settled in the spec but not yet implemented."
+    ],
+    "why": "Maintainer-approved family spec fixes disposition semantics for a residual blocker-discovered Task with no no-rerun closeout path; concrete code anchors and dead-end paths are enumerated, and a reference-vs-implementation validation path exists via the documented tool rejections and targeted tests."
   },
   "fa690750e608582b140c647f3d5d43def007906101080fabe9bacab22bfd36cf": {
     "confidence": 0.85,
