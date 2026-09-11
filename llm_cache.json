@@ -1639,6 +1639,36 @@
     ],
     "why": "Issue provides a concrete reproduction with ordered steps and a clear observed/expected behavior. A contributor traced the current code path and identified specific modules and a plausible root cause (token expiry during long-pending approval, with potential retry wiring or credential-store bug). The validation path is clear: retest on latest build and inspect logs to distinguish between retry wiring and credential-store issues."
   },
+  "069cbb25719f037777e0f07c9be2647a97e7b3840b871dba4d385d9ff9b4c751": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.algorithm_evidence claims PEFT/quantization mechanisms, but the issue body describes only HTTP routing and multimodal payload translation"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/anthropic/experimental_pass_through/messages/handler.py routing predicate for _RESPONSES_API_PROVIDERS",
+      "token-counting probe path for /v1/responses/input_tokens on custom api_base"
+    ],
+    "risks": [
+      "Changing the routing predicate could regress genuine OpenAI/Azure Responses-API routing",
+      "Token-counting fallback behavior may mask the underlying misrouting"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce with a self-hosted OpenAI-compatible backend declared as openai/<model> and send an image via /v1/messages; assert it no longer returns 400 validation errors",
+      "Regression test that text-only /v1/messages still routes correctly and that hosted_vllm/ behavior is unchanged"
+    ],
+    "unknowns": [
+      "Whether maintainers consider openai/ + custom api_base a supported configuration for Responses-API routing"
+    ],
+    "why": "The issue is a routing/plumbing bug in litellm's Anthropic /v1/messages bridge: the openai/ prefix unconditionally routes to the Responses API, breaking multimodal input for self-hosted OpenAI-compatible backends. Although the issue is well-reproduced and root cause is clear, it is ordinary provider-integration/API plumbing work, not an LLM algorithm contribution. The supplied algorithm_evidence (parameter_efficient_finetuning, numerics_quantization, adapter/awq/int4 terms) is keyword-derived and unrelated to the actual issue content; no training objective, model mechanism, distributed invariant, quantization method, kernel algorithm, or evaluation methodology is involved."
+  },
   "06a7fff03fe145629fea18afa24514594618a2b8c975303d676f83d40f2e8a32": {
     "confidence": 0.85,
     "contradictions": [],
@@ -26078,6 +26108,39 @@
       "Exact internal state corruption mechanism not identified; maintainer may need to inspect session wire.jsonl and compaction code."
     ],
     "why": "Issue provides a concrete, reproducible bug with clear steps and isolation evidence pointing to session-scoped state corruption after compaction/resume. The root cause is well-scoped and actionable for a maintainer."
+  },
+  "5c390568bb16f46e2ff49259739e546ec824e40d0a59b11d3064bda7c7e9729f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue suggests a concrete fix while open PR #19521 already implements a matching fix in the same function; independent implementation space is unconfirmed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "rag/nlp/__init__.py: flush pending seg buffer before appending table/image chunks in _build_cks",
+      "Preserve tables/images index lists by computing idx after flush",
+      "Add regression test asserting text chunk precedes table/image chunk and context_above/below semantics"
+    ],
+    "risks": [
+      "Open PR #19521 may already cover the fix, making a duplicate contribution low-value",
+      "Changing chunk ordering could affect downstream retrieval/UI expectations if not scoped to the naive parser path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's minimal repro with sections [('表格标题',None,None),('',None,'<table>...</table>'),('后续段落',None,None)] and assert cks order is text, table, text",
+      "Add a regression test verifying context_above contains the table's own caption and context_below contains the following paragraph",
+      "Run targeted unit tests for rag/nlp and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #19521 fully resolves the issue or leaves gaps (e.g., missing regression tests) that justify an independent contribution",
+      "Maintainer preference on the fix approach and whether the PR will be merged"
+    ],
+    "why": "Issue provides a concrete reproduction, code anchor (rag/nlp/__init__.py _build_cks), and a clear root cause: table/image chunks are appended before the pending text buffer (seg) is flushed, which also swaps context_above/context_below. However, an open PR #19521 already directly targets the same function and code identifiers with a matching fix, and the duplicate status is human_review_required. Whether independent implementation space remains is unresolved, which materially affects actionability."
   },
   "5cbba08bfaf7da5508509ad9d9759f071866fd4327a842a0c06d19e02437b201": {
     "confidence": 0.7,
@@ -57526,6 +57589,38 @@
       "Whether the CandidateSelector codebooks are actually loaded incorrectly (hypothesis untested)"
     ],
     "why": "Issue is a read-only report explicitly stating the author has not root-caused the failure; the leading hypothesis (compressed-tensors loading of CandidateSelector codebooks/hidden_projection) is untested, and the suggested mitigation is only a boot warning. The supplied duplicate assessment also flags PR #37462 (LiLiCorr reranker, overlapping python/sglang/srt/models/dflash.py) as semantic overlap requiring review, so coverage of the root cause is unresolved."
+  },
+  "ccbab39270d820b8600790dd0bcd03b001cc656a5b458191fd55c1fc4c4b59ad": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Candidate category WAIT_MAINTAINER with gate HUMAN_REVIEW, yet actionability evidence shows no maintainer approval, no design confirmation, and no wait reasons"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Desktop attachment/file-type validation path",
+      "Backend transport error handling for unsupported binary attachments"
+    ],
+    "risks": [
+      "Fixing at the wrong layer (UI vs transport vs provider) may not address the actual crash",
+      "Broadening accepted file types could introduce security or resource-exhaustion concerns"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce by attaching a .dmg/.exe in Cline Desktop and submitting a prompt; capture backend logs to locate the crash point",
+      "Add a regression test asserting unsupported binary attachments yield a clear unsupported-file message rather than a transport-closed error"
+    ],
+    "unknowns": [
+      "Which code path handles attachment ingestion and where the transport closes",
+      "Whether the crash is in file-type validation, size handling, or provider request construction",
+      "Whether any existing PR or internal Linear issue (CLINE-3262) already covers this fix"
+    ],
+    "why": "Issue reports a desktop backend transport crash when attaching .dmg/.exe files, but supplies only user-facing repro steps and no code anchors, stack trace, or root-cause evidence. The candidate's own actionability evidence marks root_cause_signal=false, code_anchors=[], probe_ready=false, and the pre-review gate failed with no_code_surface and reproduction_or_validation_missing. Without a code surface or root-cause signal, the fix location (attachment handling, file-type validation, transport layer) is undetermined, so code work is not yet actionable."
   },
   "ccc29486782af47e01b7954a01d003571797600e189a59dc7788e2a161a9deee": {
     "confidence": 0.85,
