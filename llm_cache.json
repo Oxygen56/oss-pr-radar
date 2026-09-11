@@ -4574,6 +4574,41 @@
     ],
     "why": "Issue provides a concrete race condition with a reproducible script, clear expected behavior, and evidence of index desync under concurrent set_payload by filter. Root cause is localized to index maintenance during concurrent updates, with a clear validation path via the provided reproducer."
   },
+  "117856c74a195cc9e7c50f44ff637d3f726c8073c876ea306ec6e909336c3aad": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate repo is OpenHands/OpenHands but maintainer comment says the fix should be made in OpenHands/software-agent-sdk"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "openhands/sdk/llm/message.py _list_serializer normalization of empty/blank text parts",
+      "regression tests for empty assistant message, blank text part, and remaining non-text content"
+    ],
+    "risks": [
+      "Fix may belong in OpenHands/software-agent-sdk rather than OpenHands/OpenHands",
+      "Changing serialization behavior could affect other OpenAI-compatible providers",
+      "Repository AI disclosure policy conflicts with automated public contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add unit test asserting _list_serializer emits content: '' for an assistant message with no content",
+      "Add unit test asserting blank text parts are filtered out",
+      "Add unit test asserting non-text/image content is preserved"
+    ],
+    "unknowns": [
+      "Whether the affected file exists in this repository or only in the upstream SDK",
+      "Whether maintainers will accept the fix in this repo despite the upstream direction",
+      "Whether the AI disclosure conflict can be resolved for a public contribution"
+    ],
+    "why": "The issue describes a plausible serialization bug in openhands/sdk/llm/message.py, but a maintainer comment directs the fix to the upstream OpenHands/software-agent-sdk repository, not this repo. The candidate repo is OpenHands/OpenHands, so the actionable code surface is unresolved. Additionally, the issue-readiness bot flags missing supported reproduction method and screenshot, and the repository has an AI disclosure conflict policy."
+  },
   "119bf7534e5c355339b9092314897a492800df9955a909d1a304878b167d28bd": {
     "confidence": 0.8,
     "contradictions": [],
@@ -27817,6 +27852,48 @@
       "Exact code path in Dify Cloud that differs from self-hosted"
     ],
     "why": "Issue reports a reproducible MCP error with a clear root cause (SQLAlchemy session transaction conflict) and a known fix pattern from merged PRs. However, the issue is Cloud-specific and the fix likely requires maintainer coordination; the candidate is a bug fix with local scope, not a new algorithm. The deterministic gate allows private work but the lack of maintainer approval and the need for design confirmation on the MCP controller fix make it premature to start."
+  },
+  "63567f997266d09d1693c95408f895ea94379c59df9c38fedc247917d9bacf0a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.actionability_evidence reports root_cause_signal=false and public_repro_signals=0, while issue comments contain maintainer reproduction with exact attempt counts, delay schedule, and tripwire output"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/memory/src/processors/observational-memory/retry.ts: make retry schedule per-instance/configurable instead of module-level singleton",
+      "packages/memory/src/processors/observational-memory/observation-strategies/sync.ts: derive rethrowOnFailure from a configurable failure policy",
+      "packages/memory/src/processors/observational-memory/processor.ts: honor fail-open policy instead of unconditional abort+rethrow",
+      "packages/memory/src/processors/observational-memory/observation-turn/step.ts: pass configurable buffering wait budget to waitForBuffering",
+      "ObservationalMemoryOptions: expose retry budget and onSyncFailure policy with backward-compatible abort default"
+    ],
+    "risks": [
+      "Broad catch could suppress user cancellation or storage invariant failures; recovery must be scoped to recoverable observer/provider errors",
+      "Uncompacted messages under repeated failures can grow unbounded; needs a defined context-overflow policy",
+      "Changing the module-level RETRY_CONFIG singleton affects all five withRetry call sites (observer-runner, reflector-runner, base, async-buffer)",
+      "Default policy choice (abort vs fail-open) is a maintainer API decision; backward-compatible default should be preserved"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Mocked OM engine + existing ObservationStep/processor fixtures: sync observation rejects with simulated recoverable provider error; under 'continue' assert raw messages, generation, observation cursor, and pending token accounting preserved, error hook emitted, actor step proceeds",
+      "Under 'abort' assert current propagation unchanged; already-aborted signal propagates under both policies",
+      "Storage/record invariant errors are not swallowed by the provider-error recovery option",
+      "Fake timers with pending buffer: assert configured short wait budget is applied, default stays 30s, and progress resumes at deadline without falsely declaring buffering complete",
+      "Resolve background buffer after timeout: assert no duplicate observation/activation, generation overwrite, lost raw messages, or permanent buffering lock",
+      "Later successful cycle observes the same previously unobserved window"
+    ],
+    "unknowns": [
+      "Maintainer decision on default failure policy and final API shape (onSyncFailure naming, retry option placement)",
+      "Whether the maintainer triage 'Await approval' label blocks PR submission per repo policy"
+    ],
+    "why": "Issue identifies a concrete, code-anchored root cause: module-level @internal RETRY_CONFIG (maxRetries 8, ~247s) in retry.ts is unreachable from public options, and sync.ts rethrowOnFailure=true combined with processor.ts abort+rethrow kills the user turn. Maintainer triage reproduced it deterministically (9 attempts, 247s schedule, tripwire abort) and confirmed it also occurs under default OM config via the step-0 sync fallback. A concrete validation path exists using existing ObservationStep/processor fixtures with a mocked OM engine and fake timers, no provider keys needed."
   },
   "635958d3488bd69ea6bc8d04560310446b35780ea592871b4f54075fb0672cf3": {
     "confidence": 0.85,
