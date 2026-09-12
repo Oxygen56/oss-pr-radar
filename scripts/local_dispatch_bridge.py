@@ -31,6 +31,10 @@ from urllib.parse import unquote
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+# ChatGPT-account app-server rejects gpt-5.6-sol; pin a supported model while
+# retaining an explicit deployment override for other hosts.
+CODEX_TASK_MODEL = os.environ.get("OSS_PR_RADAR_CODEX_MODEL", "gpt-5.5")
+
 from oss_pr_radar.action_guard import (  # noqa: E402
     ledger_action_guard_root,
     opportunity_action_guard,
@@ -8761,6 +8765,7 @@ def _app_server_request_worker(args: argparse.Namespace) -> dict[str, Any]:
                                 "sandbox": "danger-full-access",
                                 "approvalPolicy": "never",
                                 "threadSource": "appServer",
+                                "model": CODEX_TASK_MODEL,
                             },
                         },
                     )
@@ -9242,6 +9247,7 @@ def _codex_decision_worker(args: argparse.Namespace) -> dict[str, Any]:
                                 "sandbox": "danger-full-access",
                                 "approvalPolicy": "never",
                                 "threadSource": "appServer",
+                                "model": CODEX_TASK_MODEL,
                             },
                         },
                     )
@@ -9916,6 +9922,7 @@ def _write_turn_start_request(
         "approvalPolicy": "never",
         "sandboxPolicy": {"type": "dangerFullAccess"},
         "summary": "auto",
+        "model": CODEX_TASK_MODEL,
     }
     if delivery_kind and delivery_token:
         client_message_id = f"oss-pr-radar:{delivery_kind}:{delivery_token}"
