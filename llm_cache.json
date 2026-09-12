@@ -2277,6 +2277,40 @@
     ],
     "why": "Issue identifies a concrete bug in MilvusVectorStore._parse_output where cosine distance is returned as score, violating the VectorStoreBase contract and causing inverted ranking and dropped matches. The fix is localized and mirrors existing pgvector implementation, with clear reproduction steps."
   },
+  "07e92bdc0dc46ac869bd902e72a1bbb729c8804233e620a3007dddc4ebfadcf2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/services/sessionService.ts: stable composite ordering and cursor (mtime, sessionId) in listSessions pagination",
+      "packages/cli/src/serve/server/session-list.ts: parseSessionCursor must accept composite cursor format",
+      "packages/cli/src/acp-integration/acpAgent.ts: parseAcpSessionListCursor must accept composite cursor format",
+      "Backward compatibility handling for clients holding legacy numeric cursors"
+    ],
+    "risks": [
+      "Cursor format change may break clients holding old numeric cursors if backward compatibility is not handled",
+      "Scope creep into SQLite sidecar work from PR #11527",
+      "Both cursor parsers currently reject non-numeric cursors, so the fix spans core plus two CLI parsers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add sessionService test creating >size files with identical mtimes, follow cursors to exhaustion, assert every session id returned exactly once",
+      "Regression test for daemon REST persisted list cursor round-trip with composite cursor",
+      "Regression test for ACP unstable_listSessions cursor parsing with composite and legacy numeric cursors"
+    ],
+    "unknowns": [
+      "Maintainer preference on composite cursor encoding and backward-compatibility policy for legacy numeric cursors"
+    ],
+    "why": "Issue identifies a concrete, reproducible pagination defect in SessionService.listSessions(): mtime-only ordering plus strict `file.mtime < cursor` drops entire tie groups, and the cursor is a non-unique key. Triage evidence confirms exact lines (2570/2575/2681), a deterministic reproduction (200 files, one mtime, size 20 -> 20 of 200), and four live callers. The proposed composite (mtime, sessionId) cursor has a clear validation path (cursor-following test asserting each session id returned once). Open PR #11527 is opt-in SQLite and does not cover the default filesystem path, so it is not a blocking duplicate."
+  },
   "0800a641e3c341c34ef31972486da3cbd6daefda89121fc39392dff8b6644106": {
     "confidence": 0.7,
     "contradictions": [
@@ -2732,6 +2766,42 @@
       "Whether PR #39094 fully addresses the issue or only partially; maintainer preference on implementation approach"
     ],
     "why": "Issue provides a clear root cause (Anthropic tool types not recognized by router capability filter), a deterministic code-level reproduction, and a concrete expected behavior. An open PR (#39094) overlaps semantically but is not linked and lacks root-cause coverage, so a new contribution remains actionable."
+  },
+  "09f9d2861c07d39cb4b422b895ef93015b52e4bc03392fe6b5ad019ef4079e1c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "autopilot/generate_config.py: stop enabling unenforced flags or wire them",
+      "commands/autopilot.py: remove or correct panel claims",
+      "commands/train.py: enforce or refuse flags and sibling tunables",
+      "eval/forgetting.py and eval/checkpoint_intelligence.py: wire as TrainerCallbacks if chosen",
+      "docs/peft-and-efficiency.md: fix non-parsing example",
+      "tests/test_issue748_config_fields_reach_a_consumer.py: add training.forgetting_threshold to KNOWN_UNCONSUMED"
+    ],
+    "risks": [
+      "Wiring callbacks may change training behavior and require careful default handling",
+      "Name-collision leak between training.forgetting_threshold and soup ship parameter could mask the fix",
+      "Docs example fix may be orthogonal to the core wiring decision"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run build_soup_config and assert every enabled protection has a training-path consumer, or none are enabled; must fail on current code",
+      "If wired: stub-generator trainer test showing forgetting_stop: true halts after drop > forgetting_threshold and checkpoint_keep_top prunes to N",
+      "Load docs/peft-and-efficiency.md example through load_config_from_string"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer wiring the callbacks or removing the promises",
+      "Whether #808 overlaps materially with the sibling-tunable portion"
+    ],
+    "why": "Issue documents a concrete, code-anchored defect: autopilot enables forgetting_detection, checkpoint_intelligence, and early_stop_on_regression, but train.py only warns they are unenforced; implementations exist (ForgettingDetector, CheckpointTracker) but are not wired as TrainerCallbacks. Acceptance criteria give a clear reference-vs-implementation test path."
   },
   "0a08cb2cfda9252017e89a25949beb50a233bd20edafbc320a73158d983f7caa": {
     "confidence": 0.85,
@@ -12161,6 +12231,42 @@
     ],
     "why": "The issue precisely identifies a bug where request context is dropped after the first iteration in durable agents, with clear code paths and production impact. No competing PR or related issue exists, and the maintainer has acknowledged the report, making it actionable."
   },
+  "2be78f7ad05995618d2366e34403bec52121449667bdd160056459a4c37f6b37": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/omni/omni_handler.py: propagate response_format into EngineInputs",
+      "components/src/dynamo/vllm/omni/output_formatter.py: honor explicit b64_json vs url delivery",
+      "runtime FFmpeg build/backport of the swscale MMXEXT guard fix",
+      "regression test for RGB→video→RGB color round-trip"
+    ],
+    "risks": [
+      "FFmpeg fix may require a runtime image rebuild/backport rather than a source-only change",
+      "Disabling MMXEXT is only a diagnostic workaround, not a performance-qualified fix",
+      "Changing response_format propagation could affect existing URL-delivery behavior if not scoped carefully"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test asserting `data[0].b64_json` is nonempty when `response_format=b64_json` is requested, then verify the fix",
+      "Run the model-free RGB-quadrant encode/decode test through encode_to_video_bytes and /usr/local/bin/ffmpeg, asserting decoded quadrant colors match input",
+      "Verify explicit URL delivery still works when external media storage is configured",
+      "Run targeted unit tests and static checks for the vllm omni package"
+    ],
+    "unknowns": [
+      "Whether the FFmpeg guard fix is already merged/available in a suitable upstream release for backport",
+      "Whether maintainers prefer a source-level fix vs runtime image rebuild for the codec defect"
+    ],
+    "why": "Issue provides a concrete, reproducible defect with two independently isolated root causes: (A) `_engine_inputs_from_video()` in omni_handler.py omits `response_format=req.response_format`, so the formatter defaults to `url`; (B) a model-free RGB-quadrant test isolates an FFmpeg/swscale MMXEXT color-corruption path in the bundled runtime. Both have code anchors, a minimal diff, and a concrete validation path (b64_json round-trip plus RGB→video→RGB regression)."
+  },
   "2bfba248e427a2d1de55d2eed5a1d70558cef95db0da39471165bc88b4f53b3a": {
     "confidence": 0.9,
     "contradictions": [],
@@ -17808,6 +17914,48 @@
       "Whether PR #7261 will be reopened or merged"
     ],
     "why": "Issue clearly identifies a concrete bug in OTel GenAI message role mapping with a minimal reproduction and root cause in code. However, the track is llm_algorithm and the issue is about telemetry semantics, not an algorithm. The existing PR #7261 is closed and has CI failures, and the issue explicitly requests maintainer direction on approach. The deterministic gate is HUMAN_REVIEW, so we must wait for maintainer confirmation."
+  },
+  "417e5535a8a9b0ece6acc208bf6dcc11dd6efa45dd1f40b418b92e423ddd8841": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body says PR #55537 partially addresses the issue, while open_pr_assessment marks it NON_COVERING_REFERENCE with root_cause_coverage false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "csrc/libtorch_stable/quantization/w8a8/cutlass/c3x/cutlass_gemm_caller.cuh",
+      "scaled_mm_sm90_fp8_dispatch.cuh",
+      "scaled_mm_blockwise_sm90_fp8_dispatch.cuh",
+      "scaled_mm_sm100_fp8_dispatch.cuh",
+      "scaled_mm_blockwise_sm100_fp8_dispatch.cuh",
+      "scaled_mm_blockwise_sm120_fp8_dispatch.cuh",
+      "tests/kernels/quantization/test_cutlass_scaled_mm.py"
+    ],
+    "risks": [
+      "Duplicate/overlapping work with open PRs #55537, #56248, and #56480, which already cover five of six callers",
+      "The remaining unclaimed SM120 caller cannot be validated without SM120 hardware",
+      "Test-file collisions among the three PRs may cause rebase churn",
+      "New operator-boundary alignment/stride checks in #55537 may reject some padded test views"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's 512x512 padded-view reproducer against a CPU/high-precision reference and assert zero mismatches for A-only, B-only, output-only, and combined padding",
+      "Run tests/kernels/quantization/test_cutlass_scaled_mm.py::test_cutlass_subset on SM90",
+      "Add a stride-matrix regression test covering packed and padded leading dimensions for each affected dispatch caller"
+    ],
+    "unknowns": [
+      "Whether any remaining caller work is unclaimed and actionable without SM120 hardware",
+      "Whether the open PRs fully resolve the issue or leave a distinct gap",
+      "Whether the repository's AI disclosure policy permits the intended contribution"
+    ],
+    "why": "The issue itself is a concrete, well-evidenced kernel correctness bug: C3x callers rebuild packed strides via make_cute_packed_stride and discard actual leading strides, with a reproducible 8% mismatch matrix and a proposed stride fix. However, the supplied evidence shows the actionable work is already substantially covered by three open PRs (#55537, #56248, #56480) that map to five of the six affected callers, and the issue author explicitly states PR #55537 partially addresses the issue. The only unclaimed caller, scaled_mm_blockwise_sm120_fp8_dispatch.cuh, requires SM120 hardware that the evidence says is unavailable. This is a materially blocking unknown for whether new code work is actionable."
   },
   "418cd0f05d6c40bed572741d696ca0de0fc0024b73634c1be5fe0a3cd969ded5": {
     "confidence": 0.8,
@@ -32125,6 +32273,40 @@
     ],
     "why": "The issue reports a reproducible distributed-training hang in DSPARK speculative decoding with TP>1, and maintainer comment identifies root cause as rank-divergent sampling due to floating-point differences, with a proposed fix in PR #33614. Evidence includes watchdog dumps showing rank disagreement in KV cache allocation and NCCL collective desync, plus a concrete validation path via the referenced PR."
   },
+  "6d4412879fae16ba55d515d10f3bfac7bca55e8015b9115a31f442aed3614113": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "commands/train.py: gate flash-attn/liger availability checks behind the task condition that actually consumes them",
+      "autopilot/decisions.py: make decide_performance_flags task-aware so it never emits flags the chosen task ignores",
+      "config/schema.py: narrow reasoning_effort/train_on_eot allowlist to tasks that call build_format_row (sft, distill) or wire the other tasks",
+      "trainer/sft.py or each trainer's from_pretrained: optionally wire attn_implementation and Liger patch where the model is loaded"
+    ],
+    "risks": [
+      "Choosing between wiring the flags into every trainer vs. rejecting them at config load is a design decision that may need maintainer input, but both are concrete and testable.",
+      "The rope_scaling_type and reasoning_effort sub-cases are related but distinct; scope creep could dilute the fix.",
+      "Autopilot behavior change may affect existing user configs that rely on the current flag emission."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build DPO and GRPO models on a tiny CPU model with use_flash_attn: true and a stubbed get_attn_implementation returning 'sdpa'; assert the kwarg reaches from_pretrained (fails today) or that config load rejects the flag for DPO.",
+      "Assert build_soup_config(goal='alignment') on a compute capability 8.0+ profile emits no flag the resulting task ignores.",
+      "Assert reasoning_effort/train_on_eot on task: pretrain are applied or rejected at load.",
+      "Assert soup train does not exit 1 over a missing package for a flag the task does not use."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer wiring the flags into all trainers or rejecting them at config load (issue proposes either)."
+    ],
+    "why": "Issue pinpoints a concrete config/validation mismatch: use_flash_attn and use_liger are consumed only by SFT's _setup_transformers (sft.py:1293, 882, 1351-1356) yet validated for every task at commands/train.py:1192-1214 and auto-enabled by autopilot/decisions.py:344-346 for DPO/GRPO/pretrain. Reproduction with build_soup_config and validator output is supplied, and acceptance criteria give a reference-vs-implementation test (stub get_attn_implementation returning sdpa, assert kwarg reaches from_pretrained)."
+  },
   "6d5b1cdcdb32882b9ba26c9f5122365d1ade8961b6c32765732212cc3b2dec99": {
     "confidence": 0.7,
     "contradictions": [
@@ -44933,6 +45115,38 @@
       "Whether maintainers consider the DCP inconsistency a bug or intended design"
     ],
     "why": "Issue reports a concrete, profiled long-context spec-decode regression on hybrid GDN models: drafter cross-attention scans full accumulated KV each cycle (~182 ms/cycle at 185k), and no per-sequence-length disable hook exists. Code anchors (scheduler.py dynamic_sd_lookup keyed only on batch size, precompute_and_store_context_kv, num_speculative_tokens_per_batch_size) support a concrete implementation path. Comment evidence adds a DCP-sharding inconsistency in DFlashSpeculator.propose and a break-even surface, but also contains a self-corrected mechanism claim and an unresolved question about whether draft attention is meant to be DCP-sharded, so root cause is not fully settled."
+  },
+  "9aa273457f5a53217f5a7150098397db30e9462ce81fd588ca82fea5802cd5fe": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/peft_wiring.py: route all LoRA construction through shared builder",
+      "src/soup_cli/trainer/*.py: replace hand-built LoraConfig with builder call preserving task_type/target resolution",
+      "src/soup_cli/schema.py: reject rank_pattern/alpha_pattern on paths that cannot honor them"
+    ],
+    "risks": [
+      "Unlearn's hand-rolled loop may not be convertible to the shared builder, requiring a parse-time rejection instead",
+      "Behavior change for users relying on silently-ignored patterns could alter adapter shapes and memory",
+      "Broad refactor across 18 trainers risks regressions in task_type/target_modules resolution"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build DPO LoRA on tiny CPU model with rank_pattern {q_proj: 4} and assert q_proj.lora_A has 4 rows (fails at 16 on current code)",
+      "Source scan over trainer/*.py failing when LoraConfig( is called outside the shared builder",
+      "Config-load test asserting rejection message names the path for unlearn/streaming/vision where patterns cannot be honored"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer routing all sites through the builder versus adding a scope validator mirroring target_parameters"
+    ],
+    "why": "Issue pinpoints a concrete wiring defect: build_lora_config_kwargs forwards rank_pattern/alpha_pattern but only SFT/pretrain call it, while 18 other trainers hand-build LoraConfig without patterns, so DPO/KTO silently train q_proj at r=16 despite config r=4. Reproduction with tiny CPU Llama and adapter-shape inspection is described, and the sibling target_parameters validator shows the intended scope-gating pattern."
   },
   "9aa5e8d129c9ce797a0c75966a4a1647a7308ac3c4f8b92f534c811cd2473557": {
     "confidence": 0.85,
@@ -58576,6 +58790,43 @@
       "Whether the fix should be in the router or the vLLM backend configuration"
     ],
     "why": "The issue clearly identifies a root cause: a model name mismatch where lemonade launches vLLM with --served-model-name user.<model> but forwards requests using the bare model name, causing vLLM to return 404 and lemonade to mask it as HTTP 200. This is a concrete, reproducible bug with logs and multiple user confirmations."
+  },
+  "ca6ca75cba68d7e784bef4c7f58e26511d7d87f9131dc6b8f73a2e2ac948b104": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "commands/eval.py: remove silent stub fallback, report failing side, exit non-zero on load failure",
+      "commands/eval.py: propagate verdict to exit code (0 OK/MINOR, 2 MAJOR)",
+      "eval/quant_check.py: gate stub behind explicit --allow-stub and mark stub results in JSON/table",
+      "GGUF handling: load via gguf_file= or reject .gguf with clear message",
+      "docs/evaluation.md: fix GGUF example and align thresholds/per-task wording with classify_delta",
+      "stale docstring at commands/eval.py:1296-1298"
+    ],
+    "risks": [
+      "Changing exit-code semantics could break existing CI callers relying on exit 0",
+      "Removing stub fallback may break orchestration smoke tests that depend on it",
+      "GGUF loading via gguf_file= may require additional dependency or tokenizer support"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run `soup eval quant-check --before <empty dir> --after <empty dir> --tasks t.jsonl` and assert non-zero exit naming the failed side (fails on current code)",
+      "Patch make_model_generator to produce MAJOR delta and assert exit code 2 via CliRunner --format json (fails on current code)",
+      "Test load failure on only --after side preserves --before scores",
+      "Assert stub scoring only reachable via --allow-stub and JSON contains \"stub\": true",
+      "Verify documented GGUF example works or is replaced and docs thresholds match classify_delta"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer gguf_file= loading vs upfront rejection of .gguf paths",
+      "Whether any existing callers depend on the stub fallback behavior"
+    ],
+    "why": "Issue provides concrete code anchors (commands/eval.py:1351-1359, eval/quant_check.py:197-205, classify_delta), a public reproduction with empty dirs producing OK/exit 0, and a second reproduction showing MAJOR also exits 0. Root cause is clear: silent stub fallback on load failure plus no exit-code propagation from verdict. Acceptance criteria define failing tests on current code."
   },
   "cacb001b6a8a9e17fab1375fed9b50521c3e94e676a02be6dff0ea680531de42": {
     "confidence": 0.85,
