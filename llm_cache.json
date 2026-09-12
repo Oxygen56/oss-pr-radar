@@ -11453,6 +11453,40 @@
     ],
     "why": "The issue describes a bug in 'Qwen Desktop 1.0.3', but the maintainer's triage states this product is not built from this repository and the UI strings do not exist in the codebase. The affected product is unclear, and the issue may belong to another repository (modelstudioai/openwork). This is a material unknown that blocks actionability."
   },
+  "2911edb8b56b0572542729288c3691bb5ed4515233d793d7355507fd4bf46684": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Make wait() idempotent on AllGatherHandle and NoGatherHandle by re-checking INFLIGHT status before re-running the wait body",
+      "Ensure a released parameter remains NOT_AVAILABLE after a second wait so the next fetch re-gathers from ds_tensor",
+      "Add multi-rank regression coverage for stage3_allgather_sequential and cross-process-group gather groups"
+    ],
+    "risks": [
+      "Distinguishing the idempotency fix from the existing draft PR #8487 to avoid duplicate implementation",
+      "Ensuring the fix does not mask legitimate re-gathers needed after release",
+      "Formatting/CI checks on the competing PR are diagnostic only and not proof of value"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Handle-level 2-GPU reproduction: all_gather_coalesced([victim, other]), wait, release victim, wait again; assert victim status is NOT_AVAILABLE and data is not an empty tensor",
+      "Regression for stage3_allgather_sequential: true with two ordinary 4096x4096 weights in one process group",
+      "Regression for gather group spanning two process groups with victim alone in its bucket (AutoEP ep_size>1 shape)",
+      "Control cases: two weights in one process group, three weights in one process group, mixed bf16/fp32 group must remain correct"
+    ],
+    "unknowns": [
+      "Whether PR #8487 will be completed or superseded before a competing fix lands"
+    ],
+    "why": "Issue provides a concrete distributed-training invariant violation: wait() is non-idempotent on AllGatherHandle/NoGatherHandle, causing AVAILABLE status over freed storage and empty-weight matmul. Root cause, sequence, and two handle-level reproductions on 2 GPUs are supplied; open PR #8487 is a draft with no root-cause coverage, leaving room for a more complete fix."
+  },
   "29183113b6ad26860be3fb88216b0d5b62be64cb402d667a03898f0b43e5c28c": {
     "confidence": 0.85,
     "contradictions": [],
@@ -41771,6 +41805,38 @@
     ],
     "why": "Issue reports Magentic orchestration ignoring terminal conditions, but root cause is uncertain; maintainer suggests prompt override and requests more details. No open PR or related issue, but design confirmation and repro are needed."
   },
+  "8ae1ee043b7a37aab4860c82111e0ad2443f1c5f70e7c03a9ea71eb1b6cb1059": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/controllers/mcp/mcp.py: replace sessionmaker().begin() context with a plain Session(db.engine, expire_on_commit=False) and manage commits explicitly, mirroring the merged fix pattern in PR #36392/#34281",
+      "Add a regression test covering the MCP tools/call path that exercises the internal commit in AppGenerateService.generate() and asserts no 'closed transaction' error"
+    ],
+    "risks": [
+      "Changing session lifecycle in the MCP controller could affect commit/rollback semantics for other MCP endpoints; keep the change minimal and scoped",
+      "Open PR #40013 already touches the same file; coordinate to avoid duplicate/conflicting fixes",
+      "Repository has an AI disclosure conflict policy, so any public submission must satisfy that requirement"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: configure an MCP client against the Dify MCP endpoint and call a tool; confirm -32603 'Can't operate on closed transaction inside context manager'",
+      "Add a unit/integration test in the api test suite that invokes the MCP controller tool-call path and asserts a successful response with no closed-transaction error",
+      "Run the targeted api package tests and static checks (ruff/mypy) for the changed module"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the plain-Session fix or a different session-management approach for the MCP path"
+    ],
+    "why": "Issue provides a concrete reproduction (n8n MCP client -> Dify Cloud MCP server -> -32603 'Can't operate on closed transaction inside context manager'), and the bot comment plus a user comment identify the root cause: api/controllers/mcp/mcp.py wraps the request in sessionmaker().begin(), which auto-commits on context exit, while AppGenerateService.generate() performs an internal commit that closes the transaction prematurely, so later ORM writes (e.g. conversation.override_model_configs) fail. This is a real regression introduced by PR #34281 and is actionable as a minimal code fix with a regression test. The open PR #40013 overlaps the same file but lacks tests and root-cause coverage, so a test-backed fix remains valuable. No materially blocking unknown: reproduction and root cause are established, and a validation path (targeted unit test on the MCP controller plus static checks) exists."
+  },
   "8ae374a23c75ff234ff191864892cfb5b64c851d07c2bb3318b2f318babb73eb": {
     "confidence": 0.8,
     "contradictions": [],
@@ -43177,6 +43243,46 @@
     ],
     "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to re-check the chunk budget before scanning the waiting queue, causing unnecessary cache matching and host-cache load-back. Reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "8ee583e476efc6ff0b38bfa826f04855d4d8066abd796a58f42a7e64a80aa2cd": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports rejection on kiro-cli 2.10.0, but collaborators measured 2.21.2/2.21.4 accepting the field; no exact cutoff established",
+      "Triage states the banner follows from default-agent fallback, but this is the reporter's inference and is unverified"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/agent.py (_seed_kas_permissions / conductor installers)",
+      "src/kiro_crew/acp/kas_permissions.py",
+      "test/test_kas_permissions.py",
+      "test/test_conductor_agent.py"
+    ],
+    "risks": [
+      "Removing the key un-registers the agent for KAS users (reverses #4614)",
+      "Version-gating requires a measured cutoff; only 2.10.0 (reject) and 2.21.2/2.21.4 (accept) are known",
+      "The banner may have an independent cause and survive the fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with kiro-cli 2.10.0: write a spec containing `permissions` and confirm `kiro-cli agent validate` reports `unknown field permissions`",
+      "Confirm KAS still loads the on-disk profile after any change (test_an_empty_policy_is_still_written_so_the_profile_stays_loadable)",
+      "Verify the Atlassian OAuth banner independently of the spec-rejection path"
+    ],
+    "unknowns": [
+      "Which runtime owns ~/.kiro/agents/*.json (maintainer design decision)",
+      "Exact kiro-cli version cutoff for permissions acceptance",
+      "Whether the Atlassian banner is caused by the spec rejection or has an independent cause",
+      "Whether open PR #10373 already covers the root cause"
+    ],
+    "why": "The issue's core mechanism (KiroCrew writes a top-level `permissions` key that kiro-cli 2.10.0 rejects via deny_unknown_fields) is corroborated by multiple independent measurements, but the fix is explicitly an owner decision: every remedy reverses a deliberate, documented design decision (#4614) and breaks one of two supported agent backends, and the causal link from spec rejection to the Atlassian OAuth banner is unverified. The issue is also unassigned with assignmentRequired=true, and an open maintainer-owned PR (#10373) has semantic overlap requiring human comparison."
+  },
   "8f439bfa19f7a447876d1717c67dbf20cb5b0ba2275df7da2270e9d307b2bb69": {
     "confidence": 0.85,
     "contradictions": [],
@@ -43200,6 +43306,33 @@
       "Exact maintainer preference on whether to remove or gate the temperature default."
     ],
     "why": "Issue provides a clear root cause (DeepSeek provider forces temperature 0) and a concrete validation path (reproduce with deepseek-v4-flash, compare with opencode). The suggested fix is minimal and actionable."
+  },
+  "8f44039ecf5d8e5d004444972269953fbc06fd7901ede65a6dc05ba2531afd6b": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "voice/google-gemini-live-api/src/index.ts: handle usageMetadata independently of the else-if chain or invoke handleUsageUpdate from the serverContent branch when co-arriving"
+    ],
+    "risks": [
+      "Must avoid double-emitting usage when usageMetadata arrives on a frame without serverContent",
+      "Maintainer may prefer a specific dispatch refactor over the two suggested options"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test feeding a frame with both serverContent and usageMetadata and assert exactly one usage event with inputTokens 100, outputTokens 50, totalTokens 150",
+      "Run the voice-google-gemini-live-api package tests and static checks"
+    ],
+    "unknowns": [],
+    "why": "Issue pinpoints an unreachable usageMetadata branch in handleGeminiMessage's else-if chain, with a public no-API-key repro and a concrete expected/actual pair; the fix is a minimal, well-scoped dispatch change."
   },
   "8f4644df1c091e0c772b7c8497ca2329cec5b052aaaa95c49aecf58e2fd24cca": {
     "confidence": 0.7,
@@ -51410,6 +51543,40 @@
       "Maintainer preference on whether such annotations are desired, but this does not affect the low-value determination."
     ],
     "why": "The issue is a low-value code-quality request for adding return type annotations, which is already covered by an open PR (#2676) that modifies the same files. The issue itself is a duplicate of the PR's scope and lacks any algorithmic or runtime impact."
+  },
+  "ad2cebc182196beaeca5cef32ee855c699aab3077c6d505af420671465d52c22": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/omni/omni_handler.py: propagate response_format into EngineInputs",
+      "components/src/dynamo/vllm/omni/output_formatter.py: honor explicit b64_json delivery",
+      "runtime FFmpeg build/config: backport or apply the swscale MMXEXT guard fix"
+    ],
+    "risks": [
+      "FFmpeg codec fix may require a rebuilt runtime image and is outside the Python repo scope",
+      "Changing response_format propagation could affect other output modalities if not scoped to video",
+      "The DGD manifest referenced is on an example branch, not upstream main"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test asserting data[0].b64_json is nonempty when response_format=b64_json is requested",
+      "Add a model-free RGB quadrant encode/decode round-trip regression asserting pixel correctness",
+      "Verify URL delivery still works when external media storage is configured"
+    ],
+    "unknowns": [
+      "Whether the FFmpeg guard fix is already merged in a newer runtime image",
+      "Whether maintainers prefer the one-line propagation fix vs a broader formatter change"
+    ],
+    "why": "Issue provides a concrete, reproducible defect with a clear root cause: _engine_inputs_from_video() in omni_handler.py omits response_format=req.response_format, causing the formatter to default to url delivery. A second independent codec defect is isolated with a model-free RGB quadrant reproduction and cpuflags controls. Both defects have concrete validation paths (b64_json round-trip test, RGB->video->RGB regression). No open PR or duplicate issue covers this."
   },
   "ad7f039d8739e08088a43eb8531db6d20f58955b20863c8bca14b55967697b33": {
     "confidence": 0.85,
@@ -66394,6 +66561,49 @@
       "Whether maintainers prefer digest bump versus pinning apk package versions or switching to a versioned wolfi tag"
     ],
     "why": "Issue provides a concrete, reproducible root cause: the pinned wolfi-base digest has drifted from the current apk python3 package, causing both the apk trigger failure and the GLIBC_2.44 ImportError; the suggested fix (bump LITELLM_BUILD_IMAGE/LITELLM_RUNTIME_IMAGE digests, optionally set UV_PYTHON_DOWNLOADS=never) is specific and actionable. No open PR or duplicate issue covers it."
+  },
+  "de012955d21503e3b0c69666e9a5b1cb07a3fbd97b703087fb6e8878ac9f30a4": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Comment chenWULUQI attributes divergence to BF16 numerical path differences, while jschmied reports block-verification reproduces q_len=1 bit-for-bit once kernel defects are fixed, arguing against an intrinsic BF16 path difference",
+      "wickist attributes the symptom to GDN gate row misalignment fixed by #51812, while Windless84/MaCoredroid report E==V!=A verifier-argmax behavior on stock v0.28.0, suggesting a different or additional mechanism"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Speculative decode verification path (target block forward vs q_len=1 forward) for hybrid GDN/DeltaNet/Mamba targets",
+      "GDN spec-verify gate row gathering (a/b vs mixed_qkv indices) if #51812-style fix is the cause",
+      "Numerical path / batch-invariance handling for BF16 block verification"
+    ],
+    "risks": [
+      "Multiple plausible root causes (numerics vs GDN gate alignment vs kernel defects) are not disambiguated",
+      "Existing open PRs (#52487, #51684) may already cover the root cause",
+      "AI disclosure policy conflict blocks public submission",
+      "Reproduction requires 4x RTX 3090 BF16 TP=4 hardware not available to all reporters"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce target-only vs DFlash2 K=1 greedy equivalence with fixed seed, temperature=0, thinking enabled, and compare first-divergence index",
+      "Instrument target argmax/logits at token 29/30 plus draft IDs and accept/reject counts",
+      "Re-run with FP32 target verification to separate numerical drift from state-update bugs",
+      "Re-test on v0.28.0 or with the #51812 fix cherry-picked to confirm/deny that mechanism"
+    ],
+    "unknowns": [
+      "Whether the #51812 fix or v0.28.0 already resolves the reported divergence",
+      "Whether open PRs #52487/#51684 already cover the root cause",
+      "Whether the AI disclosure policy conflict permits any public contribution",
+      "Whether the divergence is numerical (BF16) or a state-update/rollback bug in the hybrid GDN path"
+    ],
+    "why": "The issue reports a concrete, reproducible greedy-equivalence failure (DFlash2 diverges at token 30, K=1, --enforce-eager, thinking-only), and comments propose several distinct candidate root causes (BF16 numerical path differences, GDN spec-verify gate row misalignment fixed by #51812, kernel defects #54945/#54948/#54076/#55122, batch-shape non-invariance). These are competing hypotheses, not a single established root cause, and the supplied duplicate/overlap evidence (PR #52487, #51684, issue #56556) is unresolved. The candidate's own gate is HUMAN_REVIEW with policy_or_disclosure_uncertain and ai_disclosure_conflict, which is a materially blocking unknown for public action."
   },
   "de0e9ff6f6891282926195858a2518296cf5603e8990c60935f873df642bea44": {
     "confidence": 0.7,
