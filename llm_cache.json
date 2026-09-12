@@ -27137,6 +27137,48 @@
     ],
     "why": "Issue describes a clear user-visible bug with a concrete root cause: scheduler returns stale assigned_worker_id without checking current worker discovery. Reproduction steps and expected behavior are explicit, and a draft fix exists. No competing PR or issue found."
   },
+  "5edaf4d850be88ed9f0bab56454b4e68233d5f1b43386c11abb7609db965964b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims durable-execution/persisted-history/message_history reachability; bot status comment reports zero references to ModelMessagesTypeAdapter in durable_exec and side-respecting replay/narrowing",
+      "Issue asserts no open PR adds the tag; open PR #7933 touches the same _tool_search.py round-trip area",
+      "Issue frames the omission as an oversight; bot comment frames the strict request-side union as the design contract"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/_messages.py ModelRequestPart union (only if maintainer confirms request-side native returns are supported)",
+      "pydantic_ai_slim/pydantic_ai/ui/_messages_builder.py dispatch semantics",
+      "request-side narrowing/replay handling for native parts"
+    ],
+    "risks": [
+      "Fixing an unreachable hand-constructed shape may encode an unintended contract for request-side native returns",
+      "Overlaps open issue #8234 and PR #7933; duplicate/covered-fix status unresolved",
+      "Reopening a twice-rejected fix shape without maintainer design sign-off",
+      "Assignment required by repo policy"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing round-trip test for ModelRequest(parts=[NativeToolSearchReturnPart(...)]) through ModelMessagesTypeAdapter",
+      "Add a producer-path test proving a supported flow (provider mapping, AG-UI adapter, durable execution) actually emits the part on ModelRequest.parts",
+      "Regression: confirm ModelResponse-side round-trip and existing narrowing tests remain unchanged"
+    ],
+    "unknowns": [
+      "Whether any supported production path can place NativeToolSearchReturnPart on ModelRequest.parts",
+      "Maintainer decision on whether request-side native tool-search returns are intended to be legal",
+      "Whether #8234 or PR #7933 already covers this exact arm",
+      "Whether repository assignment requirement is satisfied"
+    ],
+    "why": "The issue's own reproduction is real (dump→validate raises union_tag_invalid for a request-side NativeToolSearchReturnPart), but the supplied bot status comment establishes that the failing shape is only reachable by hand-construction: both producer sites build the part on ModelResponse, durable execution never calls ModelMessagesTypeAdapter, and the AG-UI reachability lead is refuted by MessagesBuilder isinstance dispatch. The proposed one-line union arm was reportedly closed twice on review, and the fix requires a maintainer design call on request-side dispatch/replay/narrowing. This is a materially blocking unknown (supported-path reachability and design intent), not normal implementation uncertainty."
+  },
   "5ee2313d68c93b824b3c942cbf47040e642a9521c45b28d2cb850ee1ac4055a3": {
     "confidence": 0.85,
     "contradictions": [
@@ -44427,6 +44469,45 @@
     ],
     "why": "Issue provides a concrete root cause (missing .cs in DEFAULT_INCLUDE_EXTENSIONS), a clear reproduction path, and a specific code anchor in search.ts. The proposed fix is a straightforward extension list update with a validation path via existing search tests."
   },
+  "99e261332de39b30d6e0a9b202f2ff0991b1f1f19c31c55f19972d274c86db30": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #788 overlapping src/soup_cli/data/sft_format.py and 'data_chat_template', while also reporting direct_code_overlap=false and root_cause_coverage=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/data/sft_format.py",
+      "src/soup_cli/trainer/sft.py",
+      "src/soup_cli/trainer/distill.py",
+      "src/soup_cli/trainer/grpo.py",
+      "src/soup_cli/trainer/online_dpo.py",
+      "src/soup_cli/config/schema.py"
+    ],
+    "risks": [
+      "PR #788 may already fix the same root cause, making a new contribution duplicative",
+      "Applying override at tokenizer load could change behavior for tasks that never render chat",
+      "Saved tokenizer in output dir may not carry the override, affecting soup chat/serve"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build DPO trainer on tiny CPU model with marker chat_template and assert marker appears in decoded prompt_ids (fails on current code)",
+      "Parametrize same assertion for KTO, ORPO, SimPO, IPO, BCO, reward_model, GRPO, Online DPO",
+      "With chat_template set on template-less tokenizer, assert GRPO renders with it rather than the {{ msg['content'] }} fallback",
+      "Assert pretrain/embedding/classifier either honor or reject data.chat_template at load"
+    ],
+    "unknowns": [
+      "Whether PR #788 actually fixes the chat_template override root cause described in #804",
+      "Whether maintainers consider #788 the intended fix for this issue"
+    ],
+    "why": "Issue #804 has a clear root cause (chat_template override applied only in SFT/distill via build_format_row) and a concrete reproduction, but the supplied open-PR assessment flags PR #788 as semantic_overlap_requires_review with overlapping path src/soup_cli/data/sft_format.py and distinctive overlap 'data_chat_template'. Whether #788 already covers the same root cause is unresolved and directly determines whether new code work is actionable."
+  },
   "99eab2edc31a3ac702fff1d30cc640fad4373d496cb2224f9aac79f626043ab1": {
     "confidence": 0.85,
     "contradictions": [
@@ -54403,6 +54484,42 @@
     ],
     "why": "The issue provides a detailed root cause with code anchors and a concrete reproduction path. An open PR (#14210) directly addresses the issue with a proposed fix, but lacks tests and is not yet merged. The issue is actionable for implementing a tested fix or improving the existing PR."
   },
+  "bda6bb64c2ffd4eae7609409b4210cc0c8675f293ee928f74a98d6994d7c612d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "autopilot/generate_config.py: stop enabling unenforced protections or wire them",
+      "commands/autopilot.py: remove or correct the decisions panel lines",
+      "commands/train.py: extend warning to sibling tunables and training.forgetting_threshold",
+      "eval/forgetting.py and eval/checkpoint_intelligence.py: optionally wrap as TrainerCallbacks",
+      "docs/peft-and-efficiency.md: fix the non-parsing example",
+      "tests/test_issue748_config_fields_reach_a_consumer.py: add training.forgetting_threshold to KNOWN_UNCONSUMED"
+    ],
+    "risks": [
+      "The issue offers two alternative fixes (wire vs. stop promising), so the maintainer must choose before implementation.",
+      "Wiring callbacks touches training loop behavior and could introduce regressions in existing training runs.",
+      "The name-collision between soup ship's forgetting_threshold and training.forgetting_threshold may complicate the consumer test."
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run build_soup_config and assert every enabled protection has a training-path consumer, or that none is enabled; confirm it fails on current code.",
+      "If wired: trainer test with a stub generator showing forgetting_stop: true halts after a drop exceeding forgetting_threshold, and checkpoint_keep_top prunes to N.",
+      "If not wired: assert autopilot panel omits the flags and training.forgetting_threshold is in KNOWN_UNCONSUMED.",
+      "Load the docs/peft-and-efficiency.md example through load_config_from_string and assert it parses."
+    ],
+    "unknowns": [
+      "Which of the two proposed fixes the maintainer prefers (wire vs. stop promising) is not stated, but either is actionable and this is normal implementation choice, not a blocker."
+    ],
+    "why": "Issue documents a concrete, code-anchored defect: autopilot/generate_config.py:110-112 enables forgetting_detection, checkpoint_intelligence, and early_stop_on_regression, but commands/train.py:743-764 warns they are not enforced, and the implementations (eval/forgetting.py:346, eval/checkpoint_intelligence.py:77) have no training-path callers. The issue supplies exact file/line anchors, a reproducible CLI transcript, and a failing docs example, so the root cause is clear and actionable."
+  },
   "bdbb3e86ab975b8c28880afb175193ef8c314715f635a79aff1646adf06117bf": {
     "confidence": 0.7,
     "contradictions": [],
@@ -57760,6 +57877,37 @@
       "Whether the closed PR #7261 will be reopened or superseded"
     ],
     "why": "Issue clearly identifies a concrete bug in OTel GenAI message role mapping with a minimal reproduction and root cause in code. However, the track is llm_algorithm and the issue is about telemetry semantics, not a training objective, model mechanism, or numerical method. The existing PR #7261 is closed and technically complete, but the issue explicitly requests design confirmation on the approach, and the repository requires assignment. Thus, maintainer confirmation is needed before starting new work."
+  },
+  "c8dccf76d0c61ee8b6578c41713e7e6d6d5261c5eedf7436ddab5cea9b931765": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Ollama provider chat-args builder: remove the `ollamaMessages.at(-1)?.role === \"user\"` guard so `tools` is attached whenever `options.tools?.length`",
+      "Add provider/runtime regression test covering a tool-result-last turn in an agent loop"
+    ],
+    "risks": [
+      "Broadening `tools` attachment to every turn could change behavior for non-agent chat flows; verify no regression in plain chat",
+      "Provider-specific tool schema mapping may need adjustment for tool-result turns",
+      "Maintainer may prefer a different guard (e.g., attach tools whenever any tool message is present) rather than unconditional attachment"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a tool-capable Ollama model in agent mode: task requiring 2+ sequential tool calls (read fileA then fileB); confirm it stops after the first tool call",
+      "Unit test the Ollama chat-args builder with messages ending in role `tool` and assert `chatOptions.tools` is populated",
+      "Re-run the agent loop after the fix and confirm the second tool call is emitted"
+    ],
+    "unknowns": [
+      "Exact source file/line for the Ollama provider chat-args builder in the current repo (issue cites a bundled extension.js line, not source)",
+      "Whether existing tests already cover tool-result-last turns"
+    ],
+    "why": "Issue provides a concrete root cause in the Ollama provider's chat-args builder: the `tools` array is gated on the last message being role `user`, so it is dropped on the tool-result turn of an agent loop. A minimal reproduction against Ollama /api/chat demonstrates CASE 1 (no tools -> no follow-up tool call) vs CASE 2 (tools resent -> correct next tool call), and the suggested fix is a one-line condition removal. This is a real agent-runtime serialization/routing bug with a clear validation path."
   },
   "c8e60bc08a9ea1005684372bdec910c9a694f09383da9799a75c88404a7eccb2": {
     "confidence": 0.7,
@@ -71137,6 +71285,40 @@
       "Whether maintainers prefer a config option for scopes or default to omitting scope; exact location of scope construction code"
     ],
     "why": "The issue provides a detailed root cause for Bug 1 (missing hydration of persisted client credentials) and Bug 3 (over-broad scope from discovery), with concrete code anchors and a clear reproduction path. Recent comments indicate Bug 1's hydration is already fixed on the default branch, but Bug 3 remains unaddressed and is actionable. The issue is technically valuable and not fully covered by existing PRs."
+  },
+  "f1f130af1744f5925898a60ee07ccefe3fdd6423528ac2efaef11c654cf04694": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Bot comment asserts a specific root cause in mcp.py, but candidate.actionability_evidence reports root_cause_signal=false",
+      "Issue is filed against Dify Cloud, while the proposed code fix is in the self-hosted repository path"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "api/controllers/mcp/mcp.py session/transaction handling",
+      "regression test for MCP tool call path"
+    ],
+    "risks": [
+      "Root cause may be in downstream AppGenerateService commit behavior rather than the MCP controller alone",
+      "Existing open PR #40013 may already cover the fix, making additional work duplicative"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce MCP tool call against a local Dify instance and confirm -32603 closed-transaction error",
+      "Add a regression test that exercises the MCP controller tool-call path and asserts no closed-transaction error"
+    ],
+    "unknowns": [
+      "Whether PR #40013 fully resolves the issue or is incomplete",
+      "Whether the failure is reproducible in the self-hosted code path versus only Cloud infrastructure",
+      "Whether a maintainer has confirmed the intended fix location"
+    ],
+    "why": "The issue reports a concrete user-visible failure (-32603 closed-transaction error) and a bot comment plus a user comment point to api/controllers/mcp/mcp.py session handling, but the supplied evidence does not establish a verified root cause or a concrete validation path. The candidate's own actionability_evidence has root_cause_signal=false and the open PR #40013 already targets the same file with a plausible fix, so duplicate/coverage status is unresolved."
   },
   "f1fecc58d9ad1a22f75e3a02c674e39f84615b0f4f56797bde44e7035c9d16fe": {
     "confidence": 0.8,
