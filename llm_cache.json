@@ -13257,6 +13257,37 @@
     ],
     "why": "The issue provides a clear frontend-only bug with a concrete root cause: the sidebar reads from the null 'metrics' field instead of the populated 'stats.usage_to_metrics' path. It includes a reproducible command, expected vs actual behavior, and acceptance criteria with a regression test requirement. No competing open PRs or duplicates were found."
   },
+  "31d40577730745541a9d9a43730298093e8f9fbb26b3dc199d63a5386a795825": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment marks duplicate status human_review_required while also claiming direct code overlap and COVERAGE relation with PR #8482"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "deepspeed/runtime/zero/parameter_offload.py: correct ds_grads_remaining reset/count semantics across multiple PostBackwardFunctionModule registrations"
+    ],
+    "risks": [
+      "Fixing the counter may break legitimate single-branch post-backward behavior",
+      "Memory measurement noise on GPU may obscure the leak without a deterministic assertion"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a minimal single-model-multi-branch network with torch activation checkpoint + ZeRO-3, fixed seed, and assert all-gathered parameter memory is released after backward; compare against a single-branch baseline."
+    ],
+    "unknowns": [
+      "Whether PR #8482 already fully resolves the issue or leaves independent implementation space",
+      "Whether the issue's proposed root cause is confirmed by maintainers"
+    ],
+    "why": "Issue describes a plausible ZeRO-3/activation-checkpoint memory leak with a specific code anchor (ds_grads_remaining reset in parameter_offload.py), but the supplied evidence shows an open PR #8482 that directly references this issue, overlaps the same code path, and is described as COVERAGE with human_review_required duplicate status. Whether independent implementation space remains is unresolved, which materially affects actionability."
+  },
   "31e15e13b7ae0390b8d665e843636dc02582aa77d572e79070361098b8292309": {
     "confidence": 0.85,
     "contradictions": [],
@@ -26480,6 +26511,44 @@
     ],
     "why": "Issue provides a concrete reproduction, code anchor (rag/nlp/__init__.py _build_cks), and a clear root cause: table/image chunks are appended before the pending text buffer (seg) is flushed, which also swaps context_above/context_below. However, an open PR #19521 already directly targets the same function and code identifiers with a matching fix, and the duplicate status is human_review_required. Whether independent implementation space remains is unresolved, which materially affects actionability."
   },
+  "5c83dc9b124cd89d8c54abf1a8a017b88ad8aebb8f6f48d7418c48abd459fe3b": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge B@A into base weight and reinitialize A/B (Kaiming/zeros) for canonical ReLoRA restart, or rename feature and correct docstring",
+      "src/soup_cli/utils/relora.py: replace strict threshold comparison with deterministic exact-count topk/stable-order mask honoring requested keep count under ties",
+      "Optimizer-state pruning/reset should target optimizer moments rather than learned adapter weights",
+      "Explicit compatibility rejection or support for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A fix is a maintainer design decision (implement real restarts vs rename feature); a partial fix implementing only half could be worse than either",
+      "Claim B production frequency is unverified; freshly-initialized lora_B is all zeros by PEFT convention, so the tie may fire on the first relora_steps interval after init",
+      "Numerical tolerance must be fixed with seed and hardware to distinguish math errors from float noise",
+      "Distributed/quantized/streaming support adds scope and may require hardware not available for validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: apply callback to a small peft LoRA model with random non-zero factors; assert effective linear map MSE before/after is within numerical tolerance (merge-then-reset control ~1e-13)",
+      "Regression test: constant-magnitude A and B with prune_ratio=0.9; assert exactly requested keep count retained and both factors remain non-zero with non-zero gradient norm",
+      "Kernel-level test: magnitude_prune_tensor on ones(10) with prune_ratio=0.9 retains exactly 1 entry deterministically",
+      "Test that successive restarts accumulate low-rank updates in the base model",
+      "Test that unsupported quantized/distributed/streamed combinations fail loudly rather than partially applying a restart"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers full ReLoRA restart implementation or feature rename/docstring correction (both are actionable, but scope differs materially)",
+      "Actual production frequency of the tie-induced total-pruning case beyond the constructed reproduction"
+    ],
+    "why": "Issue identifies two concrete, separable algorithm defects in ReLoRA callback: (A) _prune_and_reset never merges B@A into base weight before pruning/reinit, contradicting the module docstring's ReLoRA conformance claim; (B) strict `abs(t) > threshold` mask zeroes all tied-magnitude entries, killing both LoRA factors and producing zero gradients. Maintainer confirmed both with real peft LoRA model runs, including a merge-then-reset control (MSE 8.77e-13) and kernel-level tie reproduction (ones(10), prune_ratio=0.9 -> 0 kept). Root cause is localized to src/soup_cli/utils/relora.py with clear code anchors."
+  },
   "5cbba08bfaf7da5508509ad9d9759f071866fd4327a842a0c06d19e02437b201": {
     "confidence": 0.7,
     "contradictions": [],
@@ -29562,6 +29631,33 @@
       "Maintainer confirmation on desired recovery behavior"
     ],
     "why": "Issue reports a user-visible bug in agent loop recovery after tool execution failures, with concrete reproduction steps and error structure. However, the root cause is not identified, and the maintainer has only labeled it for triage without confirming design direction. The deterministic gate requires HUMAN_REVIEW, and design confirmation is needed before implementation."
+  },
+  "66c43b30bd5599e4504b8dc653a02edc827ffd3cec544f1559ea098185d61b0b": {
+    "confidence": 0.9,
+    "contradictions": [
+      "The issue hypothesizes resource leaks from failed TransferEngine instances, but the supplied contributor trace indicates the prior wrapper is destroyed immediately and Mooncake's freeEngine() owns teardown."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Implementing cleanup at the checkpoint-engine layer would require changing Mooncake's API and may be unnecessary given existing RAII teardown.",
+      "Reusing one TransferEngine wrapper would not change cleanup behavior because initializeExt() replaces its internal engine_ and invokes the same destructor path."
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If revisited, require a concrete witness of a retained port, file descriptor, or shared-memory segment across failed initialize() retries before proposing code changes."
+    ],
+    "unknowns": [
+      "No concrete reproduction or witness of a retained port, FD, or shared-memory segment after failed initialize() retries."
+    ],
+    "why": "The only supplied technical evidence is a contributor's trace showing the proposed leak mechanism is not present: reassigning self.engine drops the prior wrapper, CPython immediately runs the destructor, and Mooncake's RAII teardown frees transport/RPC resources. No public close/destroy/shutdown exists, so the suggested cleanup cannot be added at this layer. No concrete retained port/FD/shared-memory witness is supplied."
   },
   "670d63269f0dcd84d731c0aaa4d019153febee73cf10add5d2d35d34140d18d8": {
     "confidence": 0.85,
@@ -33762,6 +33858,40 @@
       "Whether the repository's ai_disclosure_conflict policy permits the intended contribution workflow."
     ],
     "why": "The issue reports a deterministic 'Failed to advance FSM' error with DFlash2 spec decode + xgrammar json_object grammar, but the supplied evidence strongly indicates the reported build predates the merged fix #53046 (commit c6e19b3be243), and later comments show the same symptom is covered by that fix. The candidate's own actionability evidence has root_cause_signal=false, and the duplicate assessment found only keyword-overlap PRs, not a direct code-path duplicate. This is a materially blocking unknown: whether the bug persists on a post-fix build determines whether any code work is actionable."
+  },
+  "739aeca31cb37d96b88eca749779aa8921e24cafe2c75dce84f339d9c4ea0b3c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/models/dflash.py: quantized draft linear path (qkv_proj/fc/mlp) and CandidateSelector weight loading",
+      "python/sglang/srt/model_executor/model_runner_components/spec_aux_hidden_state.py: aux hidden-state capture under quantized draft",
+      "python/sglang/srt/arg_groups/serving_hook.py: draft quantization default/validation warning"
+    ],
+    "risks": [
+      "Distinguishing a genuine quantized-linear bug from expected int4 g128 numerical loss",
+      "Existing open PRs #37462/#38383 touch dflash.py and may overlap or conflict",
+      "Hardware-specific behavior on sm_86/TP=2 may not reproduce on other setups"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied launch_server repro with both z-lab BF16 and syvai W4A16 drafters on the same target and compare accept len/rate counters",
+      "Add a regression test asserting quantized DFlash2 draft acceptance stays within a tolerance of the BF16 reference on a fixed prompt/seed",
+      "Unit-test that CandidateSelector codebooks/hidden_projection load to values matching the dequantized checkpoint tensors"
+    ],
+    "unknowns": [
+      "Exact root cause not yet confirmed by the reporter (leading hypothesis untested)",
+      "Whether open PRs #37462/#38383 already cover the quantized draft path"
+    ],
+    "why": "Issue reports a concrete, reproducible LLM-algorithm failure: a quantized DFlash2 draft (compressed-tensors W4A16) loads cleanly but yields ~0% speculative acceptance while the identical BF16 drafter works. Evidence includes an executable repro command, acceptance-rate counters, and a comment that rules out checkpoint corruption, fused-KV path, and class/loader mismatch, narrowing the root cause to the quantized-linear path for the draft's qkv_proj/fc/mlp. This is a numerical/quantization mechanism with a clear reference-vs-implementation validation path (BF16 vs W4A16 acceptance, dequantized tensor comparison)."
   },
   "739e4b807980426887f0de757309aece574180f69532865c1f18022efc628f81": {
     "confidence": 0.7,
@@ -44612,6 +44742,47 @@
     ],
     "why": "Issue provides a concrete, reproducible operator failure on native Ollama CLI: overflow warning fires with the configured contextWindow yet no task.compaction_executed/task.compaction_skipped events occur, and the next turn is sent uncompacted. Reproduction steps, environment, and log evidence are supplied, and the issue explicitly distinguishes itself from #7772. Root cause is not fully pinned (estimator mismatch vs prepareTurn bypass under agent teams), but the failure is well-scoped and testable."
   },
+  "9a9f582e6d6e794c235ba74112cc955ae622afc8ce49e4f22bd40577ad8c9362": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Commenter initially attributed cost to drafter rescanning full KV per draft step, then corrected that DFlash is single-pass and the mechanism is unexplained",
+      "Open question whether draft attention is intentionally unsharded under DCP or is a missing-argument bug"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py: add sequence-length dimension to dynamic speculative K lookup",
+      "vllm/config/speculative.py: expose num_speculative_tokens_per_seq_len / speculative_disable_by_seq_len config",
+      "spec decode worker: honor per-seq-len K schedule",
+      "optional: DFlashSpeculator.propose pass dcp_local_seq_lens to _build_draft_attn_metadata"
+    ],
+    "risks": [
+      "Mechanism attribution partly contested: commenter retracted the 'drafter rescans full KV' framing and cannot explain the 28.85 ms magnitude",
+      "Whether draft attention should be DCP-sharded is unresolved; fixing it may change acceptance behavior",
+      "Long-context 185k reproduction requires large-memory multi-GPU hardware not universally available",
+      "AI disclosure policy conflict may restrict automated public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce 185k single-stream decode with DFlash DT4 vs SPEC_OFF on hybrid GDN target; confirm ~16 vs ~71 tok/s",
+      "Add unit test that scheduler selects K=0 above configured seq-len threshold and K>0 below",
+      "Regression test that short-context DT8 throughput is unchanged after adding the seq-len axis",
+      "If DCP path is touched, compare draft metadata with/without dcp_local_seq_lens at DCP-1 vs DCP-8"
+    ],
+    "unknowns": [
+      "Whether the intended fix is a scheduler-level seq-len K schedule, a DCP-sharding fix in DFlashSpeculator.propose, or both",
+      "Whether the 182 ms/cycle figure is reproducible outside the reporter's RTX 4090 x4 setup",
+      "Whether maintainers consider the DCP inconsistency a bug or intended design"
+    ],
+    "why": "Issue reports a concrete, profiled long-context spec-decode regression on hybrid GDN models: drafter cross-attention scans full accumulated KV each cycle (~182 ms/cycle at 185k), and no per-sequence-length disable hook exists. Code anchors (scheduler.py dynamic_sd_lookup keyed only on batch size, precompute_and_store_context_kv, num_speculative_tokens_per_batch_size) support a concrete implementation path. Comment evidence adds a DCP-sharding inconsistency in DFlashSpeculator.propose and a break-even surface, but also contains a self-corrected mechanism claim and an unresolved question about whether draft attention is meant to be DCP-sharded, so root cause is not fully settled."
+  },
   "9aa5e8d129c9ce797a0c75966a4a1647a7308ac3c4f8b92f534c811cd2473557": {
     "confidence": 0.85,
     "contradictions": [
@@ -54615,6 +54786,40 @@
     ],
     "why": "Issue provides a detailed, high-impact bug with clear root cause and suggested fix, but the deterministic gate requires HUMAN_REVIEW and existing PR #20285 has semantic overlap with the code paths, necessitating maintainer comparison before starting new work."
   },
+  "bef51e1bd24827993ca45d95e55c020371752613ee4fcb80b075e798cd9bec2a": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "commands/eval.py: remove silent stub fallback, gate stub behind --allow-stub, exit non-zero on load failure",
+      "commands/eval.py: map verdict to exit code (0 OK/MINOR, 2 MAJOR)",
+      "eval/quant_check.py: mark stub results in JSON output",
+      "docs/evaluation.md: fix GGUF example and align thresholds/per-task wording"
+    ],
+    "risks": [
+      "Changing exit codes may break existing CI consumers relying on exit 0",
+      "GGUF loading via gguf_file= may require additional dependency handling",
+      "Scope creep across docs thresholds and per-task aggregation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add test: empty before/after dirs -> non-zero exit and names failing side (fails on current code)",
+      "Add test: patched generators producing MAJOR delta -> exit code 2 (fails on current code)",
+      "Add test: only --after load failure -> before scores not discarded",
+      "Add test: stub only reachable via --allow-stub and JSON marks stub:true"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer exit code 2 vs 1 for MAJOR",
+      "Whether GGUF support is in scope or should be refused up front"
+    ],
+    "why": "Issue provides concrete code anchors (commands/eval.py:1351-1359, eval/quant_check.py:197-205, classify_delta), a reproducible CLI scenario showing exit 0 with OK on load failure, and a second scenario showing MAJOR also exits 0. Root cause is clear: silent stub fallback plus no exit-code mapping from verdict. Acceptance criteria define failing tests on current code."
+  },
   "befe47085b7b50145afa4f2df6d305563f2256ea0fad6bb32c7f4a57f4aab56c": {
     "confidence": 0.7,
     "contradictions": [],
@@ -59203,6 +59408,45 @@
     ],
     "why": "Issue identifies a concrete bug: fast mode silently excludes scripts/ via hardcoded FAST_SKIP_DIRS in discover.c, with reproduction and root cause confirmed by a contributor. Maintainer acknowledged and routed as high-priority bug. However, the deterministic gate requires HUMAN_REVIEW, and the issue lacks explicit maintainer approval or design confirmation for the fix approach. The proposed change is actionable but needs maintainer direction on whether to remove scripts/ from the skip list, make it configurable, or add warnings."
   },
+  "cfc1096c7c2f7eb6abe6c47b4b4e4562b09eb347d07436cbf88643f434e88946": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue states drafter runs every step and writes context KV before other requests read blocks, yet also claims unwritten draft blocks are cached — the triggering step is unresolved",
+      "Open-PR assessment summary says no related open PR while listing a semantically overlapping closed draft PR #54092"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/block_pool.py: gate draft-group block registration on drafter coverage",
+      "vllm/v1/core/kv_cache_coordinator.py: exclude or mark draft groups lacking written KV",
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py: ensure precompute_and_store_context_kv coverage tracking"
+    ],
+    "risks": [
+      "Root cause step that registers unwritten draft blocks is not identified, so a fix may target the wrong path",
+      "Overlap with closed draft PR #54092 on the same speculator path could mean partial coverage already exists",
+      "AI disclosure conflict may block submission regardless of technical merit"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with DFlash/DSpark drafter + automatic prefix caching on a shared ~20k-token prefix and measure vllm:spec_decode_num_accepted_tokens / vllm:spec_decode_num_draft_tokens before/after",
+      "Add a regression test asserting draft-group blocks are not registered when the drafter pass did not cover their tokens",
+      "Compare acceptance on shared-prefix vs unique-prompt workloads to confirm the cache-restored draft context is the corrupt input"
+    ],
+    "unknowns": [
+      "Which code path registers unwritten draft-group blocks",
+      "Whether the AI disclosure conflict permits any submission",
+      "Whether #52644 or #54092 already cover the same failure"
+    ],
+    "why": "The issue describes a plausible mechanism (draft-group blocks registered by cache_full_blocks without drafter coverage) but explicitly states the triggering step is not pinned down, and the proposed fix shape is left to maintainer input. The candidate's own actionability evidence shows a policy_or_disclosure_conflict (ai_disclosure_conflict=true) and the pre-review gate failed on policy_or_disclosure_uncertain, which is a materially blocking unknown for whether code work can be submitted. Additionally, the related-issue assessment flags potential overlap with #52644 sharing stack/failure signatures, and the open-PR assessment shows a semantically overlapping closed draft PR #54092 touching the same speculator path, so duplicate/coverage status is unresolved."
+  },
   "cfe7d16b6e9c2dcadc9ddcb5a1ef8d8d389a68b43477e16dda21b6215d976145": {
     "confidence": 0.85,
     "contradictions": [
@@ -60251,6 +60495,43 @@
       "Exact implementation details of the local patch (not fully provided)"
     ],
     "why": "Issue provides a clear root cause (strict zod gate, runtime normalizer, and preview formatter each assume a fixed 'command' key), a concrete reproduction (model emits {cmd:...} causing '✖ Invalid input' and '[object Object]' preview), and a proposed three-seam fix with local patch verification. The candidate is actionable and technically valuable."
+  },
+  "d285ed568ad08e169fcb17404655514917a8083dfc1d11e88b64494b0f6894ea": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims Temporal/persisted-history/message_history reachability, but the bot status comment reports zero references in durable_exec/ and side-respecting replay/narrowing",
+      "Issue claims no open PR adds the tag, while PR #7933 is flagged as semantic overlap on _tool_search.py round-trip behavior"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pydantic_ai/_messages.py ModelRequestPart union (only if maintainer confirms request-side native returns are supported)"
+    ],
+    "risks": [
+      "Fixing an unreachable hand-constructed shape adds a union arm that maintainers already rejected twice",
+      "Fourth filing of a closed-chain defect may duplicate #8234 and prior closed issues",
+      "Accepting request-side native returns may require MessagesBuilder dispatch, provider request-mapper replay, and request-side narrowing changes beyond a one-liner"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce dump→validate on ModelRequest(parts=[NativeToolSearchReturnPart(...)]) to confirm the ValidationError",
+      "Census all construction sites of NativeToolSearchReturnPart to determine whether any supported path emits it request-side",
+      "Compare against closed #6286/#7048/#7270 and open #8234 to confirm whether the fix shape was already rejected"
+    ],
+    "unknowns": [
+      "Whether any supported production path actually constructs NativeToolSearchReturnPart on ModelRequest.parts",
+      "Whether maintainers consider request-side native tool-search returns a supported contract",
+      "Whether the proposed union arm was already rejected in closed PRs #6288/#6687"
+    ],
+    "why": "The issue's own reproduction is a hand-constructed ModelRequest(parts=[NativeToolSearchReturnPart(...)]) graph, and the bot status comment (issue_data.recent_comments) reports a producer census finding only two construction sites, both response-side, with zero references in ui/, durable_exec/, or clai/ — refuting every Impact claim (Temporal payloads, persisted-history reload, message_history re-feed). The proposed one-line union arm was reportedly already closed twice by review, and the defect chain (#6286/#7048/#7270) is closed. This is a materially blocking reachability/duplicate-coverage unknown, not normal implementation uncertainty."
   },
   "d2867ddc8f955404c7dbceaa8c4e4e62b7893071f83cdc8ef99ddc26bfeb14f8": {
     "confidence": 0.7,
@@ -63328,6 +63609,41 @@
       "No maintainer confirmation on preferred fix design; whether to reuse existing <hook_context> mechanism or introduce a new field."
     ],
     "why": "Issue provides a clear root cause: the hook adapter discards contextModification for non-cancelling lifecycle hooks, with code anchors and a concrete reproduction. The fix is actionable and testable."
+  },
+  "db3f4efce0a236920baed44364f7b0e4f061d9ebce57f55881a133737137bfe6": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims user-persisted history loses extras; bot status comment states all five production paths emit name-only matches and divert extras to provider_details, so no framework-emitted history carries extras",
+      "Issue frames this as a gap in PR #7933, but #7933 is open/unmerged"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/_tool_search.py: ToolSearchMatch TypedDict extra='allow' (only if reachability is confirmed)"
+    ],
+    "risks": [
+      "Widening the accepted schema may mask provider-key leakage that is intentionally diverted to provider_details",
+      "Duplicate/overlapping open work: PR #7933 covers outer TypedDicts only; issue #8002 covers a different TypedDict",
+      "Assignment required by repo policy"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting extras on ToolSearchMatch survive ModelMessagesTypeAdapter JSON and Python-mode round-trip",
+      "Verify whether any production adapter path can emit extras on ToolSearchMatch before treating the fix as contract-owed"
+    ],
+    "unknowns": [
+      "Whether any production adapter path can actually place extra keys on ToolSearchMatch items",
+      "Whether maintainers consider the extra='allow' hardening contract-owed or an optional deferred follow-up",
+      "Whether #7933 merging would change the required scope"
+    ],
+    "why": "The issue's mechanism (nested ToolSearchMatch TypedDict lacks extra='allow') is concrete and code-anchored, but the supplied evidence contains a direct contradiction on reachability: the bot status comment states all five production construction paths emit name-only matches and divert provider extras to provider_details, so no framework-emitted persisted history can carry extras, and the issue's reproduction synthesizes the lossy state itself. The issue's 'gap in PR #7933' premise is also stale since #7933 is open/unmerged. This unresolved reachability/contract question determines whether the one-line hardening is owed by any contract or merely optional, so it is materially blocking rather than normal implementation uncertainty."
   },
   "db54f3cfd6360920a67529e7262a750bf10aea0ded8ce49d0aae50d487354e1b": {
     "confidence": 0.7,
