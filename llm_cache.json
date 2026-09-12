@@ -605,6 +605,41 @@
     ],
     "why": "Issue pinpoints a concrete wiring defect: build_lora_config_kwargs (peft_wiring.py:106-129) is the only path forwarding rank_pattern/alpha_pattern, and only SFT/pretrain call it; DPO/KTO and ~18 other trainers construct peft.LoraConfig by hand, so the config is silently dropped and q_proj trains at r=16 instead of 4. Reproduction is explicit (tiny CPU Llama, config acceptance vs actual adapter shape), and the sibling target_parameters validator shows the intended scope-gating pattern."
   },
+  "02e2b989368187ff3ad4e310e830c3561cdebca9ebbd3e66a0ab0cd50d1760ea": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Shared composer submission hook: replace string comparison with monotonic edit version and atomic clearIfUnchanged(submitVersion)",
+      "Failure restoration path: apply same version check so failed sends cannot overwrite newer input",
+      "Per-Session draft persistence: serialize writes with latest-value-wins so in-flight writes cannot override a later clear",
+      "Clear visible text, in-memory draft, attachments/references, and persisted draft through one submission transition"
+    ],
+    "risks": [
+      "Version-token approach must not regress legitimate preservation of user edits made during async preparation",
+      "Per-Session draft write coordination must clean up on settle/Session disposal to avoid unbounded cache growth",
+      "Scope must stay in shared Composer layer; avoid Agent Org-only or Command+Enter-only workarounds"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: submit with reference/MCP/whitespace preprocessing that changes displayText; assert composer clears",
+      "Unit test: type a second message during async preparation; assert newer input is preserved",
+      "Unit test: start debounced draft write, then clear; assert persisted draft does not resurrect submitted text",
+      "Rendered E2E: real Command+Enter and Send click across ordinary SDE, Member, and Group Chat; verify editor, transcript, Session switch/remount, and persisted draft"
+    ],
+    "unknowns": [
+      "No maintainer design confirmation on the version-token approach, but this is normal review uncertainty rather than a blocker"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: the shared composer compares original editor text against transformed displayText to decide whether to clear, so preprocessing-induced representation changes are misread as newer user input; a second race is the 300ms debounced per-Session draft write completing after the clear. Reproduction steps, expected/actual behavior, and a concrete validation path (rendered E2E starting from real Command+Enter/Send click, plus unit tests across SDE/Member/Group Chat consumers) are supplied. No duplicate or open PR coverage is reported."
+  },
   "02e30646bec96817489b03fea80567a6180ade48846d33d5c852678366c8ba37": {
     "confidence": 0.85,
     "contradictions": [],
@@ -5972,6 +6007,42 @@
     ],
     "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to check the updated chunk budget before scanning the waiting queue, leading to unnecessary cache matching and host-cache load-back. The reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "14dd75fb9555b0a6fd9d61e49f426c94909025181e841d4da9df64c51bdc0546": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue states PR #12100 is merged on main but not an ancestor of v1.4.2, while open_pr_assessment lists #12100 as MERGED with only semantic (not direct code) overlap and no root-cause coverage"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/http/service/openai.rs speech handler selecting response.data.first()",
+      "lib/llm/src/protocols/openai/audios/aggregator.rs chunk concatenation",
+      "release/backport or documented support boundary for 1.4.2"
+    ],
+    "risks": [
+      "Merged PR #12100 may already cover the fix, making a new PR redundant",
+      "Backporting to 1.4.2 may not be the maintainers' chosen support path",
+      "Changing the speech handler's first-item selection could alter streaming/response semantics"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the supplied DGD and request.json against 1.4.2 images; assert returned WAV contains all worker chunks and non-silent audio",
+      "Regression test with a silent first chunk followed by multiple non-silent chunks verifying complete WAV framing",
+      "Verify frontend/worker protocol compatibility on matched images rather than replacing one side"
+    ],
+    "unknowns": [
+      "Whether maintainers want a 1.4.2 backport or only a documented support boundary",
+      "Whether merged PR #12100 already resolves this exact audio-aggregation case on main",
+      "Whether the reported behavior still reproduces on current main"
+    ],
+    "why": "The issue is a release-qualification report for stock 1.4.2, and the reporter explicitly states the fix (PR #12100, commit a97afd2d) is already merged on main but not an ancestor of tag v1.4.2. The remaining work is a backport/support-boundary decision, not a new code contribution; the supplied evidence does not establish whether a backport is wanted or whether the merged fix already covers this case, which materially determines actionability."
+  },
   "1507a269398aba85debbe3190419aeadc9eee5c456e88a3d92881096308537fe": {
     "confidence": 0.85,
     "contradictions": [
@@ -7108,6 +7179,44 @@
       "Whether the unsynchronised output_copy_stream hypothesis is the actual root cause"
     ],
     "why": "Issue is a detailed ROCm segfault report with a concrete reproducer and a plausible unsynchronised-access hypothesis, but the reporter explicitly states the root cause is 'not pinned, hence a report rather than a patch'. The candidate's own actionability evidence records root_cause_signal=false, and the duplicate assessment flags semantic overlap with open PRs (#952 draft, #56342) that may already cover the same ROCm/DeepSeek-V4.1/FULL_DECODE_ONLY/no-async-scheduling territory. The policy status is ai_disclosure_conflict, which is a materially blocking disclosure requirement. These unresolved facts determine whether code work is actionable."
+  },
+  "19b7c05309b33bb812758c0dc444e2f6eed6334a769bd21fcdd8ff8fa5370424": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: _prune_and_reset must merge B@A into base weight and reinitialize A (Kaiming) / B (zeros) for the ReLoRA contract, or the feature must be renamed and the docstring corrected",
+      "src/soup_cli/utils/relora.py: replace strict '>' kthvalue threshold with deterministic exact-count selection (topk/stable-order mask) so prune_ratio<1 always retains the requested count and at least one entry per non-trivial factor",
+      "src/soup_cli/utils/relora.py: optimizer-state reset must target optimizer moments, not learned adapter weights",
+      "src/soup_cli/utils/relora.py: explicit support or loud rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A is a maintainer contract decision (implement real restarts vs rename feature); a partial fix doing half of the merge path would be worse than either coherent option",
+      "Tie frequency in production is unmeasured; the constructed case is deterministic but the natural all-zero lora_B initialization may or may not hit the first relora_steps interval",
+      "Numerical tolerance must be fixed and seed-controlled to distinguish math errors from float noise",
+      "Quantized/FSDP/DeepSpeed/streaming interactions may require explicit rejection rather than silent partial application"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression: with random non-zero LoRA factors, assert effective linear map is preserved across merge/reinitialize to numerical tolerance (control MSE ~1e-13)",
+      "Regression: constant-magnitude A and B with prune_ratio=0.9 must retain exactly the requested keep count and leave both factors non-zero with non-zero gradient norm",
+      "Kernel unit test: ones(10) with prune_ratio=0.9 keeps 1 survivor; arange(1..10) keeps 1 survivor",
+      "Accumulation test: successive ReLoRA restarts accumulate low-rank updates in the base model",
+      "Compatibility test: unsupported quantized/distributed/streamed combinations fail clearly rather than partially applying a restart"
+    ],
+    "unknowns": [
+      "Which of the two coherent contracts (real ReLoRA restarts vs rename to periodic LoRA weight pruning) the maintainer will accept for Claim A",
+      "Whether the all-zero lora_B initialization naturally triggers the tie bug within the first relora_steps interval in production"
+    ],
+    "why": "Issue identifies two concrete, separable algorithm defects in ReLoRACallback._prune_and_reset: (A) adapter weights are pruned without merging B@A into the frozen base, so the learned function is discarded rather than restarted, contradicting the module docstring's ReLoRA/Axolotl conformance claim; (B) strict '>' thresholding against kthvalue wipes all entries on ties, zeroing both factors and permanently killing the branch's gradients. Maintainer confirmed both halves with measured evidence (base weight delta 0, effective-map MSE 142.12 vs 8.77e-13 control; nonzero A/B = 0 with grad-norm 0.0). This is a genuine PEFT/training-objective mechanism with a clear reference-vs-implementation test path."
   },
   "19ebf936d2f6b6457fb8849d525586cff38477d8c768e1b6f3fa72bb19b5c965": {
     "confidence": 0.85,
@@ -9889,6 +9998,47 @@
     ],
     "why": "Issue identifies a concrete API break in OpenEnv causing silent unscorable rollouts, with a minimal two-line fix. However, an existing PR #6672 by a maintainer already addresses the same code path, and the issue explicitly requests maintainer confirmation before sending a PR. The deterministic gate is HUMAN_REVIEW, and the PR's technical completeness and overlap require maintainer assessment."
   },
+  "2336e886ce36911357332bfb9867b0de76d547916ff20db8c15b38a0c13a0e3d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports rejection on kiro-cli 2.10.0; collaborator measurements show 2.21.2/2.21.4 accept the field, and no exact cutoff is established",
+      "Issue asserts the banner follows from the default-agent fallback; triage explicitly labels this half unverified"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/agent.py (_seed_kas_permissions / conductor installers) — emission policy for the permissions key",
+      "src/kiro_crew/agent_sdk/drivers/acp.py (derived_agent_permissions) — only if the derivation contract changes",
+      "src/kiro_crew/mcp_hot_reload.py — only if a version gate is chosen"
+    ],
+    "risks": [
+      "Removing the key un-registers the agent for KAS users (reverses #4614's deliberate decision)",
+      "Version-gating has no measured threshold; 2.10.0 rejects while 2.21.2/2.21.4 accept, cutoff unknown",
+      "Backend-gating couples the spec-writing funnel to provider resolution and gives up one-spec-serves-both-runtimes",
+      "The banner may survive the fix if its cause is independent of spec rejection"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the 2.10.0 rejection with a probe spec carrying permissions: {rules: []} via kiro-cli agent validate, reading output not exit status",
+      "Confirm the unknown-field control (zzz_definitely_not_a_field) and malformed-JSON control behave as reported on the same executable",
+      "Independently verify whether the Atlassian credential/exfiltration banner follows from the default-agent fallback, or has its own cause",
+      "If a fix is chosen, keep test_kas_permissions.py::TestTheDiskWriter::test_an_empty_policy_is_still_written_so_the_profile_stays_loadable and test_conductor_agent.py::test_a_fully_governed_host_still_emits_the_permissions_key passing"
+    ],
+    "unknowns": [
+      "Whether the Atlassian OAuth banner is actually caused by the spec rejection or has an independent cause",
+      "Which remedy maintainers will choose (drop key, version-gate, backend-gate), since each has a documented cost",
+      "Whether PR #10373 (maintainer-owned, overlapping ACP paths) already covers or conflicts with the intended fix",
+      "The exact kiro-cli version cutoff between 2.10.0 and 2.21.2"
+    ],
+    "why": "The writer-side mechanism is well established (agent.py emits a top-level permissions key; kiro-cli 2.10.0 rejects it via deny_unknown_fields, confirmed by a collaborator's native Windows measurement), but the issue's causal chain to the MCP OAuth banner is explicitly flagged as unverified inference, and the fix space is an unresolved maintainer design decision: removing the key reverses #4614 and breaks KAS profile loading (pinned by test_kas_permissions.py), version-gating has no measured cutoff, and backend-gating adds a new dependency. Multiple collaborators state no fix is proposed and the scope call is not theirs to make."
+  },
   "234a5773c1a20bafc8169dd2e932b4e8b2d7da7420334786814d915ddde54852": {
     "confidence": 0.7,
     "contradictions": [],
@@ -11050,6 +11200,48 @@
       "Maintainer design preferences or planned fixes unknown"
     ],
     "why": "Issue identifies two silent schema-generation bugs in pydantic-ai's AgentSpec with concrete root causes and downstream impact, but lacks a public minimal repro and maintainer confirmation; gate requires HUMAN_REVIEW."
+  },
+  "270eb3649f3898469eb9b406022494917d661614e88dcabe0fcdc80463cbd79d": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Comment chenWULUQI attributes divergence to BF16 numerical path differences, while jschmied reports block-verification reproduces q_len=1 bit-for-bit once kernel defects are fixed, arguing the mismatch is not intrinsic to BF16",
+      "wickist attributes the symptom to GDN gate row misalignment fixed by #51812, while Windless84/MaCoredroid report E==V!=A verifier-argmax divergence on stock v0.28.0"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Speculative decode verification path (target block forward vs q_len=1 forward) for hybrid GDN/DeltaNet/Mamba targets",
+      "GDN spec-verify gate row gathering (a/b vs mixed_qkv index alignment)",
+      "Numerical path parity between target-only and block-verification logits"
+    ],
+    "risks": [
+      "BF16 GEMM/SDPA/reduction differences vs genuine state-update/rollback bug are not yet distinguished",
+      "Multiple independent kernel defects reported on other stacks may not apply to this BF16 TP=4 setup",
+      "AI disclosure policy conflict may block public contribution actions",
+      "Potential duplicate coverage by PR #52487 / issue #56605 unresolved"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's exact request (temperature=0, seed=20260902, max_tokens=64, logprobs=true) on target-only vs DFlash2 K=1 and confirm first divergence at token 30",
+      "Compare target-only logits vs block-verification logits at token 29/30 and inspect top-1/top-2 margin",
+      "Rerun with target verification in FP32 to separate numerical-path drift from state-update/rollback defects",
+      "Cherry-pick the #51812-style a/b gathering fix (or test on v0.28.0) and rerun the repro"
+    ],
+    "unknowns": [
+      "Which specific mechanism (numerical path, GDN gate alignment, or state rollback) causes the BF16 TP=4 token-30 divergence",
+      "Whether PR #52487 or issue #56605 already covers this root cause",
+      "Whether the repository's AI disclosure policy permits the intended contribution workflow"
+    ],
+    "why": "The issue reports a concrete, reproducible greedy-equivalence failure (DFlash2 diverges at token 30, K=1, --enforce-eager, prefix cache off), and comments supply multiple candidate root causes (BF16 numerical path differences, GDN gate row misalignment #51812, kernel defects #54945/#54076/#55122). However, the supplied evidence does not resolve which mechanism applies to this BF16 TP=4 configuration, and the duplicate/overlap assessment is unresolved (PR #52487 semantic overlap, issue #56605 shared stack signature). The candidate's own preTaskEvidence flags policy_or_disclosure_uncertain (ai_disclosure_conflict) and duplicateStatus semantic_overlap_requires_review, which are materially blocking unknowns for actionable code work."
   },
   "274a668a8027dac05752d8c69735a8a7abd4e56916f211047c25a4713e56fc44": {
     "confidence": 0.6,
@@ -42593,6 +42785,46 @@
     ],
     "why": "Issue reports a clear regression in Dify Cloud MCP with a specific error, and Dosu's comment identifies a likely root cause in session management. However, the issue is Cloud-specific and the fix may require infrastructure changes; no maintainer confirmation or active investigation is present. The existing PRs are merged but lack tests and do not directly reference this issue, so a new PR could be valuable but needs maintainer guidance."
   },
+  "8cbc880b1ed0c3250f53b2b166143c2deace1f22b9819b9db6239a95f22a1534": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate classifies this as an algorithm mechanism (attention/numerics/distributed), but a maintainer states the known cause is tool call / vLLM frontend",
+      "Candidate claims reproduction evidence (executable_command, minimal_example), while the issue body explicitly says the bug could NOT be reproduced synthetically"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vLLM frontend tool-call handling / chat template path",
+      "hybrid KV cache / prefix cache state restoration for Mamba-SSM layers",
+      "GLM reasoning parser (glm45.rs / glm47) if token degeneration originates there"
+    ],
+    "risks": [
+      "Root cause may be frontend/tool-call plumbing rather than an algorithm mechanism, making it out of scope for llm_algorithm track",
+      "No deterministic synthetic reproduction means a fix cannot be validated reliably",
+      "AI-disclosure policy conflict blocks automated public action",
+      "Related issue #56556 is a different subsystem (xgrammar structured output) and could mislead investigation"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a long multi-turn agentic client session (Claude Code / OpenCode style) against the bad build and confirm degeneration",
+      "A/B the same session with --no-enable-prefix-caching to isolate prefix-cache/state-indexing",
+      "Pin flashinfer-python==0.6.17 on the bad build to separate kernel regression from vLLM core commits",
+      "Add a regression test that replays a recorded multi-turn tool-call transcript and asserts no repeated-token collapse"
+    ],
+    "unknowns": [
+      "Whether the degeneration is caused by frontend tool-call handling, prefix-cache/SSM state restoration, or a kernel/numerics change",
+      "Whether a deterministic reproduction can be constructed at all",
+      "Resolution of the AI-disclosure policy conflict before any public contribution"
+    ],
+    "why": "The issue reports a real GLM-5.3-Flash FP8 degeneration regression with a build A/B delta, but the reporter explicitly could not construct a synthetic reproduction; only long real agentic sessions trigger it. A maintainer comment states it is a known issue caused by tool call / vLLM frontend, which points away from the algorithm mechanisms (attention kernels, numerics, distributed training) that the candidate claims. The related-issue overlap (#56556, xgrammar structured output) shares only generic stack signatures (clang/gcc/collect_env.py) and is not a true duplicate. The candidate also carries an unresolved AI-disclosure policy conflict. These are materially blocking unknowns for an llm_algorithm contribution."
+  },
   "8d0b13f6c7d4e40c1f215fc6214dc7fdbb2ffa6cbbc7681331156fdd2e4e9ba5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -43441,6 +43673,38 @@
     ],
     "unknowns": [],
     "why": "Issue pinpoints an unreachable usageMetadata branch in handleGeminiMessage's else-if chain, with a public no-API-key repro and a concrete expected/actual pair; the fix is a minimal, well-scoped dispatch change."
+  },
+  "8f44d370eea93f550715ed46ba7b071ff5ab4310f3251e9ac8a998c8301d4b3e": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate actionability evidence marks root_cause_signal true and probe_ready true, but maintainer comment says the gap is already tracked in #7992 with PR #8070 open"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/dsh-runtime/src/index.ts: emit text frame from assistant/message content and accumulate assistantOutput for both assistant/chunk and assistant/message"
+    ],
+    "risks": [
+      "Duplicating PR #8070's already-open fix",
+      "Double-counting text when assistant/message follows streamed assistant/chunk deltas",
+      "Scope creep from the separate OD_TOOL_TOKEN observation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Add a regression test asserting an execute produces at least one text frame with content PONG",
+      "Run the dsh-runtime package unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #8070 will merge and fully resolve the issue",
+      "Whether maintainers want any additional validation on #7992"
+    ],
+    "why": "Issue #8085 reports a concrete, well-evidenced root cause (dsh-runtime only reads assistant/chunk and discards assistant/message body, producing empty_output), but a maintainer comment states this is the same compatibility gap already tracked in #7992 and that open PR #8070 already covers the legacy chunk path, newer stream/settlement paths, and regression fixtures. The candidate is therefore a covered opportunity rather than a new actionable contribution."
   },
   "8f4644df1c091e0c772b7c8497ca2329cec5b052aaaa95c49aecf58e2fd24cca": {
     "confidence": 0.7,
@@ -72779,6 +73043,41 @@
       "Whether maintainer prefers system message approach over faster error surfacing"
     ],
     "why": "Issue provides a clear root cause: connection-refused is mapped to retryable NetworkError, and Ollama's generous retry budget causes ~2min delay. Maintainer confirms the behavior and discusses trade-offs, but no PR exists. A focused fix distinguishing permanent connection failures from transient network errors is actionable and testable."
+  },
+  "eee9db327cfb64d5e8f180d054379a8dc76f15569289aa5557a69d0d7c640c00": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body claims the same code is on main today, while pre-task evidence reports base_sha_changed and reproduction_or_validation_missing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/message-list/prompt/download-assets.ts: make per-part download failure non-fatal or surface it to a hook",
+      "packages/core/src/utils/p-map.ts: consider error isolation semantics if pMap is the rejection vector",
+      "Add regression test covering a 404 attachment part followed by a subsequent successful turn"
+    ],
+    "risks": [
+      "Choosing among the three proposed solutions without maintainer design input may produce a rejected implementation",
+      "Silently swallowing download failures could mask genuine provider/network errors",
+      "Behavior change in prompt construction may affect other callers of downloadAssetsFromMessages"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test: build a message list with an image part whose URL returns 404, run the prompt-building path, assert the step does not reject and later turns still succeed",
+      "Integration test: simulate two consecutive turns in the same thread where the first turn's attachment URL becomes unreachable before the second turn"
+    ],
+    "unknowns": [
+      "Which of the three proposed remedies maintainers prefer (placeholder vs processor hook vs size cap)",
+      "Whether the base SHA drift changes the affected code path",
+      "Whether an existing open PR already covers this fix"
+    ],
+    "why": "Issue describes a plausible failure mode in downloadAssetsFromMessages/downloadFromUrl where a permanently failing attachment URL (404) rejects the whole step and breaks every later turn. Code anchors and a reproduction sequence are supplied, but the issue itself offers three alternative solutions (placeholder option, processor hook, size cap) with no maintainer design decision, and the bot comment explicitly asks contributors to wait for triage before opening a PR. The supplied evidence also flags design_confirmation and needs_confirmation, and the pre-task gate rejected on base_sha_changed, duplicate_changed, and reproduction_or_validation_missing."
   },
   "ef021dcb900c76db421e150631f9c7f7fd3d0617e0aa3f9965693d452a4e252d": {
     "confidence": 0.7,
