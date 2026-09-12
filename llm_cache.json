@@ -11375,6 +11375,38 @@
     ],
     "why": "Issue provides a clear, reproducible bug with root-cause analysis and a concrete fix direction. The triage bot confirms the root cause and extends it to the OpenAI-compatible pipeline where the clamp is not invoked. The issue is actionable and valuable for agent_ai_infra track."
   },
+  "2a3508e8ff1e52750a221933bacac2ebcaf32942ce07202a7b36d924d7bfd8c8": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment marks duplicate status human_review_required while also noting PR #8482 has direct code overlap and references the issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "deepspeed/runtime/zero/parameter_offload.py: correct ds_grads_remaining accounting so post_backward_function runs per branch under AC + ZeRO-3"
+    ],
+    "risks": [
+      "PR #8482 may already cover the fix, making duplicate work low value",
+      "Distinguishing true leak from normal allocator caching requires careful measurement",
+      "Multi-branch recompute semantics may need maintainer design confirmation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a minimal single-model-multi-branch network with torch activation checkpoint + ZeRO-3, fixed seed, and assert gathered parameter memory is released after backward (compare peak/retained memory against a non-AC baseline)."
+    ],
+    "unknowns": [
+      "Whether PR #8482 fully resolves the root cause or leaves independent implementation space",
+      "Whether maintainers consider the issue already covered by the open PR"
+    ],
+    "why": "Issue #8481 describes a concrete ZeRO-3/activation-checkpoint memory leak with a plausible root cause in parameter_offload.py (ds_grads_remaining reset in PostBackwardFunctionModule), but the supplied evidence shows an open PR #8482 that directly references this issue, overlaps the same code path, and claims to fix the same bug. Whether independent implementation space remains is unresolved and requires human comparison, which is a materially blocking unknown for actionability."
+  },
   "2a74f260657006090d90fd0df288ea954fcea120c71b7aa2c674df4a3f33021d": {
     "confidence": 0.85,
     "contradictions": [
@@ -43595,6 +43627,42 @@
     ],
     "why": "Issue identifies two concrete, code-anchored defects in relora.py: (A) _prune_and_reset never merges B@A into the frozen base before pruning, so the learned adapter contribution is discarded (base weight delta 0, effective-map MSE 142.12 vs merge-then-reset control 8.77e-13); (B) strict '>' thresholding against kthvalue wipes all entries on ties, zeroing both factors and producing zero gradients. Maintainer independently reproduced both halves on 2edc063 and confirmed the module docstring conformance gap. This is a genuine algorithm-conformance/numerics defect with a concrete reference-vs-implementation validation path."
   },
+  "97de97fd13f8e07fe0d6727df8e1a5639e3590d56ddd50a9cc36c5ce16ec88d0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/advanced_precision.py: replace hasattr-based NVFP4Config lookup with explicit prototype import and ImportError handling",
+      "src/soup_cli/utils/save_formats.py: remap scheme_factory_map to 0.18 class names and drop/map inner_k_tiles",
+      "src/soup_cli/utils/v028_features.py: make requested-but-not-applied nvfp4 visible instead of a silent yellow warning",
+      "pyproject.toml / commands/doctor.py / commands/export.py: unify the torchao version floor"
+    ],
+    "risks": [
+      "Whether torchao NVFP4 kernels actually execute on sm_120 is unverified; is_sm_at_least_100() may pass while kernels fail",
+      "Choosing between NVFP4TrainingConfig (training) and inference/PTQ configs changes semantics of the nvfp4 flag and needs maintainer intent",
+      "Overlap with #800 and #829 on the same helper/doctor paths could cause duplicate or conflicting fixes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a contract test using pytest.importorskip('torchao') that imports real torchao and asserts every configured scheme class name resolves; confirm it fails on current code with torchao 0.18.0",
+      "Run export_torchao for all four schemes against torchao 0.18.0 and assert success or explicit allowlist removal",
+      "Add a regression asserting Int4WeightOnlyConfig no longer receives inner_k_tiles",
+      "Record an end-to-end training.nvfp4: true run on Blackwell (sm_120) in benchmarks/"
+    ],
+    "unknowns": [
+      "Whether an older torchao release ever exported the current spellings (only 0.18.0 checked)",
+      "Whether training.nvfp4 is intended as training-time quantization or post-training quantization"
+    ],
+    "why": "Issue documents a concrete, verifiable defect: Soup resolves torchao configs by name (NVFP4Config, Int8DynActInt4Config, Float8DynActFloat8Config) that torchao 0.18.0 does not export, with exact file/line anchors, a real-hardware reproduction transcript, and a clear proposed mapping to prototype classes. This is a numerics/quantization mechanism with a concrete reference-vs-implementation validation path (import real torchao and assert every configured name resolves)."
+  },
   "97ec112b5446f06fde429a8a1fd884175dd822eb1d2c30a31e4078133f506b72": {
     "confidence": 0.7,
     "contradictions": [],
@@ -57490,6 +57558,38 @@
       "Whether the divergence persists on the latest vLLM version with the suggested fix applied."
     ],
     "why": "Issue provides a concrete greedy-equivalence failure with reproducible commands, expected/actual token divergence at a fixed position, and multiple independent reports isolating the problem to speculative verification numerical paths or state handling. The evidence includes a clear validation path via logit-level A/B and FP32 comparisons, and the issue is algorithmically relevant to LLM inference correctness."
+  },
+  "c9c8a5cbc85e84d839191ca411c325486586e0fcaaf2f9aa8c5f5df688fafb37": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/commands/eval.py: remove silent stub fallback, gate stub behind --allow-stub, propagate verdict to exit code (0 OK/MINOR, 2 MAJOR)",
+      "src/soup_cli/eval/quant_check.py: mark stub results in output, align thresholds with docs",
+      "docs/evaluation.md: fix GGUF example and threshold/per-task documentation"
+    ],
+    "risks": [
+      "Exit-code convention change (2 for MAJOR) may conflict with other gate commands; issue itself notes #813 about inconsistent exit codes",
+      "Removing the stub fallback could break orchestration smoke tests that rely on it",
+      "GGUF loading via gguf_file= may require additional dependency support"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: quant-check with two empty dirs exits non-zero and names the failing side (currently exits 0 with OK)",
+      "Add regression test: patched generators producing MAJOR delta assert exit code 2 (currently 0)",
+      "Add test: only --after load failure is reported and --before scores are not discarded",
+      "Add test: stub scoring only reachable via --allow-stub and JSON output includes stub marker"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer exit code 2 vs another non-zero convention given the open #813 exit-code inconsistency issue"
+    ],
+    "why": "Issue pinpoints two concrete defects with code anchors: silent stub fallback in commands/eval.py:1351-1359 masking load failures as OK, and missing exit-code propagation from the verdict. Reproduction is concrete (empty dirs + tasks.jsonl yields OK/exit 0; patched generators yield MAJOR/exit 0), and acceptance criteria define failing tests that fail on current code. Track is agent_ai_infra, so the llm_algorithm rejection rule does not apply."
   },
   "c9c946ff34929ec11bb867b43746f226c79807213cec8fbc11eac784c8e17f7d": {
     "confidence": 0.6,
