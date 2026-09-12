@@ -11962,6 +11962,41 @@
     ],
     "why": "Issue reports a clear, reproducible bug in AG-UI approval resume where only the first of multiple gated calls executes. Root cause is identified in _local_approval_content_ids_to_remove occurrence-matching. However, the deterministic gate requires HUMAN_REVIEW, and the issue lacks maintainer approval or design confirmation. Existing PR #7546 is not directly related, so no competition. Actionable fix is plausible but requires maintainer direction."
   },
+  "2ad21bdb97d6ada6c81d4d82b5849ff395916640939c055b6b87af2be06962b9": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims qualified LLM-algorithm mechanisms (model_architecture, numerics_quantization) while the issue body describes model-card registration and admission-policy plumbing"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "ThunderAgent registration path (remove synthetic ModelDeploymentCard / register_model for thunderagent_router.generate)",
+      "Frontend model-card normalization and admission path to keep backend card authoritative",
+      "Pluggable router/flow-control contract to accept PreprocessedRequest after admission"
+    ],
+    "risks": [
+      "Architectural change to registration/routing contract may conflict with existing ThunderAgent integration expectations",
+      "Open PR #14761 touches adjacent frontend admission/error handling and may overlap in changed files",
+      "No maintainer confirmation of the proposed direction (remove public model registration)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce with SGLang worker at 131,072-token context and 135,010-token prompt; assert frontend rejects before routing rather than SGLang rejecting after routing",
+      "Regression test that the frontend-visible model card carries the backend runtime_config.token_budget and truncation policy",
+      "Test that ThunderAgent policy can only tighten, not replace, frontend/backend admission rules"
+    ],
+    "unknowns": [
+      "Whether maintainers accept removing ThunderAgent public model registration versus patching field inheritance",
+      "Whether PR #14761 will land first and change the affected admission code paths"
+    ],
+    "why": "The issue describes a model-card ownership/registration defect in the ThunderAgent proxy: a second ModelDeploymentCard is created without inheriting the backend's runtime_config.token_budget, so frontend admission uses the wrong policy. This is routing/registration plumbing and metadata propagation, not an LLM algorithm mechanism. The algorithm_evidence matched only generic terms (normalization, overflow) with no formula, kernel, training objective, quantization method, or evaluation methodology; the proposed fix is architectural (remove public model registration, invoke ThunderAgent after preprocessing via the pluggable router), which is ordinary API/plumbing work even though it lives in an LLM-serving repository."
+  },
   "2ad309e750401ac0ff8648b03351940cc02fe3f1c807356eef971d8aaed2c45a": {
     "confidence": 0.85,
     "contradictions": [
@@ -13272,6 +13307,47 @@
     ],
     "why": "Issue provides detailed root cause, code anchors, measured impact, and expected behavior. Existing PRs are incomplete or draft, leaving clear competition opportunity."
   },
+  "2e94634198ac3033dd2c39af2a655f3fca42f8c734a458280b2cf4d83ca26abf": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue asserts the banner follows from default-agent fallback; triage explicitly labels that half unverified",
+      "Issue requests 'bundle a kiro-cli whose schema supports it', but KiroCrew bundles no kiro-cli (detects installed one)",
+      "Issue's first option (stop writing permissions) conflicts with the documented, test-pinned KAS registration contract"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/agent.py (_seed_kas_permissions / conductor writers) — only after maintainer selects a remedy",
+      "src/kiro_crew/acp/kas_permissions.py if the sidecar split is chosen",
+      "test/test_kas_permissions.py and test_conductor_agent.py assertions if the contract changes"
+    ],
+    "risks": [
+      "Removing the key un-registers the agent for KAS users (breaking change for a supported backend)",
+      "Version-gating has no measured cutoff and no pinned minimum kiro-cli version exists in main",
+      "The banner may have an independent cause and would survive the spec fix",
+      "Sixteen dependent assertions pin the current behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with official kiro-cli 2.10.0 binary: agent validate on a permissions-bearing spec must show the unknown-field rejection (measured by bolichen97)",
+      "Control: same spec with an arbitrary unknown field and with malformed JSON to prove the detector reports rejections",
+      "After any fix, verify KAS still loads the on-disk profile (resumed-session agent resolution) and that a pre-existing handwritten permissions policy is preserved"
+    ],
+    "unknowns": [
+      "Whether the Atlassian OAuth banner is actually caused by the spec rejection or has an independent cause",
+      "Which remedy the maintainer will choose (stop writing vs version-gate vs backend-gate), since each has a different cost",
+      "Whether a version cutoff exists between 2.10.0 (rejects) and 2.21.2 (accepts)",
+      "Assignment status: policy is needs_assignment and the issue has no assignee"
+    ],
+    "why": "The writer mechanism is confirmed (agent.py emits top-level permissions; kiro-cli 2.10.0 rejects it, 2.21.x tolerates it), but the issue's causal chain to the MCP OAuth banner is explicitly unverified, and every candidate fix reverses a deliberate, test-pinned design decision (#4614, test_kas_permissions.py) that keeps KAS profiles loadable. The remedy choice is an owner decision, not a mechanical bug fix, and the repo policy requires assignment (needs_assignment) with no assignee."
+  },
   "2eaf22eecdf4803f2fd0af4b88765c7e81e4c80fd591ab1986907f25da7121a0": {
     "confidence": 0.6,
     "contradictions": [],
@@ -13474,6 +13550,42 @@
       "Whether the proposed fix is already implemented in the open PR #53367, which lacks tests; but the issue itself is actionable regardless."
     ],
     "why": "The issue precisely identifies a root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It provides a concrete reproduction (two server launches with k=9 then k=7) and a proposed fix (add num_speculative_tokens to the hash). This is a valid LLM algorithm mechanism (model architecture/config affecting compiled graph shapes) with a clear validation path via the reproduction steps."
+  },
+  "3036c190a1a0df58cabc19118a2d1f54be523fc627987a48efc82bff94b376d0": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue expects daily-cloudcode-pa.googleapis.com for consumer accounts, while the commenter's proposed fix routes to daily-cloudcode-pa.sandbox.googleapis.com"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Antigravity auth/account classification (loadCodeAssist) to distinguish consumer vs enterprise",
+      "Antigravity provider endpoint selection for generateContent/stream",
+      "429 diagnostics to separate quota exhaustion from routing/entitlement denial"
+    ],
+    "risks": [
+      "Wrong endpoint choice (sandbox vs production daily host) could break consumer inference or leak traffic to a sandbox",
+      "Changing endpoint routing for an entire account class may regress enterprise/GCP-managed accounts",
+      "No maintainer verification against a real Google AI Pro account yet"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a Google AI Pro consumer account: login --provider antigravity, then auth-test --provider antigravity, confirming 429 on cloudcode-pa",
+      "After fix, verify generateContent succeeds against the correct consumer host and that enterprise/GCP-managed accounts still route to cloudcode-pa",
+      "Add regression test asserting endpoint selection by account class (consumer project_id=aicode-consumers, gcpManaged=false)"
+    ],
+    "unknowns": [
+      "Which host is authoritative for consumer production inference (daily vs daily sandbox)",
+      "Whether the third-party branch's failover approach matches maintainer design intent",
+      "Whether enterprise/GCP-managed routing is preserved by the proposed change"
+    ],
+    "why": "Issue gives a plausible routing root cause (consumer accounts hitting cloudcode-pa instead of daily-cloudcode-pa) with reproduction steps and external corroboration, but the only concrete fix evidence is an unmerged third-party branch whose claimed endpoint (daily-cloudcode-pa.sandbox.googleapis.com) contradicts the issue's own expected host (daily-cloudcode-pa.googleapis.com). The correct endpoint for consumer production is therefore unresolved, which directly determines whether the code change is actionable."
   },
   "3098e24e4bbd71590fb07ab9050c57f79e839c4c2ef89c445a5e267012f609e2": {
     "confidence": 0.85,
@@ -31714,6 +31826,41 @@
     ],
     "why": "Issue provides a clear root cause (torch.stack on variable-size crops) and a reproducible test, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#33458) has failed CI checks, so maintainer confirmation is needed before starting new work."
   },
+  "6a281565b224029692aa59615a578f833386c25917524e6abce2a3211d00b4b0": {
+    "confidence": 0.72,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal is false while issue_data.recent_comments supplies an explicit root cause and code anchor",
+      "candidate.open_pr_assessment reports semantic_overlap false for PR #40013 despite overlapping path api/controllers/mcp/mcp.py and matching fix description"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/controllers/mcp/mcp.py: replace sessionmaker().begin() context with explicit session lifecycle (plain Session with expire_on_commit=False and explicit commit/rollback) so downstream internal commits do not close the transaction",
+      "Regression test covering MCP tools/call path that triggers an internal commit during generation"
+    ],
+    "risks": [
+      "Open PR #40013 already targets the same file with a similar fix but lacks tests; a competing change must add regression coverage or root-cause depth to be worthwhile",
+      "Session lifecycle change could alter commit/rollback semantics for other MCP endpoints if not scoped carefully",
+      "Cloud-side deployment means the fix must land upstream to affect the reported Cloud behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that invokes the MCP controller tool-call path with a mocked AppGenerateService.generate() performing an internal session.commit(), asserting no 'closed transaction' error and a successful response",
+      "Run targeted api tests for controllers/mcp plus static checks; verify the same scenario against the self-hosted 1.16.1 reproduction from the issue"
+    ],
+    "unknowns": [
+      "Whether PR #40013 will be merged as-is, which would make a competing fix redundant",
+      "Whether maintainers require the fix to be scoped to MCP only or as part of the broader session refactor tracked in #37403"
+    ],
+    "why": "Issue supplies a concrete reproduction (n8n MCP client -> Dify MCP endpoint -> tools/call) and a specific error string ('Can't operate on closed transaction inside context manager'). Supplied evidence (dosubot comment, issue_data.recent_comments) anchors the root cause to api/controllers/mcp/mcp.py wrapping the request in sessionmaker().begin(), whose auto-commit on context exit conflicts with an internal session.commit() in AppGenerateService.generate(), leaving conversation.override_model_configs to fail on a closed transaction. This is a code-level, testable defect on the MCP tool-call path, not plumbing."
+  },
   "6a3996d641c6b3f46f8220916b6213bf2d396f6cb485aa02a5aa9a3b3843ce79": {
     "confidence": 0.8,
     "contradictions": [
@@ -34223,6 +34370,43 @@
       "Maintainer design preference for handling missing storage-state file"
     ],
     "why": "Issue reports a user-visible regression in Browser Mode with a clear repro and expected behavior, but the root cause is uncertain (fix not in rc.8 vs. upgrade path gap) and requires maintainer confirmation on design choice (seed vs. skip). No open PR or related issue found, and gate says HUMAN_REVIEW."
+  },
+  "7181f586b44864fccf4db2bb6524ffa2eb6cea61ec34111de0d97a009d65a90f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge B@A into base weight and reinitialize A (Kaiming) / B (zeros) for a canonical ReLoRA restart, or rename the feature and correct the module docstring to stop claiming paper/Axolotl conformance",
+      "src/soup_cli/utils/relora.py: replace strict threshold comparison with exact-count deterministic topk/stable-order mask so prune_ratio<1 always retains the requested keep count and at least one entry per non-trivial factor",
+      "src/soup_cli/utils/relora.py: target optimizer moments (not learned adapter weights) for pruning/reset, and re-warm the LR schedule on restart",
+      "src/soup_cli/utils/relora.py: explicit support or loud rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A is a maintainer contract decision (implement real restarts vs rename/correct docs); a partial implementation of only one half would be worse than either coherent option",
+      "Tie-frequency in production is unmeasured; the constructed case is deterministic but the all-zero lora_B initialization tie may or may not fire in ordinary runs",
+      "Numerical tolerance and seed/hardware must be fixed to distinguish genuine math errors from floating-point noise",
+      "Quantized/FSDP/DeepSpeed/streaming interactions could silently partially apply a restart if not explicitly rejected"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: with random non-zero LoRA factors, assert the effective linear map is preserved across merge/reinitialization to numerical tolerance (control MSE ~1e-13), and that successive low-rank updates accumulate in the base weight",
+      "Regression test: constant-magnitude A and B with prune_ratio=0.9 must retain exactly the requested keep count (e.g. 4 of 32) and must not zero both factors; assert non-zero gradient norm on both lora_A and lora_B after the callback",
+      "Kernel-level test: ones(10) with prune_ratio=0.9 keeps 1 survivor (currently 0); arange(1..10) keeps 1 (currently correct)",
+      "Check the natural tie case: freshly-initialized all-zero lora_B under PEFT convention at the first relora_steps interval",
+      "Compatibility test: unsupported quantized/distributed/streamed combinations fail clearly rather than partially applying a restart"
+    ],
+    "unknowns": [
+      "Which of the two coherent contracts (real ReLoRA restart vs rename to periodic LoRA weight pruning) the maintainer will accept, though the owner comment indicates a preference for the first while accepting the second as honest and smaller"
+    ],
+    "why": "Issue identifies two concrete, code-anchored defects in src/soup_cli/utils/relora.py: (A) _prune_and_reset never merges B@A into the frozen base before pruning, so the learned adapter contribution is discarded rather than restarted (maintainer reproduced max|delta|=0 on base weight with MSE 142.12 on the effective map vs 8.77e-13 for a merge-then-reset control); (B) strict `abs(t) > threshold` masking wipes all entries on magnitude ties, zeroing both lora_A and lora_B and leaving a permanently dead zero-gradient branch. Both are algorithm-level LoRA/PEFT mechanism defects with deterministic reproductions and a clear reference-vs-implementation validation path."
   },
   "7199a06e62c88bb56d13dc0935dbcef92cccb46576fa7b7c22413957ed47a98f": {
     "confidence": 0.7,
@@ -44248,6 +44432,49 @@
       "Whether the repository's AI disclosure policy blocks an automated public contribution"
     ],
     "why": "Issue provides a concrete reproduction command, a full call-chain root-cause analysis, and a specific code anchor (forward_context.py:96 assertion) showing the dummy-run path passes num_tokens_across_dp=None, triggering an inconsistent DP all_reduce. This is a distributed-training invariant bug with a clear reference-vs-implementation validation path."
+  },
+  "9438268e994ab870a70eca57e0a02f850981afe23ffb6dbf826fab672270c7e8": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Commenters attribute divergence to BF16 numerical-path differences vs. a fixable GDN gate-gathering kernel defect (#51812)",
+      "Reporter's build predates #51812 while a commenter claims that fix eliminates the symptom",
+      "Duplicate assessment flags semantic overlap with PR #52487 but no direct issue linkage"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Speculative decode verification path (target argmax/logits at verified positions)",
+      "GDN/DeltaNet/Mamba recurrent-state write/rollback boundaries in spec-verify",
+      "Gate row gathering (a/b vs mixed_qkv) alignment in GDN spec-verify kernel"
+    ],
+    "risks": [
+      "Root cause may already be fixed by #51812 in v0.28.0, making the reported divergence stale",
+      "Divergence may be BF16 numerical-path/batch-shape sensitivity rather than a DFlash2 logic defect",
+      "Overlapping open PRs (#52487, #51684, #56528) may already cover the code path",
+      "Repository AI-disclosure policy conflict may block automated contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce greedy target-only vs DFlash2 K=1 on the reported prompt with fixed seed and compare first-divergence token index",
+      "Re-test on v0.28.0 or cherry-pick #51812 to check whether divergence at token 30 persists",
+      "Instrument per-position target argmax/logits, proposed/accepted token IDs, and KV/SSM state boundaries around token 29/30",
+      "Run target-only at --max-num-seqs 1 vs 2 to test batch-shape invariance of the target forward"
+    ],
+    "unknowns": [
+      "Whether the reported divergence persists on v0.28.0 / after #51812",
+      "Whether the repository AI-disclosure policy permits the intended contribution",
+      "Whether PR #52487 or related PRs already resolve the same root cause"
+    ],
+    "why": "The issue reports a concrete, reproducible greedy-equivalence failure (DFlash2 vs target-only diverging at token 30, K=1, --enforce-eager, prefix cache off), which is a valid LLM-algorithm correctness signal with a reference-vs-implementation test path. However, supplied evidence contains materially conflicting root-cause attributions: commenters point to BF16 numerical-path differences, GDN gate row misalignment (#51812, landed in v0.28.0), and multiple unrelated kernel defects (#54945/#54948, #54076/#53798, #55122), while the reporter's build predates the claimed fix. The duplicate/overlap assessment is unresolved (PR #52487 semantic overlap, issue #56605 shared stack signature), and the submission policy is flagged ai_disclosure_conflict, which is a repository-level disclosure requirement that gates whether code work is actionable. These unresolved coverage and policy facts determine whether a new contribution is warranted."
   },
   "946dc5f45a0d46fa08af2eecb68b9f8261c069ff0a94bf8e32b5b5912047a877": {
     "confidence": 0.8,
@@ -71001,6 +71228,40 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly identifies a pricing-data gap causing silent under-billing for priority tier on dated-snapshot model entries, with concrete repro and root cause. However, an open PR #34504 overlaps semantically and touches the same cost-calc path, so a new PR risks duplication until that PR's scope is assessed."
+  },
+  "eb76f5db0014ade85486ecc8b9a01f4f4160c8dfcb4844966b8adc56b1a4d20b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/thread-stream-runtime.ts: prevent stale runner writes after thread-lease loss/recovery takeover",
+      "packages/core/src/mastra/index.ts: ensure shutdown settlement does not allow obsolete execution to overwrite settled assistant memory",
+      "packages/core/src/agent/durable/create-durable-agent.ts: enforce ownership/write boundary for recovered runs"
+    ],
+    "risks": [
+      "Fix may require a design decision on whether lease-loss recovery is a supported topology",
+      "Overly broad fencing could break legitimate recovery or shutdown behavior",
+      "Issue explicitly asks for maintainer clarification on intended ownership contract"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the gist's `bash setup-candidate.sh && bash run.sh stale` to reproduce the overwrite invariant failure",
+      "Add a regression test asserting `after` equals `before` for the assistant row after stale worker shutdown",
+      "Run targeted core package unit tests and static checks for durable agent/thread-stream-runtime"
+    ],
+    "unknowns": [
+      "Maintainer's intended contract for recovery after lease expiry without proving the original process dead",
+      "Whether the fix belongs in thread-stream-runtime, durable-agent creation, or shutdown settlement"
+    ],
+    "why": "Issue provides a concrete, reproducible durable-agent history-corruption scenario with a standalone gist, deterministic model, disposable Postgres/Redis, and captured before/after artifacts showing the same assistant row overwritten by a stale worker. Code anchors point to thread-stream-runtime.ts lease-loss behavior and mastra.shutdown() settlement boundary, giving a clear root-cause direction and a reference-vs-implementation validation path."
   },
   "ebb4ee99b700ca58c30dbbeaab2a7a9830b4a9e4a6fec4a179ef6b37055a3ea1": {
     "confidence": 0.7,
