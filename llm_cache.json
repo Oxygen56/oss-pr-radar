@@ -9908,6 +9908,46 @@
     ],
     "why": "The issue provides a clear reproduction with expected vs actual streaming chunks, identifies the specific transition from content to tool_calls, and suggests a concrete fix (flush pending text before tool_calls). The related PR #34458 (merged) addresses chunk-invariant parsing for DeepSeek-V4, but the issue remains open and the root cause coverage is not confirmed, so the contribution is still actionable."
   },
+  "22366796f850b17c010a25e866a69a55ed3a1c9be967ca7af235443dc9e19f62": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Reporter attributes degeneration to kernel/prefix-cache/version delta, while maintainer ZJY0516 states it is a known tool-call/vLLM frontend issue",
+      "Reporter could not reproduce synthetically, yet the issue is labeled a bug with a build A/B delta"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.open_pr_assessment",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints tool-call/frontend parsing path (per maintainer claim)",
+      "hybrid/Mamba prefix-cache state restoration path (per reporter hypothesis)",
+      "attention kernel path if FlashInfer 0.6.18 is implicated"
+    ],
+    "risks": [
+      "Regression may be non-deterministic and only manifest in real agentic clients, making a stable regression test hard",
+      "Three-way version delta means a fix in one component may not address the actual cause",
+      "Potential duplicate coverage with issue #56583 and open PR #56635 (glm frontend tool call parsing) could make independent work redundant"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Bisect the vLLM commit range g487ecf187..g385dce36b with prefix caching toggled on/off",
+      "Pin flashinfer-python==0.6.17 on the bad build and re-run the long multi-turn agentic session",
+      "Pin transformers==5.15.1 on the bad build and re-run the same session",
+      "Build a deterministic long multi-turn tool-call transcript fixture and assert no repeated-token degeneration"
+    ],
+    "unknowns": [
+      "Which component in the version delta actually causes the degeneration",
+      "Whether the maintainer's tool-call/frontend claim is the confirmed root cause or an unverified assertion",
+      "Whether issue #56583 and PR #56635 already cover the same failure, making this issue redundant",
+      "Whether a deterministic reproduction can be constructed at all"
+    ],
+    "why": "Issue reports a real GLM-5.3-Flash degeneration regression, but the reporter explicitly could not construct a synthetic reproduction and attributes the regression to an unresolved three-way version delta (vLLM commit range, FlashInfer 0.6.17→0.6.18, transformers 5.15.1→5.16.1). A maintainer comment asserts it is a known tool-call/frontend issue, which conflicts with the reporter's kernel/prefix-cache framing, and the related-issue assessment flags potential overlap with #56583 sharing stack signatures. Root cause is not established, so a concrete reference-vs-implementation or numerical regression test cannot yet be specified."
+  },
   "22369c8ed1c9d0aafdcbf78a7e81208b2d1a4257e1fc07e8e3d3c2b256609e22": {
     "confidence": 0.8,
     "contradictions": [],
@@ -21950,6 +21990,41 @@
       "Whether a related PR or issue already exists (lookup timed out)"
     ],
     "why": "Issue reports a user-visible bug loading MiniMaxH3 with sglang, but lacks a clear root cause and the provided reproduction is incomplete (no error message text, only an image). The deterministic gate requires HUMAN_REVIEW, and related issue/open PR lookups timed out, so duplicate work cannot be excluded."
+  },
+  "4b4e8ecf09fc621498672a8d3fd561a0ba8073847fdaa4d5f15d3789f8adca66": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body provides ordered reproduction steps, but actionability_evidence reports reproductionPathPlan=false and probe_ready=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/message-list/prompt/download-assets.ts: make per-part download failure non-fatal or expose it to a hook",
+      "packages/core/src/utils/p-map.ts: possibly adjust error propagation semantics if pMap is the aggregation point"
+    ],
+    "risks": [
+      "Choosing among placeholder replacement, processor hook, and size cap is a product/API design decision that could change public behavior",
+      "Silently dropping attachments may hide real errors from applications",
+      "The bot triage notice indicates maintainers have not yet approved PR work on this issue"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test for downloadAssetsFromMessages where one user message part URL returns 404 and assert the step does not reject",
+      "Add a regression test that a later turn in the same thread still succeeds after an earlier attachment becomes unreachable",
+      "Run targeted packages/core unit tests and static checks"
+    ],
+    "unknowns": [
+      "Which of the three proposed remedies maintainers want",
+      "Whether the failure should be surfaced through processAPIError or a new hook",
+      "Whether a per-download size cap is in scope"
+    ],
+    "why": "The issue describes a plausible failure mode in downloadAssetsFromMessages/downloadFromUrl, but the supplied evidence marks root_cause_signal=false, reproductionPathPlan=false, probe_ready=false, and needs_confirmation/design_confirmation=true. The issue itself proposes three alternative fixes (placeholder replacement, processor hook, size cap), so the intended behavior is not settled. The only recent comment is a bot triage notice explicitly asking contributors to wait for maintainer triage before opening a PR."
   },
   "4b6ace56abf94950a4dadd478214b14243ec718b8c173058cbdca405780cde6d": {
     "confidence": 0.85,
@@ -37680,6 +37755,41 @@
     ],
     "why": "Issue provides a concrete, reproducible data-loss bug in the canonical round-trip serializer, with root cause traced to TypedDict validation silently discarding unknown keys in LoadCapabilityReturnPart.content. The expected behavior (preserve or fail) is supported by existing helper and tests, and the reproduction script and test plan are explicit."
   },
+  "7a3b310c094519b54ceaa56368ca2d87edbe94b3ea8984e455071d2351c5c656": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body lists five unchecked callers as remaining work, but the recent comment states five are covered by open PRs and only the SM120 blockwise caller is unclaimed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "csrc/libtorch_stable/quantization/w8a8/cutlass/c3x/scaled_mm_blockwise_sm120_fp8_dispatch.cuh: set runtime leading strides from tensor metadata instead of make_cute_packed_stride",
+      "tests/kernels/quantization/test_cutlass_scaled_mm.py: add SM120 blockwise strided-view regression coverage"
+    ],
+    "risks": [
+      "SM120 hardware (RTX 5090 / RTX PRO Blackwell) may be unavailable, blocking validation",
+      "Test-file collisions with #55537/#56248/#56480 require rebase coordination",
+      "New alignment/leading-dimension checks in scaled_mm_entry.cu may reject padded test views"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's 512x512-view reproducer on SM120 hardware and confirm mismatches drop to zero",
+      "Run tests/kernels/quantization/test_cutlass_scaled_mm.py including test_cutlass_subset on SM120",
+      "Verify packed inputs remain unchanged and 16-byte alignment/leading-dimension checks in scaled_mm_entry.cu are satisfied"
+    ],
+    "unknowns": [
+      "Whether SM120 hardware is available for validation",
+      "Whether the three open PRs will merge and cover the remaining callers before new work starts"
+    ],
+    "why": "The issue itself is a strong, concrete kernel-algorithm bug: C3x CUTLASS scaled_mm rebuilds packed strides via make_cute_packed_stride and discards real leading strides, with a reproducible 8% mismatch matrix and a proposed stride fix. However, the supplied evidence shows three open PRs (#55537, #56248, #56480) already covering five of six affected callers, and the issue's own comment states only scaled_mm_blockwise_sm120_fp8_dispatch.cuh remains unclaimed and requires SM120 hardware the reporter lacks. That unresolved duplicate/coverage state and hardware availability materially determine whether new code work is actionable."
+  },
   "7a433a046ec698544ac5a0b3645938c74f695c63b0b3d94a5fee9331c3c00fd6": {
     "confidence": 0.85,
     "contradictions": [
@@ -43008,6 +43118,41 @@
       "Exact fix approach (skip vs. reject) not yet decided; maintainer approval is conditional on PR review."
     ],
     "why": "Issue provides a precise, reproducible bug in ZeRO-1/2 with a clear root cause: zero-sized trainable parameters are omitted from param_to_partition_ids but still enter gradient reduction, causing KeyError. The fix is a small, well-scoped change in stage_1_and_2.py with a concrete validation path (reproducer and regression test)."
+  },
+  "8c695e275ff1313fe0d6b23cc4fd6cabf61812d3c3e6fe1e2db0ca5080753f56": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Triage bot states the AppImage contains no Python and exports neither PYTHONHOME nor PYTHONPATH, while reporter provides binary-level and /proc evidence that AppRun.wrapped exports them"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/mcp-client.ts: scrub PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH from inherited env before spawning stdio MCP servers",
+      "packages/core/src/utils/sanitize-child-env.ts: extend sanitization list or add opt-in neutral-env behavior",
+      "packages/cli/src/config/shared-env-keys.ts: align shared env key handling if applicable"
+    ],
+    "risks": [
+      "Maintainers may consider scrubbing LD_LIBRARY_PATH too broad and break bundled-runtime children that rely on it",
+      "Changing child env sanitization could affect non-MCP spawned processes if applied globally",
+      "Attribution dispute between reporter and triage bot may delay acceptance even though the underlying request is valid"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test asserting spawned stdio MCP child env excludes PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH when set in process.env",
+      "Reproduce with PYTHONHOME=/tmp/.mount_FAKE/usr/ and LD_LIBRARY_PATH=/nonexistent and verify a Python stdio MCP server starts and completes handshake",
+      "Regression test that user-provided mcpServerConfig.env still overrides sanitized values"
+    ],
+    "unknowns": [
+      "Whether maintainers will accept scrubbing these variables given the deferred tradeoff referenced as #8653",
+      "Exact intended scope: MCP children only vs all user-configured child processes"
+    ],
+    "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP servers, breaking external Python interpreters. Reporter supplies a minimal repro, /proc environ evidence, and a working workaround. Triage bot disputes the AppImage attribution but the reporter's follow-up provides binary-level and live /proc evidence that the AppRun artifact exports these vars, plus a second leak channel (LD_LIBRARY_PATH) with a reproduction matrix. Code anchors point to mcp-client.ts and sanitize-child-env.ts, giving a plausible fix location. No open PR or duplicate issue covers this. The remaining uncertainty is whether maintainers accept scrubbing these vars as the fix (a deferred tradeoff referenced as #8653), which is normal design review rather than a blocking unknown."
   },
   "8c7314510f29f907af540e2b90b90a3c34b9a9139293cfe987d4c2030364ac03": {
     "confidence": 0.85,
@@ -56097,6 +56242,38 @@
       "Exact handling of token storage clearing semantics"
     ],
     "why": "The issue identifies a concrete, reproducible bug in the OAuth client flow: expired client secrets are never invalidated, causing permanent lockout. The root cause is clearly traced to missing checks in the client code, with a deterministic reproduction provided. No competing PR or issue exists, and the fix is well-scoped."
+  },
+  "b8fad922cdcda3d57deec88091ffd02ee4ce1a194c6f22c3ea917c4db79ab38b": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #40897 while also stating no direct code overlap"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py",
+      "drop_params handling for reasoning_effort on gpt-4.1/gpt-4o"
+    ],
+    "risks": [
+      "Existing open PR #40897 may already cover the root cause",
+      "Changing drop_params semantics could broaden API behavior changes beyond this model family"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test using get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) asserting UnsupportedParamsError or forwarded param",
+      "Run targeted unit tests for get_supported_openai_params and drop_params behavior"
+    ],
+    "unknowns": [
+      "Whether PR #40897 actually fixes the same root cause",
+      "Exact code path where drop_params silently discards reasoning_effort"
+    ],
+    "why": "Issue describes a concrete user-visible bug with reproduction steps and code anchors, but the supplied evidence does not establish the root cause (root_cause_signal=false) and the duplicate assessment flags semantic overlap with open PR #40897 that requires human comparison before any code work is actionable."
   },
   "b918697abefb1c8ad12dea4d247d5686a38d77d5d20805ce8277423436ee800a": {
     "confidence": 0.85,
@@ -71984,6 +72161,43 @@
       "Maintainer confirmation on preferred fix location (legacy vs new mapper)"
     ],
     "why": "Issue provides a precise root cause: langfuse_otel output setters ignore RerankResponse, with a minimal repro and suggested fix. No competing PR or issue found. The fix is small and testable."
+  },
+  "e93f5394814b69ab1c622b605fd11dc5e3db403869f472c4863d4b64ba4f8b98": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports PR #7101 as open and semantically overlapping, while issue_data.recent_comments says a contributor is opening a PR shortly"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/google/adk/agents/llm_agent.py: avoid silent class replacement or surface dependency/paradigm change",
+      "src/google/adk/tools/discovery_engine_search_tool.py: allow configurable name/description or alias resolution",
+      "src/google/adk/tools/vertex_ai_search_tool.py: fail fast with clear ImportError when google-cloud-discoveryengine missing"
+    ],
+    "risks": [
+      "PR #7101 may already cover the dependency-error portion of the root cause",
+      "Changing tool naming/aliasing could alter public API behavior",
+      "Maintainer design preference on deprecating bypass_multi_tools_limit is unknown"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test constructing an Agent with VertexAiSearchTool(bypass_multi_tools_limit=True) plus a second tool and assert a clear ImportError when google-adk[gcp] is absent",
+      "Add a test that a custom name/description is forwarded to the substituted tool and that the model-facing declaration matches",
+      "Run targeted unit tests for google/adk/agents and google/adk/tools"
+    ],
+    "unknowns": [
+      "Whether PR #7101 already resolves the dependency-error root cause",
+      "Whether maintainers want the flag deprecated vs. fixed",
+      "Whether the issue is assigned to the commenting contributor"
+    ],
+    "why": "Issue describes a real leaky-abstraction problem in VertexAiSearchTool's bypass_multi_tools_limit class replacement, with a minimal reproduction and code anchors. However, the supplied evidence shows an open PR #7101 that semantically overlaps on the same code path and distinctive symbol (bypass_multi_tools_limit), and a contributor comment claims they are opening a PR now. Duplicate/merged-fix coverage is unresolved, which materially determines whether new code work is actionable."
   },
   "e9431a38e8cd0ce801c126e3f47209e278199d0973754a2e820b0a9a4cfb7091": {
     "confidence": 0.8,
