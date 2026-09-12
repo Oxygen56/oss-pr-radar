@@ -22593,6 +22593,43 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue clearly describes a silent truncation bug in the cmd branch of build_shell_command with a concrete repro and code anchor. However, the submission policy requires assignment and the gate decision is HUMAN_REVIEW, so work cannot start without maintainer confirmation."
   },
+  "5112753161c34edb2aed9a36aafbd08f211fa063472a1bad8106ec5a35dabdc8": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #788 overlapping src/soup_cli/data/sft_format.py, while related_issue_assessment reports no related open issues"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/data/sft_format.py: apply override in shared tokenizer-loading path used by all trainers",
+      "src/soup_cli/trainer/grpo.py and online_dpo.py: install hardcoded fallback only if tokenizer still has no template",
+      "src/soup_cli/config/schema.py: reject data.chat_template for pretrain/embedding/classifier with task named",
+      "saved tokenizer in output dir should carry the override"
+    ],
+    "risks": [
+      "Open PR #788 touches src/soup_cli/data/sft_format.py and shares the data_chat_template semantic token; it may partially cover the same code path and should be compared before implementing",
+      "Changing tokenizer template application across all trainers could alter existing training behavior for users relying on shipped templates",
+      "Rejecting data.chat_template on pretrain/embedding/classifier is a config-compatibility change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build DPO trainer on tiny CPU model with marker chat_template and assert marker appears in decoded prompt_ids (fails on current code)",
+      "Parametrize same assertion for KTO, ORPO, SimPO, IPO, BCO, reward_model, GRPO, Online DPO",
+      "With chat_template set on template-less tokenizer, assert GRPO renders with override not {{ msg['content'] }} fallback",
+      "Assert load_config_from_string rejects data.chat_template for pretrain/embedding/classifier"
+    ],
+    "unknowns": [
+      "Whether PR #788 already fixes the same root cause or only the doubled-BOS issue in the text SFT path",
+      "Whether maintainers have a preferred shared tokenizer-loading helper design"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: data.chat_template is only applied via apply_chat_template_override, whose sole caller build_format_row is only used by SFT and distill, so DPO/GRPO/Online DPO and other preference trainers render with the shipped tokenizer template. Reproduction with a marker Jinja template and decoded prompt_ids is described, and acceptance criteria define a reference-vs-implementation test. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific rejection rule does not apply."
+  },
   "512676a32222eaa5a81eac3a338462c95919fa8a114c430000342c27568ebc72": {
     "confidence": 0.85,
     "contradictions": [],
@@ -33192,6 +33229,44 @@
       "Whether PR #20186 actually fixes this issue or is unrelated"
     ],
     "why": "The issue provides a clear root cause (missing default index on mastra_workflow_snapshot) and a public repro, but the deterministic gate requires HUMAN_REVIEW and the existing PR #20186 has semantic overlap with the same code paths, requiring maintainer comparison before new work starts."
+  },
+  "705819cda9e9037166b89c49a1421aaaaf352f2338ef0b0f419219bf0e1ee940": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge B@A into base weight and reinitialize A/B (Kaiming/zeros) for canonical ReLoRA restart, or rename feature and correct docstring",
+      "src/soup_cli/utils/relora.py: replace strict threshold comparison with deterministic exact-count selection (topk/stable-order mask) so prune_ratio<1 always retains the requested count",
+      "src/soup_cli/utils/relora.py: target optimizer moments rather than learned adapter weights when pruning/resetting optimizer state",
+      "src/soup_cli/utils/relora.py: explicit support or loud rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A is a maintainer design decision (implement real restarts vs rename feature); a partial implementation of only one half could be rejected",
+      "Tie scenario production frequency is unverified; maintainer notes freshly-initialized lora_B is all zeros by PEFT convention, which may make the tie case non-constructed in practice",
+      "Distinguishing mathematical semantics errors from floating-point/random variation requires fixed seeds, baselines, and tolerances",
+      "Quantized/FSDP/DeepSpeed/streaming compatibility adds scope beyond the minimal fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: with random non-zero LoRA factors, assert effective linear map is preserved across merge/reinitialization to numerical tolerance (MSE ~1e-12), and base weight delta is non-zero after merge",
+      "Regression test: constant-magnitude A and B with prune_ratio=0.9 must retain exactly the requested keep count and leave both factors non-zero with non-zero gradient norms",
+      "Kernel-level test: ones(10) with prune_ratio=0.9 retains 1 entry; arange(1..10) retains 1 entry",
+      "Test that successive restarts accumulate low-rank updates in the base model",
+      "Test that unsupported quantized/distributed/streamed combinations fail clearly rather than partially applying a restart"
+    ],
+    "unknowns": [
+      "Which of the two separable fixes (A: merge/reinit restart vs rename; B: exact-count mask) the contributor intends to take, since maintainer asked for explicit selection",
+      "Whether the tie case fires in ordinary runs given PEFT's zero-initialized lora_B, which affects severity but not actionability"
+    ],
+    "why": "Issue identifies two concrete, separable defects in src/soup_cli/utils/relora.py: (A) _prune_and_reset never merges B@A into the frozen base before pruning, so the effective linear map changes (MSE 142.12 vs merge-control 8.77e-13, base weight delta 0), contradicting the module docstring's ReLoRA conformance claim; (B) strict `abs(t) > threshold` masking wipes all entries on ties, zeroing both factors and producing zero gradient norms, violating the requested keep count. Maintainer confirmed both halves with real peft LoRA runs and kernel-level checks, and explicitly invited a PR while asking which half is being taken. This is a genuine algorithm-conformance and numerical-correctness defect with a clear reference-vs-implementation validation path."
   },
   "7064df3b525479e3d19215ef46074fec08ad5384af52536831c99ae029864eba": {
     "confidence": 0.7,
@@ -70251,6 +70326,39 @@
       "Whether existing PR #7604 can be improved or will be merged soon"
     ],
     "why": "Issue provides a clear root cause (system Chrome exits on --remote-debugging-port=0, and ensureChromiumExecutable() ignores PUPPETEER_EXECUTABLE_PATH) and a workaround. Existing PR #7604 is weak: it has failing CI and lacks full evidence, so a materially better PR with complete tests and root-cause coverage is plausible."
+  },
+  "ee06e838ee5d6a9dd293396f74fd3c420892cbca26256cfc759fce7cc6bd4516": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Image generation request builder: honor configured profile image size instead of hardcoded 1024x1024",
+      "Image generation fetch/timeout path: apply IMAGE_GEN_TIMEOUT_MS (and related env timeouts) to the actual request, including undici headers/body timeout options"
+    ],
+    "risks": [
+      "Timeout may originate from undici default headersTimeout rather than app config, requiring fetch dispatcher/timeout option changes rather than a simple constant swap",
+      "Size may be hardcoded in multiple call sites (avatar vs profile vs game dynamic images), risking partial fix",
+      "Changing timeout semantics could affect other provider calls sharing the same fetch wrapper"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test asserting the outgoing OpenAI-compatible image request body uses the configured size (e.g. 512x512) rather than 1024x1024",
+      "Add a regression test with a slow mock image endpoint asserting the request is not aborted before IMAGE_GEN_TIMEOUT_MS",
+      "Run targeted unit tests for the image generation/provider module plus static checks"
+    ],
+    "unknowns": [
+      "Exact code location where image size is hardcoded vs read from profile config",
+      "Whether the 300s abort is undici headersTimeout or an app-level default, which determines the fix surface"
+    ],
+    "why": "Issue reports two concrete user-visible bugs on the OpenAI-compatible image generation path: configured image size (512x512) is ignored and a hardcoded ~300s timeout fires despite IMAGE_GEN_TIMEOUT_MS=1800000. Reproduction steps, env vars, and the actual request body showing size 1024x1024 are supplied, giving a concrete reference-vs-implementation validation path. No open PR or duplicate issue covers it. Root cause is not yet pinpointed (size may be hardcoded in the avatar/profile image request builder; timeout may be an undici headersTimeout default rather than the app-level IMAGE_GEN_TIMEOUT_MS), but this is normal implementation uncertainty resolvable by tracing the request construction and fetch options."
   },
   "ee0a12631792defdcfba6c691fa27b87f7a770d73486bd25e5e1bf025b58c0b3": {
     "confidence": 0.85,
