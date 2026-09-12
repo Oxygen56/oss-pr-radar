@@ -249,6 +249,50 @@
     ],
     "why": "The issue provides deep device-level evidence of a spin loop in the TMEM allocation path of the FlashMLA sparse-decode kernel, but explicitly states it is not a root-cause report and asks for maintainer guidance on the correct owner and diagnostic path. The root cause (phase mismatch, visibility, or hardware state) is undetermined, and the fix likely requires changes in FlashMLA or CUTLASS, not vLLM. The issue is a request for guidance, not a concrete patch proposal."
   },
+  "015f9c61cedeaed5ba4937c9fd1f9c05e1f56ef8bbe77bbb4f105918acdac9d2": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Commenters attribute divergence to BF16 numerical path differences (chenWULUQI) while jschmied reports bit-for-bit agreement once kernel defects are fixed, and wickist attributes it to GDN gate row misalignment (#51812)",
+      "Candidate duplicate assessment flags PR #52487 as semantic overlap requiring review while also listing it as not directly referencing the issue",
+      "preTaskEvidence policy status ai_disclosure_conflict conflicts with proceeding to code contribution"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/spec_decode verification path: target argmax/logits at verified positions",
+      "GDN/DeltaNet/Mamba recurrent-state write/rollback boundaries in spec-verify",
+      "draft token proposal and acceptance accounting for DFlash2DraftModel"
+    ],
+    "risks": [
+      "Root cause may be BF16 numerical path difference rather than a code defect, making a code fix inappropriate",
+      "Existing PR #52487 and issue #56583 may already cover the same root cause",
+      "Repository AI-disclosure policy conflict may block automated contribution",
+      "Divergence may be hardware/stack-specific (sm_86 vs sm_120/sm_121) and not reproducible on maintainer hardware"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with fixed seed 20260902, temperature=0, max_tokens=64, logprobs=true; compare target-only vs DFlash2 K=1 token-by-token and record first divergence index",
+      "Run the same prompt target-only with --max-num-seqs 1 vs 2 to test batch-shape invariance of the target forward",
+      "Re-test on v0.28.0 (or cherry-pick #51812) to check whether GDN gate row alignment closes the divergence",
+      "Instrument target argmax/logits, proposed token IDs, accepted/rejected counts, and KV/SSM write-rollback boundaries around tokens 29-30"
+    ],
+    "unknowns": [
+      "Whether the divergence persists on current main / v0.28.0 after #51812",
+      "Whether PR #52487 or issue #56583 already resolves the same root cause",
+      "Whether the repository's AI-disclosure requirement permits this contribution",
+      "Whether the failure is reproducible on maintainer-available hardware (sm_86 vs sm_120/sm_121)"
+    ],
+    "why": "Issue reports a concrete, reproducible greedy-equivalence failure in the DFlash2 speculative-decode path (divergence at token 30, K=1, --enforce-eager, prefix cache off), which is a valid llm_algorithm mechanism (spec-verify numerics/state). However, supplied evidence contains materially conflicting root-cause attributions: commenters point to BF16 numerical path differences, GDN gate row misalignment (#51812), and multiple unrelated kernel defects (#54945/#54948, #54076/#53798, #55122), while the candidate's own duplicate assessment flags PR #52487 (spec draft weight reload after sleep wake) as semantic overlap requiring review. The candidate's preTaskEvidence also records policy_or_disclosure_uncertain / ai_disclosure_conflict, which is a repository-level disclosure requirement that gates whether code work is actionable. These unresolved duplicate/coverage and disclosure facts determine actionability, so RETRY rather than NO_OBJECTION."
+  },
   "01730ac02f70b15e01b68abf1fbf1a15520578d3a6268d659c00a1aaba142722": {
     "confidence": 0.85,
     "contradictions": [
@@ -6517,6 +6561,47 @@
     ],
     "why": "The issue provides a clear root cause: SpeculativeConfig.compute_hash() omits num_speculative_tokens, causing torch.compile cache collisions across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm and the issue involves model architecture and distributed training mechanisms, with a clear validation path via numerical regression or runtime assertion checks."
   },
+  "1646c8fc40b43e3bcd7c4da5f91dd24aa6bcb4bfb3aa32a752d640f522a62c5f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims the banner follows from the default-agent fallback, but triage explicitly states this half is the reporter's inference, not established by the trace",
+      "Issue requests stopping the permissions write, but that reverses a deliberate documented decision (#4614) and breaks KAS registration"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/agent.py (_seed_kas_permissions / _finalize_and_write write funnel)",
+      "src/kiro_crew/acp/kas_permissions.py (permissions derivation/consumption)",
+      "src/kiro_crew/mcp_hot_reload.py (kiro-cli version gating, if chosen)"
+    ],
+    "risks": [
+      "Removing the permissions key un-registers the agent for KAS users (breaking change for a supported backend)",
+      "Version-gating requires a measured kiro-cli cutoff that does not yet exist",
+      "Backend-gating the write funnel introduces a provider-resolution dependency and drops the one-spec-serves-both-runtimes property",
+      "The reported banner may persist after the spec fix if it has an independent cause"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with kiro-cli 2.10.0: generate agent specs via setup and confirm `kiro-cli agent validate` rejects `permissions`",
+      "Regression: confirm KAS still loads the on-disk profile after any change (test_kas_permissions.py::TestTheDiskWriter::test_an_empty_policy_is_still_written_so_the_profile_stays_loadable)",
+      "Confirm conductor specs still emit/behave correctly (test_conductor_agent.py::test_a_fully_governed_host_still_emits_the_permissions_key)",
+      "Independently verify whether the Atlassian OAuth banner is caused by the default-agent fallback or has a separate cause"
+    ],
+    "unknowns": [
+      "Whether the Atlassian OAuth banner is actually caused by the spec rejection or has an independent cause",
+      "Which fix approach maintainers will accept (remove / version-gate / backend-gate), since each has a documented cost",
+      "Whether the required assignment will be granted, given policy status needs_assignment",
+      "Whether PR #10373 or another open PR already covers the root cause"
+    ],
+    "why": "The issue's core mechanism (KiroCrew writes a top-level `permissions` key that kiro-cli 2.10.0 rejects via deny_unknown_fields) is corroborated by measured evidence, but the causal link to the reported MCP OAuth banner is explicitly unverified, and the fix space is an unresolved maintainer design decision: removing the key breaks KAS agent registration (pinned by tests), version-gating has no measured cutoff, and backend-gating changes the write funnel's contract. The issue also requires assignment (policy status needs_assignment), and the closest open PR (#10373, maintainer-owned) overlaps the ACP/permissions paths without covering the root cause, so duplicate coverage is unresolved."
+  },
   "16519cf5533c5654742400de797e7d911887310a0a6b24e3edbbb4325f9395cb": {
     "confidence": 0.7,
     "contradictions": [],
@@ -6608,6 +6693,40 @@
       "Whether fsdp2 critic support is in scope for the same change"
     ],
     "why": "Issue pinpoints a concrete AttributeError: SeparateRayPPOTrainer._create_critic_class reads critic.model.fsdp_config, but critic.model is HFModelConfig which has no fsdp_config field; the default strategy=fsdp takes this branch, so separation-family trainers cannot build a critic. Code anchors and a CPU-testable validation path are supplied."
+  },
+  "16bb6e337f59b1f23f9b599882e4b1b354953b6f41ecac53b6ba711dffa577a8": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #40897 while also reporting no direct code overlap and no issue reference"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py",
+      "drop_params handling for reasoning_effort on non-reasoning OpenAI/Azure models"
+    ],
+    "risks": [
+      "PR #40897 may already fix the same root cause, making a new contribution duplicative",
+      "Changing drop_params semantics for reasoning_effort could broaden API behavior beyond the reported models",
+      "Maintainer preference between forwarding the param vs raising UnsupportedParamsError is unresolved"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) and assert it no longer silently drops the param",
+      "Add regression test covering both openai and azure providers for gpt-4.1/gpt-4o families",
+      "Compare against PR #40897 implementation boundary before writing new code"
+    ],
+    "unknowns": [
+      "Whether PR #40897 actually fixes the reasoning_effort drop for gpt-4.1/gpt-4o on openai and azure",
+      "Maintainer-preferred behavior: forward param to provider vs raise UnsupportedParamsError under drop_params"
+    ],
+    "why": "Issue describes a concrete user-visible bug with reproduction steps and code anchors, but the supplied evidence contains a material unresolved duplicate/overlap: open PR #40897 is flagged as semantic_overlap_requires_review with overlapping code paths and the distinctive token reasoning_effort, and the pre-task duplicate status is semantic_overlap_requires_review. Whether that PR already covers the root cause determines whether new code work is actionable, so this is a materially blocking unknown rather than normal implementation uncertainty."
   },
   "172ae6ab92a0de63cf5a2c3175786e60bb99e5edf95efdf022e114ebe52394a0": {
     "confidence": 0.85,
@@ -29306,6 +29425,39 @@
     ],
     "why": "Issue provides a clear root cause and deterministic repro for a real startup crash, but the deterministic gate is HUMAN_REVIEW and the repo requires AI-use disclosure, blocking autonomous action. Existing PR #41834 overlaps semantically and may already address the root cause, so maintainer comparison is needed before starting new work."
   },
+  "60db7e9ebbb158fa1b2ca22794d408d3d164446105e58368dd2296303df8fd08": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/authorship/post_commit.rs: re-diff staged content against existing attestations instead of only filling holes",
+      "src/daemon/checkpoint.rs / src/authorship/working_log.rs: reuse known_human-equivalent reconciliation while preserving partial staging and unstaged work",
+      "src/commands/git_handlers.rs: invoke full re-diff before finalizing the commit authorship note"
+    ],
+    "risks": [
+      "Changing the shared carryover snapshot or adding a live pre-commit read could break partial staging and delayed trace2 processing",
+      "Gap/edge recovery may refill a removed claim from an adjacent AI line",
+      "Scope decision between conservative omission and preserving earlier-checkpoint attribution affects correctness of downstream rework metrics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing regression test using TestRepo: commit base line, checkpoint human then mock_ai, rewrite line without checkpoint, commit, assert blame attributes the rewritten line to human",
+      "Control: commit the AI version before the uncheckpointed rewrite and assert correct reclassification",
+      "Control: run mock_known_human before commit and assert correct reattribution",
+      "Verify partial staging and unstaged edits are preserved and gap/edge recovery does not refill rejected claims"
+    ],
+    "unknowns": [
+      "Whether maintainers require preserving attribution from earlier staged versions versus conservative omission, which determines the eligible-snapshot rule"
+    ],
+    "why": "Issue provides a concrete, reproducible attribution bug: built-in git commit interception only fills unattested holes and never re-diffs lines carrying stale AI attestation, while the known_human checkpoint path does. A commenter independently reproduced a narrower variant on the base SHA with explicit checkpoints and controls, and identified the reconciliation of pending working-log attribution as the locus. Code anchors (post_commit.rs, checkpoint.rs, working_log.rs, git_handlers.rs) and a validation path (blame before/after commit, known_human control) are supplied."
+  },
   "61465f54d4d9a5323923c292bcb0891d912ff26f04b28bebe69f1ed621ad84d7": {
     "confidence": 0.85,
     "contradictions": [
@@ -32350,6 +32502,45 @@
       "Whether the fix should disable speculative decoding when guided decoding is active or make them compatible is unclear."
     ],
     "why": "The issue reports a concrete bug where speculative decoding (MTP) causes malformed tool calls, with multiple user confirmations and a clear reproduction path. The root cause is likely in the interaction between speculative decoding and guided/structured output generation, affecting token stream assembly. The evidence includes code paths in the v1 engine and a bisected commit, providing a strong basis for actionable code work."
+  },
+  "69b404c9d733beddfaf9dccf06afaaffc6ece71e56bc0df481150fcb48a71bc0": {
+    "confidence": 0.6,
+    "contradictions": [
+      "algorithm_evidence claims qualified=true with 4 mechanisms, but formula_signal=false and experiment_signal=false, and the maintainer attributes the bug to frontend tool-call parsing rather than an algorithm mechanism"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "GLM frontend tool-call parsing / reasoning parser path (rust/src/parser/src/reasoning/glm45.rs, glm47 parser)",
+      "Possibly prefix-cache / hybrid KV state handling if maintainer direction points there"
+    ],
+    "risks": [
+      "Root cause is unconfirmed and may be frontend parsing rather than an algorithm defect, making this out of scope for track=llm_algorithm",
+      "Potential duplicate with issue #56583 is unresolved",
+      "AI-disclosure policy conflict blocks automated public action",
+      "No synthetic reproduction means validation is not yet concrete"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a deterministic multi-turn agentic reproduction with fixed seed and pinned FlashInfer 0.6.17 vs 0.6.18 to isolate the regression",
+      "Run with --no-enable-prefix-caching to test whether prefix-cache state restoration is implicated",
+      "Add a regression test around GLM tool-call parsing that asserts no repeated-token degeneration across appended turns"
+    ],
+    "unknowns": [
+      "Whether the root cause is frontend tool-call parsing or a kernel/numerics regression",
+      "Whether issue #56583 is the same defect",
+      "Whether the AI-disclosure policy permits any contribution here",
+      "Whether a deterministic reproduction can be constructed at all"
+    ],
+    "why": "The issue reports a real GLM-5.3-Flash degeneration regression, but the reporter explicitly could not reproduce it synthetically; only long real agentic sessions trigger it. A maintainer comment (ZJY0516) attributes it to 'tool call / vllm frontend', which is frontend/parser plumbing rather than an LLM algorithm mechanism, and the candidate's own algorithm_evidence shows formula_signal=false and experiment_signal=false. The candidate also flags an unresolved potential duplicate (#56583) and an AI-disclosure policy conflict, and the linked PR #56635 lacks root-cause coverage and tests."
   },
   "69d660d7e6e16cccfe43369ca281d7cafb99a02eb25aab6b3134df85e1bd6ecb": {
     "confidence": 0.8,
@@ -36741,6 +36932,42 @@
       "Whether maintainers have already decided to support guardrail mode on non-bedrock passthrough routes; need to check with maintainers before implementing."
     ],
     "why": "Issue provides a clear, reproducible bug with a suspected root cause and code anchors. The fix is actionable and security-relevant, and the issue explicitly offers verification support."
+  },
+  "767c864504f9a0a55611c0649f94a4211e9ff3daa3d366b47cdfd5dbbbabf616": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Triage bot claims the AppImage sets no PYTHONHOME/PYTHONPATH and ships no Python; reporter's live evidence shows AppRun.wrapped contains PYTHONHOME=%s/usr/ and the mount prefix matches the app's own filename"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/mcp-client.ts: strip PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH from spawned stdio MCP child env",
+      "packages/core/src/utils/sanitize-child-env.ts: extend sanitization to cover interpreter/loader variables",
+      "packages/cli/src/config/shared-env-keys.ts: possibly add these keys to shared env handling"
+    ],
+    "risks": [
+      "Maintainers may consider this a deliberate deferred tradeoff (#8653) and prefer scoping the fix differently",
+      "Stripping LD_LIBRARY_PATH broadly could affect other child processes that legitimately need it",
+      "The AppImage AppRun export itself may need fixing rather than only the MCP spawn path"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: spawn a stdio MCP child with PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH set in process.env and assert the child env does not contain them",
+      "Integration test: configure a Python venv stdio MCP server, launch under a poisoned env (PYTHONHOME=/tmp/.mount_FAKE/usr/, LD_LIBRARY_PATH=/nonexistent), assert the server starts and completes the MCP handshake",
+      "Regression: verify user-supplied mcpServerConfig.env still overrides sanitized values"
+    ],
+    "unknowns": [
+      "Whether maintainers accept the AppImage AppRun attribution over the triage bot's static analysis",
+      "Whether the fix should be in the AppImage entry point, the MCP spawn path, or both",
+      "Whether #8653 already covers this scope"
+    ],
+    "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH leak into spawned stdio MCP servers, breaking external Python interpreters. Reporter provides executable minimal repro, /proc environ evidence, and a working workaround. Triage bot initially disputed the AppImage attribution but the reporter supplied live evidence (AppRun.wrapped binary strings, mount prefix matching the app's own filename, /proc maps) that the leak originates in the AppImage's AppRun. Code anchors (mcp-client.ts, sanitize-child-env.ts) point to the spawn env construction, and the suggested fix (strip PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH from MCP child env) is concrete and testable."
   },
   "768ec3fe50a795e1ec1561bd5aaf6c756378b5f98619bfd923176abfb0a39f58": {
     "confidence": 0.8,
@@ -53395,6 +53622,45 @@
     ],
     "why": "Issue provides a clear root cause: scheduler fails to check chunk budget after resuming a chunked request, leading to unnecessary waiting-queue scans and potential host-cache load-back. Reproduction steps are concrete and deterministic at scheduler level. Existing PR #35645 addresses the same issue but lacks tests, leaving room for a more complete contribution."
   },
+  "af4905abb2c6f7c5ca458e686d74f867e637fe5ef57211e5d9b67c59073a64a7": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body lists scaled_mm_blockwise_sm90_fp8_dispatch.cuh as unchecked, while recent_comments states #56248 fixes it"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "csrc/libtorch_stable/quantization/w8a8/cutlass/c3x/cutlass_gemm_caller.cuh stride handling",
+      "scaled_mm_blockwise_sm120_fp8_dispatch.cuh stride handling (unclaimed)",
+      "tests/kernels/quantization/test_cutlass_scaled_mm.py regression coverage"
+    ],
+    "risks": [
+      "Three open PRs already cover most callers; new work may duplicate them",
+      "SM120 hardware unavailable to validate the last unclaimed caller",
+      "Repository AI-disclosure policy conflict blocks automated public action",
+      "Test-file collisions across the three PRs complicate independent regression coverage"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's 512x512 sliced-view reproducer on SM90 and confirm 0 mismatches after fix",
+      "Run existing test_cutlass_subset / test_cutlass_scaled_mm.py on affected hardware",
+      "Validate SM120 blockwise caller on RTX 5090 / RTX PRO Blackwell hardware"
+    ],
+    "unknowns": [
+      "Whether the three open PRs fully cover the root cause or leave a distinct actionable gap",
+      "Whether SM120 hardware is available to validate the remaining unclaimed caller",
+      "How the repository's ai_disclosure_conflict policy affects contribution eligibility"
+    ],
+    "why": "The issue itself is a strong, concrete kernel-algorithm bug: C3x callers rebuild packed CUTLASS strides from shape, discarding real leading strides, with a reproducible 8% mismatch matrix and a proposed stride fix. However, the supplied evidence shows the root cause is already being covered by three open PRs (#55537, #56248, #56480) that the issue author explicitly acknowledges as partial fixes, and one caller (scaled_mm_blockwise_sm120_fp8_dispatch.cuh) remains unclaimed but requires SM120 hardware the reporter does not have. The duplicate/coverage status is 'semantic_overlap_requires_review' and the policy status is 'ai_disclosure_conflict', both of which are materially blocking for deciding whether new code work is actionable."
+  },
   "af58976ba654f3f4294b8d4f0f27e7c539549bb181a754e64c36e0a0c37e835b": {
     "confidence": 0.8,
     "contradictions": [
@@ -56922,6 +57188,41 @@
       "Whether #22530 already changed the intended unattended approval semantics"
     ],
     "why": "Issue provides an offline, deterministic reproduction with a failing desired-behavior assertion and a concrete root-cause chain: stock factory-plan skill directs factory_transition_work_item(stage: execute) instead of submit_plan, the controller mount does not override the Code SDK default yolo: true, and session.resolveToolApproval returns allow without emitting a human tool_approval_required event, so the plan checkpoint is bypassed. This is a concrete agent/controller/tool-approval behavior bug with a clear validation path, not mere plumbing."
+  },
+  "bb4b0322b7aac7c0909ffd4d316c67a96b8b6dc44cb702507ca38a2e6b743161": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with wait_reasons DESIGN_CONFIRMATION, yet gate_decision is HUMAN_REVIEW and pre-review failed on reproduction_or_validation_missing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/message-list/prompt/download-assets.ts: make per-part download failure non-fatal or route it to a hook",
+      "packages/core/src/utils/p-map.ts: possibly adjust error propagation semantics",
+      "agent loop (processInputStep/processLLMRequest) integration for surfacing the failure"
+    ],
+    "risks": [
+      "Choosing the wrong remediation (placeholder vs hook vs size cap) may conflict with maintainer design intent",
+      "Silently dropping attachments could mask real errors if not surfaced",
+      "Repeated full-file downloads per turn is a separate performance concern that may be conflated with the fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test in packages/core for downloadAssetsFromMessages with one 404 URL part among valid parts, asserting the step does not reject",
+      "Regression test replaying a thread whose earlier message contains a permanently failing URL part across multiple turns"
+    ],
+    "unknowns": [
+      "Which of the three proposed remedies maintainers will accept",
+      "Whether maintainers will remove the triage label and permit a PR",
+      "Whether a concrete minimal reproduction exists beyond the described steps"
+    ],
+    "why": "Issue describes a plausible failure path (downloadFromUrl throwing DOWNLOAD_ASSETS_FAILED on permanent 404, replayed every turn), but the expected behavior is explicitly open-ended: the reporter lists three alternative solutions (placeholder substitution, processor hook, size cap) without a chosen design. The bot comment also explicitly asks contributors to wait for maintainer triage before opening a PR, and the candidate's own actionability evidence flags design_confirmation=true and needs_confirmation=true. This is a materially blocking unknown for choosing an implementation."
   },
   "bb516bcf522aade73c2d9d1088435c11443264d36d9601497381a4ef6f7d3e06": {
     "confidence": 0.7,
