@@ -3751,6 +3751,41 @@
     ],
     "why": "Issue provides a clear root cause: Triton persistent matmul kernel config exceeds shared memory on SM89, with multiple independent reproductions and local fixes. However, the deterministic gate requires HUMAN_REVIEW, and existing PR #13023 has semantic overlap with the issue's code path and keywords, requiring maintainer comparison before creating a new task."
   },
+  "0d095b22b608021bf9676d9308312476dfd92da3f31191db237c7d4e716f9227": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue states PR #12100 is not an ancestor of v1.4.2, while open_pr_assessment lists it as MERGED with semantic overlap on openai.rs"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "lib/llm/src/http/service/openai.rs speech response assembly to emit all audio chunks",
+      "lib/llm/src/protocols/openai/audios/aggregator.rs to concatenate complete waveform payloads",
+      "release/backport or documented support boundary for 1.4.2 images"
+    ],
+    "risks": [
+      "PR #12100 is already merged on main, so the actionable work may be a backport or documentation of the support boundary rather than new code",
+      "Changing response assembly could alter streaming/raw-WAV behavior for other audio paths",
+      "Requires GPU/Kubernetes environment to validate end-to-end"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's DGD and request.json against 1.4.2 images; assert output.wav is non-silent and contains the full utterance",
+      "Add regression test with multiple audio chunks where the first chunk is silent, verifying complete delivery and valid WAV framing",
+      "Run targeted frontend/audio aggregator unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers want a 1.4.2 backport or only a documented limitation",
+      "Whether the merged #12100 fully resolves the multi-chunk delivery on current main"
+    ],
+    "why": "Issue provides a concrete, reproducible 1.4.2 failure: HTTP /v1/audio/speech returns only the first 0.08s silent WAV chunk while worker logs show three chunks. It names the frontend handler (openai.rs) selecting response.data.first() and the audio aggregator not concatenating waveform payloads, and points to merged PR #12100 as the fix that is not an ancestor of v1.4.2. This is a versioned backport/support-boundary bug with clear acceptance criteria and a validation path, not an installation or CLI issue."
+  },
   "0d0c0ce6742367849de9ef3baa9507496b7434b54938980e38e443a2f726c1d2": {
     "confidence": 0.7,
     "contradictions": [],
@@ -16539,6 +16574,39 @@
     ],
     "why": "Issue identifies a concrete bug: Step3p5ToolParser inherits supports_required_and_named=True, causing named/required tool_choice to bypass XML parsing and return raw XML as arguments. Root cause is clear and fix is minimal (set flag to False). No competing PR addresses this issue; existing PRs are unrelated or lack tests. Actionable and valuable."
   },
+  "3bfae1853b35572a4996fc9728883fd6447d25c0afd3ce4817045634ded3e605": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Avatar/image generation request builder must honor the configured profile image size instead of hardcoding 1024x1024",
+      "Image generation timeout configuration (IMAGE_GEN_TIMEOUT_MS) must be plumbed into the fetch/undici request path so it is not capped at ~300s",
+      "Investigate whether LoRA tag handling in positive/negative prompts strips the character prompt (separate from size/timeout)"
+    ],
+    "risks": [
+      "Timeout may originate in undici's default headersTimeout rather than the app-level IMAGE_GEN_TIMEOUT_MS, so the fix may require dispatcher/agent configuration, not just a constant change",
+      "Changing default image size behavior could affect other providers or existing profiles",
+      "The LoRA/prompt-stripping comment may be a separate bug that could be conflated with the size/timeout fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that configures a 512x512 avatar size and asserts the outgoing OpenAI-compatible image request body contains size=512x512",
+      "Add a test that sets IMAGE_GEN_TIMEOUT_MS to a value above 300000 and asserts the request timeout/AbortSignal uses that value rather than a default",
+      "Reproduce against a mock OpenAI-compatible endpoint (e.g. localAI) and confirm no HeadersTimeoutError before the configured timeout"
+    ],
+    "unknowns": [
+      "Whether the 300s cap comes from undici headersTimeout defaults or from an app-level constant",
+      "Whether the LoRA prompt-stripping observation shares a root cause with the size/timeout defects"
+    ],
+    "why": "Issue reports two concrete user-visible defects on the OpenAI-compatible image generation path: configured avatar size (512x512) is ignored and a 1024x1024 request is sent, and IMAGE_GEN_TIMEOUT_MS=1800000 is not honored, with a HeadersTimeoutError from undici after ~300s. Reproduction steps and an expected/actual pair are supplied, and the request body confirms the wrong size. The comment adds a separate prompt-handling observation (LoRA tags stripping the character prompt) that is not clearly the same root cause, so the timeout/size fix is actionable but the prompt issue should be treated as a distinct sub-problem."
+  },
   "3c16064f1a321d98c08fac36bc38b14f3c86b52412e72e438a68670d932e9b3f": {
     "confidence": 0.7,
     "contradictions": [
@@ -26570,6 +26638,38 @@
       "Whether maintainers have any design preference for handling such classification conflicts"
     ],
     "why": "Issue provides a precise root cause (generic 'name' branch precedes company/organization check), a deterministic reproduction with failing test code, and a clear expected behavior. The fix is a small ordering change in variable detection logic, with regression coverage specified."
+  },
+  "5bbfc4c99d7817764e959d176c43f63abcad1361ec9351a0bb3e4c23feea7222": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "lib/llm/src/mocker.rs: gate model-card publication on engine startup completion / generate endpoint readiness",
+      "lib/llm/src/http/service/generate.rs: ensure /v1/models listing reflects endpoint health status",
+      "lib/llm/src/protocols/openai/generate.rs and sglang/generate.rs: align model-card discovery with readiness transition"
+    ],
+    "risks": [
+      "Gating publication on readiness may delay legitimate model listing in non-disagg or fast-startup configurations",
+      "Maintainer may prefer a different readiness signal or placement of the gate",
+      "Behavior change to /v1/models timing could affect existing clients that expect early listing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a mocker disagg decode with a nonzero --startup-time and asserts the model is absent from /v1/models until the generate endpoint reports Ready",
+      "Reproduce per issue: deploy mocker disagg 2P1D with decode --startup-time 300, poll /v1/models, send requests before 300s (expect no hang/timeout after fix) and after 300s (expect success)",
+      "Run targeted unit tests for the mocker and frontend discovery packages plus static checks"
+    ],
+    "unknowns": [
+      "Exact maintainer-preferred readiness hook or API for gating model-card publication"
+    ],
+    "why": "Issue provides a concrete, reproducible readiness-contract bug: mocker publishes the model card at engine creation, before the decode worker's startup simulation completes, so /v1/models advertises a model that cannot serve. Root cause is identified (model-card publication not gated on the existing NotReady→Ready endpoint health transition), with a clear timeline, repro steps, and a suggested fix reusing existing readiness machinery. Code anchors (mocker, startup_time, generate, /v1/models) and a validation path (poll /v1/models, send requests before/after startup) are supplied. No duplicate or merged fix covers this; the closest PRs are keyword-overlap only and do not reference the issue."
   },
   "5bf31c1c511c32742999b2776c6aaeef68a89356618185ba743d5f6376321a0c": {
     "confidence": 0.7,
