@@ -32679,6 +32679,41 @@
     ],
     "why": "Issue provides a clear root cause: scheduler fails to check chunk budget after resuming a chunked request, causing unnecessary waiting-queue scans and potential host-cache load-back. Reproduction steps are concrete and deterministic at scheduler level, and code anchors are identified. Existing PR #35645 addresses the same issue but lacks tests, leaving room for a more complete contribution."
   },
+  "6ced664f4c7fa98f4d73d472b29c5b45a84c1de77f45adcf603ac6859f1482a4": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue proposes a docs PR, while open PR #282 already targets the same docs fix and references this issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docs/quick-start.md: change FunctionToolCallback inputType from String.class to a record/POJO request type",
+      "docs/quick-start.md: move @ToolParam onto record components",
+      "docs/quick-start.md: align SYSTEM_PROMPT tool names with registered names",
+      "docs/quick-start.md: unify dependency versions and fix 'System Prom' typo"
+    ],
+    "risks": [
+      "Open PR #282 may already fully cover the docs fix, making a new contribution redundant",
+      "Changing the minimal quick-start example may conflict with maintainer preference for simplicity",
+      "Framework-side behavior (FunctionToolCallback schema generation) is not addressed by a docs-only change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's no-API-key snippet printing tool.getToolDefinition().inputSchema() and assert type=object for the record-based tool",
+      "Reproduce the two-round agent.call(\"what is the weather in San Francisco\") flow and confirm no HTTP 400 and get_weather executes"
+    ],
+    "unknowns": [
+      "Whether PR #282 fully resolves the issue or leaves gaps requiring a separate contribution",
+      "Whether maintainers want a docs-only fix versus a framework-level schema-generation change"
+    ],
+    "why": "Issue is a docs-only quick-start bug with a clear root cause (FunctionToolCallback.inputType(String.class) yields a top-level string schema, causing DashScope 400), but the fix is already covered by open PR spring-ai-alibaba/website#282, which references this issue and overlaps on the same code identifiers. The duplicate/coverage status is explicitly human_review_required, so independent implementation space is unresolved."
+  },
   "6cf399537ade07304e5295120e3afe39c9baab85ffa05e09fda1f2dbbfe84ff8": {
     "confidence": 0.7,
     "contradictions": [
