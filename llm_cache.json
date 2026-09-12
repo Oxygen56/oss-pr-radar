@@ -14606,6 +14606,37 @@
     ],
     "why": "Issue provides a clear, reproducible failure with exact error from ScatterNDUpdate shape inference, affecting two public models on GPU. No competing PR or related issue exists. The root cause is likely in model conversion or OVMS handling of dynamic shapes, making it actionable."
   },
+  "35325f1566bbf0bf04305523674af23ed3286ef75d53cb185aae34f2eb11aebe": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports deterministic FSM failure on a build that commenters state predates the merged fix #53046; no post-fix reproduction is provided."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/structured_output/__init__.py grammar_bitmask validate_tokens guard",
+      "vllm/v1/structured_output/backend_xgrammar.py FSM advance path"
+    ],
+    "risks": [
+      "Reported failure may be entirely explained by the pre-fix build, making any new fix redundant.",
+      "Deterministic token 271 recurrence could be a boundary condition already addressed by #53046."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Rebuild from merged main containing c6e19b3be243 (or later) and re-run the 3/3 json_object trigger loop; if FSM errors persist, capture draft token IDs and grammar state to isolate a distinct bug."
+    ],
+    "unknowns": [
+      "Whether the FSM error reproduces on a build containing c6e19b3be243 (post-#53046).",
+      "Whether the DFlash2 candidate-selection path applies the grammar allowed-token mask independently of the #53046 fix."
+    ],
+    "why": "The issue reports a deterministic 'Failed to advance FSM' error under DFlash2 spec decode + xgrammar json_object grammar, but the supplied comment evidence strongly indicates the reported build (PR-head SHA 3406ec1da) predates the merged fix #53046 (c6e19b3be243), and multiple commenters confirm the validate_tokens guard is absent in the affected builds. This creates unresolved duplicate/merged-fix coverage: the bug may already be fixed on main, so code work is not clearly actionable without a post-fix reproduction."
+  },
   "353f4dc670d412484bf5c788d8273fb32c7533848fd80f8090231f706d3af028": {
     "confidence": 0.7,
     "contradictions": [
@@ -46720,6 +46751,39 @@
     ],
     "why": "Issue reports a clear crash with root cause and repro, but the deterministic gate says HUMAN_REVIEW and the related issue audit timed out. An existing draft PR (#50894) directly addresses the bug but has failed CI and is incomplete, so a better PR may be possible. However, maintainer design preference and PR status need confirmation."
   },
+  "9b7f751b78e7be838eb399bb676dafc20c245101011b8d788e0509c01b0ae302": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue claims user-persisted history loses extras, but maintainer-bot reachability analysis shows all production paths emit name-only matches and divert extras to provider_details",
+      "Issue frames this as a 'gap in PR #7933', but #7933 is open/unmerged and only touches the three outer TypedDicts"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pydantic_ai_slim/pydantic_ai/_tool_search.py: optionally add __pydantic_config__ = pydantic.ConfigDict(extra='allow') to ToolSearchMatch, mirroring PR #7933's template"
+    ],
+    "risks": [
+      "Widening ToolSearchMatch to extra='allow' changes the accepted schema for a nested TypedDict; low risk but should be gated on whether PR #7933 merges",
+      "Reachability could flip if a future adapter change copies raw provider keys into matches, at which point this becomes a real bug"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Add a round-trip test asserting extras on ToolSearchMatch items survive ModelMessagesTypeAdapter.dump_json/validate_json, and confirm it fails on main before the change",
+      "Re-run tests/test_messages.py and tests/test_tool_search.py round-trip suites to confirm no regression from widening the schema"
+    ],
+    "unknowns": [
+      "Whether PR #7933 will merge, which would make the one-line ToolSearchMatch hardening a natural companion change"
+    ],
+    "why": "The issue's mechanism is real and precisely anchored (ToolSearchMatch TypedDict lacks extra='allow' while sibling TypedDicts got it in PR #7933), but the supplied maintainer-bot triage evidence establishes that the state-loss is unreachable in production: all five construction paths emit name-only matches and divert provider extras to provider_details, so no framework-emitted persisted history can carry the extra keys. The reproduction synthesizes the lossy state by hand, and the 'gap in PR #7933' premise is stale since #7933 is open/unmerged. This is a low-value hardening follow-up, not an owed fix."
+  },
   "9b93baed1d28ffdbc7e2c137544f63f8db631a5f0bd5b5ebd2ecc852d848baee": {
     "confidence": 0.85,
     "contradictions": [],
@@ -58233,6 +58297,43 @@
       "Current base SHA after base_sha_changed, and whether legal_confirmation policy blocks contribution"
     ],
     "why": "Issue describes a concrete user-visible defect with reproduction steps and code anchors, but the supplied evidence shows an open PR (#40732) with semantic overlap on reasoning_effort/gpt-4o and no direct issue link, so duplicate/coverage status is unresolved. Additionally, the candidate's own preTaskEvidence reports base_sha_changed and a legal_confirmation submission policy, both of which are materially blocking unknowns for actionability."
+  },
+  "c47637e29e31db7452e0484ab246f2d03443cb6d7f8e2de51640587f3d5b066c": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue states drafter 'in principle runs every step and writes context KV for all scheduled tokens', yet also states it has not pinned which step registers unwritten draft blocks — the mechanism is asserted but the triggering path is unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/block_pool.py cache_full_blocks registration gating for draft KV groups",
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py precompute_and_store_context_kv coverage tracking",
+      "vllm/v1/core/kv_cache_coordinator.py / kv_cache_manager.py draft-group cache-ahead behavior"
+    ],
+    "risks": [
+      "Root-cause step (which path registers unwritten draft blocks) is unconfirmed, so a fix may target the wrong call site",
+      "Proposed fix shape is explicitly deferred to maintainer input; implementation could conflict with intended cache-layer design",
+      "Over-broad masking of cache-restored draft context discards valid hits, as the issue itself notes about #47926"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a deterministic repro: serve DFlash/DSpark drafter with APC on, replay a fixed shared-prefix prompt set, and assert acceptance does not collapse vs unique-prompt baseline",
+      "Add a unit test that a draft-group block hash is not registered when no drafter pass covered its tokens",
+      "Regression test that valid local cache hits still restore draft context (i.e. fix does not over-mask like #47926)"
+    ],
+    "unknowns": [
+      "Which code path registers draft-group blocks without a covering drafter pass",
+      "Whether maintainers want cache-layer gating vs speculator-side coverage tracking",
+      "Whether the shared-prefix acceptance collapse is reproducible with a deterministic minimal test rather than production-shaped traffic"
+    ],
+    "why": "Issue describes a plausible mechanism (draft-group KV blocks cached without drafter coverage) but explicitly states the exact step that registers unwritten draft blocks is not pinned down, and asks maintainers where drafter coverage can lapse. The reproduction is a workload sketch (sustained shared-prefix traffic, metric thresholds) rather than a deterministic minimal repro, and the proposed fix shape is explicitly left open for maintainer input. The related-issue match (#56556, xgrammar allOf) shares only stack/failure signatures and is not a real duplicate, but the unresolved root-cause step and open design question materially affect whether a concrete code fix is actionable."
   },
   "c476e2df3a394a6debacad1d5ee675c9994e581ddc20928612e10c18afe11cb7": {
     "confidence": 0.8,
@@ -77215,6 +77316,47 @@
       "No maintainer confirmation on preferred fix style; but this does not block actionability."
     ],
     "why": "Issue provides a clear root cause (unquoted PLUGIN_ROOT in codex-hooks.json) and a concrete reproduction with expected vs actual behavior. The fix is a minimal, well-scoped change to quote script paths in nine commands. No competing PR directly covers this issue; PR #6196 is only keyword overlap. The repository is mature and the validation path is straightforward."
+  },
+  "fe23d41cfc322d634ed35538cfe2dd982107c4d3c8e870d9759123181bec2a8e": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue attributes cost to drafter full-context attention rescan; commenter retracts that mechanism because DFlash is single-pass",
+      "Commenter proposes DCP-sharded draft attention metadata bug as alternative cause, conflicting with the issue's stated root cause",
+      "Issue claims no per-seq-len hook exists, but commenter cites open PR #48944 and proposal #54801 already adding context/sequence-length axes"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py dynamic speculative lookup keyed on sequence length",
+      "vllm/config/speculative.py or scheduler config for per-seq-len speculative control",
+      "DFlashSpeculator.propose DCP metadata plumbing if DCP sharding is confirmed as the cause"
+    ],
+    "risks": [
+      "Fixing the wrong mechanism (scheduler hook vs DCP sharding) would not address the measured 182 ms/cycle cost",
+      "Overlapping open PRs #48944 and #54801 may already cover the proposed scheduler change",
+      "Hardware-specific behavior (RTX 4090 TP4, B300 TP8) may not reproduce on available CI hardware"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the 185k single-stream DFlash DT4 regression against SPEC_OFF on the reported hybrid GDN model and hardware",
+      "Run the synthetic-zero acceptance sweep at DCP-1 vs DCP-8 to isolate whether the drafter cost scales with DCP degree",
+      "Add a regression test asserting the per-seq-len speculative schedule selects K=0 above the configured context threshold"
+    ],
+    "unknowns": [
+      "Whether the dominant cost is drafter full-context attention or missing DCP sharding in DFlashSpeculator.propose",
+      "Whether open PR #48944 or #54801 already implements the requested per-seq-len disable hook",
+      "Whether the regression reproduces on hardware available to the contributor"
+    ],
+    "why": "The issue reports a concrete long-context spec-decode regression with profiled drafter full-context attention cost, but the supplied comment thread materially contradicts the proposed mechanism: one commenter retracts the 'drafter rescans full KV' explanation (DFlash is single-pass), and another proposes a DCP-sharding metadata bug in DFlashSpeculator.propose as the real cause. The root cause is therefore unresolved between at least two competing mechanisms, and the issue's own Direction 1 (per-seq-len disable hook) is already covered by open PR #48944 and a separate proposal #54801, so the actionable code change is not yet determined."
   },
   "fe32c9e91d883770a72cc340756d2a710395efc5f0ace6b4e323adadf7c7e5e4": {
     "confidence": 0.85,
