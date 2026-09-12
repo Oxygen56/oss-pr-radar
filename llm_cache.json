@@ -44919,6 +44919,38 @@
     ],
     "why": "Issue provides a clear root cause (race after page.reload() before toggle handler attached), concrete reproduction evidence (consistent E2E failure across unrelated PRs), and a suggested fix direction. A contributor has volunteered and the fix is scoped to E2E step definitions with regression coverage."
   },
+  "9c1b191f7f4e147fc745303e7889667a5498d5959d79c78ec043e358dbf45fcc": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment marks duplicate status human_review_required while also noting PR #8482 lacks tests and root-cause coverage"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "deepspeed/runtime/zero/parameter_offload.py: correct ds_grads_remaining accounting and PostBackwardFunctionModule hook registration for AC + ZeRO-3 + multi-branch networks"
+    ],
+    "risks": [
+      "Distinguishing true leak from normal allocator caching/fragmentation",
+      "Overlapping open PR #8482 may already cover the fix",
+      "Requires multi-GPU/ZeRO-3 environment to reproduce"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a minimal single-model-multi-branch network with torch activation checkpointing and ZeRO-3, fix seed, and assert all-gathered parameter memory is released after backward; compare against a non-AC baseline."
+    ],
+    "unknowns": [
+      "Whether PR #8482 already fixes the reported leak or leaves independent implementation space",
+      "Whether the issue's proposed root cause is confirmed by maintainers"
+    ],
+    "why": "Issue describes a concrete DeepSpeed ZeRO-3 memory leak with a plausible root cause in parameter_offload.py (ds_grads_remaining reset / PostBackwardFunctionModule double registration), but the supplied evidence shows an open PR #8482 that directly references this issue, overlaps the same code path, and is marked human_review_required for duplicate/coverage. Whether independent implementation space remains is unresolved, which materially affects actionability."
+  },
   "9c1fb3e2991987f1a7f8345147e1298e9b6a8bed38e5f16a7327e38b76aa0708": {
     "confidence": 0.85,
     "contradictions": [],
@@ -53117,6 +53149,42 @@
       "No maintainer design preference confirmed; the suggested fix direction is reasonable but may need maintainer input."
     ],
     "why": "Issue provides a precise root cause (EventedAgent.executeWorkflow never calls deleteRunSnapshots), a concrete reproduction path, and a suggested fix direction with a clear validation path. The bug is user-visible and impactful, and the evidence is sufficient to make the work actionable."
+  },
+  "babc4710c457724104ac00f67e1da79746ab68140dd4feb7100d27d9b319eeb9": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims durable-execution/persisted-history/message_history reachability; bot comment states the failing shape is unreachable in checked-in code and durable execution never invokes ModelMessagesTypeAdapter",
+      "Issue says no open PR adds the tag; open PR #7933 is flagged as semantic overlap on the same code path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pydantic_ai/_messages.py ModelRequestPart union (add builtin-tool-search-return arm)",
+      "possibly MessagesBuilder dispatch and request-side narrowing if request-side native returns are to be supported"
+    ],
+    "risks": [
+      "Fix may be a maintainer design call rather than a bug fix if request-side native returns are intentionally disallowed",
+      "Potential duplicate/closed-chain coverage (#8234, closed #6286/#7048/#7270) and open PR #7933 overlap",
+      "Assignment required by repo policy"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing round-trip test for ModelRequest(parts=[NativeToolSearchReturnPart(...)]) through ModelMessagesTypeAdapter",
+      "Verify whether any supported producer path (openai.py:5633, anthropic.py:3994, AG-UI adapter, durable execution) can place this part on ModelRequest.parts"
+    ],
+    "unknowns": [
+      "Whether any supported runtime path actually constructs NativeToolSearchReturnPart on ModelRequest.parts",
+      "Whether maintainers consider request-side native returns a supported contract",
+      "Whether PR #7933 already covers this root cause"
+    ],
+    "why": "The issue presents a concrete, reproduced ValidationError and a plausible one-line union fix, but the supplied evidence contains a materially blocking contradiction: the bot status comment asserts the failing shape is unreachable on any supported path (both construction sites are response-side; durable execution never invokes ModelMessagesTypeAdapter; AG-UI reachability refuted by MessagesBuilder dispatch), while the issue's Impact section claims durable-execution/persisted-history/message_history reachability. This reachability question determines whether the code change is actionable at all, and it is unresolved in the supplied evidence."
   },
   "bad7c41131eeab631317d27b52bf5312bdd8f57d79444c073ab1716d49788a9e": {
     "confidence": 0.8,
