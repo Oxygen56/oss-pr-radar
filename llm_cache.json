@@ -2301,6 +2301,46 @@
     ],
     "why": "Issue identifies two silent schema-generation defects in pydantic-ai's AgentSpec, with concrete code paths and downstream impact. However, the submission policy requires assignment and the gate is HUMAN_REVIEW, so maintainer confirmation is needed before implementation."
   },
+  "08494e244460f2bdc6f1bd233b2c685a93c02c048c12fc1a0297cabb4ea2f20c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports kiro-cli 2.10.0 rejects `permissions` via deny_unknown_fields, while contributors measure 2.21.0/2.21.1/2.21.2/2.21.4 accepting it (and accepting an unknown-field control), so acceptance does not establish the field is known",
+      "Issue asserts the banner follows from the default-agent fallback; triage states this is the reporter's inference, not established by the trace",
+      "Issue lists 'bundle a kiro-cli whose schema supports it' as a fix, but KiroCrew bundles no kiro-cli"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/agent.py `_seed_kas_permissions` / conductor installers (only if a maintainer-chosen remedy is defined)",
+      "src/kiro_crew/acp/kas_permissions.py (only if the KAS/kiro-cli schema split is resolved)"
+    ],
+    "risks": [
+      "Removing the `permissions` key reverses #4614 and un-registers the agent for KAS users (resumed-session load failure)",
+      "Version-gating has no measured threshold; the field is absent from the 2.21.x schema and no minimum kiro-cli version is pinned",
+      "Bundling a different kiro-cli is cross-repo and KiroCrew bundles no kiro-cli",
+      "The banner may persist after any spec fix if its cause is independent"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on an actual kiro-cli 2.10.0 build: run `kiro-cli mcp list` against the generated kirocrew.json and capture the rejection text from that executable",
+      "Add a regression test asserting the chosen behavior for the `permissions` key on both backends, alongside test/test_kas_permissions.py::TestTheDiskWriter::test_an_empty_policy_is_still_written_so_the_profile_stays_loadable",
+      "Independently verify whether the Atlassian credential/exfiltration banner follows from the default-agent fallback or has a separate cause"
+    ],
+    "unknowns": [
+      "Whether the 2.10.0 rejection reproduces on an obtainable build (no credential-free route was found)",
+      "Which runtime owns ~/.kiro/agents/*.json and which remedy a maintainer will choose",
+      "Whether the Atlassian banner has an independent cause",
+      "Whether the repository requires assignment before external contribution (policy status needs_assignment)"
+    ],
+    "why": "The issue's causal chain is only half-verified: the spec rejection on kiro-cli 2.10.0 is plausible but unmeasured, and multiple contributors independently show kiro-cli 2.21.x accepts (and ignores) the `permissions` key, with an unknown-field control probe also accepted. The banner's link to the default-agent fallback is explicitly the reporter's inference. The `permissions` write is a deliberate, test-pinned design decision (#4614) whose removal breaks KAS profile loading, so no concrete, non-breaking fix is established."
+  },
   "088a618f302285b4d2f40c0e4deb64d929bd345ce98c56a6c09cf3a5db773e78": {
     "confidence": 0.6,
     "contradictions": [],
@@ -4186,6 +4226,45 @@
       "Exact internal sub-boundary within layer 3 not yet isolated; whether the fix is in attention kernel, MLP, or normalization is unknown"
     ],
     "why": "The issue provides a concrete, reproducible LLM algorithm bug: Qwen3.5-2B produces incorrect outputs for batch_size > 4 under CUDA graph, with deterministic token divergence at index 9. The reporter and commenters have isolated the failure to a whole-decoder-layer boundary (layer 3) and provided a clear validation path via controlled experiments (batch size thresholds, graph on/off, block reuse on/off). This is a genuine model correctness issue with a reference-vs-implementation test (single-request vs batched outputs)."
+  },
+  "1039ca61ffc951326dd96ca935afa8853d0d932fa1f82cca806d716bb33df6f8": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue Impact claims (Temporal/durable-execution payloads, persisted-history reload, message_history re-feed) are refuted by the bot comment's producer census showing both construction sites are response-side and durable execution never invokes ModelMessagesTypeAdapter",
+      "Issue asserts the omission is an oversight; bot comment asserts the strict request-side union matches the design contract and the arm was already closed twice by review"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "pydantic_ai/_messages.py ModelRequestPart union (only if reachability is established)",
+      "MessagesBuilder request/response dispatch decision",
+      "provider request-mapper replay handling for native returns"
+    ],
+    "risks": [
+      "Adding the request-side union arm may reclassify request-first dispatch and break Anthropic replay (assert_never), as reported for prior closed PRs #6288/#6687",
+      "Duplicate/overlapping coverage with open #8234 and PR #7933",
+      "Fourth filing of a closed-chain defect may consume triage attention without a supported-path bug"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce dump→validate on ModelRequest(parts=[NativeToolSearchReturnPart(...)]) to confirm the union_tag_invalid error",
+      "Census all construction sites of NativeToolSearchReturnPart and assert whether any supported path places it on ModelRequest.parts",
+      "If reachability is confirmed, add a request-side round-trip regression test in tests/test_messages.py"
+    ],
+    "unknowns": [
+      "Whether any supported production path actually places NativeToolSearchReturnPart on ModelRequest.parts",
+      "Whether maintainers intend request-side native returns to be legal (design call absent from the chain)",
+      "Whether the fix should be bundled with #8234 or handled separately"
+    ],
+    "why": "The issue's own reproduction is a hand-constructed ModelRequest(parts=[NativeToolSearchReturnPart(...)]) graph, and the bot status comment (issue_data.recent_comments) reports a producer census finding only two construction sites, both response-side, with zero references in ui/, durable_exec/, or clai/. That directly contradicts the issue's Impact claims (Temporal payloads, persisted-history reload, message_history re-feed). The proposed one-line union arm is also reported as twice rejected in review, and the defect is a fourth filing of a closed chain (#6286/#7048/#7270) with a partial duplicate in open #8234. Whether the failing shape is reachable on any supported path is a materially blocking unknown that determines whether code work is actionable."
   },
   "103f0c85331ffb3c79b13f5fd2e130f77509da3ca4606cfa3301dbf7747d2dee": {
     "confidence": 0.7,
@@ -19737,6 +19816,38 @@
     ],
     "why": "The issue clearly describes a bug with a root cause and reproduction, but the maintainer has labeled it for triage and requested a minimal reproduction, indicating design confirmation is needed. The proposed fixes (auto-create thread, expose threadId option, or ignore lone resourceId) have different API implications, so maintainer direction is required before implementation."
   },
+  "497fb8438684a8a76af4e11f0032c34dc791cd1508d357a9734afb2509c3237a": {
+    "confidence": 0.9,
+    "contradictions": [
+      "candidate.algorithm_evidence claims parameter_efficient_finetuning/numerics_quantization mechanisms, but the issue body concerns MCP client attribute naming, not PEFT or quantization"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm_mlx/mcp/client.py attribute reads (protocol_version, server_info, input_schema, is_error)",
+      "pyproject.toml mcp dependency range handling"
+    ],
+    "risks": [
+      "Straight rename to snake_case would break SDK 1 users given unbounded mcp>=1.0.0",
+      "Silent fallbacks (inputSchema -> {}, isError -> False) can mask tool-call failures"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run the provided echo_server.py reproduction against MCP SDK 2.2.0 and confirm connect() returns promptly",
+      "Regression test asserting tool.input_schema is preserved and result.is_error is honored",
+      "Compatibility test against MCP SDK 1.x if dual support is retained"
+    ],
+    "unknowns": [
+      "Whether maintainers intend to support both MCP SDK 1 and 2 or migrate to SDK 2 only"
+    ],
+    "why": "The issue is a well-documented MCP SDK1-vs-SDK2 attribute-name mismatch (camelCase vs snake_case) in vllm_mlx/mcp/client.py, causing a hang and silent fallbacks. Although the root cause is clear and reproducible, this is ordinary client/provider integration plumbing (attribute renaming, dependency-range handling), not an LLM algorithm contribution. For track=llm_algorithm, installation/CLI/config/wrapper/provider-integration work must be rejected even in an algorithm repository; the algorithm_evidence matched terms ('adapter', 'quantization') are incidental and not the actual subject of the issue."
+  },
   "49970ebd5c2b88b07fee2771b5109262e0cdb7084bad2c4086a1232158630c48": {
     "confidence": 0.9,
     "contradictions": [],
@@ -28561,6 +28672,39 @@
     ],
     "why": "Issue provides a concrete reproduction, root cause is clearly identified (model_name not refreshed from terminal event), and a fix approach is proposed with regression tests. The discussion refines the fix to handle continuation merging and usage cost, but the core contribution is actionable."
   },
+  "63b2021077396907c0f6968d6da7f69417a9a8f9fcc2f82ed7539de8edf5baf5": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/http/service/openai.rs: stop selecting only response.data.first() for raw WAV speech responses; concatenate/stream all audio chunks with valid WAV framing",
+      "lib/llm/src/protocols/openai/audios/aggregator.rs: ensure aggregated data list preserves complete waveform payloads rather than only extending the list",
+      "Release/support documentation clarifying the 1.4.2 limitation or the required fixed image revision"
+    ],
+    "risks": [
+      "Backport vs. document-as-limitation decision is a maintainer call; the fix may be scoped to release images rather than main",
+      "Changing the raw WAV response path could affect streaming vs. non-streaming behavior and other audio response formats",
+      "PR #12100 already merged on main, so a naive re-implementation could conflict with existing streaming work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test with multiple audio chunks where the first chunk is silent, asserting the full non-silent utterance is delivered and WAV framing is valid",
+      "Replay the issue's exact request.json against the fixed frontend/worker pair and verify output.wav is not the 3,884-byte all-zero 0.08s file",
+      "Test frontend/worker compatibility together rather than replacing only one side"
+    ],
+    "unknowns": [
+      "Whether maintainers want a 1.4.2 backport or only a documented support boundary",
+      "Whether the merged #12100 on main already fully resolves the multi-chunk delivery for current main, leaving only the release-image gap"
+    ],
+    "why": "Issue provides a concrete, reproducible 1.4.2 failure: frontend folds the speech stream and selects only response.data.first(), so only the initial 0.08s silent WAV chunk reaches the HTTP caller while the worker emits three chunks. Root cause is anchored to openai.rs and audios/aggregator.rs, and the issue explicitly scopes itself as a 1.4.2 qualification/backport/support-boundary report rather than a claim that main lacks the fix. PR #12100 is merged but not an ancestor of tag v1.4.2, so it does not cover this release-specific case."
+  },
   "63bc9d26bdaf31fb367c86d795041826e76e24135ec616280e8d2b68bb4c525d": {
     "confidence": 0.9,
     "contradictions": [],
@@ -33231,6 +33375,47 @@
       "Whether other speculative methods (eagle, etc.) are affected; only ngram and mtp were tested."
     ],
     "why": "The issue provides a clear root cause: ngram speculative decoding corrupts tool-call parser output for Qwen3.x models, with controlled experiments isolating the cause and a concrete validation path. The track is llm_algorithm and the evidence includes evaluation methodology and numerical/quantization aspects, supporting a reference-vs-implementation test."
+  },
+  "72a7ab0426e8c54032137b40985952e8f8618b8d8b7f8dd290d10ef667b46b9e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment/duplicateStatus report 'none' while PR 9902 is MERGED with semantic overlap on the same stub.py and Windows-degrade test files",
+      "Issue attributes the symptom to a loop-stall, but collaborator dwu96 demonstrates header-only dumps are normal and a real stall would have exited the process",
+      "actionability_evidence lists root_cause_signal=true and probe_ready=true, but recent comments state the root cause is unknown and no code change is derivable"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/mcp_gateway/stub.py (per-session MCP client attach/handshake path)",
+      "src/kiro_crew/slack/gateway.py (_init_mcp_gateway stub resolution)",
+      "src/kiro_crew/dashboard/crash_dump_store.py (only if startup-ordering of open_dump_file is confirmed as a separate defect)"
+    ],
+    "risks": [
+      "The reported loop-stall evidence is a false lead; building a fix around it would be wasted or harmful work",
+      "The Windows fallback defect may already be fixed by merged PR 9902, making a new PR duplicative",
+      "No non-Windows reproduction and no gateway-side error log means the actual root cause of the empty toolset is unidentified",
+      "Assignment is required by repository policy and no assignee exists"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on a Windows host with 0.6.0.16: create a new session and capture the gateway log around session creation to obtain the real server-side handshake error, not the client-side 'tool does not exist' symptom",
+      "Run test/test_mcp_gateway_stub_windows_degrade.py, test/test_mcp_gateway_stub_optin.py, test/test_mcp_gateway_pool_integ.py on Windows to confirm current main behavior",
+      "Verify whether the merged PR 9902 fix already resolves the reporter's attach failure on current main before proposing new code"
+    ],
+    "unknowns": [
+      "Actual root cause of the empty core/cron toolset on Windows",
+      "Whether merged PR 9902 already resolves the reporter's attach failure on current main",
+      "Whether the ~17s delay in open_dump_file() on Windows is a real startup-ordering defect",
+      "Whether the required assignment has been granted"
+    ],
+    "why": "The issue's own loop-stall framing was refuted by a collaborator (dwu96) as a false lead: header-only loopstall dumps are the normal artifact of every healthy gateway start, and exit=True means a real stall would have killed the process. The remaining defect (new sessions binding an empty core/cron toolset) has no identified root cause, no non-Windows reproduction, and no gateway-side error log. A later collaborator (bolichen97) notes the Windows fallback defect matching 'connection closed: initialize response' already landed in merged PR 9902, and explicitly states they have not reproduced the doctor-green/session-empty symptom on current main. The candidate's own open_pr_assessment lists PR 9902 as MERGED with semantic overlap on src/kiro_crew/mcp_gateway/stub.py and test/test_mcp_gateway_stub_windows_degrade.py, yet duplicateStatus is 'none' — a contradiction. Additionally, policy status is needs_assignment with assignmentRequired=true and no assignees, which is a materially blocking unknown for actionability."
   },
   "72ab4f5f6b62cbd2260045e539b44f991266f0232bcb4dc2398a8081bc4274b7": {
     "confidence": 0.85,
@@ -47223,6 +47408,36 @@
       "Whether the closed PR #7261 will be reopened or superseded"
     ],
     "why": "The issue precisely identifies a semantic-convention violation in OTel GenAI message roles, with a minimal reproduction and confirmed root cause. However, the repository requires assignment and the existing PR #7261 is closed with CI failures, so maintainer direction is needed before starting new work."
+  },
+  "a599e97d1fe633eec9922fe4286c2060b0105f1314d9916cd7510b878a2c82b7": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/notifications/delivery-policy.ts: guard the sources lookup with an own-property check so prototype members fall through to priorities/default"
+    ],
+    "risks": [
+      "Maintainer may prefer a different own-property idiom (Object.hasOwn vs hasOwnProperty.call) or a Map-based sources structure",
+      "Behavior change could affect integrations that intentionally rely on prototype-named sources, though that is the bug being fixed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test asserting source 'constructor' under { sources: {}, default: 'discard' } is discarded (record.status=discarded, no message persisted)",
+      "Regression test that a genuinely configured source key still selects its decision",
+      "Run targeted package unit tests and static checks for @mastra/core notifications"
+    ],
+    "unknowns": [
+      "Whether maintainers want the fix scoped only to delivery-policy.ts or also to the sibling issue #23693's plain-object maps"
+    ],
+    "why": "Issue pinpoints the exact lookup in packages/core/src/notifications/delivery-policy.ts where config.sources[input.record.source] resolves inherited Object.prototype members (constructor, toString, etc.), bypassing priorities and default. Concrete public repro via agent.sendNotificationSignal() with MockMemory/InMemoryStore, no model call, and a clear expected fix (own-property check such as Object.hasOwn before the read). No open PR or duplicate issue covers it."
   },
   "a5b4aa5390a2fad9ed522ed306ca07440be0afba2699cfc4c770e5c3803394c0": {
     "confidence": 0.85,

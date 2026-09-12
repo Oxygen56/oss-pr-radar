@@ -1,13 +1,13 @@
 {
-  "digest": "d52d1a989542aaf59c969d0636eb3212da14688b3530ccb8965720b97f7b4e52",
-  "generatedAt": "2026-09-11T23:34:05.904641Z",
+  "digest": "b95229e35aab22af6c6dc4535f01de7c329a0cdd7ab9dd2edc1fc1756c1b3e73",
+  "generatedAt": "2026-09-12T00:35:04.210283Z",
   "items": [
     {
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
       "baseSha": "f8e907b92dabe47232978023fdcb01e2a7d4b752",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -47,131 +47,13 @@
       "url": "https://github.com/AgentOps-AI/agentops/pull/1402"
     },
     {
-      "actionDigest": "612bfd6ab8233def3573495bba39b4f46413e6e27efd631b381bec20636f1f17",
-      "actions": [
-        "CI 检查失败"
-      ],
-      "baseRefName": "litellm_oss_branch",
-      "baseSha": "a5164fe210245ab540511111bce92bdaeb2a9f5b",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
-      "ciStatus": "FAILED",
-      "draft": false,
-      "evidence": {
-        "actionableCheckNames": [],
-        "baseCompareError": null,
-        "baseCompareStatus": null,
-        "baseIntegrationRequired": false,
-        "baseMergeBaseSha": null,
-        "baseRefName": "litellm_oss_branch",
-        "baseSha": "a5164fe210245ab540511111bce92bdaeb2a9f5b",
-        "changedFiles": [
-          "litellm/router_strategy/lowest_latency.py"
-        ],
-        "failingChecks": [
-          {
-            "annotations": [],
-            "conclusion": "failure",
-            "name": "codecov/patch",
-            "url": "https://app.codecov.io/gh/BerriAI/litellm/pull/29696"
-          }
-        ],
-        "headSha": "c3fd5d09c41d78492ff1089ebe379229cbf02a5a",
-        "maintainerEvents": [
-          {
-            "actorLogin": "greptile-apps[bot]",
-            "actorType": "Bot",
-            "authorAssociation": "CONTRIBUTOR",
-            "createdAt": "2026-06-04T18:52:45Z",
-            "eventId": "github:top-level-comment:BerriAI/litellm#29696:4625173502",
-            "eventType": "TOP_LEVEL_COMMENT",
-            "opportunityKey": "BerriAI/litellm#29696",
-            "summary": "<!-- greptile-status --> Too many files changed for review. (`1074 files found`, `100 file limit`)",
-            "targetPrKey": "BerriAI/litellm#29696",
-            "targetRepo": "BerriAI/litellm",
-            "url": "https://github.com/BerriAI/litellm/pull/29696#issuecomment-4625173502"
-          },
-          {
-            "actorLogin": "CLAassistant",
-            "actorType": "User",
-            "authorAssociation": "NONE",
-            "createdAt": "2026-06-04T18:52:47Z",
-            "eventId": "github:top-level-comment:BerriAI/litellm#29696:4625173691",
-            "eventType": "TOP_LEVEL_COMMENT",
-            "opportunityKey": "BerriAI/litellm#29696",
-            "summary": "[![CLA assistant check](https://cla-assistant.io/pull/badge/signed)](https://cla-assistant.io/BerriAI/litellm?pullRequest=29696) <br/>All committers have signed the CLA.",
-            "targetPrKey": "BerriAI/litellm#29696",
-            "targetRepo": "BerriAI/litellm",
-            "url": "https://github.com/BerriAI/litellm/pull/29696#issuecomment-4625173691"
-          },
-          {
-            "actorLogin": "codspeed-hq[bot]",
-            "actorType": "Bot",
-            "authorAssociation": "CONTRIBUTOR",
-            "createdAt": "2026-06-04T18:54:38Z",
-            "eventId": "github:top-level-comment:BerriAI/litellm#29696:4625186067",
-            "eventType": "TOP_LEVEL_COMMENT",
-            "opportunityKey": "BerriAI/litellm#29696",
-            "summary": "<!-- __CODSPEED_PERFORMANCE_REPORT_COMMENT__ --> ## Merging this PR will **not alter performance** `✅ 16` untouched benchmarks --- <sub>Comparing <code>Oxygen56:fix/latency-rmw-race</code> (5f84bd2) with <code>main</code> (5be0797)</sub> <a href=\"https://app.codspeed.io/BerriAI/litellm/branches/Oxygen56%3Afix%2Flatency-rmw-race?utm_source=github&utm_medium=comment-v2&utm_content=button\"> <picture>",
-            "targetPrKey": "BerriAI/litellm#29696",
-            "targetRepo": "BerriAI/litellm",
-            "url": "https://github.com/BerriAI/litellm/pull/29696#issuecomment-4625186067"
-          },
-          {
-            "actorLogin": "codecov[bot]",
-            "actorType": "Bot",
-            "authorAssociation": "NONE",
-            "createdAt": "2026-06-04T18:56:02Z",
-            "eventId": "github:top-level-comment:BerriAI/litellm#29696:4625197436",
-            "eventType": "TOP_LEVEL_COMMENT",
-            "opportunityKey": "BerriAI/litellm#29696",
-            "summary": "## [Codecov](https://app.codecov.io/gh/BerriAI/litellm/pull/29696?dropdown=coverage&src=pr&el=h1&utm_medium=referral&utm_source=github&utm_content=comment&utm_campaign=pr+comments&utm_term=BerriAI) Report :x: Patch coverage is `62.50000%` with `9 lines` in your changes missing coverage. Please review. | [Files with missing lines](https://app.codecov.io/gh/BerriAI/litellm/pull/29696?dropdown=covera",
-            "targetPrKey": "BerriAI/litellm#29696",
-            "targetRepo": "BerriAI/litellm",
-            "url": "https://github.com/BerriAI/litellm/pull/29696#issuecomment-4625197436"
-          },
-          {
-            "actorLogin": "github-actions[bot]",
-            "actorType": "Bot",
-            "authorAssociation": "CONTRIBUTOR",
-            "createdAt": "2026-09-05T00:02:48Z",
-            "eventId": "github:top-level-comment:BerriAI/litellm#29696:5547858389",
-            "eventType": "TOP_LEVEL_COMMENT",
-            "opportunityKey": "BerriAI/litellm#29696",
-            "summary": "This pull request has been automatically marked as stale because it has not had recent activity. It will be closed if no further activity occurs.",
-            "targetPrKey": "BerriAI/litellm#29696",
-            "targetRepo": "BerriAI/litellm",
-            "url": "https://github.com/BerriAI/litellm/pull/29696#issuecomment-5547858389"
-          }
-        ],
-        "mergeConflict": false,
-        "mergeConflictPreparationVersion": null,
-        "prState": "OPEN",
-        "pullResponseDigest": "4e86e959334d09cd8923a25b99dcdbe14ca8a238e393ca5b3fc1f45a68545d5b",
-        "requestedChanges": [],
-        "unansweredMaintainerComments": [],
-        "unresolvedReviewThreads": []
-      },
-      "headSha": "c3fd5d09c41d78492ff1089ebe379229cbf02a5a",
-      "key": "BerriAI/litellm#29696",
-      "mergeConflict": false,
-      "mergeableState": "unstable",
-      "number": 29696,
-      "prState": "OPEN",
-      "repo": "BerriAI/litellm",
-      "taskActionDigest": "d38cee92a7856d98e16e8541c7aaf19b48aa452061d5cba9ce6e92124309110b",
-      "taskActions": [],
-      "taskFollowupRequired": false,
-      "title": "fix(latency-routing): prevent lost-update race in latency tracker",
-      "url": "https://github.com/BerriAI/litellm/pull/29696"
-    },
-    {
       "actionDigest": "87cf6dc8a04c838fa52f4b8a8161c54d56411d7b1bb85072acfcbfc05e2d4559",
       "actions": [
         "存在未解决审查线程"
       ],
       "baseRefName": "litellm_oss_branch",
       "baseSha": "a5164fe210245ab540511111bce92bdaeb2a9f5b",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -274,7 +156,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "daf5dec52bfc523bb396154314143f9ffc157469cb92ea4724363e1f09499c9f",
+        "pullResponseDigest": "12765ea038dffe6ee55161af6141552aee350e53c04e2d22667824804cab0a0c",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
@@ -335,8 +217,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "litellm_internal_staging",
-      "baseSha": "4e9d414603f85d678ba4f55e3cf14c90bac65bfe",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "dab7f6a86acadb790e66be12dbd71e6706f60d2c",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -346,7 +228,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "litellm_internal_staging",
-        "baseSha": "4e9d414603f85d678ba4f55e3cf14c90bac65bfe",
+        "baseSha": "dab7f6a86acadb790e66be12dbd71e6706f60d2c",
         "changedFiles": [
           "litellm/llms/azure/responses/transformation.py",
           "tests/test_litellm/llms/azure/response/test_azure_transformation.py"
@@ -397,7 +279,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "fb4a057302c994e6f55138d1ae8b8cdff8252778c69a3eec7f4ebebd7a7dcb54",
+        "pullResponseDigest": "eae52c472c072735ced3c5033483efeb9623a95d25e6b4f5f37ffdf1cd5953cc",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -416,13 +298,13 @@
       "url": "https://github.com/BerriAI/litellm/pull/36372"
     },
     {
-      "actionDigest": "c38850de9143ee791e7975d8b4183291f4ba1a3be51687d3aa82311195b4fff2",
+      "actionDigest": "fb2157604c9bd9701a16546ed4592df95050d6a8a46d8c4341369fb5117376a6",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "litellm_internal_staging",
-      "baseSha": "4e9d414603f85d678ba4f55e3cf14c90bac65bfe",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "dab7f6a86acadb790e66be12dbd71e6706f60d2c",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -432,7 +314,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "litellm_internal_staging",
-        "baseSha": "4e9d414603f85d678ba4f55e3cf14c90bac65bfe",
+        "baseSha": "dab7f6a86acadb790e66be12dbd71e6706f60d2c",
         "changedFiles": [
           "ui/litellm-dashboard/src/app/(dashboard)/mcp-servers/_components/mcp_server_edit.test.tsx",
           "ui/litellm-dashboard/src/app/(dashboard)/mcp-servers/_components/mcp_server_edit.tsx"
@@ -467,7 +349,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "75582edea8bfce05b71ff8d8bdd79286ce9802f1583a5bb8d1bc6e477af5a4ff",
+        "pullResponseDigest": "a5841cdb5a1a8b13bd39c4323e9418073fd9e51c9d753ac1ca2b05a31a1aca6e",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -479,7 +361,7 @@
       "number": 36374,
       "prState": "OPEN",
       "repo": "BerriAI/litellm",
-      "taskActionDigest": "0c829cee40f4baabbb9c4c3372455d2c44116dc5cd9e7b2c95da5548ea14d7d2",
+      "taskActionDigest": "0b3b723fcce1990fd86fdc024952a600d3363c2c37a3c2afd7bc9f05943f6e4e",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -488,15 +370,15 @@
       "url": "https://github.com/BerriAI/litellm/pull/36374"
     },
     {
-      "actionDigest": "333b1a182c0150899929f0531b92ffdb29a760862939225c59b728903307d27a",
+      "actionDigest": "c61a99ad12ba089ab879f5f25a74a78dae093c6ae118a18cd6034f6b4b3be061",
       "actions": [
         "CI 检查失败",
         "分支存在合并冲突",
         "存在未解决审查线程"
       ],
       "baseRefName": "litellm_internal_staging",
-      "baseSha": "4e9d414603f85d678ba4f55e3cf14c90bac65bfe",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "dab7f6a86acadb790e66be12dbd71e6706f60d2c",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -508,7 +390,7 @@
         "baseIntegrationRequired": true,
         "baseMergeBaseSha": "d86336a7c6f5c97b5fb46413a8a1c9d77f426220",
         "baseRefName": "litellm_internal_staging",
-        "baseSha": "4e9d414603f85d678ba4f55e3cf14c90bac65bfe",
+        "baseSha": "dab7f6a86acadb790e66be12dbd71e6706f60d2c",
         "changedFiles": [
           "litellm/llms/anthropic/experimental_pass_through/messages/streaming_iterator.py",
           "litellm/proxy/pass_through_endpoints/streaming_handler.py",
@@ -639,7 +521,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "628427251fbf774a2ae9ba2782d46dc1f69984b45940ae5c63660883df96b466",
+        "pullResponseDigest": "9df85decc6af4c15e9808e0cec1a3405a4d079126a7d2ea18868c1989fe805ca",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
@@ -688,7 +570,7 @@
       "number": 36791,
       "prState": "OPEN",
       "repo": "BerriAI/litellm",
-      "taskActionDigest": "64948943ea5a356a912fda3ccda568463be4090b4363cba9b79212e34eda4dcf",
+      "taskActionDigest": "10f0f08b0cf053d15cd17abe15b2b7e1c7e617c546f8a52f342faad4ec215bc0",
       "taskActions": [
         "当前分支检查失败",
         "分支存在合并冲突",
@@ -705,7 +587,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "9291856d1ea4a4ceea9f8fef8ce14f4f6c81e8eb",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -762,7 +644,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "9291856d1ea4a4ceea9f8fef8ce14f4f6c81e8eb",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -858,7 +740,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "67de1e5fa14f3b9af4720e1786a35c465d673f02",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -894,7 +776,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "4acf8823cfb541787a3f5db19d547a5c697a60848d0585b0f3897ec433d051f2",
+        "pullResponseDigest": "5839a4d705c96f2a2f5fb157ca0e84aae264bbf42c3420ab8b564ef3b8cd57e8",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -919,7 +801,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "ee2cac102b835fcd7adb3d4b9bc3d62b0b71cdfd",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -957,7 +839,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "54fa09ac2eef2e8ecef5e711cf60799f7c0e8e181055b775f1bd78472217f2cb",
+        "pullResponseDigest": "8555e5178eafe599a3ba4d6f873b7b76f081e823544d07dd824535dbc9548155",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -982,7 +864,7 @@
       "actions": [],
       "baseRefName": "develop",
       "baseSha": "a4c1405618c9ab5436230f4a11c45f1c86ef130e",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1058,7 +940,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1117,7 +999,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "944172f6c0d0f90fdc1921fd38c1dcae62c48592",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": true,
       "evidence": {
@@ -1177,7 +1059,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "5cbd79af2129c61d557161a6fac8db330baffa10",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1222,7 +1104,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "31a4d36d123688581a9e9744427272b33ce940e0",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -1265,7 +1147,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "b82253ba1b680a67091c4de32f074477c30ba416",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1328,7 +1210,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "4dcc1cbd47169fd3674127bf6d25d78b48dab6417f09462466a415e91e57d0aa",
+        "pullResponseDigest": "c993c5273cabf0d9584c4611c2f58ca937ba0f050e3aa1447faf7a34e7280543",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -1351,7 +1233,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "b82253ba1b680a67091c4de32f074477c30ba416",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1372,7 +1254,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "de824047297cd651c267922513452d397f62f085fef384be88183a80de1b44bf",
+        "pullResponseDigest": "428198fd8e318f165832095145b49ead55d2c73aed769cd07697059ab810de52",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -1395,7 +1277,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "b82253ba1b680a67091c4de32f074477c30ba416",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1420,7 +1302,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "6a335ccc2d8accc566849e7da04f674ee02a6ef67f0bc1c3f8fcee964f9556f6",
+        "pullResponseDigest": "74737ffbc6b09f0c58266f80a4233700071770883563019d3066edebe92cae75",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -1443,7 +1325,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "c5db8f72dbea5c2c70de96885e4167ce5b1b24b0",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1506,7 +1388,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "740f0b5b51119e2f143199098ca40c0c8c6c7e3c50e723d4998ad76169f03f81",
+        "pullResponseDigest": "2576c5bd11118f924276886d096237b2febe5fc0413d60a386bcb0e5d545fcd7",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -1531,7 +1413,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "44219f8532e2fe6ce936850455f4b9a2567e4194",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1552,7 +1434,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "d8439575fa7ffc490cabbff12259163416df4cff372c5b31f2f422bf4eb501c4",
+        "pullResponseDigest": "143e91a7047af76107e8c56e7f43b12e0353eb9790720bf87ac0b00ee521aece",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -1560,7 +1442,7 @@
       "headSha": "f14232e5de50dd70923ed3ade2aebfa20fb3a5a9",
       "key": "agno-agi/agno#8189",
       "mergeConflict": true,
-      "mergeableState": "unknown",
+      "mergeableState": "dirty",
       "number": 8189,
       "prState": "OPEN",
       "repo": "agno-agi/agno",
@@ -1580,7 +1462,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "0027a8ef0bc108152b1382bfe9584ffa90ec4c7c",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1666,7 +1548,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "fe66ff5280bd18eb48a4d059a6bf3bbba2569a3079d8564bbd5457b42e19a562",
+        "pullResponseDigest": "936ec42f7097cf5628de56122f532e738c2c070c01d319d6a8597b7e36644f4b",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
@@ -1731,7 +1613,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "0027a8ef0bc108152b1382bfe9584ffa90ec4c7c",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -1794,7 +1676,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "0a211b26dd834a1fbee11dba82dae337f7b4f5733e14fa886af1faf350bc2a07",
+        "pullResponseDigest": "3903efe2ae02b8a2b002b64cf37384860d7d9775b6852b677cba0ae993081909",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -1823,7 +1705,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "0027a8ef0bc108152b1382bfe9584ffa90ec4c7c",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -2124,7 +2006,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "04e081baa71d16f5e0be75cc3ea9e6360dd43da83a17d42b6615f0d2135ae538",
+        "pullResponseDigest": "0833514c55c34a6a9179d4f6ccda2039c2a3332896788487ef1fca3a28247649",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
@@ -2192,7 +2074,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "0027a8ef0bc108152b1382bfe9584ffa90ec4c7c",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -2302,7 +2184,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "9c481b2c06a8af0014df10246c6f08a76fd3f75896c8898ab79ed15bd09a5770",
+        "pullResponseDigest": "5f7e1037f3d4712a43cc1800152f2086487aee62011c68b87e32e4d8eb0bdfb7",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
@@ -2383,7 +2265,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "0027a8ef0bc108152b1382bfe9584ffa90ec4c7c",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -2432,7 +2314,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "8e4140c9f5b79ac9bc8421ed74fa691be4d6441a6cc6e466e82b4b68065cf29a",
+        "pullResponseDigest": "10fcbac0141be2299ede064c7a4b24264def724c01b639d91d73821e298aeebc",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -2455,7 +2337,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "f101a76aed20655fde8e2c67cd1002bd7e700c3a",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2498,7 +2380,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "f101a76aed20655fde8e2c67cd1002bd7e700c3a",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2544,7 +2426,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "f101a76aed20655fde8e2c67cd1002bd7e700c3a",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2610,7 +2492,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "f101a76aed20655fde8e2c67cd1002bd7e700c3a",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2672,7 +2554,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "f101a76aed20655fde8e2c67cd1002bd7e700c3a",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2715,7 +2597,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "f101a76aed20655fde8e2c67cd1002bd7e700c3a",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2761,7 +2643,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "f101a76aed20655fde8e2c67cd1002bd7e700c3a",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2806,7 +2688,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "34040c9c568585f6929bedeaad110ad08f079624",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2827,7 +2709,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "d53c401fba3a3d83599d62e4482ea507e524ba34ab2bf6078482118450ce836f",
+        "pullResponseDigest": "300b7536d05cb1d7580c577a07ebc3bcf4fc1bd684a6fdf1ff5837cbfa6fb2c5",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -2850,7 +2732,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "34040c9c568585f6929bedeaad110ad08f079624",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2870,7 +2752,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "f7bddf9bc827dd5a698a06c947ef54a98878bc1936b2ff33f56e2c81848961c2",
+        "pullResponseDigest": "f54e9d7795680e9987af8758d2bfc4d2a2e9b8f9b180895df45956f459a762be",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -2893,7 +2775,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "34040c9c568585f6929bedeaad110ad08f079624",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2919,7 +2801,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "a71e0893cb9058cd15be777a2224b521b2b28268031cfb51e61ec7d311fcb4a4",
+        "pullResponseDigest": "42832682c8af585d83494a6535c0674e360ebd812b8f4537753e48f1b80de540",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -2944,7 +2826,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "34040c9c568585f6929bedeaad110ad08f079624",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -2979,7 +2861,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "098261e200aea6ef1dbdf7fa688008bd61c6a14bc4c9b3c017e7efd24ed0a76e",
+        "pullResponseDigest": "0f5cf1bfe3869c49add638065ae7e8ea71005a426371b3d82bd5bf63aa3b4044",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -3004,7 +2886,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "34040c9c568585f6929bedeaad110ad08f079624",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -3025,7 +2907,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "219c8f327cfb6d8d5a23ff8991b839f60931827dd73a1ef39d8a6614121dcf96",
+        "pullResponseDigest": "6e84b28de3f11a538345d952a1bea9e22b08d1e6b5cc88904b949ef654d3f8a7",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -3048,7 +2930,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "eedf5deab04cd85c862f411145db735198286f9d",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -3179,7 +3061,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "50f205533fe10ba35b553d2a3689c77b87bd5d0a",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -3218,7 +3100,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "2729755b9dc15dec7afa190ed08c8299c54f54e503e2c23edf1cd4187e20a66c",
+        "pullResponseDigest": "69713defcb3bbfee520128070c4789acfbf6671de6ec5e733a66b47e4a3a5f43",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -3244,7 +3126,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "b771930d2b4d858e5bd9670203c66260b385a8fa",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -3282,7 +3164,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "fddd6644089543ff023425cf0e99dfdadbef7b3616b3cc34c78c223e2230778f",
+        "pullResponseDigest": "70be824d19dd873addd4e75a506e13d9be8f756f0aeb8b8244fbf470ecbdf89e",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
@@ -3331,7 +3213,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "8c791b7b9cf7deab56cb5a92818c34499af9097f",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3568,7 +3450,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "8c791b7b9cf7deab56cb5a92818c34499af9097f",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3775,7 +3657,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "a7920e95c184ba9243165931e65c8e01c67c06f5",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -3836,7 +3718,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "a7920e95c184ba9243165931e65c8e01c67c06f5",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -3894,7 +3776,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "a7920e95c184ba9243165931e65c8e01c67c06f5",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -3955,8 +3837,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "e7d224dec65330689c040c7af8635b03dfafe614",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "cfe9cadab99617d5013bf89f07b079d105057791",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -3969,7 +3851,7 @@
         "baseIntegrationRequired": true,
         "baseMergeBaseSha": "0cfd0bbe0563c3ca0df04d86198f17a5c60b6695",
         "baseRefName": "main",
-        "baseSha": "e7d224dec65330689c040c7af8635b03dfafe614",
+        "baseSha": "cfe9cadab99617d5013bf89f07b079d105057791",
         "changedFiles": [
           "sdk/packages/llms/src/providers/model-facts.ts",
           "sdk/packages/llms/src/providers/routing/provider-options.test.ts"
@@ -4060,7 +3942,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "f9c80750b8ede49100263dfa6c336f95deeaeeb4ee5d1040ec29e042fc2b389c",
+        "pullResponseDigest": "05ed203b58f61c3d5e650ab07f8595f5f0c7d00d465a415dcaeefffb3be1d102",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -4072,7 +3954,7 @@
       "number": 11317,
       "prState": "OPEN",
       "repo": "cline/cline",
-      "taskActionDigest": "53dd6bdeb43bdc6b0919a61e8fabdf1099262e029410c7007886a410a099b7e7",
+      "taskActionDigest": "29308320479f2e8562be56579db8cbf9bcdae154412b5681e3aa28cf0550a3ff",
       "taskActions": [
         "当前分支检查失败"
       ],
@@ -4084,8 +3966,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "e7d224dec65330689c040c7af8635b03dfafe614",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "cfe9cadab99617d5013bf89f07b079d105057791",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -4095,7 +3977,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "e7d224dec65330689c040c7af8635b03dfafe614",
+        "baseSha": "cfe9cadab99617d5013bf89f07b079d105057791",
         "changedFiles": [
           "apps/vscode/src/shared/services/Logger.test.ts",
           "apps/vscode/src/shared/services/Logger.ts"
@@ -4120,7 +4002,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "498f1061785d97367235b26bcc7eb6591d61c2c3f41a43b40f31faaa83217658",
+        "pullResponseDigest": "5e8ea86c6952982f73c1ed1b1b24846de3a230a99ab3f3a0f028d5bef23d1b61",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -4142,8 +4024,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "e7d224dec65330689c040c7af8635b03dfafe614",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "cfe9cadab99617d5013bf89f07b079d105057791",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -4153,7 +4035,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "e7d224dec65330689c040c7af8635b03dfafe614",
+        "baseSha": "cfe9cadab99617d5013bf89f07b079d105057791",
         "changedFiles": [
           "apps/cli/src/acp/acpAgent.test.ts",
           "apps/cli/src/acp/acpAgent.ts"
@@ -4178,7 +4060,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "86959834c42d015f90dae5d27a1878fc1527f7d9558261a01aae8ce0ef17d85d",
+        "pullResponseDigest": "787996c131924d195ba4a4a9278b529884f771daee7932d1821b4e2e0cb854f2",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -4200,8 +4082,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "e7d224dec65330689c040c7af8635b03dfafe614",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "cfe9cadab99617d5013bf89f07b079d105057791",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -4211,7 +4093,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "e7d224dec65330689c040c7af8635b03dfafe614",
+        "baseSha": "cfe9cadab99617d5013bf89f07b079d105057791",
         "changedFiles": [
           "apps/vscode/src/sdk/vscode-run-commands-tool.test.ts",
           "apps/vscode/src/sdk/vscode-run-commands-tool.ts"
@@ -4236,7 +4118,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "bee83e6ca5c5c42780a0cad68ec171f58d8865b86d37a859d4888d4277ee1096",
+        "pullResponseDigest": "ce5d803778d09b4680e8ede5d014b9ae397492405e99b5e8e8ac35a2fe1bc8bb",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -4255,14 +4137,14 @@
       "url": "https://github.com/cline/cline/pull/13303"
     },
     {
-      "actionDigest": "332c5d94806ad42350d58de15f2e1b5341396ebea83d386ca2140d9f33e4853e",
+      "actionDigest": "9e18303ecdaf4ededa0a9961e001480a4e7dd389bc1a4b1a1449ccc0ea6d1709",
       "actions": [
         "CI 检查失败",
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "e7d224dec65330689c040c7af8635b03dfafe614",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "cfe9cadab99617d5013bf89f07b079d105057791",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -4275,7 +4157,7 @@
         "baseIntegrationRequired": true,
         "baseMergeBaseSha": "041afb718bcdfe50eabd90d060e5335ef98e2d16",
         "baseRefName": "main",
-        "baseSha": "e7d224dec65330689c040c7af8635b03dfafe614",
+        "baseSha": "cfe9cadab99617d5013bf89f07b079d105057791",
         "changedFiles": [
           "sdk/packages/core/src/extensions/tools/definitions.test.ts",
           "sdk/packages/core/src/extensions/tools/definitions.ts"
@@ -4343,7 +4225,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "33f56864905e9517b33bace681c99dfba5019444af4dee64089dfc8d37a41b29",
+        "pullResponseDigest": "9ea69b525808e43748c70f4f32d3af2c09a9e52c1f8a34bac84d280c68bd6991",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -4355,7 +4237,7 @@
       "number": 13307,
       "prState": "OPEN",
       "repo": "cline/cline",
-      "taskActionDigest": "5a26b1bbe434d011de9ea4d457ceb286ee7841cf881645aece674e12de773d8a",
+      "taskActionDigest": "639388bbc4fd5fbb69cb1809a63a5ec404ad29db05d2bbe07eb5cd6005435629",
       "taskActions": [
         "当前分支检查失败",
         "分支存在合并冲突"
@@ -4369,7 +4251,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "894898f84c4ac0a89f24bf7bee6c381eb0e67f51",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -4444,7 +4326,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "0d8d67d48b5e24fa6b932edc0c86d15c615293ea49a193545d120614af09ef2c",
+        "pullResponseDigest": "96fefe81b0d5b8d6b00ddafca2aa0b23b4524b0a75f691a2bcc774640b02576c",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -4467,7 +4349,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "894898f84c4ac0a89f24bf7bee6c381eb0e67f51",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -4517,7 +4399,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "798372fdc0a6bd4716a3b67b78d0a423b0bea7308c9381c5a66e908f58d0d257",
+        "pullResponseDigest": "92eca2e7fc2b6197f66981c9e4cf375fc9dfefa1d3b4aa813da6cc9c43525f7f",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -4542,7 +4424,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "c6d0ded76eca4c649276e39ab376ad6c66142eb7",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": true,
       "evidence": {
@@ -4592,7 +4474,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "005e03b81cec38b7da6399833d609ee89a2587f2",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -4642,7 +4524,7 @@
       ],
       "baseRefName": "main-v2",
       "baseSha": "036c7c50c5c154f747419aee6b75667f9044c8fa",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -4692,7 +4574,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "d6d35a3d1e8ffc0dfd8a8c856c792e6022da5d00c3c74e1a9c9e983ed2cabee4",
+        "pullResponseDigest": "e5de2b7b74a038d5c2fb1af2ebb02796407ba2b5d9fa14b66d553124146c320b",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -4718,8 +4600,8 @@
         "存在未解决审查线程"
       ],
       "baseRefName": "main",
-      "baseSha": "f1e3f1739db625de8b432afb2633f0f54dcb4e87",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "eea399b74fe3cb74f942f21eecfed6c0d46561c4",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -4729,7 +4611,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "f1e3f1739db625de8b432afb2633f0f54dcb4e87",
+        "baseSha": "eea399b74fe3cb74f942f21eecfed6c0d46561c4",
         "changedFiles": [
           "flashinfer/prefill.py",
           "tests/attention/test_custom_mask_validation.py"
@@ -4884,7 +4766,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "b7f43fef07ca95f52cff87a7111f7472e8bedaf345a9a39f63048e123a50400d",
+        "pullResponseDigest": "7948842e26d97668572a2152ff504ca9efa6c392552edfdd0bc0b47a3f1b0859",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
@@ -4902,7 +4784,7 @@
       "headSha": "ea9db53c7db8c9bf7838e52024e1184fd96ad4e7",
       "key": "flashinfer-ai/flashinfer#3467",
       "mergeConflict": false,
-      "mergeableState": "unknown",
+      "mergeableState": "blocked",
       "number": 3467,
       "prState": "OPEN",
       "repo": "flashinfer-ai/flashinfer",
@@ -4920,8 +4802,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "f1e3f1739db625de8b432afb2633f0f54dcb4e87",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "eea399b74fe3cb74f942f21eecfed6c0d46561c4",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -4931,7 +4813,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "f1e3f1739db625de8b432afb2633f0f54dcb4e87",
+        "baseSha": "eea399b74fe3cb74f942f21eecfed6c0d46561c4",
         "changedFiles": [
           "include/flashinfer/sampling.cuh",
           "tests/utils/test_sampling.py"
@@ -5199,7 +5081,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "f66530f2d963db2c54c7e02680501d2f9d066c57868cc7e1400671291c114056",
+        "pullResponseDigest": "ce41a7f30d4f60430afcb9c988a62a9da32f78d4046a3471c1d097392a6e5b8f",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -5224,7 +5106,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "82d6bb284d1ff1c6ef37f29a4c3b63d1a8b11806",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -5244,7 +5126,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "0553dc3ed66c891fb9cfecba707ee33713da3855699a8137e713f4f2ef3f5b8e",
+        "pullResponseDigest": "140a90237866a39150164b9ac315c8af65ca11d974219e30feccba407d7f3d46",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -5252,7 +5134,7 @@
       "headSha": "b06cdbe99393743ca2b30a12adac451ffb023cfb",
       "key": "ggml-org/llama.cpp#23932",
       "mergeConflict": true,
-      "mergeableState": "unknown",
+      "mergeableState": "dirty",
       "number": 23932,
       "prState": "OPEN",
       "repo": "ggml-org/llama.cpp",
@@ -5272,7 +5154,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "0cfe43b657ead31fe463866f2a348b7d7ce38119",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -5436,7 +5318,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "0cfe43b657ead31fe463866f2a348b7d7ce38119",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -5553,7 +5435,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "140e3c81fc9c0fc3b4eecd637a54d637a56f9f2e",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -5614,7 +5496,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "30bb1161095dbae2271e6bc3cc4c219cc3897a57",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -5654,13 +5536,13 @@
       "url": "https://github.com/huggingface/smolagents/pull/2330"
     },
     {
-      "actionDigest": "613b1f420f31ce7aa21eba6b3f278642df0f9b667eb31ca18aa00f5f5d8b2374",
+      "actionDigest": "e49a5700cb9d14fe991e1cdfa2d6b9b1bc09a8b30ac9dfd1e2b56a652d159856",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "master",
-      "baseSha": "1e0a7ebe89b4c4c90451ccc66e456f0e4aba85ca",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "6fbeaaa9e890f262e26c7a374940120699680937",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -5670,7 +5552,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "master",
-        "baseSha": "1e0a7ebe89b4c4c90451ccc66e456f0e4aba85ca",
+        "baseSha": "6fbeaaa9e890f262e26c7a374940120699680937",
         "changedFiles": [
           "CLAUDE.md",
           "docs/MULTI_AGENT_STRUCTURES.md",
@@ -5743,7 +5625,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "d0ad11753dd183ac86e2c22b0baee32d1a29ab25e7876501104d9fde5e98a974",
+        "pullResponseDigest": "179aa06a8dae56fbbbc97dfd6aaac9a8b2fe7aa1033da06aa0ff7a72838ca074",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -5755,7 +5637,7 @@
       "number": 1664,
       "prState": "OPEN",
       "repo": "kyegomez/swarms",
-      "taskActionDigest": "cb3dccc8465fcee8f5684434a376ca7fee8b2ab5e6f7ea4c73194db5ed084cf8",
+      "taskActionDigest": "55352e95fbf3733cf87bdf4c16038715b5d6b749d28bbe245f084fddddd73ade",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -5764,13 +5646,13 @@
       "url": "https://github.com/kyegomez/swarms/pull/1664"
     },
     {
-      "actionDigest": "a9c327aa46c91df1e6057b82cc3c5ad1cfd80d48f82d48c5774eda5d2456de4f",
+      "actionDigest": "d6dc2e97c7836d623712965108d9c75582aea438e91121a9bdc3487657701fb0",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "master",
-      "baseSha": "1e0a7ebe89b4c4c90451ccc66e456f0e4aba85ca",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "6fbeaaa9e890f262e26c7a374940120699680937",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -5780,7 +5662,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "master",
-        "baseSha": "1e0a7ebe89b4c4c90451ccc66e456f0e4aba85ca",
+        "baseSha": "6fbeaaa9e890f262e26c7a374940120699680937",
         "changedFiles": [
           "swarms/structs/hiearchical_swarm.py"
         ],
@@ -5814,7 +5696,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "0f3f6c222981453da2ba49016bb50d1775e39a5a2352a25223168c70544e4c92",
+        "pullResponseDigest": "b573d23dbe0962e572cd57f2407dc2c0f577c2cd058d56fa3d6a95b175f93520",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -5826,7 +5708,7 @@
       "number": 1670,
       "prState": "OPEN",
       "repo": "kyegomez/swarms",
-      "taskActionDigest": "2c791848691d082702bd9915e078c3c2f07b88fad54ea78dc7f3c9d7ff69845d",
+      "taskActionDigest": "a161f021178bb707800c7987d3a130b4d8e532b005b3e63d3ebb2f9434094743",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -5835,13 +5717,13 @@
       "url": "https://github.com/kyegomez/swarms/pull/1670"
     },
     {
-      "actionDigest": "bc52e8c73a9ec739b8443e4a5df5050e3fa101e381b2225906c7bdd5357a2065",
+      "actionDigest": "04badb7cdef7db141c960a36be0de72679cb99db02b8ab813b32ba2df0942db0",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "master",
-      "baseSha": "1e0a7ebe89b4c4c90451ccc66e456f0e4aba85ca",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "6fbeaaa9e890f262e26c7a374940120699680937",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -5851,7 +5733,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "master",
-        "baseSha": "1e0a7ebe89b4c4c90451ccc66e456f0e4aba85ca",
+        "baseSha": "6fbeaaa9e890f262e26c7a374940120699680937",
         "changedFiles": [
           "swarms/structs/hiearchical_swarm.py"
         ],
@@ -5885,7 +5767,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "871bc61e9e5f9a9466fd24c06937537fda50d212b0eb7cc807ff0a93124248a0",
+        "pullResponseDigest": "f7d0ec3710bf451f84d2e380c60836da661916b4e47c3637559ae25403ade830",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -5897,7 +5779,7 @@
       "number": 1671,
       "prState": "OPEN",
       "repo": "kyegomez/swarms",
-      "taskActionDigest": "4973ccaa51adce4629ffed23cef48b88959c6cb5b60c9d86bc3fdecdd3c2daba",
+      "taskActionDigest": "337302a2c2d0c5c2b6923638fffd960c32c304f4e9c346a5a80b56a4657f7a55",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -5914,7 +5796,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "595cd72a2b2021f2375fa31109af02d20bb17648",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -5966,7 +5848,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "6ad5db6ef2fec572a6c325e11b03011c395117db866200bb009003a9228c34f6",
+        "pullResponseDigest": "61ec95a5a1e69d5716eb62c4b03e99d910416788a1fb49669a60efffa25553e8",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
@@ -6002,7 +5884,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "085a79c748be47111d2e1c1b65b3f82200998d5c",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -6026,7 +5908,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "88e4d852b9a4ff6a8477c8d445b0c8c6142a370686e134b4f03b1a025a704c84",
+        "pullResponseDigest": "d2bd55871b28cb931e9332dad8d8729db5c80f74b3e3ce62ffb32955fda5fa92",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -6049,7 +5931,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "f62d849350816588b1c6294e7914bbe4d8b84072",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -6107,7 +5989,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "c7ee362aff94a369af70f13f2b4f853f6793ff4c",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -6152,7 +6034,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "c7ee362aff94a369af70f13f2b4f853f6793ff4c",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -6210,7 +6092,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "c7ee362aff94a369af70f13f2b4f853f6793ff4c",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -6250,13 +6132,13 @@
       "url": "https://github.com/mem0ai/mem0/pull/6967"
     },
     {
-      "actionDigest": "d0332a0e02f8cf5bb9ee2f97acfbaec9d4a790bbfea47c337dcc0257f9cce129",
+      "actionDigest": "c9b71fda629de5b0bbdbf3d33e3c33bf428fcd984b4950609ffce8d62c629c3f",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "e844e8f5a00719ba19d3f5e93a1b43ba8436be7e",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "3c670707766a8455da6491a9049cc9d575e019f0",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -6266,7 +6148,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "e844e8f5a00719ba19d3f5e93a1b43ba8436be7e",
+        "baseSha": "3c670707766a8455da6491a9049cc9d575e019f0",
         "changedFiles": [
           "dotnet/src/Microsoft.Agents.AI.Workflows/Futures.cs",
           "dotnet/src/Microsoft.Agents.AI.Workflows/WorkflowHostAgent.cs",
@@ -6280,7 +6162,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "3274b2e54470bf8e53c9b6245e90046e313a29735444d6712628e840281170d4",
+        "pullResponseDigest": "bcb7924e0aa8af32aec7670b8e82bae666c59f578f5072602be0b7287a02b3bf",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -6292,7 +6174,7 @@
       "number": 6882,
       "prState": "OPEN",
       "repo": "microsoft/agent-framework",
-      "taskActionDigest": "b462768a11daa36ddf7de3e14eeb1c00f1cfe26c6b38b2307dc1c3492613ba12",
+      "taskActionDigest": "e57c22eb53ab72e5a351afa1cc4817df9e0ad477ad23f18d9d70c84ba442bfd6",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -6305,7 +6187,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "027ecf0a379bcc1d09956d46d12d44a3ad9cee14",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -6326,7 +6208,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "78a04c67a252f6df2f2bf17efd93e70117f13a9ab24d8ea808e24e6cf01b85e5",
+        "pullResponseDigest": "e18bb6314ee02d204d600a4258a78de003a639d054547208f78b3cc4d41f769f",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -6351,7 +6233,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "2ae2dbbb8f9ed9ffe1739ecf5abfe31a940ee50c",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -6386,7 +6268,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "15dca863624903015f7397526470abb3213936f494dc3245ca0d307c8c159c4e",
+        "pullResponseDigest": "1be8eea0cbfc0718387c25c5a83c60d650d6df916d2eca6fd6693fcc59d05357",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -6413,7 +6295,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "2ae2dbbb8f9ed9ffe1739ecf5abfe31a940ee50c",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -6450,7 +6332,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "98d0148a536f73ae1a3bbd565cf60332d945b3a0d4039e16d8d4e77e30d3c739",
+        "pullResponseDigest": "698f3b53eb8de7a7aded7821c717691ac58259307c0832b94d5c2a5c97ded052",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -6477,7 +6359,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "2ae2dbbb8f9ed9ffe1739ecf5abfe31a940ee50c",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -6522,7 +6404,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "e159481dd6683312f73486b2b9e56f79a7d433f502fc798b75d7bc76da9c7782",
+        "pullResponseDigest": "c2ddff5ba54c3def87a44eb84a460fe7d232a08e395b000a9a3861abec6dd5b9",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -6547,7 +6429,7 @@
       "actions": [],
       "baseRefName": "master",
       "baseSha": "f7f92c7107e72f8151392b7fdf22bdf660df6892",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -6625,7 +6507,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "5f71d009c037d9e572a3631c4e39110f1974b5b14e603d08a0cc43ac4a8ac2b4",
+        "pullResponseDigest": "2c8a92353b9df4d2d01d79e91045c261cb064161f932c65dc1164b58d8014e2e",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -6648,7 +6530,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "53fed26112817f7c55f664efb9e3f65f06cab7db",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -6668,7 +6550,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "2f5e0c72de663449cb14b7b31556393cdd3e470edfbfe41c3623da1c59e25591",
+        "pullResponseDigest": "f3dea5b9be27ebd0ce77aa98bb7f37685a0748c3b408be7d914187eef7990baa",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -6693,7 +6575,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "53fed26112817f7c55f664efb9e3f65f06cab7db",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -6714,7 +6596,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "2531e2b806ce14e5ca7305ce35d2663eb931173749953aa5079ca976e1ed29df",
+        "pullResponseDigest": "5c4bbfbb2eaaa3b19c5d35c80deba68b0c8d017f023ec0a673312d098b53e63d",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -6742,7 +6624,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "53fed26112817f7c55f664efb9e3f65f06cab7db",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -6777,7 +6659,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "7070cb3facf87fb413d2aa2965f1d6d8a2d2aae4d8a5a96d07c794825b1a1c21",
+        "pullResponseDigest": "736f693485af3560fe145a4b1dabb94f515495c3f5f8d683410aed9a0ae013fb",
         "requestedChanges": [],
         "unansweredMaintainerComments": [
           {
@@ -6819,7 +6701,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "ed595846b684276e364aa65da38e414109ef8cfb",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -6872,7 +6754,7 @@
       "actions": [],
       "baseRefName": "main",
       "baseSha": "e12b81d3bbf644ec7045e152d69bc4b68d69cd48",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -6919,7 +6801,7 @@
       ],
       "baseRefName": "master",
       "baseSha": "25b710ed79d2b67277ca1d1212b86af2f46fad4f",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -7001,8 +6883,8 @@
       "actionDigest": "b1e05559ea9cca2ea7aa5f1670831493f12dfcb0919aef65ca3a3bb03b970f68",
       "actions": [],
       "baseRefName": "main",
-      "baseSha": "84cb60cb2901c407389a82a8f573d283acb09313",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "6da1714833e188dbce1b6e0eac6ecd29c82ad4c6",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -7012,7 +6894,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "84cb60cb2901c407389a82a8f573d283acb09313",
+        "baseSha": "6da1714833e188dbce1b6e0eac6ecd29c82ad4c6",
         "changedFiles": [
           "changelog/5354.fixed.md",
           "src/pipecat/services/openai/realtime/llm.py",
@@ -7024,7 +6906,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "12f70edc09911036067fff1f34480f64670d669f5fc69708376c94827257ee8f",
+        "pullResponseDigest": "6e33ce1198bbd293f55101dab5378c314911ea9d1a43d352c66c1791ece26e2e",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -7050,7 +6932,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "8e386180bd87b852e7934cfef53cba3d6bee1bb4",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "UNKNOWN",
       "draft": false,
       "evidence": {
@@ -7159,7 +7041,7 @@
       ],
       "baseRefName": "main",
       "baseSha": "d1aab0fc71ee2f857b4bc82184a8ee8db556cf3f",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -7204,7 +7086,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "5969fb7b3af76b4f4aaec36325ab982a3416616aec4f43dd62d0804e1b6ec51d",
+        "pullResponseDigest": "b1cde1d57f8d81bae5371be69830526b2d159ff8cdd6a1f6bfd068b8306dd347",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
@@ -7249,8 +7131,8 @@
         "存在未解决审查线程"
       ],
       "baseRefName": "master",
-      "baseSha": "7aed7040fa509b4d3e17d1a3f3c450fdbcc90f76",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "44e93d309792bd714ab286044adc5fa6bea99735",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -7260,7 +7142,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "master",
-        "baseSha": "7aed7040fa509b4d3e17d1a3f3c450fdbcc90f76",
+        "baseSha": "44e93d309792bd714ab286044adc5fa6bea99735",
         "changedFiles": [
           "python/ray/serve/_private/replica_result.py",
           "python/ray/serve/tests/test_grpc_e2e.py",
@@ -7302,7 +7184,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "1c51529b43db17ee715f016fdecaf289e43d607e029341f56936b7dfba6dd55d",
+        "pullResponseDigest": "4aad2aa3aa56b65e789b224e51907c5adac19d7e75bce143a3098baf30d128c9",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
@@ -7339,7 +7221,7 @@
       ],
       "baseRefName": "develop",
       "baseSha": "fc19d7a77845131de51b2d11d8e7525798ccc7e2",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -7383,7 +7265,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "a11bf656ba3c815df1ebc1ff8197e6091ba579151a80647d2e1e7608f3d19eae",
+        "pullResponseDigest": "8badda0ef12aa4aea579c099d4894101b0e14a5327636760ed29200a2b2bf3ec",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -7404,14 +7286,14 @@
       "url": "https://github.com/rtk-ai/rtk/pull/3483"
     },
     {
-      "actionDigest": "a47d7ea36f9bcf24c2869fe85c6dd6d440299ad8c470133a5b568c112a1d5a57",
+      "actionDigest": "fe30e3eba7e56ab59da917a023641bb226e1ad2cd4a08dfcda1a7087e929d0cb",
       "actions": [
         "CI 检查失败",
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -7421,7 +7303,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
+        "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
         "changedFiles": [
           "python/sglang/srt/mem_cache/unified_radix_cache.py",
           "test/registered/unit/mem_cache/test_unified_radix_cache_unittest.py"
@@ -7685,7 +7567,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "e8c48f2730d472596a6f6f20b5c3616f04abeca8c060bcda48bb3763c97cb820",
+        "pullResponseDigest": "2faec25579cb865e98a0a21da109059eac1f9d3b6b253acbe74bd6a9f7170ca3",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -7697,7 +7579,7 @@
       "number": 29819,
       "prState": "OPEN",
       "repo": "sgl-project/sglang",
-      "taskActionDigest": "09a0052f179b1f4458481d816ed4cf1dab30c34758a4bc3c53d1d58a5b4bbe34",
+      "taskActionDigest": "8ba5ed4c266a92bfc21cf728bcdaa3dd7a9b28042b2ef65e0930863b09219639",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -7706,15 +7588,15 @@
       "url": "https://github.com/sgl-project/sglang/pull/29819"
     },
     {
-      "actionDigest": "462bbf5d98891b2ea61a9aa99af875e8302a2dfa2d77818eaf400e8817045cbc",
+      "actionDigest": "5743e676b73ee110913fdb85aeac2422aaae0fbbba19254d3199a400a5f560e7",
       "actions": [
         "CI 检查失败",
         "分支存在合并冲突",
         "存在未解决审查线程"
       ],
       "baseRefName": "main",
-      "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -7724,7 +7606,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
+        "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
         "changedFiles": [
           "python/sglang/srt/configs/longcat_flash.py",
           "test/registered/unit/configs/test_longcat_flash_config.py"
@@ -7884,7 +7766,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "587fdb3d387d22ffbe0877b50a9a467b1c30d2ef3fb8e74949852ebbaf45d2f5",
+        "pullResponseDigest": "f6ea4db8f288a268c559dcf2a70db1aa3b8fac65104d6a77ade42a5be57c042a",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": [
@@ -7906,7 +7788,7 @@
       "number": 30183,
       "prState": "OPEN",
       "repo": "sgl-project/sglang",
-      "taskActionDigest": "c5947cd5d037add1dbfedf3b2a3726f56cf7ea7f640755b337a7bcab318a88b1",
+      "taskActionDigest": "1b52e646c0732825d17ea37a3fd09852a1eacbe5eb6aee46d5b9fd843a03e04e",
       "taskActions": [
         "分支存在合并冲突",
         "存在未解决审查线程"
@@ -7916,14 +7798,14 @@
       "url": "https://github.com/sgl-project/sglang/pull/30183"
     },
     {
-      "actionDigest": "cdea10a60bbf0f4a49aeff4270652d9ecd9ecb818a3a34146a4bc32314065c2f",
+      "actionDigest": "9d78b8dd5fa2632e238aa9d40136dd141ccbbe6b3d202c87a4094cf06193509f",
       "actions": [
         "CI 检查失败",
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -7933,7 +7815,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
+        "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
         "changedFiles": [
           "python/sglang/srt/model_executor/model_runner.py",
           "test/registered/unit/model_executor/test_model_runner_decode_rows.py"
@@ -8180,7 +8062,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "8a6b32427b2a77acef41fb8ef79b72a3a90736d83816c31741daa339b8c262d2",
+        "pullResponseDigest": "0230bcb2e9a47203a978d88ec6f2d121d9388c7353e7cb70b70a84bad176c145",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -8192,7 +8074,7 @@
       "number": 30554,
       "prState": "OPEN",
       "repo": "sgl-project/sglang",
-      "taskActionDigest": "4ab370a88ddb6d92de28788d5f78cbe86586e7c165997f8c4337ec3b65983d0c",
+      "taskActionDigest": "5a82e822d50f01f4c5599c3cd321e1bbfae29ae7a503ede4385533b94face753",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -8206,8 +8088,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -8217,7 +8099,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
+        "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
         "changedFiles": [
           "python/sglang/srt/models/deepseek_v4.py",
           "test/registered/unit/models/test_deepseek_v4_tbo_policy.py"
@@ -8403,7 +8285,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "030b7f7c0d554361252de8ad1533617032e29e28ca54cf098fb701446b02cea1",
+        "pullResponseDigest": "ba88f12074bb2deca9db3597eab72a779c8572eceac4cbb0b210fc87e21cfe76",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -8422,14 +8304,14 @@
       "url": "https://github.com/sgl-project/sglang/pull/33217"
     },
     {
-      "actionDigest": "88b08952b6486e4cc46b94af6caaf31c4a98597d9ed204d1fca879d67419e6a1",
+      "actionDigest": "074d2afceb31dd1aac29972c83d078fe52694b19713ff7dff4849759d1af97f1",
       "actions": [
         "CI 检查失败",
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -8439,7 +8321,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
+        "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
         "changedFiles": [
           "python/sglang/srt/managers/io_struct.py",
           "python/sglang/srt/managers/tokenizer_manager.py",
@@ -8653,7 +8535,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "158540575ef95a0b62684b77d9a785962cea3d659fd3f53a6e66c167adaf290d",
+        "pullResponseDigest": "c2008427a2ccfb6f1eee9c9a0ee0541b83a5f43f61a06b9bc2c77d7e27d9017a",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -8665,7 +8547,7 @@
       "number": 34138,
       "prState": "OPEN",
       "repo": "sgl-project/sglang",
-      "taskActionDigest": "4c6bf17369f87b666b05cac6ff9f78a2dd1a3203fb778b5a8c3a325dbb82d73b",
+      "taskActionDigest": "bd614707d11e22edb9102eb40378713b881fafc1653dd583f4e89d558db43e43",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -8679,8 +8561,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -8690,7 +8572,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
+        "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
         "changedFiles": [
           "python/sglang/multimodal_gen/configs/sample/teacache.py",
           "python/sglang/multimodal_gen/runtime/cache/teacache.py",
@@ -8883,7 +8765,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "a9dcfb3c16f4c8bac45e0bf8922c784f809f3c36b1894fc63aca8dbb27d61c72",
+        "pullResponseDigest": "4d26052c8e3496360f8eec0d3b85da1b5d33510ee9dff09d7ae862d741d23d87",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -8907,8 +8789,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -8918,7 +8800,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
+        "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
         "changedFiles": [
           "python/sglang/multimodal_gen/runtime/cache/spectrum.py",
           "python/sglang/multimodal_gen/test/unit/test_spectrum.py"
@@ -9109,7 +8991,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "a8fc1da31912c9c607f029f57dd1ef5f6146e246e2f94d793df78626bbc305a7",
+        "pullResponseDigest": "99bbbedde414fe2fb71850e6a2cad65f4797d76df97db8637d8384008251fb0d",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -9128,14 +9010,14 @@
       "url": "https://github.com/sgl-project/sglang/pull/35140"
     },
     {
-      "actionDigest": "cf43ff653792edce02165839f367bcfcdf7cab4f5403b38e3a0f8f1b5cebf93d",
+      "actionDigest": "e72418cf922b9fc209ce1ed51fb8aae7abd0735063e6ae85d25bba53a96622e3",
       "actions": [
         "CI 检查失败",
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -9145,7 +9027,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "5f3606c7b2aec653fcfdbe3465379e700c4a5492",
+        "baseSha": "29cc9d2dc93134cb7567da66de65a824c0bf745e",
         "changedFiles": [
           "python/sglang/srt/server_args.py",
           "python/sglang/srt/utils/network.py",
@@ -9318,7 +9200,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "68a590dcf6eca74da2abf036046256fb12fab45e15a5ee15703f7879c3ddbba9",
+        "pullResponseDigest": "f5f049c417f60a5d0d583347c753735855f3c566965be1bd06ba3ad638382bea",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -9330,7 +9212,7 @@
       "number": 37458,
       "prState": "OPEN",
       "repo": "sgl-project/sglang",
-      "taskActionDigest": "544a46cc345e35ec56c38555bd029fb49f8ca6d8d47ede24ecf046d568eaabe3",
+      "taskActionDigest": "e582b6a4db343c34ca85fd5abb617ece2f8ef1653412d022f5bad9320fe97018",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -9344,8 +9226,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "46d2b23ac5047a813ebb082122166e4ae09b5f39",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -9355,7 +9237,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
+        "baseSha": "46d2b23ac5047a813ebb082122166e4ae09b5f39",
         "changedFiles": [
           "tests/kernels/moe/test_oracle_base.py"
         ],
@@ -9543,7 +9425,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "4cd905abc21490ad804a8faa3cf902fc72286a0002b5443ded2b8805556cc597",
+        "pullResponseDigest": "aa3d9604e93b47c2eb990b070c5d2d49f6dbde92ffce59c45b0775f9494914b2",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -9551,7 +9433,7 @@
       "headSha": "bf03fd287e90e665cdc91b02ede947e9a395f0c2",
       "key": "vllm-project/vllm#44231",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 44231,
       "prState": "OPEN",
       "repo": "vllm-project/vllm",
@@ -9567,8 +9449,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "46d2b23ac5047a813ebb082122166e4ae09b5f39",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -9578,7 +9460,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
+        "baseSha": "46d2b23ac5047a813ebb082122166e4ae09b5f39",
         "changedFiles": [
           "tests/config/test_cache_config.py",
           "vllm/config/cache.py"
@@ -9638,7 +9520,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "2e858f0f39c2f235181a49994a12043165c082c192e35bc779cdee85348342d2",
+        "pullResponseDigest": "27c25820108a8cd11e2c101699fc2fabcf42962d01a7ad7b6774644ec066d43d",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -9646,7 +9528,7 @@
       "headSha": "962eb6a9732d51c75231913d2702d949e772f649",
       "key": "vllm-project/vllm#44241",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 44241,
       "prState": "OPEN",
       "repo": "vllm-project/vllm",
@@ -9662,8 +9544,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "46d2b23ac5047a813ebb082122166e4ae09b5f39",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -9673,7 +9555,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
+        "baseSha": "46d2b23ac5047a813ebb082122166e4ae09b5f39",
         "changedFiles": [
           "vllm/distributed/device_communicators/shm_broadcast.py",
           "vllm/envs.py",
@@ -9711,7 +9593,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "01a2d3403e2006c57ddf59769be50a4c9004e0d1d020e1a911637241fd74a188",
+        "pullResponseDigest": "85a7ee4f30f3403368149dfaf1913afc77640949fadcf7d63823652fc45bd349",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -9719,7 +9601,7 @@
       "headSha": "0dbbded9cdbba8c4f8e76bb54772afa6478ca0c3",
       "key": "vllm-project/vllm#45135",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 45135,
       "prState": "OPEN",
       "repo": "vllm-project/vllm",
@@ -9735,8 +9617,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "9d88ceb02694c6e3df182ec3c87201284f50e2c6",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -9746,7 +9628,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
+        "baseSha": "9d88ceb02694c6e3df182ec3c87201284f50e2c6",
         "changedFiles": [
           "tests/v1/kv_connector/unit/test_invalid_blocks_correctness.py",
           "vllm/v1/core/sched/scheduler.py"
@@ -9901,7 +9783,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "4294c376a03468bedb27e9010ead520a03470894f377d125d599464e3e9efae1",
+        "pullResponseDigest": "571577e62544f9310b9b0b8fc64f76c6498e999e9cb7b534e1a910e4ba9eb412",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -9925,8 +9807,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "46d2b23ac5047a813ebb082122166e4ae09b5f39",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -9936,7 +9818,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
+        "baseSha": "46d2b23ac5047a813ebb082122166e4ae09b5f39",
         "changedFiles": [
           "vllm/sampling_params.py"
         ],
@@ -9995,7 +9877,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "c315e0739e1101b11c70ee0d67827bc2ffd822a6c1bbcf3a00fc9d7a6a822048",
+        "pullResponseDigest": "64478513c96eeae0188a7d03c0094e8aa0fa12e24b07a942633e6cf4cee76619",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -10003,7 +9885,7 @@
       "headSha": "cec787e20a92202a7e670de7f67de37bc5e6fa74",
       "key": "vllm-project/vllm#45522",
       "mergeConflict": false,
-      "mergeableState": "blocked",
+      "mergeableState": "unknown",
       "number": 45522,
       "prState": "OPEN",
       "repo": "vllm-project/vllm",
@@ -10014,14 +9896,14 @@
       "url": "https://github.com/vllm-project/vllm/pull/45522"
     },
     {
-      "actionDigest": "3cb0a424ba9b22687a1f50dde6ec4d359193e583049b6cdf91905e9008110d64",
+      "actionDigest": "e5dd04146f739e5d18d39e70ce898dd5dee02912ca6c28823ec661f303eecca9",
       "actions": [
         "CI 检查失败",
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "9d88ceb02694c6e3df182ec3c87201284f50e2c6",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": false,
       "evidence": {
@@ -10031,7 +9913,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
+        "baseSha": "9d88ceb02694c6e3df182ec3c87201284f50e2c6",
         "changedFiles": [
           "tests/v1/kv_connector/unit/offloading_connector/test_scheduler.py",
           "vllm/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py"
@@ -10147,7 +10029,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "8167d28d451a729e4680dcb0d06c7e83a23c9ff8c855cbf9c23e0689f5a57e8d",
+        "pullResponseDigest": "4c6aba500a9999321941736847620542f8b68dfaa7fd2a6a270b17ea2784caf8",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -10159,7 +10041,7 @@
       "number": 52287,
       "prState": "OPEN",
       "repo": "vllm-project/vllm",
-      "taskActionDigest": "c6f8c76a96348a12308292647cb30907af6436d1d76b4e7bb160edc9c684ff14",
+      "taskActionDigest": "707a18f643ba179857aa5e6a4dc9dd2aa5c3945e0077dfbb8d186306a34eaa5e",
       "taskActions": [
         "分支存在合并冲突"
       ],
@@ -10174,8 +10056,8 @@
         "CI 检查失败"
       ],
       "baseRefName": "main",
-      "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "9d88ceb02694c6e3df182ec3c87201284f50e2c6",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "FAILED",
       "draft": true,
       "evidence": {
@@ -10185,7 +10067,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
+        "baseSha": "9d88ceb02694c6e3df182ec3c87201284f50e2c6",
         "changedFiles": [
           "tests/v1/kv_offload/cpu/test_gpu_worker.py",
           "vllm/v1/kv_offload/cpu/gpu_worker.py"
@@ -10211,7 +10093,7 @@
         "mergeConflict": false,
         "mergeConflictPreparationVersion": null,
         "prState": "OPEN",
-        "pullResponseDigest": "bc39e4051658db3fa82ceda3027cedb4131a513ac5aed415e30fe3fc8c2a2e0b",
+        "pullResponseDigest": "96c5b8c1a7914696d4d30ed1c5463ba9d5d7e92629f70fa3f025072679ce85ea",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -10232,13 +10114,13 @@
       "url": "https://github.com/vllm-project/vllm/pull/52296"
     },
     {
-      "actionDigest": "20150ebf54bd80164f763568bce17be05716d940666dfe5bb6a837ee20f44a5c",
+      "actionDigest": "17f8059142a0d54b0e8e2f35f003eed4021933ab9a79dc633a1d6d50488f7b21",
       "actions": [
         "分支存在合并冲突"
       ],
       "baseRefName": "main",
-      "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
-      "checkedAt": "2026-09-11T23:34:05.904641Z",
+      "baseSha": "9d88ceb02694c6e3df182ec3c87201284f50e2c6",
+      "checkedAt": "2026-09-12T00:35:04.210283Z",
       "ciStatus": "PASSED",
       "draft": false,
       "evidence": {
@@ -10248,7 +10130,7 @@
         "baseIntegrationRequired": false,
         "baseMergeBaseSha": null,
         "baseRefName": "main",
-        "baseSha": "988d9b6777d077f843cd2164a222ac8535d36ed2",
+        "baseSha": "9d88ceb02694c6e3df182ec3c87201284f50e2c6",
         "changedFiles": [
           "tests/v1/structured_output/test_validation.py",
           "vllm/sampling_params.py",
@@ -10334,7 +10216,7 @@
         "mergeConflict": true,
         "mergeConflictPreparationVersion": "conflict_files_v1",
         "prState": "OPEN",
-        "pullResponseDigest": "d0eabc791bdcdc7df86aba6b2b7589ab5e546d6d6de1f34e8e181ffb3478ebaa",
+        "pullResponseDigest": "03e99c402800632f7e3b93af0fa89b34d2a6f9ff8efd6d8c130fd12aba42bb24",
         "requestedChanges": [],
         "unansweredMaintainerComments": [],
         "unresolvedReviewThreads": []
@@ -10346,7 +10228,7 @@
       "number": 52298,
       "prState": "OPEN",
       "repo": "vllm-project/vllm",
-      "taskActionDigest": "fd47167482c74d8cf77362d0a12b0ab9e8a1b75d5b10f187513d8423fba81b11",
+      "taskActionDigest": "06d8fe306c07649fd9955683c9552a925c0a289204d98539d17b119481e13dca",
       "taskActions": [
         "分支存在合并冲突"
       ],
