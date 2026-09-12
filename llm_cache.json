@@ -48141,6 +48141,41 @@
     ],
     "why": "The issue provides a concrete, reproducible bug with a clear root cause hypothesis (CUDA graph path causing numerical divergence in a specific MoE model) and a validation path via the provided script. It qualifies as an llm_algorithm issue because it involves model architecture and numerical behavior under different execution modes, with a reference-vs-implementation test."
   },
+  "a36217517c2d7ffd9e65fecced1fedb1df3a1c2dcc5a71de42726782fc1ce1b0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "tests/integration/n8n-api/utils/cleanup-helpers.ts: move orphan sweep out of per-file afterAll into a single globalSetup or otherwise scope it to avoid mid-run deletion",
+      "18 integration test files: remove or adjust afterAll cleanupOrphanedWorkflows calls",
+      "optional age guard in cleanupOrphanedWorkflows to avoid deleting recently created workflows"
+    ],
+    "risks": [
+      "globalSetup runs outside Vitest worker context and may not have access to the same environment/credentials as afterAll hooks",
+      "Moving cleanup to globalSetup changes leak-cleanup semantics for crashed runs within the same suite execution",
+      "Age guard threshold could be too aggressive or too lenient and needs tuning",
+      "Maintainer may prefer a different scoping approach (e.g., per-file prefix) over globalSetup"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that runs two integration test files in parallel where one finishes early and verify the other's in-flight workflows are not deleted",
+      "Run the full integration suite repeatedly (e.g., 3 consecutive npm test runs) and confirm no N8nNotFoundError 404s from cross-file cleanup",
+      "Run the affected files individually (smart-parameters.test.ts, update-partial-workflow.test.ts, ai-validation/e2e-validation.test.ts) to confirm they still pass"
+    ],
+    "unknowns": [
+      "Whether globalSetup has access to the n8n test instance credentials and cleanup config used by cleanupOrphanedWorkflows",
+      "Whether maintainers have a preferred approach for the orphan sweep (globalSetup vs per-file scoping vs age guard)"
+    ],
+    "why": "Issue identifies a concrete root cause: cleanupOrphanedWorkflows in tests/integration/n8n-api/utils/cleanup-helpers.ts:25 performs an instance-wide sweep from 18 afterAll hooks, and Vitest parallel file execution causes one file to delete another file's in-flight workflows. The issue supplies observed failures, ruled-out causes, and a concrete fix direction (globalSetup once before suite, optional age guard). This is test-infrastructure code, not shipped code, and the track is agent_ai_infra rather than llm_algorithm, so the algorithm-specific rejection does not apply."
+  },
   "a3672ff5b434c1c9dcb6632372bfc346f22267d6753d4d76d39155854559c012": {
     "confidence": 0.9,
     "contradictions": [
@@ -48172,6 +48207,41 @@
       "Whether any existing PR is considered viable for revival"
     ],
     "why": "Issue clearly identifies a user-visible bug in mem0 v3: ADD-only extraction causes stale/contradictory facts to accumulate, with a concrete reproduction scenario. However, the deterministic gate requires HUMAN_REVIEW, and multiple PRs already attempt to address this issue (#4969, #4965, #5240), all closed without merge. Maintainer design direction is still being clarified (append-only vs CRUD), as seen in comments. This requires maintainer confirmation before new work."
+  },
+  "a39381d350c296c453b8596e37415d55cfc180a8996716eebdac0c301fe1f374": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports deterministic FSM failure on DFlash2, but commenters show the reported build predates the merged fix #53046 that addresses the same symptom",
+      "Issue claims failure is specific to json_object grammar, while commenters report the same error with MTP and ngram_gpu drafters and json_schema"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No code change justified until reproduction on a build containing c6e19b3be243 is confirmed"
+    ],
+    "risks": [
+      "The reported failure may be entirely explained by the pre-fix build, making any new fix redundant",
+      "The issue conflates DFlash2-specific behavior with a general spec-decode + xgrammar interaction already fixed",
+      "Without a post-fix reproduction, root cause and required code changes are unknown"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Rebuild from merged main containing c6e19b3be243 (e.g., b389ac29465b or later) and re-run the 3/3 trigger loop; if FSM errors persist, isolate the DFlash2 draft-vs-grammar interaction; if they disappear, close as duplicate of #53046"
+    ],
+    "unknowns": [
+      "Whether the FSM error reproduces on a build containing c6e19b3be243",
+      "Whether the DFlash2 candidate selection path applies the grammar allowed-token mask",
+      "Whether the failure is a distinct bug or a duplicate of #53046"
+    ],
+    "why": "The issue reports a deterministic 'Failed to advance FSM' error with DFlash2 spec decode + xgrammar json_object grammar, but the supplied evidence shows the reported build (3406ec1da) is a PR-head build that predates the merged fix #53046 (c6e19b3be243), which specifically addresses spurious FSM errors after speculative reasoning end. Multiple commenters independently confirm the guard is absent in pre-fix builds and that the symptom matches. The issue's own root cause is not established as a distinct bug; it is likely covered by an existing merged fix. This is a materially blocking unknown: whether the bug persists on a post-fix build determines whether any code work is actionable."
   },
   "a3e09721ef670e2deec6b2c085d1939dd960a16885bedbb40210d38bc7728678": {
     "confidence": 0.6,
@@ -64202,6 +64272,40 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a CI failure with a plausible environment/cache root cause, but existing PR #52256 overlaps the exact test file and is maintainer-owned with passing CI. The issue is not verified on main and the failure may be node-specific. A new PR would risk duplicating #52256 or addressing a non-reproducible environment issue."
+  },
+  "da4ba7872da5bad18a2d8dcf31fc312b519c4aa60e9c7473bba0cd024385ee6e": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Make wait() idempotent on AllGatherHandle and NoGatherHandle by re-checking INFLIGHT/status before re-running the body",
+      "Ensure a second wait on a released parameter leaves it NOT_AVAILABLE so the next fetch re-gathers from ds_tensor",
+      "Add multi-rank regression coverage for stage3_allgather_sequential and split-process-group gather groups"
+    ],
+    "risks": [
+      "Fixing only AllGatherHandle may leave NoGatherHandle and MultipleAllGatherHandles sub-handle paths broken",
+      "Idempotency change must not mask legitimate re-gathers or break coalesced handle semantics",
+      "Test must fix seed, dtype, and rank count to distinguish numerical/random variation from the empty-tensor bug"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Handle-level 2-GPU repro: all_gather_coalesced([victim, other]), wait, release victim, wait again; assert victim status is NOT_AVAILABLE and data is not AVAILABLE over 0 elements",
+      "Run with stage3_allgather_sequential: true on two ordinary 4096x4096 weights and assert no empty-weight matmul",
+      "Run split-process-group case (victim alone in its bucket) yielding MultipleAllGatherHandles[AllGatherHandle]/NoGatherHandle and assert same invariant",
+      "Regression controls: two weights in one process group, three weights in one process group, mixed bf16/fp32 group remain correct"
+    ],
+    "unknowns": [
+      "Whether PR #8487's draft implementation already fixes both handle classes and the split-process-group path"
+    ],
+    "why": "Issue provides a concrete distributed-training invariant violation: AllGatherHandle/NoGatherHandle wait() is not idempotent, so a released ZeRO-3 parameter can be marked AVAILABLE over empty storage and the next matmul sees vec(0). Root cause is pinned to specific classes and code paths, with a handle-level 2-GPU reproduction and controls. Existing PR #8487 is a draft with no root-cause coverage, so it does not fully cover the opportunity."
   },
   "da540c78dfbafd7316481cbf74f4ff96c3367404b0004f9b590905b59a2f9583": {
     "confidence": 0.85,
