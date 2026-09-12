@@ -2332,6 +2332,34 @@
     ],
     "why": "The issue reports a concrete, reproducible continuous-batching bug (unconstrained request poisons the next strict-schema request, HTTP 422), but the collaborator comment states the root cause is a processor-slot alignment defect in the upstream mlx-lm dependency, already fixed upstream (mlx-lm commit e2f2fb2) with a regression test, and that the next step is maintainer validation of the dependency fix rather than a new in-repo code change. This makes the actionable work in this repository unresolved: it is unclear whether any code change here is needed beyond a dependency bump, and the fix is not in the released version."
   },
+  "077cca0861dae262f76dce4f9416957e90b5a1cbf3f150d5efa82408302aba32": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "docker/Dockerfile.database: bump LITELLM_BUILD_IMAGE and LITELLM_RUNTIME_IMAGE wolfi-base digests",
+      "docker/Dockerfile.database: optionally add UV_PYTHON_DOWNLOADS=never to make interpreter selection fail fast"
+    ],
+    "risks": [
+      "Bumping the base digest may pull in other package changes requiring further Dockerfile adjustments",
+      "UV_PYTHON_DOWNLOADS=never could break builds if the apk interpreter is unavailable in some environments"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run `docker build -f docker/Dockerfile.database -t litellm-test .` on linux/amd64 and confirm the apk and uv sync layers succeed",
+      "Run the built image with `docker run --rm --entrypoint sh <image> -c 'ls -l /app/.venv/bin/python && python -c \"import litellm\"'` and confirm the venv symlink resolves and import succeeds"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a concrete, reproducible root cause: pinned wolfi-base digest has drifted from current apk python3 packages, causing both the apk trigger failure and the uvloop source-build failure; the suggested fix (bump LITELLM_BUILD_IMAGE/LITELLM_RUNTIME_IMAGE digests, optionally set UV_PYTHON_DOWNLOADS=never) is specific and actionable. No open PR or duplicate issue covers it."
+  },
   "07bfee077669e7ab51a5fae983ad8a5b168956f797df5a3919941f3f6d061e03": {
     "confidence": 0.85,
     "contradictions": [],
@@ -2445,6 +2473,36 @@
       "Maintainer preference on composite cursor encoding and backward-compatibility policy for legacy numeric cursors"
     ],
     "why": "Issue identifies a concrete, reproducible pagination defect in SessionService.listSessions(): mtime-only ordering plus strict `file.mtime < cursor` drops entire tie groups, and the cursor is a non-unique key. Triage evidence confirms exact lines (2570/2575/2681), a deterministic reproduction (200 files, one mtime, size 20 -> 20 of 200), and four live callers. The proposed composite (mtime, sessionId) cursor has a clear validation path (cursor-following test asserting each session id returned once). Open PR #11527 is opt-in SQLite and does not cover the default filesystem path, so it is not a blocking duplicate."
+  },
+  "07fc20683c4101abcfe30d1f6db34b35da3d0238f0168f766077656f284fa07d": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Normalize finish reason in agent-controller where it is read, tolerating both {unified, raw} record and plain string forms",
+      "Add regression test covering nested and flat finishReason shapes"
+    ],
+    "risks": [
+      "Nesting depth differs across providers; a one-level unwrap may silently fail for some",
+      "Normalizing at the provider boundary breaks ai@7's own downstream normalization",
+      "Supplying stopWhen appears to replace the maxSteps-derived condition, risking unbounded turns"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a real @ai-sdk provider and maxSteps > 1, asserting the turn stops after the model returns stop rather than consuming the full step budget",
+      "Add unit test feeding both {unified:{unified:'stop',raw:'STOP'}} and flat 'stop' shapes to the finish-reason reader"
+    ],
+    "unknowns": [
+      "No public minimal reproduction is supplied; reproduction requires a real provider rather than MockLanguageModelV4"
+    ],
+    "why": "Issue pinpoints the root cause: agent-controller reads finish reason via getString() on a {unified, raw} record, yielding undefined, so the stop branch never fires and multi-step turns run to maxSteps. Concrete code anchors, measured before/after metrics, and a workaround are supplied. No duplicate/merged fix covers this; the only overlapping PRs are keyword-only and unrelated."
   },
   "0800a641e3c341c34ef31972486da3cbd6daefda89121fc39392dff8b6644106": {
     "confidence": 0.7,
@@ -7923,6 +7981,41 @@
       "Whether the fix is already present in the latest main branch or v0.28.0, which would make the contribution redundant"
     ],
     "why": "The issue provides a clear root cause: a DeepGEMM revision regression between e21c821 and 8b1392b causes CUDA illegal memory access during CUDA graph capture on SM90 H20. A controlled A/B test confirms the fix, and the issue includes concrete reproduction steps and code anchors. This is a kernel-level algorithm bug with a clear validation path."
+  },
+  "1c0d64613df4740f92185249abac3e3bf6d519db51cff3dd6a8bdfa2c660221c": {
+    "confidence": 0.6,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while issue body identifies a specific code path and root cause",
+      "open_pr_assessment status is semantic_overlap_requires_review with best_score -18, indicating uncertain overlap"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py",
+      "drop_params handling for reasoning_effort on openai/azure chat path"
+    ],
+    "risks": [
+      "Existing PR #40885 may already cover the root cause, making a new PR duplicative",
+      "Changing drop_params semantics could affect other unsupported-param cases",
+      "Behavior change may conflict with maintainer design preference"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing test using get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) expecting UnsupportedParamsError or forwarded param",
+      "Regression test for azure provider path",
+      "Run targeted unit tests for get_supported_openai_params and drop_params"
+    ],
+    "unknowns": [
+      "Whether PR #40885 actually fixes the same root cause for gpt-4.1/gpt-4o on openai/azure",
+      "Whether maintainers prefer forwarding the param vs raising UnsupportedParamsError under drop_params"
+    ],
+    "why": "Issue describes a concrete user-visible bug with a reproducible path, but the supplied evidence shows an open PR (#40885) with semantic overlap on the same reasoning_effort code path that is not linked to this issue. Duplicate/merged-fix coverage is unresolved, which materially determines whether new code work is actionable."
   },
   "1c0e91125d0b847395cf79734c117d45504842db9d351551303898cd19bc242d": {
     "confidence": 0.85,
@@ -23489,6 +23582,38 @@
     ],
     "why": "The issue provides a precise root cause in the single-type branch of postProcessJSONNode, a minimal standalone reproducer, and a clear expected fix aligned with the already-merged multi-type fix (#21190). The bug causes schema duplication and OpenAI server errors, with production impact and a concrete validation path."
   },
+  "50e48c5c72675384724bb8d29e2bbbc0d5f625c816b992b6e2d9978016e363c9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "extensions/vscode/src/util/FileSearch.ts: bound the walk (maxFiles cap) and/or chunk addAll with awaits",
+      "Optionally use vscode.workspace.findFiles() or listWorkspaceContents for remote workspaces",
+      "Optionally extend default ignore list for out-of-source build dirs"
+    ],
+    "risks": [
+      "Choosing between maxFiles cap, chunking, and findFiles() may need maintainer preference, but any is actionable",
+      "Behavior change to @file search completeness if cap is too low",
+      "Remote-SSH crash itself cannot be reproduced in CI; validation relies on unit-level bounding tests"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that stubs walkDirs to return > cap paths and asserts the index is bounded and the event loop yields between batches",
+      "Regression test asserting initializeFileSearchState does not synchronously addAll an unbounded result set",
+      "Run targeted unit tests and static checks for the vscode extension package"
+    ],
+    "unknowns": [
+      "Exact preferred cap value and whether maintainers prefer findFiles() over capping walkDirs"
+    ],
+    "why": "Issue provides a concrete root cause in extensions/vscode/src/util/FileSearch.ts: initializeFileSearchState() calls walkDirs with no cap and synchronously addAll()s every path into MiniSearch, blocking the extension host on large Remote-SSH workspaces. A commenter independently confirms the line and notes walkDirs already accepts maxFiles, giving a concrete minimal fix path. Reproduction evidence (ordered steps, CPU profiles, logs) and code anchors are supplied, and no duplicate/merged fix covers this path."
+  },
   "5105335f7b5b60c223331111f95768eb587bd5f4e9fa6f8146939df791fb0900": {
     "confidence": 0.7,
     "contradictions": [],
@@ -35273,6 +35398,41 @@
     ],
     "why": "The issue identifies a concrete runtime bug with reproducible commands and code-level anchors (gdn_backend.py:559, AWQ dtype mismatch, CUDA graph hangs). It involves quantization numerics and model architecture, satisfying the llm_algorithm track. The root cause is clear: dtype mismatch in AWQ path and missing fast path for hybrid GDN on SM89. Validation path is concrete via reproduction commands and potential numerical tests."
   },
+  "72ac0110e94befe6381ecc3d720ec974d3afe5708cd5299bf7d5a7de3d658472": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Triage bot states the AppImage contains no Python and exports no PYTHONHOME/PYTHONPATH, while reporter provides binary-level string and /proc environ evidence that it does"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/mcp-client.ts: strip PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH from inherited env for stdio MCP children",
+      "packages/core/src/utils/sanitize-child-env.ts: extend sanitization list",
+      "packages/cli/src/config/shared-env-keys.ts: align shared env key handling"
+    ],
+    "risks": [
+      "Triage bot disputes AppImage attribution; fix location may differ from reporter's claim",
+      "Over-broad env stripping could break MCP servers that legitimately rely on inherited env vars",
+      "LD_LIBRARY_PATH scrubbing may affect other dynamically linked children"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: spawn a stdio MCP child with poisoned PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH in process.env and assert the child env is neutral",
+      "Integration: configure a Python venv stdio MCP server under a simulated AppImage env and verify handshake succeeds",
+      "Regression: confirm user-supplied mcpServerConfig.env still overrides sanitized values"
+    ],
+    "unknowns": [
+      "Whether maintainers accept the AppImage attribution over the triage bot's static analysis",
+      "Whether the deferred scrubbing tradeoff (#8653) will be re-opened for these variables"
+    ],
+    "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP children, breaking external Python interpreters. Reporter supplied a minimal repro, /proc environ evidence, and a working workaround. Triage bot disputed the AppImage attribution, but the reporter rebutted with binary-level string evidence and a mount-prefix match, so the root cause is plausibly established though not fully settled. Code anchors (mcp-client.ts, sanitize-child-env.ts, shared-env-keys.ts) give a clear fix surface."
+  },
   "72d0326c71307d687265ff726b9eb8440664c8e84d24366a34c6b2a90245ab5e": {
     "confidence": 0.85,
     "contradictions": [],
@@ -43124,6 +43284,44 @@
     ],
     "why": "Issue provides a clear root cause: capability guard checks symbol presence and device capability but not cubin arch coverage, leading to kernel launch failure on sm_110a. Reproduction command and traceback are supplied, and a workaround confirms the Triton fallback path. The issue is actionable with a concrete fix (probe device or catch runtime error) and a validation path (run reproduction on sm_110a)."
   },
+  "8dace00f2d8bdb80a966ed9c836310cc9ba20344e7ce8a3da9126874c78a078e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body lists scaled_mm_sm90_fp8_dispatch.cuh and blockwise SM90/SM100 callers as unchecked, while the recent comment states those are covered by open PRs #55537/#56248/#56480"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "csrc/libtorch_stable/quantization/w8a8/cutlass/c3x/scaled_mm_blockwise_sm120_fp8_dispatch.cuh: set runtime leading strides from tensor metadata instead of make_cute_packed_stride",
+      "tests/kernels/quantization/test_cutlass_scaled_mm.py: add strided/padded-view regression coverage for the SM120 blockwise path"
+    ],
+    "risks": [
+      "SM120 hardware (RTX 5090 / RTX PRO Blackwell) is required to validate the only unclaimed caller; without it the fix cannot be confirmed",
+      "Three open PRs collide in tests/kernels/quantization/test_cutlass_scaled_mm.py at overlapping hunk anchors, so any new work risks rebase churn and duplicate effort",
+      "PR #55537 tightens the shared operator boundary (16-byte data_ptr alignment, leading dim >= logical extent), which may reject padded views built via element-offset slicing",
+      "Repository policy reports ai_disclosure_conflict, which may block automated public submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the 512x512-view-backed-by-1024x1024 stride matrix on SM120 hardware and confirm ~8% mismatches before the fix and 0 after",
+      "Run the existing test_cutlass_subset / test_cutlass_strided_subsets regression on SM120",
+      "Verify packed (non-padded) inputs remain bit-identical to the pre-fix path"
+    ],
+    "unknowns": [
+      "Whether any of the three open PRs will merge and thereby close the covered callers",
+      "Whether SM120 hardware is available to the candidate to validate the last unclaimed caller",
+      "Whether the repository's AI disclosure policy permits the required public contribution action"
+    ],
+    "why": "The issue is a concrete, well-evidenced CUTLASS C3x kernel correctness bug (packed strides reconstructed from shape instead of tensor metadata), with a reproducible stride matrix and a proposed fix. However, the supplied evidence shows three open PRs (#55537, #56248, #56480) already covering five of six affected callers, and the issue's own comment states only scaled_mm_blockwise_sm120_fp8_dispatch.cuh remains unclaimed — requiring SM120 hardware that the reporter lacks. The remaining actionable work is therefore gated on unavailable hardware, and the duplicate/coverage status is explicitly 'semantic_overlap_requires_review' rather than resolved."
+  },
   "8de24e9cd4380f38ab3035a84d8d3a14faa714b0c6be8d60048aec77da22cfdf": {
     "confidence": 0.85,
     "contradictions": [],
@@ -45160,6 +45358,39 @@
       "Exact FastMCP version and configuration in the target deployment after migration"
     ],
     "why": "The issue reports a concrete OAuth failure with a clear reproduction path and identifies a mismatch between the MCP resource indicator and Entra's required resource-qualified scopes. The discussion confirms the root cause and proposes a migration to FastMCP's AzureProvider/OAuthProxy as the translation boundary, which is actionable."
+  },
+  "9502a18f20e45eebcfd4c5352b9316bfedb415356ab818eae0c4fffded5e3b6b": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/message-list/prompt/download-assets.ts: make per-part download failure non-fatal or surface it to a processor hook instead of rejecting the whole step",
+      "packages/core/src/utils/p-map.ts: confirm error propagation semantics used by downloadAssetsFromMessages",
+      "Optional: expose failed-download metadata (url, message id, part index) to processAPIError or a new hook"
+    ],
+    "risks": [
+      "Behavior change may silently drop attachments; placeholder vs. hook vs. size cap is a design choice the maintainer may want to weigh in on",
+      "Changing pMap error handling could mask other genuine download failures",
+      "Per-download size cap is a separate concern and may expand scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test in packages/core that builds a message list with an image part whose URL returns 404 and asserts the step no longer throws DOWNLOAD_ASSETS_FAILED",
+      "Regression test: first turn succeeds, then URL is made to 404, and a subsequent turn in the same thread still completes",
+      "Run targeted package unit tests and static checks for packages/core"
+    ],
+    "unknowns": [
+      "Which of the three proposed remedies (placeholder, processor hook, size cap) maintainers prefer",
+      "Whether the triage bot's request to wait for maintainer approval is a hard gate for this repo"
+    ],
+    "why": "Issue pinpoints the failure path: downloadAssetsFromMessages/downloadFromUrl in packages/core/src/agent/message-list/prompt/download-assets.ts throws DOWNLOAD_ASSETS_FAILED on a permanently unreachable attachment, and because history is replayed each turn the whole thread dies. Code anchors and a concrete ordered reproduction (send attachment, make URL 404, send next message) are supplied, so a reference-vs-implementation regression test is constructible. The open PRs (#23685, #23050) show no direct code-path or semantic overlap, so no duplicate coverage blocks work."
   },
   "9506866a686728a5b7f1cc814f069c369f312e7c52c8457bb684a0bddf54e530": {
     "confidence": 0.85,
@@ -56098,6 +56329,40 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a reproducible GPU-family-dependent gradient explosion in LoRA training, with strong evidence of an autotune-selected kernel defect or data race. However, the root cause is not yet isolated to a specific kernel or code path; the reporter offers to run diagnostics but no maintainer has confirmed or assigned the investigation. The candidate is actionable but requires maintainer confirmation to proceed with a fix."
   },
+  "bb10ea11356fff3c55c6f9a40c79da2f616e14d091eef2586ea8c744c7dd10f2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Factory controller mount / session yolo default handling so autoApprovePlans:false is honored",
+      "factory-plan skill or transition tool path to reach a human plan checkpoint before execute",
+      "FactoryTransitionService approval stamping for agent-initiated transitions"
+    ],
+    "risks": [
+      "Changing yolo defaults could alter unrelated tool-approval behavior",
+      "Maintainers may prefer fixing the skill instruction vs the controller default",
+      "Scope creep into broader approval/governance features (#20757, #23522)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the gist reproduction npm test to confirm the bug and yolo:false control",
+      "Run npm run test:regression to assert the plan awaits human approval and exits 0 after fix",
+      "Add a targeted unit/integration test around session.resolveToolApproval and factory_transition_work_item with autoApprovePlans:false"
+    ],
+    "unknowns": [
+      "Whether maintainers want the fix in the stock skill, the controller mount, or the transition service",
+      "Whether #22530 already changed the intended unattended approval semantics"
+    ],
+    "why": "Issue provides an offline, deterministic reproduction with a failing desired-behavior assertion and a concrete root-cause chain: stock factory-plan skill directs factory_transition_work_item(stage: execute) instead of submit_plan, the controller mount does not override the Code SDK default yolo: true, and session.resolveToolApproval returns allow without emitting a human tool_approval_required event, so the plan checkpoint is bypassed. This is a concrete agent/controller/tool-approval behavior bug with a clear validation path, not mere plumbing."
+  },
   "bb516bcf522aade73c2d9d1088435c11443264d36d9601497381a4ef6f7d3e06": {
     "confidence": 0.7,
     "contradictions": [],
@@ -59872,6 +60137,41 @@
       "Maintainer preference for configuration approach"
     ],
     "why": "Issue provides clear reproduction steps, environment details, and server logs showing client disconnect due to non-configurable HTTP body timeout. Root cause is identified as missing configuration for body timeout in Cline's API settings. This is actionable for implementing a configurable timeout or adjusting default behavior."
+  },
+  "c781763d54b4a8d611ea0d0f366709cef7229bef7a80827c65e80ebe0bd9a829": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue states PR #12100 merged the streaming fix but is not an ancestor of v1.4.2, while open_pr_assessment lists #12100 as MERGED with semantic overlap but no direct code overlap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/http/service/openai.rs: stop selecting only response.data.first() for audio/speech and deliver all chunks",
+      "lib/llm/src/protocols/openai/audios/aggregator.rs: concatenate complete waveform payloads or preserve multi-chunk stream",
+      "Regression test covering multiple audio chunks with a silent first chunk and valid WAV framing"
+    ],
+    "risks": [
+      "Fix may already exist in merged PR #12100; work could reduce to a backport or documentation of the support boundary rather than new code",
+      "Changing audio aggregation/streaming behavior could affect other response formats or clients",
+      "Requires GPU/Kubernetes environment to fully validate end-to-end"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's DGD and curl request against 1.4.2 images; assert output.wav is not 3884 bytes / 0.08s silent",
+      "Add a unit/integration test feeding a multi-chunk audio stream (silent first chunk) through the frontend handler and assert complete WAV delivery",
+      "Compare direct-to-worker chunk capture vs HTTP response to confirm all chunks reach the caller"
+    ],
+    "unknowns": [
+      "Whether the intended resolution is a backport of #12100 to 1.4.2 or a new fix on main",
+      "Whether current main still exhibits the bug or is already fixed by #12100"
+    ],
+    "why": "Issue provides a concrete, reproducible 1.4.2 failure: HTTP /v1/audio/speech returns only the first 0.08s silent WAV chunk while worker logs show three chunks, with byte-level hashes and a direct-to-worker comparison. The diagnosis points at the frontend speech handler selecting response.data.first() and the audio aggregator not concatenating waveform payloads, giving a plausible code-level root cause. However, the issue itself frames this as a release-specific qualification/backport report and states PR #12100 (merged) already contains the streaming fix but is not an ancestor of tag v1.4.2, so the actionable code work may be a backport rather than a new fix."
   },
   "c78819723a9dfbb6c078d3c7378a50b3076acf74cd2788dd611a9b00e81cccde": {
     "confidence": 0.7,
@@ -69019,6 +69319,45 @@
       "Related issue status unknown due to timeout"
     ],
     "why": "Issue identifies a clear shallow-update bug in get_config causing recursive config override failure, with a concrete reproduction. However, open PR and related issue lookups timed out, so duplicate implementation cannot be excluded. Maintainer design confirmation is needed before starting work."
+  },
+  "e32b22dcb2fbf5fd8f5d02a9e7aebb02f4ae929c672084f644246ac8147870fc": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims drafter re-scans full accumulated KV every cycle; commenter retracts this, noting DFlash is single-pass with one draft forward per step",
+      "Commenter attributes cost to missing dcp_local_seq_lens in DFlashSpeculator.propose, contradicting the issue's 'unavoidable full-context attention' framing",
+      "Measured 28.85 ms draft overhead is ~17x beyond layer-count/sharding geometry, unexplained"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py dynamic_sd_lookup keying",
+      "vllm/config/speculative.py speculative config schema",
+      "DFlashSpeculator.propose DCP metadata plumbing"
+    ],
+    "risks": [
+      "Root cause is contested between full-context drafter scan and missing DCP sharding; fixing the wrong one yields no improvement",
+      "Direction 1 overlaps open PR #48944 and proposal #54801, risking duplicate work",
+      "AI disclosure policy conflict blocks automated public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce 185k single-stream decode with DFlash DT4 vs SPEC_OFF on hybrid GDN target to confirm the ~71 vs ~16 tok/s gap",
+      "Run synthetic-zero acceptance sweep at DCP-1 vs DCP-8 to isolate whether the drafter penalty scales with DCP degree",
+      "Kernel trace attributing the per-cycle drafter attention time to confirm or refute the full-context scan hypothesis"
+    ],
+    "unknowns": [
+      "Whether the drafter penalty is caused by full-context attention or missing DCP sharding",
+      "Whether open PR #48944 already covers the requested per-sequence-length disable hook",
+      "Whether the synthetic-zero measurement method is representative or worst-case-only"
+    ],
+    "why": "The issue reports a real long-context spec-decode regression with profiled ~182 ms/cycle drafter attention cost, but the supplied comment thread materially contradicts the proposed mechanism: one commenter retracts the 'drafter rescans full KV' explanation (DFlash is single-pass), another attributes the cost to missing DCP sharding in DFlashSpeculator.propose, and the magnitude is unexplained (~17x beyond geometry). Direction 1 (per-seq-len disable hook) is also already covered by open PR #48944 and a separate proposal #54801, so the actionable code path is unresolved."
   },
   "e340917d1462d511f2c9f32651e642385ff132150e5fed4914523c305645f134": {
     "confidence": 0.85,
