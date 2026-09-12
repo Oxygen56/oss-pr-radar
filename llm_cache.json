@@ -1162,6 +1162,40 @@
     ],
     "why": "The issue provides a clear, reproducible bug on Windows with a specific root cause in fileURLToPath handling of relative file:// paths. The fix is localized to path resolution in HTTP provider multipart handling, and the expected behavior is well-defined. No competing PR or related issue exists, and the maintainer has not yet engaged, but the bug is user-visible and actionable."
   },
+  "04bad9c39afd3195324aa5b488c914e9ce71ae3fe66de8e24260ff1d02efc914": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "mlx/distributed ring backend socket exchange for large payloads (all_sum/all_reduce)",
+      "mlx.nn.utils.average_gradients chunking/collective sequencing",
+      "stream handling for communication_stream=mx.cpu vs GPU stream"
+    ],
+    "risks": [
+      "Distinguishing a genuine ring-backend race from timing/network artifacts requires multi-host hardware",
+      "Fix may need to address both CPU-stream deadlock and GPU-stream watchdog paths",
+      "Reproduction is probabilistic, so regression tests need many iterations to be meaningful"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run cpu_stream_loop_repro.py at >=3 ranks in a loop to reproduce the probabilistic deadlock",
+      "Run gpu_stream_repro.py with injected skew to reproduce the ~5s watchdog kill",
+      "Add a regression test exercising repeated all_sum on tens-of-MB payloads across >=3 ranks with fixed seed and iteration count"
+    ],
+    "unknowns": [
+      "Exact root cause inside the ring socket exchange is not yet identified",
+      "Whether the GPU-stream watchdog kill and CPU-stream deadlock share one underlying defect"
+    ],
+    "why": "Issue provides a self-contained, dependency-free reproduction of a ring-backend collective deadlock in mlx.distributed.all_sum/average_gradients, with measured ~3-4% per-collective failure rate, ruled-out variables (tree shape, chunking, skew, pre-barrier), and independent py-spy stack traces from a second reporter pinning both ranks inside all_sum. This is a concrete distributed-training invariant/algorithmic bug with a clear reference-vs-implementation validation path."
+  },
   "050b8940d1d5024fcdf2906032e6a02ac5d0527389b39369f452b81b84e44e7b": {
     "confidence": 0.9,
     "contradictions": [],
@@ -1446,6 +1480,40 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a silent correctness failure in LMCache P/D disaggregation with a concrete reproduction and a plausible root-cause hypothesis from a contributor (token-count mismatch in the adapter). However, the supplied evidence indicates a potential duplicate issue #52620 sharing stack signatures, and the deterministic gate is HUMAN_REVIEW. The candidate is algorithmically relevant (KV-cache correctness, distributed inference) but requires maintainer confirmation of the duplicate and root-cause ownership before implementation."
+  },
+  "05d8c7beebcb8b6242979fb01029bde6071e7ef7f2064b2d5c270dc689a9b68f": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/omni/omni_handler.py: propagate response_format into EngineInputs",
+      "components/src/dynamo/vllm/omni/output_formatter.py: honor b64_json delivery",
+      "runtime FFmpeg build configuration / swscale guard for RGB->YUV420p color correctness"
+    ],
+    "risks": [
+      "FFmpeg color defect may require a runtime rebuild/backport rather than a source-only change",
+      "Disabling MMXEXT is diagnostic only and not performance-qualified",
+      "Scope spans two independent defects, so a single PR may need to be split"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test asserting response_format=b64_json yields nonempty data[0].b64_json and no file:// URL",
+      "Run the model-free RGB-quadrant encode/decode round-trip and assert decoded quadrant colors match input",
+      "Verify explicit URL delivery still works when external media storage is configured",
+      "Re-run the DGD request against rebuilt, version-identified images"
+    ],
+    "unknowns": [
+      "Whether the FFmpeg guard fix is available in a buildable upstream release for the shipped runtime"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause for the primary defect: _engine_inputs_from_video() omits response_format=req.response_format, so the formatter defaults to url and drops b64_json. Code anchors, ordered reproduction steps, an executable curl command, and a minimal diff are supplied. The secondary FFmpeg color defect is isolated with a model-free RGB-quadrant reproduction and controlled cpuflags comparisons, giving a concrete validation path. No duplicate or merged-fix coverage is reported."
   },
   "05f4d2b870d883a6f63a07bd14d84d0ad470bdb97ff9f2c282d5c00cd35d16e4": {
     "confidence": 0.85,
@@ -31197,6 +31265,42 @@
     ],
     "why": "Issue provides a clear, reproducible bug with a detailed root-cause analysis and a concrete validation path. The proposed fix (argument validation) is actionable and aligns with existing patterns. No material unknowns block implementation."
   },
+  "6a833ca9a2b382779e1dcb84a701748d77ca16ac16af864c07000baa6d905414": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Avatar image-generation request builder: honor configured profile image size instead of hardcoded 1024x1024",
+      "Image generation timeout plumbing: apply IMAGE_GEN_TIMEOUT_MS to the OpenAI-compatible image fetch instead of the default undici headers timeout",
+      "Avatar prompt assembly: ensure the character/avatar prompt is included in the outgoing request body"
+    ],
+    "risks": [
+      "Timeout may originate in a shared undici dispatcher/agent rather than the image call site, so the fix could touch broader networking behavior",
+      "Size handling may be split between profile config and provider request mapping, risking partial fixes",
+      "Prompt-forwarding symptom is only reported in a comment and may be a separate defect"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that mocks an OpenAI-compatible image endpoint and asserts the request body size equals the configured 512x512",
+      "Add a test asserting the image fetch uses the configured IMAGE_GEN_TIMEOUT_MS (e.g. via fake timers or an injected fetch) rather than the default headers timeout",
+      "Add a regression test asserting the avatar/character prompt appears in the outgoing image request body",
+      "Run the targeted package unit tests and static checks for the image-generation module"
+    ],
+    "unknowns": [
+      "Exact code path that hardcodes 1024x1024 and where IMAGE_GEN_TIMEOUT_MS is (or is not) consumed",
+      "Whether the prompt-forwarding symptom shares the same root cause as the size/timeout defects"
+    ],
+    "why": "Issue reports two concrete, user-visible defects on the avatar image-generation path: configured size (512x512) is ignored and a hard 1024x1024 is sent, and IMAGE_GEN_TIMEOUT_MS=1800000 is ignored with a ~300s undici HeadersTimeoutError. Reproduction steps, expected/actual pair, and a traceback frame are supplied, and a commenter adds a third symptom (avatar prompt not forwarded). No open PR or duplicate issue covers it, so the work is not already done."
+  },
   "6ab6ef79ea14b7a4f4415b9d606924d4d25da641157b23420c42de10bc65975f": {
     "confidence": 0.85,
     "contradictions": [
@@ -35136,6 +35240,39 @@
     ],
     "why": "Issue provides a clear, reproducible bug with a suspected root cause and code anchors. The fix is actionable and security-relevant, and the issue explicitly offers verification support."
   },
+  "768ec3fe50a795e1ec1561bd5aaf6c756378b5f98619bfd923176abfb0a39f58": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py: surface reasoning_effort as unsupported for non-reasoning gpt-4.1/gpt-4o models",
+      "drop_params handling: raise UnsupportedParamsError (or forward the param) instead of silently dropping reasoning_effort when the model cannot reason"
+    ],
+    "risks": [
+      "Changing drop_params semantics for reasoning_effort could affect other models/providers that legitimately accept it",
+      "Maintainer may prefer forwarding the param to the provider over raising UnsupportedParamsError, which changes the error surface",
+      "Broadening the change beyond the gpt-4.1/gpt-4o families could cause unintended API behavior changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test asserting get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) does not silently return without reasoning_effort",
+      "Repeat the same assertion for custom_llm_provider='azure'",
+      "Verify drop_params=False still raises UnsupportedParamsError for these models",
+      "Run the targeted litellm utils/param unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer forwarding reasoning_effort to the provider versus raising UnsupportedParamsError under drop_params",
+      "Exact set of models/providers that should be treated as non-reasoning for this gate"
+    ],
+    "why": "Issue provides a concrete, executable reproduction (get_optional_params with drop_params=True silently drops reasoning_effort for gpt-4.1/gpt-4o on openai and azure), a clear root-cause anchor (get_supported_openai_params omits reasoning_effort, and drop_params then silently discards it), and a provider-side 400 confirming the drop hides a real rejection. No open PR directly covers this code path; the closest PRs only share the reasoning_effort keyword and target different paths (gpt5 gating, bedrock grok, responses drop_params)."
+  },
   "76b5c7c494964a6b044d1a2dc434e4bccf6ebbfc0123dd8ab67d992d87438234": {
     "confidence": 0.7,
     "contradictions": [],
@@ -38552,6 +38689,35 @@
       "No existing tests or code anchors beyond issue text"
     ],
     "why": "The issue describes a concrete, reproducible bug in the MCP server auth-update flow: full-replace semantics without read-back, no session hot-reload, and leaky OAuth errors. It provides ordered repro steps, root cause analysis, and a suggested fix direction. This is a user-visible bug in an agent/inference infrastructure path, with clear actionability."
+  },
+  "8336eb7cd69b786ac7144e2a931c4e95ff927136f323c621a8a2f01a2b770b86": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docker/Dockerfile.database: bump LITELLM_BUILD_IMAGE and LITELLM_RUNTIME_IMAGE to current wolfi-base digests",
+      "docker/Dockerfile.database: optionally add UV_PYTHON_DOWNLOADS=never to make interpreter selection failures loud"
+    ],
+    "risks": [
+      "Bumping the base digest may pull in other package changes that affect the build or runtime image",
+      "The exact current wolfi-base digest must be verified at implementation time to avoid re-pinning to a stale digest"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run docker build -f docker/Dockerfile.database -t litellm-test . on linux/amd64 and confirm the apk add and uv sync layers succeed",
+      "Run docker run --rm --entrypoint sh <built-image> -c 'ls -l /app/.venv/bin/python' and confirm the symlink resolves to /usr/bin/python3",
+      "Run docker run --rm <built-image> python -c 'import litellm' to confirm the runtime image starts"
+    ],
+    "unknowns": [
+      "The exact current wolfi-base digest to pin to is not supplied in the evidence"
+    ],
+    "why": "Issue provides a concrete, reproducible build failure with two distinct failure modes traced to a single root cause: the pinned wolfi-base digest has drifted from the current apk package repository, so apk add python3 installs an interpreter requiring a newer glibc than the pinned base provides. The suggested fix (bump LITELLM_BUILD_IMAGE/LITELLM_RUNTIME_IMAGE digests, optionally set UV_PYTHON_DOWNLOADS=never) is specific and actionable, and the issue includes exact commands, error output, and a comparison against the published image."
   },
   "83467bc1c14d0ef66aeea259629eeed649194f904f31a377609e42b7be05b6d5": {
     "confidence": 0.85,
@@ -50733,6 +50899,40 @@
     ],
     "why": "The issue is an evidence/ops completion task, not a code contribution. The implementation gap is already closed by commit 23b875ff7f8, and the remaining work requires human-provided artifacts (ASR bundle, fused library) and legal audio staging. No new code change is actionable without those prerequisites."
   },
+  "aee334ec39e2a203f8c47694054461bb05f4e2eb99cb425ebe7da9e6c8fef6ce": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "tests/integration/n8n-api/utils/cleanup-helpers.ts: scope or relocate cleanupOrphanedWorkflows",
+      "18 test files' afterAll hooks: remove per-file instance-wide sweep",
+      "add globalSetup (or equivalent) to run orphan sweep once before the suite",
+      "optional age guard to avoid deleting recently created workflows"
+    ],
+    "risks": [
+      "globalSetup may not have access to the same credentials/context as per-file afterAll hooks",
+      "age guard could leave genuinely leaked recent workflows uncleaned",
+      "changing shared cleanup helper may affect other test files not listed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by running the full integration suite repeatedly on the base commit and observing 404/N8nNotFoundError in different files",
+      "After fix, run the full suite multiple times and confirm no cross-file workflow deletion failures",
+      "Run affected files individually (smart-parameters.test.ts, update-partial-workflow.test.ts, ai-validation/e2e-validation.test.ts) to confirm they still pass",
+      "Verify globalSetup sweep still removes leaked workflows from a simulated crashed prior run"
+    ],
+    "unknowns": [
+      "Whether the test harness/globalSetup has access to the n8n API credentials needed for the sweep",
+      "Exact count and full list of the 18 calling test files"
+    ],
+    "why": "Issue identifies a concrete root cause: cleanupOrphanedWorkflows in tests/integration/n8n-api/utils/cleanup-helpers.ts:25 performs an instance-wide sweep of workflows matching the shared cleanup prefix/tag, and 18 test files call it from afterAll while Vitest runs files in parallel, so the first finisher deletes in-flight workflows of other files. Observed 404/N8nNotFoundError failures across three runs in different files, each passing in isolation, support the race. Suggested fix (move sweep to globalSetup, optional age guard) is concrete and testable."
+  },
   "af14f7d278c0511e454d90474ac89e2b78725dca9ee80b647b1debe84075f05c": {
     "confidence": 0.82,
     "contradictions": [],
@@ -61234,6 +61434,42 @@
     ],
     "why": "The issue provides a clear root cause (race between page reload and toggle click without readiness assertion), concrete reproduction evidence (consistent E2E failures across unrelated PRs), and a specific validation path (assert toggle enabled before click). The proposed fix is actionable and testable."
   },
+  "d2e510fe2ad5d0b0d6fb1aa64128ccda4cfe38112748587544b37a87dcbb957b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports rootCauseCoverage=false while the issue body itself supplies a detailed root cause; the PR's coverage is incomplete, not the issue's"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "deepspeed/runtime/zero/linear.py: make AllGatherHandle.wait() and NoGatherHandle.wait() idempotent (early-return when already completed / re-check INFLIGHT)",
+      "Ensure released parameters remain NOT_AVAILABLE so subsequent fetch re-gathers from ds_tensor"
+    ],
+    "risks": [
+      "Fixing wait() idempotency must not mask genuine re-gather needs or break MultipleAllGatherHandles delegation",
+      "Existing draft PR #8487 targets the same classes; implementation overlap/duplication risk",
+      "Formatting CI failure on the related PR is diagnostic only, not a value signal"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Handle-level 2-GPU reproduction: all_gather_coalesced([victim, other]), wait, release victim, wait again; assert victim status is NOT_AVAILABLE and data is not empty",
+      "Cover both configurations: stage3_allgather_sequential=true single process group, and gather group spanning two process groups with victim alone in its bucket",
+      "Regression controls: two/three weights in one process group and mixed bf16/fp32 group must remain correct",
+      "Add a multi-rank ZeRO-3 test exercising repeated fetch/release of a parameter above stage3_param_persistence_threshold"
+    ],
+    "unknowns": [
+      "Whether PR #8487's draft implementation already fully fixes both handle classes or leaves gaps",
+      "Exact maintainer preference on idempotency approach (completion flag vs INFLIGHT re-check)"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: AllGatherHandle/NoGatherHandle wait() is not idempotent, unlike the coalesced handle classes, so a second wait can set AVAILABLE over freed (empty) storage. Reproduction is described at handle level on 2 GPUs with two configurations and controls, and the expected behavior (idempotent wait, re-gather from ds_tensor) is a concrete distributed-training invariant. This is a real algorithm-mechanism bug, not plumbing."
+  },
   "d2f0f43ac554b864a88479cf019f2bdec194278a8629e65f470a6a943efa35a9": {
     "confidence": 0.7,
     "contradictions": [
@@ -66302,6 +66538,40 @@
       "Whether PR #18244 fully resolves the issue for all configurations (e.g., CUDA graph off)"
     ],
     "why": "Issue provides deterministic reproduction with batch-size threshold, expected vs actual outputs, and extensive maintainer-led ablation localizing the fault to the attention backend/KV-state boundary. A concrete fix PR (#18244) is referenced by a collaborator, and a workaround is provided. The root cause is sufficiently clear for actionable code work."
+  },
+  "e1ecb1926a2cf1b697248c89689319b276bf90d85d98c945832fd47f79b8d57c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body asserts a clear root cause in downloadFromUrl, but actionability_evidence.root_cause_signal is false and reproductionPathPlan is false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/message-list/prompt/download-assets.ts: make per-part download failure non-fatal or surface it to a hook",
+      "packages/core/src/utils/p-map.ts: consider error isolation semantics if pMap is the propagation point"
+    ],
+    "risks": [
+      "Three mutually exclusive proposed solutions; implementing the wrong one wastes effort and may conflict with maintainer design preference",
+      "Changing download failure semantics could mask genuine errors or alter API behavior for existing consumers",
+      "Repeated full-file downloads per turn is a separate performance concern that may be out of scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test that builds a message list with an unsupported-URL image part whose fetch returns 404, then asserts the step does not throw DOWNLOAD_ASSETS_FAILED and later turns still succeed",
+      "Regression test that a successful download path is unchanged"
+    ],
+    "unknowns": [
+      "Which of the three proposed remedies maintainers will accept",
+      "Whether maintainer triage/approval will be granted before a PR is welcome",
+      "Whether the failure is reproducible on current main with a concrete minimal test harness"
+    ],
+    "why": "Issue describes a plausible failure mode in downloadAssetsFromMessages/downloadFromUrl where a permanent 404 rejects the whole step via pMap, but the supplied evidence marks root_cause_signal=false and reproductionPathPlan=false; the issue offers three alternative desired behaviors (placeholder option, processor hook, size cap) without a single agreed fix, and the bot comment explicitly asks contributors to wait for maintainer triage before opening a PR."
   },
   "e200d8ab0437f515de2b6502970e776b2fb8c1d7f9457eebc7dafb3a0f704100": {
     "confidence": 0.7,
