@@ -19956,6 +19956,38 @@
     ],
     "why": "The issue provides a clear root cause: the Rust frontend gates prompt_logprobs behind nvext.extra_fields, while native vLLM returns it at the response root. Reproduction steps and expected/actual outputs are supplied, and the fix is localized to lib/llm with a concrete validation path."
   },
+  "43bdc789c08dcefe3432b90b8413e76576f9f38ed4a54a4083d2fd91145840a2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py: distinguish 'unsupported but harmless' from 'param is the point of the call' for reasoning_effort on non-reasoning models",
+      "drop_params handling in get_optional_params: raise UnsupportedParamsError (or forward) instead of silently dropping reasoning_effort for gpt-4.1/gpt-4o families"
+    ],
+    "risks": [
+      "Behavior change may affect callers relying on silent drop for reasoning_effort; scope must be limited to models that cannot reason at all",
+      "Maintainer may prefer forwarding the param to the provider rather than raising locally",
+      "Azure path may have separate param handling that needs its own coverage"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add failing unit test: get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) must not silently return without reasoning_effort",
+      "Same test for azure provider and gpt-4o/gpt-4o-mini",
+      "Regression test: drop_params=True still silently drops genuinely harmless unsupported params for other models",
+      "Run targeted litellm unit tests for get_optional_params and provider param translation"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer forwarding vs raising UnsupportedParamsError for this class of param"
+    ],
+    "why": "Issue provides a concrete, executable reproduction (get_optional_params with drop_params=True silently drops reasoning_effort for gpt-4.1/gpt-4o on openai and azure), a verified provider-side 400, and a clear code anchor (get_supported_openai_params / drop_params). Root cause is well established: drop_params converts an explicit provider rejection into a silent behavior change. No open PR directly covers this code path (best overlap is keyword-only, no direct code overlap)."
+  },
   "43d647f60c1ef3bd1d6a5bc9e68863926ed661397aa99738e281999ad80aaf99": {
     "confidence": 0.85,
     "contradictions": [
@@ -21449,6 +21481,44 @@
       "Whether the issue is already fixed by an existing PR (e.g., #4385) is unclear."
     ],
     "why": "Issue provides concrete reproduction steps, multiple example trajectories, and a detailed root-cause analysis pointing to the parent agent processing empty streaming events after code-explorer completion. The evidence includes code anchors and a clear validation path via trajectory replay."
+  },
+  "49749822407b4b09e8223039a749407e0fc3d3f8b5847a7510fc418f9359aac6": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims drafter runs every step yet cannot identify the step that registers unwritten draft blocks",
+      "Duplicate assessment reports semantic overlap with open PRs while issue states no concrete fix exists"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py",
+      "vllm/v1/core/block_pool.py",
+      "vllm/v1/core/kv_cache_coordinator.py"
+    ],
+    "risks": [
+      "Root cause not pinned to a specific code path",
+      "Open PRs #53577/#56598 may already cover the fix",
+      "AI disclosure policy conflict blocks automated submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce acceptance collapse with APC on a shared ~20k-token prefix and compare against unique-prompt baseline",
+      "Add regression test asserting draft-group blocks are not registered when no drafter pass covered their tokens"
+    ],
+    "unknowns": [
+      "Which scheduling step skips drafter coverage",
+      "Whether PR #53577 or #56598 already fixes the root cause",
+      "Resolution of the ai_disclosure_conflict policy status"
+    ],
+    "why": "Issue describes a plausible draft-KV/prefix-cache corruption mechanism with code anchors and a workaround PR (#47926), but the reporter explicitly states they have not pinned which step registers unwritten draft blocks, and the candidate's own duplicate assessment flags open PRs #53577 and #56598 with overlapping dflash/dspark speculator paths and unresolved coverage. The AI-disclosure policy conflict also remains unresolved."
   },
   "497956747ca2caf0ab86b8f812d382c3d43b8cdcc8ff113d26359603706dfec4": {
     "confidence": 0.7,
@@ -33122,6 +33192,39 @@
     ],
     "why": "Issue reports four concrete scheduler defects with clear repro steps and evidence. Existing PR #11110 partially addresses one defect (run-now failure reporting) but lacks regression tests and does not cover the other three bugs. A materially better PR could fix all four issues with proper tests."
   },
+  "6aed2217c602dad558c13bfc3dc9e9584ad2bfbca1d41cfbf1b990d24a0349de": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body claims the same code is on main today, but no base-SHA verification of the failing behavior is supplied"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/message-list/prompt/download-assets.ts: make per-part download failure non-fatal or surface it to a processor hook",
+      "packages/core/src/utils/p-map.ts: possibly adjust error aggregation semantics"
+    ],
+    "risks": [
+      "Changing download failure semantics could silently drop attachments that should surface errors",
+      "Maintainers may prefer a processor-hook design over a placeholder option, making a premature implementation wasted work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test that replays a thread containing a user message with an image part whose URL returns 404, asserting the turn does not throw DOWNLOAD_ASSETS_FAILED",
+      "Run targeted core package unit tests for download-assets and the agent loop"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference among the three proposed solutions",
+      "Whether a concrete minimal reproduction or failing test already exists",
+      "Whether the issue is assigned or blocked by maintainer triage"
+    ],
+    "why": "The issue describes a plausible failure mode in downloadAssetsFromMessages/downloadFromUrl, but the supplied evidence does not establish a concrete reproduction or a confirmed root cause, and the issue itself offers three alternative desired behaviors rather than a single actionable fix. The bot comment explicitly asks contributors to wait for maintainer triage before opening a PR, and the candidate is marked WAIT_MAINTAINER with DESIGN_CONFIRMATION."
+  },
   "6af1a1a9e70126951b2dad20617a16b6730177325ea47704a542ead31ef00483": {
     "confidence": 0.8,
     "contradictions": [],
@@ -35269,6 +35372,42 @@
       "Maintainer preference for default value vs. retry approach."
     ],
     "why": "The issue provides a clear root cause (idle PostgreSQL connections dropped by RDS, no validation on checkout) and a concrete validation path (reproduce with the given DATABASE_URL parameters and observe error frequency). The suggested fix (default max_idle_connection_lifetime or retry on kind: Closed) is actionable and testable."
+  },
+  "707b0b2e6b343c97883921e0eb1ff6c50acc9502688b2e16acad37b2ac204399": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.algorithm_evidence claims qualified=true with model_architecture/distributed_training/numerics_quantization/evaluation_method, but the issue body and maintainer comment point to frontend tool-call parsing, and the evidence shows formula_signal=false and experiment_signal=false",
+      "candidate.actionability_evidence reports public_repro_signals=2 and reproduction_evidence including executable_command/minimal_example, while the issue body explicitly states the minimal reproduction attempt could NOT reproduce synthetically"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "No concrete algorithmic module identified; if pursued, likely vllm/entrypoints or rust/src/parser/src/reasoning/glm45.rs frontend tool-call parsing, which is out of scope for track=llm_algorithm"
+    ],
+    "risks": [
+      "ai_disclosure_conflict policy status may block automated public action",
+      "Potential duplicate issue #56583 with shared failure signatures could mean the fix is already covered",
+      "Maintainer attributes the bug to frontend tool-call parsing, which is ordinary API/parser plumbing rather than an LLM algorithm contribution",
+      "No reproducible synthetic trigger means any fix cannot be validated by a controlled experiment"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "A reference-vs-implementation or numerical regression test cannot be specified from the supplied evidence because no synthetic reproduction exists; the reporter's own attempts (single-turn, 8-way concurrent, 10-turn tool history, ~34k context) all returned coherent output"
+    ],
+    "unknowns": [
+      "Whether the ai_disclosure_conflict policy status permits any public contribution",
+      "Whether issue #56583 is a true duplicate whose fix would cover this issue",
+      "Whether the root cause is in vLLM core, FlashInfer 0.6.18, or transformers 5.16.1 — the reporter's version delta leaves all three open",
+      "Whether a deterministic synthetic reproduction can be constructed at all"
+    ],
+    "why": "The issue reports a real GLM-5.3-Flash degeneration regression, but the reporter explicitly could not reproduce it synthetically; only long real agentic sessions trigger it. A maintainer comment attributes it to 'tool call / vllm frontend', which is parser/frontend plumbing rather than an LLM algorithm mechanism (training objective, kernel algorithm, quantization/numerical method, or evaluation methodology). The candidate's algorithm_evidence claims model_architecture/distributed_training/numerics_quantization/evaluation_method, but the supplied evidence shows no formula, no experiment, and no concrete algorithmic root cause — the code anchors are collect_env.py, finished_reason, clear_thinking, bash, max_tokens, and glm parser files, i.e. frontend/parser plumbing. Additionally, the pre-task policy status is ai_disclosure_conflict, which is a materially blocking disclosure requirement, and there is a potential duplicate issue #56583 sharing stack/failure signatures. These unknowns determine whether code work is actionable."
   },
   "70a91257ccf59a6276f5df537f67d07050f4f7f093164083350e0a19c2292bd3": {
     "confidence": 0.85,
