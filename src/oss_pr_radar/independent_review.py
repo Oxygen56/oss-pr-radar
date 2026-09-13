@@ -1618,6 +1618,7 @@ def review_once(
     reviewer: ReviewRunner = codex_review_runner,
     timeout: int = 900,
     state_root: Path | None = None,
+    key: str | None = None,
 ) -> dict[str, Any]:
     """Review at most one committed result and atomically bind the verdict to it."""
 
@@ -1638,7 +1639,10 @@ def review_once(
         skipped: list[dict[str, str]] = []
         errors: list[dict[str, str]] = []
         retry_exhausted: list[dict[str, Any]] = []
-        candidates = _ordered_candidates(state_root, store.task_result_candidates())
+        candidates = store.task_result_candidates()
+        if key is not None:
+            candidates = [candidate for candidate in candidates if candidate.get("key") == key]
+        candidates = _ordered_candidates(state_root, candidates)
         for candidate in candidates:
             review_attempted = False
             source_digest = ""

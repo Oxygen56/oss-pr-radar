@@ -2328,6 +2328,204 @@ def _legacy_result_context_digest_migration_allowed(
     return value.get("contextDigest") in legacy_digests
 
 
+def _validation_result_context_refresh_proof(
+    store: RadarLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    worktree: Path,
+) -> dict[str, Any] | None:
+    """Recognize only an audit refresh of an already-sent validation task.
+
+    Historical authority is not a blanket allowance for stale results. Both
+    digests must reconstruct from the same immutable task binding, the latest
+    audit must still allow the task, and no intervening authority revocation
+    may have occurred. Commit/parent/scope and signed evidence validation stay
+    in the ordinary ingestion path after this read-only proof.
+    """
+    if (
+        candidate.get("stage") != "VALIDATION_PENDING"
+        or context.get("stage") != "VALIDATION_PENDING"
+        or context.get("taskStage") != "IMPLEMENTATION_READY"
+        or context.get("prFollowup") is not None
+        or context.get("publicationReceipt") is not None
+        or context.get("codePathTombstoneReceipt") is not None
+        or value.get("stage") != "FIX_READY"
+        or value.get("handoffMode") != "controller_commit_complete"
+        or value.get("followupDigest")
+        or not isinstance(value.get("quality"), dict)
+        or not assess_submit_ready(value["quality"]).ready
+        or _controller_policy_verification(context) is None
+        or _publication_block_reason(context, value)
+        or _task_live_audit_refresh_due(context)
+    ):
+        return None
+    binding = {
+        "intentId": str(candidate.get("intentId") or ""),
+        "threadId": str(candidate.get("threadId") or ""),
+        "worktreePath": str(worktree),
+    }
+    if not all(binding.values()) or any(context.get(k) != v for k, v in binding.items()):
+        return None
+    if context.get("key") != candidate.get("key") or context.get("issueUrl") != candidate.get(
+        "issueUrl"
+    ):
+        return None
+    old_digest = str(value.get("contextDigest") or "")
+    current_digest = str(context.get("contextDigest") or "")
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", old_digest) is None
+        or current_digest != _task_context_digest(context, None)
+        or old_digest == current_digest
+        or context.get("targetBase") is None
+        or value.get("commitSha") != command(["git", "rev-parse", "HEAD"], cwd=worktree)
+        or _local_changed_files(worktree)
+    ):
+        return None
+    validate_target_base(context["targetBase"])
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT id,event_type,payload_json,created_at FROM events
+               WHERE opportunity_key=? AND event_type IN (
+                 'TASK_CONTEXT_AUTHORITY_BOUND','AUDIT_PASS','AUDIT_SNAPSHOT',
+                 'VALIDATION_FOLLOWUP_RESERVED','VALIDATION_FOLLOWUP_SENT',
+                 'TASK_RESULT_VALIDATION_DEFERRED') ORDER BY id""",
+            (candidate["key"],),
+        ).fetchall()
+    events = [(dict(row), json.loads(row["payload_json"])) for row in rows]
+    authority_fields = (
+        "taskId",
+        "threadId",
+        "contextDigest",
+        "hasContinuation",
+        "continuationDedupeKey",
+        "probeReceiptDigest",
+        "tombstoneReceiptDigest",
+        "implementationClaimed",
+    )
+    authorities = [
+        (row, payload)
+        for row, payload in events
+        if row["event_type"] == "TASK_CONTEXT_AUTHORITY_BOUND"
+        and payload.get("taskId") == binding["intentId"]
+        and payload.get("threadId") == binding["threadId"]
+    ]
+    prior = next(
+        ((row, p) for row, p in reversed(authorities) if p.get("contextDigest") == old_digest),
+        None,
+    )
+    if prior is None or authorities[-1][1].get("contextDigest") != current_digest:
+        return None
+    for row, authority in authorities:
+        if row["id"] < prior[0]["id"]:
+            continue
+        state = {field: authority.get(field) for field in authority_fields}
+        if (
+            authority.get("authorityStateDigest") != sha256_json(state)
+            or state["hasContinuation"] is not False
+            or state["implementationClaimed"] is not True
+            or state["continuationDedupeKey"] is not None
+            or state["tombstoneReceiptDigest"] is not None
+            or state["probeReceiptDigest"] != prior[1].get("probeReceiptDigest")
+            or authority.get("revocationObservedAt")
+        ):
+            return None
+    bound_events = [(row, p) for row, p in events if all(p.get(k) == v for k, v in binding.items())]
+    sent = next(
+        (
+            (row, p)
+            for row, p in reversed(bound_events)
+            if row["event_type"] == "VALIDATION_FOLLOWUP_SENT"
+        ),
+        None,
+    )
+    deferred = next(
+        (
+            (row, p)
+            for row, p in reversed(bound_events)
+            if row["event_type"] == "TASK_RESULT_VALIDATION_DEFERRED"
+        ),
+        None,
+    )
+    if (
+        sent is None
+        or deferred is None
+        or sent[1].get("resultDigest") != deferred[1].get("resultDigest")
+    ):
+        return None
+    reserved = next(
+        (
+            (row, p)
+            for row, p in reversed(bound_events)
+            if row["event_type"] == "VALIDATION_FOLLOWUP_RESERVED"
+            and p.get("resultDigest") == sent[1].get("resultDigest")
+            and row["id"] < sent[0]["id"]
+        ),
+        None,
+    )
+    if reserved is None or not (
+        parse_time(deferred[0]["created_at"])
+        <= parse_time(prior[1]["authorityObservedAt"])
+        <= parse_time(reserved[0]["created_at"])
+        <= parse_time(sent[0]["created_at"])
+    ):
+        return None
+    expected_reservation = sha256_text(
+        f"{candidate['key']}|{binding['intentId']}|{binding['threadId']}|"
+        f"{binding['worktreePath']}|{sent[1]['resultDigest']}|attempt:{reserved[1].get('attempt')}"
+    )
+    if reserved[1].get("reservationDigest") != expected_reservation:
+        return None
+    audits = [
+        (row, p) for row, p in events if row["event_type"] in {"AUDIT_PASS", "AUDIT_SNAPSHOT"}
+    ]
+    historical_audit = next(
+        (
+            (row, p)
+            for row, p in reversed(audits)
+            if isinstance(p.get("liveAudit"), dict)
+            and p.get("targetBase") == context["targetBase"]
+            and parse_time(row["created_at"]) <= parse_time(prior[1]["authorityObservedAt"])
+            and _task_context_digest(dict(context, liveAudit=p["liveAudit"]), None) == old_digest
+        ),
+        None,
+    )
+    current_audit = next(
+        (
+            (row, p)
+            for row, p in reversed(audits)
+            if p.get("liveAudit") == context.get("liveAudit")
+            and p.get("targetBase") == context["targetBase"]
+            and isinstance(p.get("authorization"), dict)
+        ),
+        None,
+    )
+    if historical_audit is None or current_audit is None:
+        return None
+    evidence = context["liveAudit"]["evidence"]
+    authorization = current_audit[1]["authorization"]
+    if (
+        authorization.get("status") != "ALLOW"
+        or authorization.get("evidence_digest") != evidence.get("digest")
+        or evidence.get("complete") is not True
+        or not evidence.get("completeness")
+    ) or any(status != "COMPLETE" for status in evidence["completeness"].values()):
+        return None
+    return {
+        **binding,
+        "previousContextDigest": old_digest,
+        "contextDigest": current_digest,
+        "previousAuthorityEventId": prior[0]["id"],
+        "authorityEventId": authorities[-1][0]["id"],
+        "previousAuditEventId": historical_audit[0]["id"],
+        "auditEventId": current_audit[0]["id"],
+        "validationFollowupEventId": sent[0]["id"],
+        "validationResultDigest": sent[1]["resultDigest"],
+        "commitSha": value["commitSha"],
+    }
+
+
 def _controller_parent_drift(
     value: dict[str, Any], context: dict[str, Any]
 ) -> dict[str, str] | None:
@@ -4702,6 +4900,51 @@ def _publish_controller_decision_feedback_updates(
     raise RuntimeError("controller Codex decision feedback publish attempts exhausted")
 
 
+def publish_publication_feedback(args: argparse.Namespace) -> dict[str, Any]:
+    """Publish only durable, already-public admissions through controller feedback."""
+
+    from oss_pr_radar.publication_feedback import FILENAME, build_feedback, merge_feedback
+
+    runtime_root = getattr(args, "runtime_root", None)
+    pause = _active_publication_pause(Path(runtime_root)) if runtime_root is not None else None
+    if pause is not None:
+        return {"ok": True, "paused": True, "admissions": 0, "stateChanged": False}
+    incoming = build_feedback(Path(args.ledger))
+    state_script = ROOT / "scripts" / "state_branch.py"
+    feedback_path = STATE / FILENAME
+    for attempt in range(1, 6):
+        # This channel already exists. A failed fetch must not be mistaken for
+        # an empty branch and then replace its terminal/decision feedback.
+        command(
+            [
+                sys.executable,
+                str(state_script),
+                "restore",
+                "--profile",
+                "controller-feedback",
+            ],
+            cwd=STATE.parent,
+            timeout=90,
+        )
+        previous = read_json(feedback_path, missing=None)
+        merged = merge_feedback(previous, incoming)
+        if previous == merged:
+            return {"ok": True, "admissions": len(merged["entries"]), "stateChanged": False}
+        atomic_write_json(feedback_path, merged)
+        try:
+            command(
+                [sys.executable, str(state_script), "publish", "--profile", "controller-feedback"],
+                cwd=STATE.parent,
+                timeout=90,
+            )
+            return {"ok": True, "admissions": len(merged["entries"]), "stateChanged": True}
+        except RuntimeError as exc:
+            if "state branch changed since restore" not in str(exc) or attempt == 5:
+                raise
+            sleep(min(2**attempt, 8))
+    raise RuntimeError("controller publication feedback publish attempts exhausted")
+
+
 def list_pending(path: Path = LEDGER_PATH) -> dict[str, Any]:
     values = ledger(path).pending()
     return {
@@ -5506,7 +5749,10 @@ def independent_review_run(args: argparse.Namespace) -> dict[str, Any]:
             "skipped": [],
             "errors": [],
         }
-    result = review_once(ROOT, args.ledger, state_root=_review_state_root(args))
+    if getattr(args, "key", None):
+        result = review_once(ROOT, args.ledger, state_root=_review_state_root(args), key=args.key)
+    else:
+        result = review_once(ROOT, args.ledger, state_root=_review_state_root(args))
     if "errors" not in result:
         return result
     reported_errors = list(result.get("errors") or [])
@@ -19810,6 +20056,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     publication_requests: list[dict[str, Any]] = []
     validation_deferred: list[dict[str, Any]] = []
     legacy_context_digest_migrations: list[str] = []
+    validation_context_rebindings: list[dict[str, Any]] = []
     quarantined: list[dict[str, Any]] = []
     quarantined_already_recorded: list[dict[str, Any]] = []
     work_blocked: list[dict[str, Any]] = []
@@ -19826,11 +20073,14 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
     if candidate_provider is None:
         candidate_provider = store.task_result_candidates
     for candidate in candidate_provider():
+        if getattr(args, "key", None) and candidate.get("key") != args.key:
+            continue
         managed_candidate = dict(candidate.get("intent") or {})
         managed_candidate.update(candidate)
         stack = ExitStack()
         candidate_failed = False
         evidence_block_idempotency_key = ""
+        validation_context_rebind = None
         try:
             active_turn = _active_task_turn_for_result(candidate)
             if active_turn is not None:
@@ -20625,6 +20875,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     ingested.append({"key": candidate["key"], "stage": "IMPLEMENTATION_READY"})
                     continue
             if value.get("contextDigest") != context.get("contextDigest"):
+                validation_context_rebind = _validation_result_context_refresh_proof(
+                    store,
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    worktree=result_access.worktree,
+                )
                 if digest_seen and possible_policy_recovery:
                     if controller_policy is None:
                         continue
@@ -20638,6 +20895,15 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     value = dict(value)
                     value["contextDigest"] = context.get("contextDigest")
                     legacy_context_digest_migrations.append(candidate["key"])
+                elif validation_context_rebind is not None:
+                    # The binding gate above already proved a unique legacy
+                    # identity when taskId was omitted. Carry that proven id
+                    # into the existing strict validation-parent checks.
+                    value = dict(
+                        value,
+                        contextDigest=context["contextDigest"],
+                        taskId=context["intentId"],
+                    )
                 elif legacy_compatible_result:
                     pass
                 elif current_wake_digest and value.get("followupDigest") != current_wake_digest:
@@ -20858,6 +21124,19 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         write_result=False,
                     )
                 raw = _write_task_result_json_to_private(result_access, value)
+                if validation_context_rebind is not None:
+                    with store.transaction() as connection:
+                        store._event(
+                            connection,
+                            candidate["key"],
+                            "TASK_RESULT_CONTEXT_REFRESH_REBOUND",
+                            sha256_json(validation_context_rebind),
+                            validation_context_rebind,
+                            iso_z(datetime.now(UTC)),
+                        )
+                    validation_context_rebindings.append(
+                        {"key": candidate["key"], **validation_context_rebind}
+                    )
                 quality = value.get("quality")
                 assert isinstance(quality, dict)
                 digest = _task_result_digest(value, raw)
@@ -21132,6 +21411,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
         result["ignored"] = ignored
     if legacy_context_digest_migrations:
         result["legacyContextDigestMigrations"] = legacy_context_digest_migrations
+    if validation_context_rebindings:
+        result["validationContextRebindings"] = validation_context_rebindings
     if work_blocked:
         result["workBlocked"] = work_blocked
     if active_turn_deferred:
@@ -24305,6 +24586,7 @@ def main() -> int:
     subparsers.add_parser("sync")
     subparsers.add_parser("queue-import")
     subparsers.add_parser("publish-terminal-feedback")
+    subparsers.add_parser("publish-publication-feedback")
     codex_decision_dispatch_parser = subparsers.add_parser("codex-decision-dispatch")
     codex_decision_dispatch_parser.add_argument("--project-id", default=DEFAULT_TASK_PROJECT_ID)
     codex_decision_worker_parser = subparsers.add_parser("codex-decision-worker")
@@ -24526,9 +24808,11 @@ def main() -> int:
     validation_followup_abandon_parser.add_argument("--min-age-minutes", type=int, default=90)
     validation_followup_abandon_parser.add_argument("--intent-id")
     validation_followup_abandon_parser.add_argument("--worktree-path")
-    subparsers.add_parser("ingest-results")
+    ingest_parser = subparsers.add_parser("ingest-results")
+    ingest_parser.add_argument("--key", help="Only ingest this exact owner/repo#issue binding")
     subparsers.add_parser("local-receipt-enqueue")
-    subparsers.add_parser("independent-review-run")
+    review_parser = subparsers.add_parser("independent-review-run")
+    review_parser.add_argument("--key", help="Only review this exact owner/repo#issue binding")
     subparsers.add_parser("publication-run")
     publication_retry_parser = subparsers.add_parser("publication-retry")
     publication_retry_parser.add_argument("--request-id", required=True)
@@ -24683,6 +24967,8 @@ def main() -> int:
         result = import_signed_queue(args.ledger)
     elif args.operation == "publish-terminal-feedback":
         result = publish_terminal_feedback(args)
+    elif args.operation == "publish-publication-feedback":
+        result = publish_publication_feedback(args)
     elif args.operation == "codex-decision-dispatch":
         result = dispatch_codex_decisions(args)
     elif args.operation == "codex-decision-worker":

@@ -22,6 +22,12 @@ from oss_pr_radar.managed_snapshot import validate_snapshot  # noqa: E402
 from oss_pr_radar.outbound_pause import (  # noqa: E402
     outbound_effect_guard,
 )
+from oss_pr_radar.publication_feedback import (  # noqa: E402
+    FILENAME as PUBLICATION_FEEDBACK_FILE,
+)
+from oss_pr_radar.publication_feedback import (  # noqa: E402
+    validate_feedback,
+)
 from oss_pr_radar.release_binding import runtime_ledger_path  # noqa: E402
 
 FILES = {
@@ -44,6 +50,7 @@ MANIFEST_VERSION = "radar_state_v2"
 CONTROLLER_FEEDBACK_FILES = {
     "controller_terminal_feedback.json": Path("state/controller_terminal_feedback.json"),
     "controller_decision_feedback.json": Path("state/controller_decision_feedback.json"),
+    PUBLICATION_FEEDBACK_FILE: Path("state") / PUBLICATION_FEEDBACK_FILE,
 }
 CONTROLLER_FEEDBACK_MANIFEST = "controller_feedback_manifest.json"
 CONTROLLER_FEEDBACK_BASE_SHA = Path("state/controller_feedback_base_sha.txt")
@@ -168,6 +175,9 @@ def _validate_state_file(
     allow_legacy_managed_snapshot: bool = False,
 ) -> None:
     value = _decode_state_json(remote_name, raw)
+    if remote_name == PUBLICATION_FEEDBACK_FILE:
+        validate_feedback(value, historical=allow_legacy_managed_snapshot)
+        _scan_snapshot(value)
     if remote_name.endswith("managed_lifecycle.snapshot.json.gz"):
         if not isinstance(value, dict):
             raise RuntimeError("managed lifecycle snapshot schema is invalid")

@@ -228,6 +228,7 @@ def controller_cycle(
         require_ok=True,
     )
     bridge("terminalFeedbackBeforeSync", "publish-terminal-feedback")
+    bridge("publicationAdmissionFeedback", "publish-publication-feedback")
     if current_operational is True and not remote_scan_active:
         bridge("queueSync", "sync", timeout=1200)
     else:
@@ -269,6 +270,7 @@ def controller_cycle(
             "30",
         )
         publication = bridge("publication", "publication-run", timeout=1800)
+        bridge("publicationAdmissionFeedbackAfterPublication", "publish-publication-feedback")
         bridge("contextSync", "context-sync")
         publication_terminalized = any(
             isinstance(item, dict) and item.get("terminalized") is True

@@ -110,6 +110,42 @@ def test_review_once_binds_pass_to_exact_commit(tmp_path, monkeypatch):
     assert seen["cwd"] == worktree
 
 
+def test_review_key_filter_runs_before_ordering_or_opening_other_tasks(tmp_path, monkeypatch):
+    control, _worktree, _result_path, candidate, _base, _head = prepared_task(tmp_path)
+    other = dict(candidate, key="other/repo#9", worktreePath="/not-an-authorized-task")
+    monkeypatch.setattr(
+        module,
+        "RadarLedger",
+        lambda _path: SimpleNamespace(task_result_candidates=lambda: [other, candidate]),
+    )
+    ordered = module._ordered_candidates
+    opened = module._candidate_result
+
+    def only_selected_order(root, candidates):
+        assert candidates == [candidate]
+        return ordered(root, candidates)
+
+    def only_selected_open(item, **kwargs):
+        assert item == candidate
+        return opened(item, **kwargs)
+
+    monkeypatch.setattr(module, "_ordered_candidates", only_selected_order)
+    monkeypatch.setattr(module, "_candidate_result", only_selected_open)
+    result = module.review_once(
+        control,
+        control / "ledger.sqlite3",
+        key=candidate["key"],
+        reviewer=lambda *_args: {
+            "verdict": "PASS",
+            "summary": "Selected test fixture diff reviewed.",
+            "findings": [],
+            "evidence": ["service.py is the full selected test fixture diff"],
+        },
+    )
+    assert result["errors"] == []
+    assert [item["key"] for item in result["updated"]] == [candidate["key"]]
+
+
 def test_review_receipt_survives_controller_result_receipt_rebinding(tmp_path, monkeypatch):
     control, _worktree, result_path, candidate, _base, head = prepared_task(tmp_path)
 

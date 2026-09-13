@@ -11794,6 +11794,259 @@ def test_ingestion_still_rejects_context_mismatch_for_active_task(tmp_path):
     assert result["errors"] == [{"key": "a/b#1", "error": "task result context digest mismatch"}]
 
 
+def _audit_refresh_validation_result(tmp_path, *, omit_task_id=False):
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        missing_quality=("independent_review_passed",),
+        additional_baseline_files=("tests/test_runtime.py",),
+        probe_code_paths=("runtime.py", "tests/test_runtime.py"),
+        reported_code_paths=("runtime.py", "tests/test_runtime.py"),
+    )
+    initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert initial["validationDeferred"]
+    managed = ManagedLedger(store.path, ensure_schema=False)
+    candidate = store.task_result_candidates_for_ingestion()[0]
+    previous_head = run_git(worktree, "rev-parse", "HEAD")
+    target = {
+        "branch": "main",
+        "defaultBranch": "main",
+        "source": "repository_default",
+        "sha": run_git(worktree, "rev-parse", "refs/remotes/origin/main"),
+    }
+
+    def refresh(digest):
+        audit = {
+            "capturedAt": iso_z(datetime.now(UTC)),
+            "evidence": {
+                "digest": digest,
+                "repo": "a/b",
+                "complete": True,
+                "issue": {"number": 1, "state": "open"},
+                "completeness": {"repositoryPolicy": "COMPLETE", "issue": "COMPLETE"},
+                "policy": {
+                    "status": "NORMAL",
+                    "digest": digest,
+                    "ai_disclosure": False,
+                    "ai_prohibited": False,
+                },
+            },
+        }
+        store.record_audit_snapshot(
+            "a/b#1",
+            evidence={
+                "liveAudit": audit,
+                "targetBase": target,
+                "authorization": {"status": "ALLOW", "evidence_digest": digest},
+            },
+            dedupe_key="intent-1:" + digest,
+        )
+        context = json.loads(
+            MODULE.write_task_context(
+                store,
+                issue_url="https://github.com/a/b/issues/1",
+                thread_id="thread-1",
+                cwd=worktree,
+            ).read_text()
+        )
+        authority = {
+            "taskId": "intent-1",
+            "threadId": "thread-1",
+            "contextDigest": context["contextDigest"],
+            "hasContinuation": False,
+            "continuationDedupeKey": None,
+            "probeReceiptDigest": None,
+            "tombstoneReceiptDigest": None,
+            "implementationClaimed": True,
+        }
+        marker = {
+            **authority,
+            "authorityStateDigest": sha256_json(authority),
+            "authorityObservedAt": iso_z(datetime.now(UTC)),
+            "authorityTransition": True,
+        }
+        with store.transaction() as connection:
+            store._event(
+                connection,
+                "a/b#1",
+                "TASK_CONTEXT_AUTHORITY_BOUND",
+                sha256_json(marker),
+                marker,
+                marker["authorityObservedAt"],
+            )
+        return context
+
+    old_context = refresh("a" * 64)
+    pending = store.validation_followup_candidates()[0]
+    reserved = store.reserve_validation_followup(
+        thread_id="thread-1",
+        result_digest=pending["resultDigest"],
+    )
+    store.commit_validation_followup(
+        thread_id="thread-1",
+        result_digest=pending["resultDigest"],
+        reservation_digest=reserved["reservationDigest"],
+    )
+    value = _completed_validation_child(worktree, result_path, old_context, previous_head)
+    value["quality"] = {field: True for field in QUALITY_FIELDS}
+    value, _ = _finalize_controller_commit_for_test(
+        candidate=candidate,
+        context=old_context,
+        value=value,
+        result_path=result_path,
+        managed_ledger=managed,
+    )
+    if omit_task_id:
+        value.pop("taskId", None)
+    _sign_reproduction_certificate(
+        value,
+        result_path=result_path,
+        base_sha=target["sha"],
+        head_sha=run_git(worktree, "rev-parse", "HEAD"),
+        commit_sha=run_git(worktree, "rev-parse", "HEAD"),
+        store=store,
+    )
+    value = json.loads(result_path.read_text())
+    _write_explicit_controller_review(tmp_path, value)
+    current_context = refresh("b" * 64)
+    return store, worktree, result_path, old_context, current_context
+
+
+def test_ingestion_replays_completed_validation_after_authenticated_audit_refresh(
+    monkeypatch, tmp_path
+):
+    store, worktree, result_path, old, current = _audit_refresh_validation_result(tmp_path)
+    raw = result_path.read_bytes()
+    proof = MODULE._validation_result_context_refresh_proof
+    # The real ingestion entry point first reproduces the production failure
+    # with the missing branch, then consumes the identical bytes with the fix.
+    monkeypatch.setattr(MODULE, "_validation_result_context_refresh_proof", lambda *a, **k: None)
+    before = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert before["errors"] == [{"key": "a/b#1", "error": "task result context digest mismatch"}]
+    assert result_path.read_bytes() == raw
+    monkeypatch.setattr(MODULE, "_validation_result_context_refresh_proof", proof)
+
+    after = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+
+    assert after["ok"] is True
+    assert after["errors"] == []
+    assert after.get("workBlocked", []) == []
+    assert after["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}]
+    assert after["validationContextRebindings"][0]["previousContextDigest"] == old["contextDigest"]
+    assert after["validationContextRebindings"][0]["contextDigest"] == current["contextDigest"]
+    assert json.loads(result_path.read_text())["contextDigest"] == current["contextDigest"]
+    assert run_git(worktree, "status", "--porcelain") == ""
+    with store.connect() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type='TASK_RESULT_CONTEXT_REFRESH_REBOUND'"
+            ).fetchone()[0]
+            == 1
+        )
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+    replay = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert replay["ok"] is True
+    assert replay["ingested"] == []
+    assert "validationContextRebindings" not in replay
+
+
+@pytest.mark.parametrize(
+    "damage", ["authority", "revocation", "reservation", "binding", "policy", "head", "scope"]
+)
+def test_validation_audit_refresh_rebinding_stays_fail_closed(monkeypatch, tmp_path, damage):
+    store, worktree, result_path, old, current = _audit_refresh_validation_result(tmp_path)
+    context_path = result_path.parent / "task-context.json"
+    with store.connect() as connection:
+        if damage == "authority":
+            connection.execute(
+                "DELETE FROM events WHERE event_type='TASK_CONTEXT_AUTHORITY_BOUND' "
+                "AND json_extract(payload_json,'$.contextDigest')=?",
+                (old["contextDigest"],),
+            )
+        elif damage == "revocation":
+            connection.execute(
+                "UPDATE events SET payload_json=json_set(payload_json,'$.implementationClaimed',0) "
+                "WHERE event_type='TASK_CONTEXT_AUTHORITY_BOUND' "
+                "AND json_extract(payload_json,'$.contextDigest')=?",
+                (current["contextDigest"],),
+            )
+        elif damage == "reservation":
+            connection.execute("DELETE FROM events WHERE event_type='VALIDATION_FOLLOWUP_SENT'")
+        elif damage == "policy":
+            connection.execute(
+                "UPDATE events SET payload_json=json_set(payload_json,'$.authorization.status','BLOCK') "
+                "WHERE event_type='AUDIT_SNAPSHOT' "
+                "AND json_extract(payload_json,'$.liveAudit.evidence.digest')=?",
+                ("b" * 64,),
+            )
+    if damage == "binding":
+        current["targetBase"] = dict(current["targetBase"], branch="other")
+        current["contextDigest"] = MODULE._task_context_digest(current, None)
+        context_path.write_text(json.dumps(current))
+    if damage in {"head", "scope"}:
+        value = json.loads(result_path.read_text())
+        if damage == "head":
+            value["commitSha"] = "f" * 40
+        else:
+            value["controllerCommitChangedFiles"] = ["outside.py"]
+        value.pop("reproductionReceipt", None)
+        value.pop("resultDigest", None)
+        result_path.write_text(json.dumps(value))
+        _write_explicit_controller_review(tmp_path, value)
+    raw = result_path.read_bytes()
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+
+    assert result["ok"] is False or result.get("workBlocked")
+    assert result["ingested"] == []
+    assert "validationContextRebindings" not in result
+    assert result_path.read_bytes() == raw
+
+
+def test_ingest_results_key_filter_does_not_open_unselected_worktrees(monkeypatch, tmp_path):
+    store, _worktree = registered_store(tmp_path)
+    monkeypatch.setattr(
+        MODULE, "_active_task_turn_for_result", lambda _: pytest.fail("unselected task opened")
+    )
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="different/repo#9"))
+    assert result["ok"] is True
+    assert result["ingested"] == []
+
+
+def test_validation_context_refresh_cannot_substitute_for_central_review(tmp_path):
+    store, _worktree, result_path, _old, current = _audit_refresh_validation_result(tmp_path)
+    value = json.loads(result_path.read_text())
+    _receipt_path(
+        tmp_path, key="a/b#1", commit_sha=value["commitSha"], source_digest=_source_digest(value)
+    ).unlink()
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+
+    assert result["ok"] is True
+    assert result["publicationRequests"] == []
+    assert result["validationDeferred"][0]["missing"] == ["independent_review_passed"]
+    assert result["ingested"][0]["stage"] == "VALIDATION_PENDING"
+    assert json.loads(result_path.read_text())["contextDigest"] == current["contextDigest"]
+    assert json.loads(result_path.read_text())["quality"]["independent_review_passed"] is False
+
+
+def test_validation_context_refresh_binds_proven_legacy_id_without_reusing_changed_review(tmp_path):
+    store, _worktree, result_path, _old, current = _audit_refresh_validation_result(
+        tmp_path, omit_task_id=True
+    )
+    assert "taskId" not in json.loads(result_path.read_text())
+
+    result = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+
+    assert result["ok"] is True
+    assert result.get("workBlocked", []) == []
+    assert result["publicationRequests"] == []
+    assert result["validationDeferred"][0]["missing"] == ["independent_review_passed"]
+    normalized = json.loads(result_path.read_text())
+    assert normalized["taskId"] == "intent-1"
+    assert normalized["contextDigest"] == current["contextDigest"]
+    assert normalized["quality"]["independent_review_passed"] is False
+
+
 def test_ingestion_rejects_legacy_result_for_non_null_target_base(monkeypatch, tmp_path):
     monkeypatch.setattr(MODULE, "ROOT", tmp_path)
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")

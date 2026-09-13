@@ -21,6 +21,7 @@ CONTEXTS = {
     "evidence-cert-v1": "evidence-cert-v1",
     "absence-attestation-v1": "absence-attestation-v1",
     "managed-snapshot-v1": "managed-snapshot-v1",
+    "publication-feedback-v1": "publication-feedback-v1",
     "repo-probe-v1": "repo-probe-v1",
     "task-creation-v1": "task-creation-v1",
     "war-room-rollback-v1": "war-room-rollback-v1",
