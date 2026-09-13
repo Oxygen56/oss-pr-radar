@@ -408,6 +408,135 @@ def test_manual_dispatches_and_schedule_canaries_never_count_as_watchdog_coverag
     assert result["evidenceSource"] == "scheduler_watchdog_exact_run_id"
 
 
+def test_hosted_health_does_not_claim_fallback_coverage_without_watchdog_state():
+    runs = _hourly_full_runs()
+    natural_ids = {str(item["id"]) for item in runs if item.get("event") == "schedule"}
+
+    result = MODULE.full_slot_coverage(
+        runs,
+        now=NOW,
+        natural_full_chain_run_ids=natural_ids,
+        watchdog_run_ids=None,
+    )
+
+    assert result["assessed"] is False
+    assert result["healthy"] is None
+    assert result["sourceEvent"] == "schedule"
+    assert result["evidenceSource"] == "natural_full_chain_jobs_api_only"
+    assert "FULL_SLOT_COVERAGE_MISSING" not in result["issues"]
+
+
+def test_hosted_health_accepts_healthy_fallback_without_claiming_natural_recovery(
+    monkeypatch, capsys
+):
+    current = datetime.now(UTC)
+    fallback = {
+        "id": 201,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": (current - timedelta(minutes=30)).isoformat(),
+        "updated_at": (current - timedelta(minutes=20)).isoformat(),
+        "html_url": "https://github.com/a/b/actions/runs/201",
+    }
+    natural = {
+        "id": 200,
+        "event": "schedule",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": (current - timedelta(hours=13)).isoformat(),
+        "updated_at": (current - timedelta(hours=13)).isoformat(),
+        "html_url": "https://github.com/a/b/actions/runs/200",
+    }
+    monkeypatch.setattr(MODULE, "runs", lambda _repo: [fallback, natural])
+    monkeypatch.setattr(MODULE, "collect_natural_full_chain_run_ids", lambda *_a, **_k: set())
+    monkeypatch.setattr(MODULE, "github_actions_external_blocker", lambda *_args: None)
+    monkeypatch.setattr(
+        MODULE,
+        "workflow_component_health",
+        lambda *_args: {
+            "assessed": True,
+            "healthy": True,
+            "issues": [],
+            "scanSucceeded": True,
+            "fullChainProven": True,
+            "runEvent": "workflow_dispatch",
+            "runId": 201,
+            "runUpdatedAt": fallback["updated_at"],
+            "runUrl": fallback["html_url"],
+        },
+    )
+    monkeypatch.setattr(MODULE.sys, "argv", ["check_workflow_health.py", "--allow-fallback"])
+
+    assert MODULE.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["currentOperationalHealthy"] is True
+    assert result["githubNaturalScheduleHealthy"] is False
+    assert result["operationalHealthy"] is False
+    assert result["exitHealthy"] is True
+    assert result["exitPolicy"] == "allow_fallback"
+    assert result["fullSlotCoverage"]["assessed"] is False
+
+
+def test_allow_fallback_does_not_hide_evaluated_missing_slots(monkeypatch, capsys, tmp_path):
+    current = datetime.now(UTC)
+    fallback = {
+        "id": 211,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": (current - timedelta(minutes=30)).isoformat(),
+        "updated_at": (current - timedelta(minutes=20)).isoformat(),
+        "html_url": "https://github.com/a/b/actions/runs/211",
+    }
+    monkeypatch.setattr(MODULE, "runs", lambda _repo: [fallback])
+    monkeypatch.setattr(MODULE, "proven_watchdog_run_ids", lambda _root: {"211"})
+    monkeypatch.setattr(MODULE, "github_actions_external_blocker", lambda *_args: None)
+    monkeypatch.setattr(MODULE, "runtime_managed_followup_coverage", _healthy_managed_followup)
+    monkeypatch.setattr(MODULE, "bind_runtime", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        MODULE,
+        "workflow_component_health",
+        lambda *_args: {
+            "assessed": True,
+            "healthy": True,
+            "issues": [],
+            "scanSucceeded": True,
+            "runEvent": "workflow_dispatch",
+            "runId": 211,
+            "runUpdatedAt": fallback["updated_at"],
+            "runUrl": fallback["html_url"],
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "full_slot_coverage",
+        lambda *_args, **_kwargs: {
+            "assessed": True,
+            "healthy": False,
+            "issues": ["FULL_SLOT_COVERAGE_MISSING"],
+            "coverageRatio": 0.5,
+        },
+    )
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        [
+            "check_workflow_health.py",
+            "--runtime-root",
+            str(tmp_path),
+            "--allow-fallback",
+        ],
+    )
+
+    assert MODULE.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["currentOperationalHealthy"] is True
+    assert result["operationalHealthy"] is False
+    assert result["exitHealthy"] is False
+    assert "FULL_SLOT_COVERAGE_MISSING" in result["operationalIssues"]
+
+
 def test_latest_failed_natural_run_makes_canary_unhealthy_even_with_full_history():
     runs = [
         {
@@ -1297,8 +1426,9 @@ def test_dispatch_blocker_does_not_poison_natural_canary_health(monkeypatch, cap
     assert "GITHUB_ACTIONS_BILLING_BLOCKED" in result["operationalIssues"]
 
 
+@pytest.mark.parametrize("fallback_args", [[], ["--allow-fallback"]])
 def test_component_degradation_is_unhealthy_without_repeating_a_successful_scan(
-    monkeypatch, capsys
+    monkeypatch, capsys, fallback_args
 ):
     failed_run = {
         "id": 44,
@@ -1325,7 +1455,7 @@ def test_component_degradation_is_unhealthy_without_repeating_a_successful_scan(
     monkeypatch.setattr(
         MODULE.sys,
         "argv",
-        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime"],
+        ["check_workflow_health.py", "--runtime-root", "/tmp/radar-runtime", *fallback_args],
     )
 
     assert MODULE.main() == 2

@@ -23,6 +23,12 @@ manual fallback run. The GitHub health watchdog is intentionally read-only and
 only reports freshness; it has no local runtime authorization and cannot repair
 or notify. A recent active fallback suppresses a second repair, and workflow
 concurrency serializes a late natural run behind it.
+The hosted health workflow uses `--allow-fallback`: a fresh full-chain fallback
+keeps that operational check successful, while the JSON still reports natural
+scheduling as unhealthy when it is sparse or stale. Because the hosted job has
+no access to the desktop watchdog's exact run claims, mixed hourly coverage is
+explicitly unassessed there; the bound local check remains authoritative for
+fallback slot coverage and still fails on missing or failed slots.
 The desktop controller never waits inside its execution window for that run to
 finish. It skips only queue sync and continues live revalidation of unexpired
 local signed intents. The five-minute local importer picks up the completed

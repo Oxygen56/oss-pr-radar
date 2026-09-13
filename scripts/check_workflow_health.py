@@ -654,10 +654,12 @@ def full_slot_coverage(
     ]
     # The oldest returned run only needs to reach the first slot's one-hour
     # attribution interval. This stays false for short synthetic/API history.
+    # A hosted health check cannot access the desktop watchdog's durable exact
+    # fallback claims. Natural-chain proof can still be reported, but mixed
+    # schedule/dispatch slot coverage is only assessable when the local
+    # watchdog IDs are supplied (including an empty set, which fails closed).
     assessed = bool(
-        (proven_ids is not None or natural_ids is not None)
-        and run_times
-        and min(run_times) < expected[0] + timedelta(hours=1)
+        proven_ids is not None and run_times and min(run_times) < expected[0] + timedelta(hours=1)
     )
     by_slot: dict[datetime, list[dict]] = {slot: [] for slot in expected}
     for item in workflow_runs:
@@ -719,12 +721,18 @@ def full_slot_coverage(
         "assessed": assessed,
         "healthy": coverage_healthy,
         "sourceEvent": (
-            "schedule+workflow_dispatch" if natural_ids is not None else _FULL_SCAN_EVENT
+            "schedule+workflow_dispatch"
+            if natural_ids is not None and proven_ids is not None
+            else (_NATURAL_EVENT if natural_ids is not None else _FULL_SCAN_EVENT)
         ),
         "evidenceSource": (
             "scheduler_watchdog_exact_run_id_and_natural_full_chain_proof"
-            if natural_ids is not None
-            else "scheduler_watchdog_exact_run_id"
+            if natural_ids is not None and proven_ids is not None
+            else (
+                "natural_full_chain_jobs_api_only"
+                if natural_ids is not None
+                else "scheduler_watchdog_exact_run_id"
+            )
         ),
         "evidenceAvailable": proven_ids is not None or natural_ids is not None,
         "watchdogRunIds": sorted(proven_ids or []),
@@ -984,6 +992,14 @@ def main() -> int:
     parser.add_argument("--runtime-root", type=Path, default=None)
     parser.add_argument("--code-root", type=Path, default=None)
     parser.add_argument("--notify", action="store_true")
+    parser.add_argument(
+        "--allow-fallback",
+        action="store_true",
+        help=(
+            "Treat a fresh, healthy fallback scan as an operational success while "
+            "retaining natural-schedule warnings in the JSON report"
+        ),
+    )
     parser.add_argument("--max-effective-age-minutes", type=int, default=110)
     parser.add_argument("--coverage-window-hours", type=int, default=12)
     args = parser.parse_args()
@@ -1112,6 +1128,15 @@ def main() -> int:
         )
     )
     result["healthIssues"] = list(dict.fromkeys([*result["issues"], *result["operationalIssues"]]))
+    result["exitHealthy"] = bool(
+        result["operationalHealthy"]
+        or (
+            args.allow_fallback
+            and result["currentOperationalHealthy"]
+            and full_slot_coverage_health.get("healthy") is not False
+        )
+    )
+    result["exitPolicy"] = "allow_fallback" if args.allow_fallback else "strict_natural_schedule"
     if args.notify and (
         result["healthy"] is not True
         or not effective["fresh"]
@@ -1146,7 +1171,7 @@ def main() -> int:
             ),
         )
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result["operationalHealthy"] is True else 2
+    return 0 if result["exitHealthy"] is True else 2
 
 
 if __name__ == "__main__":

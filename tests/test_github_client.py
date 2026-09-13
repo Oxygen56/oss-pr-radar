@@ -172,6 +172,112 @@ def test_api_does_not_retry_nontransient_permission_failure():
     assert len(calls) == 1
 
 
+def test_pull_files_retries_observed_false_too_many_files_error():
+    calls = []
+
+    def runner(_args, _timeout):
+        calls.append(True)
+        if len(calls) == 1:
+            raise GitHubError(
+                "gh: The request could not be processed because too many files changed (HTTP 422)"
+            )
+        return '[[{"filename":"CONTRIBUTING.md"}]]'
+
+    client = GitHubClient(runner=runner, sleeper=lambda _delay: None)
+    assert client.pull_files("anthropics/claude-agent-sdk-python", 1005) == [
+        {"filename": "CONTRIBUTING.md"}
+    ]
+    assert len(calls) == 2
+    assert not is_transient_github_error("gh: Validation Failed (HTTP 422)")
+
+
+def test_installation_limit_waits_instead_of_failing_immediately():
+    calls = []
+    delays = []
+
+    def runner(_args, _timeout):
+        calls.append(True)
+        if len(calls) < 3:
+            raise GitHubError("gh: API rate limit exceeded for installation. (HTTP 403)")
+        return '[{"items":[]}]'
+
+    client = GitHubClient(runner=runner, sleeper=delays.append)
+    assert client.open_pull_requests_by_author("Oxygen56") == []
+    assert len(calls) == 3
+    assert delays == [60.0, 120.0]
+
+
+@pytest.mark.parametrize("retry_after,expected_calls,expected_delays", [(2, 2, [2]), (3600, 1, [])])
+def test_rate_limit_reset_never_retried_early(retry_after, expected_calls, expected_delays):
+    calls = []
+    delays = []
+
+    def runner(_args, _timeout):
+        calls.append(True)
+        if len(calls) == 1:
+            raise GitHubError("API rate limit exceeded (HTTP 403)", retry_after=retry_after)
+        return '{"number":1}'
+
+    client = GitHubClient(runner=runner, sleeper=delays.append)
+    if expected_calls == 1:
+        with pytest.raises(GitHubError, match="rate limit"):
+            client.issue("a/b", 1)
+    else:
+        assert client.issue("a/b", 1)["number"] == 1
+    assert len(calls) == expected_calls
+    assert delays == expected_delays
+
+
+def test_default_runner_removes_each_slurped_page_headers(monkeypatch):
+    header = "HTTP/2.0 200 OK\nContent-Type: application/json\r\n\r\n"
+
+    def fake_run(args, **kwargs):
+        assert "--include" in args
+        return subprocess.CompletedProcess(
+            args, 0, stdout=f'[{header}[{{"number":1}}],{header}[{{"number":2}}]]', stderr=""
+        )
+
+    monkeypatch.setattr(github_client.subprocess, "run", fake_run)
+    assert GitHubClient().api("repos/a/b/issues", paginate=True) == [{"number": 1}, {"number": 2}]
+
+
+@pytest.mark.parametrize(
+    "header,expected",
+    [
+        ("Retry-After: 15\r\nX-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: 150\r\n", 15),
+        ("X-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: 150\r\n", 50),
+    ],
+)
+def test_default_runner_preserves_rate_limit_reset(monkeypatch, header, expected):
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(
+            args,
+            1,
+            stdout=f'HTTP/2.0 403 Forbidden\n{header}\r\n{{"message":"API rate limit exceeded"}}',
+            stderr="gh: API rate limit exceeded for installation. (HTTP 403)",
+        )
+
+    monkeypatch.setattr(github_client.subprocess, "run", fake_run)
+    monkeypatch.setattr(github_client.time, "time", lambda: 100)
+    with pytest.raises(GitHubError) as error:
+        GitHubClient(retry_delays=()).issue("a/b", 1)
+    assert error.value.retry_after == expected
+
+
+def test_graphql_rate_limit_does_not_retry_before_reset_outside_timeout():
+    calls = []
+    delays = []
+
+    def runner(_args, _timeout):
+        calls.append(True)
+        raise GitHubError("API rate limit exceeded (HTTP 403)", retry_after=60)
+
+    with pytest.raises(GitHubError, match="rate limit"):
+        GitHubClient(runner=runner, sleeper=delays.append).pull_review_threads("a/b", 1)
+    assert len(calls) == 1
+    assert delays == []
+
+
 def test_related_prs_keep_cross_repository_timeline_identity(monkeypatch):
     client = GitHubClient()
     monkeypatch.setattr(client, "api", lambda *_args, **_kwargs: [])

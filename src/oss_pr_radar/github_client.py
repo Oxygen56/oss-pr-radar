@@ -14,11 +14,21 @@ from urllib.parse import quote
 
 
 class GitHubError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 Runner = Callable[[list[str], int], str]
 Sleeper = Callable[[float], None]
+
+_HTTP_HEADERS = re.compile(r"HTTP/\S+ \d{3}[^\r\n]*\r?\n(?:[^\r\n]+\r?\n)*\r?\n")
+
+
+def _is_rate_limit_error(error: BaseException | str) -> bool:
+    message = str(error).casefold()
+    return "rate limit" in message or bool(re.search(r"\bhttp\s+429\b", message))
+
 
 _PROXY_ENV_NAMES = (
     "HTTP_PROXY",
@@ -63,12 +73,18 @@ def is_transient_github_error(error: BaseException | str) -> bool:
     """Return whether a read failed for a retryable transport/server reason."""
 
     message = str(error).strip().casefold()
-    return _is_connectivity_github_error(error) or bool(
-        re.search(r"\bhttp\s+(?:408|429|5\d\d)\b", message)
+    return (
+        _is_connectivity_github_error(error)
+        or _is_rate_limit_error(error)
+        or bool(re.search(r"\bhttp\s+(?:408|5\d\d)\b", message))
+        or ("too many files changed" in message and "http 422" in message)
     )
 
 
 def _default_runner(args: list[str], timeout: int) -> str:
+    # Keep reset headers on failures, including errors halfway through pagination.
+    if args[:2] == ["gh", "api"] and "--include" not in args:
+        args = [*args, "--include"]
     started = time.monotonic()
     proxy_env = os.environ.copy()
     proxy_configured = any(proxy_env.get(name) for name in _PROXY_ENV_NAMES)
@@ -108,8 +124,22 @@ def _default_runner(args: list[str], timeout: int) -> str:
             completed = invoke(proxy_env, remaining)
     if completed.returncode != 0:
         error = (completed.stderr or completed.stdout or "GitHub command failed").strip()
-        raise GitHubError(error[:1000])
-    return completed.stdout
+        retry_after = None
+        headers = _HTTP_HEADERS.findall(completed.stdout)
+        if headers and _is_rate_limit_error(error):
+            values = dict(
+                (key.casefold(), value.strip())
+                for key, value in re.findall(r"(?m)^([^:\r\n]+):[ \t]*(.*)\r?$", headers[-1])
+            )
+            try:
+                if "retry-after" in values:
+                    retry_after = max(0.0, float(values["retry-after"]))
+                elif values.get("x-ratelimit-remaining") == "0":
+                    retry_after = max(0.0, float(values["x-ratelimit-reset"]) - time.time())
+            except (ValueError, KeyError):
+                pass
+        raise GitHubError(error[:1000], retry_after=retry_after)
+    return _HTTP_HEADERS.sub("", completed.stdout)
 
 
 @dataclass
@@ -118,6 +148,7 @@ class GitHubClient:
     timeout: int = 45
     retry_delays: tuple[float, ...] = (0.25, 1.0)
     sleeper: Sleeper = time.sleep
+    rate_limit_wait_budget: float = 180.0
 
     def api(
         self,
@@ -134,7 +165,9 @@ class GitHubClient:
             args.extend(["-H", f"Accept: {accept}"])
         for key, value in (params or {}).items():
             args.extend(["-f", f"{key}={value}"])
+        rate_limit_waited = 0.0
         for attempt in range(len(self.retry_delays) + 1):
+            delay = self.retry_delays[attempt] if attempt < len(self.retry_delays) else 0.0
             try:
                 raw = self.runner(args, self.timeout)
                 data = json.loads(raw)
@@ -145,7 +178,14 @@ class GitHubClient:
             except (GitHubError, subprocess.TimeoutExpired) as exc:
                 if attempt >= len(self.retry_delays) or not is_transient_github_error(exc):
                     raise
-            self.sleeper(self.retry_delays[attempt])
+                if _is_rate_limit_error(exc):
+                    delay = getattr(exc, "retry_after", None)
+                    if delay is None:
+                        delay = 60.0 * (2**attempt)
+                    if rate_limit_waited + delay > self.rate_limit_wait_budget:
+                        raise
+                    rate_limit_waited += delay
+            self.sleeper(delay)
         if not paginate:
             return data
         if not isinstance(data, list):
@@ -301,6 +341,7 @@ class GitHubClient:
         started = time.monotonic()
         last_error: BaseException | None = None
         for attempt in range(len(self.retry_delays) + 1):
+            retry_delay = self.retry_delays[attempt] if attempt < len(self.retry_delays) else 0.0
             remaining = float(self.timeout) - (time.monotonic() - started)
             if remaining <= 0:
                 if isinstance(last_error, json.JSONDecodeError):
@@ -320,8 +361,14 @@ class GitHubClient:
                 last_error = exc
                 if attempt >= len(self.retry_delays) or not is_transient_github_error(exc):
                     raise
+                if _is_rate_limit_error(exc):
+                    retry_delay = getattr(exc, "retry_after", None)
+                    if retry_delay is None:
+                        retry_delay = 60.0 * (2**attempt)
+                    if retry_delay >= float(self.timeout) - (time.monotonic() - started):
+                        raise
             remaining = float(self.timeout) - (time.monotonic() - started)
-            delay = min(self.retry_delays[attempt], max(0.0, remaining))
+            delay = min(retry_delay, max(0.0, remaining))
             if delay <= 0:
                 if isinstance(last_error, json.JSONDecodeError):
                     raise GitHubError("GitHub review threads response is invalid") from last_error

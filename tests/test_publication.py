@@ -698,6 +698,7 @@ def test_broker_blocks_legacy_request_without_private_review(monkeypatch, tmp_pa
 
 def test_broker_still_blocks_a_new_pr_when_a_strong_competitor_exists(tmp_path):
     store, request, _ = prepared_request(tmp_path)
+    recent_update = iso_z(datetime.now(UTC) - timedelta(days=1))
 
     class CompetitionClient(Client):
         def related_open_prs(self, repo, number, **kwargs):
@@ -711,7 +712,7 @@ def test_broker_still_blocks_a_new_pr_when_a_strong_competitor_exists(tmp_path):
                 "title": "Fix streaming tool arguments",
                 "body": "Fixes #7",
                 "draft": False,
-                "updated_at": "2026-08-09T01:00:00Z",
+                "updated_at": recent_update,
                 "head": {"sha": "competing-head"},
             }
 

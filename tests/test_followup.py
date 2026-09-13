@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from oss_pr_radar.followup import collect_followup
-from oss_pr_radar.github_client import GitHubError
+from oss_pr_radar.github_client import GitHubClient, GitHubError
 
 
 class Client:
@@ -464,14 +466,30 @@ def test_initial_query_failure_preserves_state_and_emits_report():
     assert state["items"] == existing["items"]
 
 
-def test_single_pr_failure_preserves_its_previous_state():
+@pytest.mark.parametrize(
+    "error",
+    [
+        "diff temporarily unavailable (HTTP 500)",
+        "The request could not be processed because too many files changed (HTTP 422)",
+        "API rate limit exceeded for installation (HTTP 403)",
+    ],
+)
+def test_single_pr_failure_preserves_its_previous_state(error):
     existing, _ = collect_followup(
         Client(), author="Oxygen56", now=datetime(2026, 8, 4, tzinfo=UTC)
     )
 
+    calls = []
+
+    def runner(_args, _timeout):
+        calls.append(True)
+        raise GitHubError(error)
+
+    github = GitHubClient(runner=runner, sleeper=lambda _delay: None)
+
     class FailingClient(Client):
         def pull_files(self, repo, number):
-            raise GitHubError("diff temporarily unavailable (HTTP 500)")
+            return github.pull_files(repo, number)
 
     state, report = collect_followup(
         FailingClient(),
@@ -482,8 +500,9 @@ def test_single_pr_failure_preserves_its_previous_state():
 
     assert report["scan_ok"] is False
     assert report["candidate_details"] == []
-    assert report["errors"] == ["a/b#9:diff temporarily unavailable (HTTP 500)"]
+    assert report["errors"] == [f"a/b#9:{error}"]
     assert state["items"] == existing["items"]
+    assert len(calls) == 3
 
 
 def test_failed_check_only_wakes_task_when_evidence_matches_changed_file():
