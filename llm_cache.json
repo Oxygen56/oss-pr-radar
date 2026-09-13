@@ -9536,6 +9536,43 @@
     ],
     "why": "Issue provides detailed reproduction and root-cause analysis, but maintainer guidance is pending on scope and upstream dependency fix; existing PR #1571 is draft and incomplete, leaving competition opportunity but requiring design confirmation."
   },
+  "20eb21d423a510b8fe8602624cc5b551d729f6e9e74728542a53d36b8b1d0fe6": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body attributes regression to vLLM commit range / FlashInfer / transformers, while maintainer comment attributes it to tool call / vLLM frontend",
+      "Candidate algorithm_evidence claims distributed_training and numerics_quantization mechanisms, but the issue provides no such evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.open_pr_assessment",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "GLM frontend tool-call parsing / chat-template handling",
+      "prefix-cache or hybrid KV state restoration path if frontend is ruled out"
+    ],
+    "risks": [
+      "Root cause may be frontend parsing, not the kernel/numerics path the candidate claims, leading to a misdirected fix",
+      "No standalone reproduction means a fix cannot be validated deterministically",
+      "Potential overlap with issue #56583 and open PR #56635 is unresolved"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a long multi-turn agentic session against the bad build and confirm degeneration",
+      "A/B the same session with prefix caching disabled and with FlashInfer pinned to 0.6.17 to isolate the regression source",
+      "Add a regression test exercising multi-turn tool-call parsing once root cause is identified"
+    ],
+    "unknowns": [
+      "Whether the root cause is frontend tool-call parsing or a kernel/cache regression",
+      "Whether issue #56583 is the same defect or a distinct one",
+      "Whether PR #56635 already covers the fix"
+    ],
+    "why": "The issue reports a real GLM-5.3-Flash degeneration regression, but the reporter explicitly could not construct a synthetic reproduction; evidence is only a build A/B and rollback. A maintainer comment attributes it to 'tool call / vllm frontend', which points to frontend parsing rather than the claimed kernel/numerics/distributed mechanisms, and the candidate's algorithm_evidence mechanisms (model_architecture, distributed_training, numerics_quantization, evaluation_method) are not substantiated by the issue text. The related issue #56583 shares only generic stack signatures (collect_env.py, compiler failures), not a demonstrated same root cause, so duplicate coverage is unresolved."
+  },
   "20eec55ab4508ff02d1e7ef76f06ea2a0f8ebf7e04ff7ac782fbac157a3ca82a": {
     "confidence": 0.85,
     "contradictions": [
@@ -20801,6 +20838,41 @@
       "Whether existing PR #6324 already addresses this issue or conflicts."
     ],
     "why": "Issue clearly identifies a real bug: local capability-contributed tools drop token usage from RunUsage and UsageLimits. Root cause is well-documented with a verified repro and implementation note. However, the issue is explicitly gated on #6886, which awaits a maintainer design decision on durable-exec return channels. Also, existing PR #6324 has semantic overlap and requires human comparison. Thus, work should wait for maintainer guidance."
+  },
+  "478b8f76f2b1641c532064160a23ee3c83bb751162a8f4361fd61f9397e6327f": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Triage bot states the AppImage contains no Python and exports neither PYTHONHOME nor PYTHONPATH; reporter provides binary string and /proc environ evidence that AppRun.wrapped does export them"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/mcp-client.ts: extend child-env sanitization for stdio MCP spawns",
+      "packages/core/src/utils/sanitize-child-env.ts: add PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH handling",
+      "packages/cli/src/config/shared-env-keys.ts: keep env-key lists consistent"
+    ],
+    "risks": [
+      "Stripping LD_LIBRARY_PATH may break MCP servers that legitimately rely on it",
+      "Triage bot disputes the AppImage attribution; maintainer may want the fix scoped to the AppRun entry point instead of the MCP spawn path",
+      "Existing deferred tradeoff (#8653) may mean maintainers intentionally pass through env"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test asserting sanitizeChildEnv strips PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH from a poisoned process.env",
+      "Integration test spawning a stdio MCP child with poisoned env and verifying the child sees a neutral environment",
+      "Manual repro: PYTHONHOME=/tmp/.mount_FAKE/usr/ <venv>/bin/python -c 'print(1)' fails before fix, succeeds after"
+    ],
+    "unknowns": [
+      "Whether maintainers accept the MCP-spawn sanitization approach versus fixing the AppRun entry point",
+      "Whether stripping LD_LIBRARY_PATH is in scope or would regress other MCP servers"
+    ],
+    "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP children, breaking external Python interpreters. Reporter supplied a minimal repro, /proc environ evidence, and a working workaround. Triage bot disputed the AppImage attribution, but the reporter rebutted with binary-level string evidence and a live /proc mount-prefix match, so the root cause is plausibly established. Code anchors (mcp-client.ts, sanitize-child-env.ts, shared-env-keys.ts) point to a concrete fix location. No open PR or duplicate issue covers it."
   },
   "47ab3aa2bd748efc0ee029cd47e3649eca77bdaf88dc0265cd05009c4f7ed55a": {
     "confidence": 0.7,
@@ -33959,6 +34031,45 @@
     ],
     "why": "Issue provides a concrete root cause (streamed response model name not refreshed from terminal event), a runnable repro, and a clear fix location. The proposed change is narrow and testable, with maintainer discussion confirming the bug and approach."
   },
+  "6d1bb2ed147ab7efc2fcd981648130fffa38e019a7369110177f165060fe4807": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue states drafter runs every step and writes context KV for all scheduled tokens, yet also states it is unknown which step registered unwritten draft blocks",
+      "Candidate marks root_cause_signal true while issue text says the triggering step is not pinned"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/block_pool.py cache_full_blocks draft-group registration",
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py precompute_and_store_context_kv coverage",
+      "vllm/v1/core/kv_cache_coordinator.py draft-group hit/caching path"
+    ],
+    "risks": [
+      "Root cause not pinned to a specific step that registers unwritten draft blocks",
+      "Overlap with open PR #53577 and related issues #56583/#56605 may already cover the fix",
+      "Repository AI disclosure policy conflict blocks automated public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with DFlash/DSpark drafter + automatic prefix caching on a shared ~20k-token prefix and measure spec_decode_num_accepted_tokens/num_draft_tokens",
+      "Compare acceptance with and without the #47926 masking workaround on the same workload",
+      "Add a regression test asserting draft-group blocks are not registered when no drafter pass covered their tokens"
+    ],
+    "unknowns": [
+      "Which code path registers draft-group blocks without a covering drafter pass",
+      "Whether PR #53577 or the related issues already resolve this root cause",
+      "How the ai_disclosure_conflict policy requirement is to be satisfied"
+    ],
+    "why": "Issue describes a plausible mechanism (draft-group blocks registered by cache_full_blocks without drafter coverage) but explicitly states the triggering step is not pinned down, and the candidate's own evidence flags unresolved duplicate/overlap with PR #53577 and related issues #56583/#56605, plus an ai_disclosure_conflict policy block. These are materially blocking unknowns for deciding whether code work is actionable."
+  },
   "6d24452a9ba97788de956d33271eaf95b97f2295055b62365e61110b5b73f959": {
     "confidence": 0.7,
     "contradictions": [],
@@ -37699,6 +37810,35 @@
       "Whether maintainers have already started work on this or have design preferences; but no evidence of that."
     ],
     "why": "Issue identifies a concrete bug in Gemma4UnifiedMultimodalEmbedder where output_proj_dims is incorrectly used as input dimension for audio, causing weight-loading AssertionError. Root cause is clear, fix is minimal and verified by reporter. No competing PR or related issue found."
+  },
+  "78879eddb1a12b1bb016df2a5617a02f2d7bc2811a4e94c4c8e97b7cedda26f6": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/goose/src/agents/mcp_client.rs: make ClientLifecycleMode::Auto fall back to legacy initialize on NoCompatibleProtocolVersion",
+      "crates/goose/src/agents/agent.rs: optionally restore v1.49 default mcp_protocol_version for extensions",
+      "extension startup error surfacing underlying ClientInitializeError for debuggability"
+    ],
+    "risks": [
+      "Changing Auto fallback semantics could mask genuine protocol incompatibilities if not scoped to NoCompatibleProtocolVersion",
+      "Restoring the old default may regress the intended prefer-latest behavior for 2026-07-28 servers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test with a mock stdio MCP server that responds to server/discover with supportedVersions not including 2026-07-28, asserting the client falls back to legacy initialize and the extension starts",
+      "Run targeted tests for crates/goose agents/mcp_client and agent modules plus static checks"
+    ],
+    "unknowns": [
+      "Repository policy requires assignment before implementation (needs_assignment), which is a process gate rather than a technical blocker"
+    ],
+    "why": "Issue provides a concrete regression: v1.50 changed AgentConfig default mcp_protocol_version from Some(V_2025_11_25) to None, causing ClientLifecycleMode::Auto to probe server/discover with preferred 2026-07-28 and fail with NoCompatibleProtocolVersion for spec-compliant 2025-11-25 servers instead of falling back to legacy initialize. Root cause is anchored to agent.rs and mcp_client.rs, with a clear reproduction and two concrete fix directions."
   },
   "789c3d9adfaf3f140ecb6683fd3657ffa6bb3543f23aa64697f6ae00c35614bc": {
     "confidence": 0.85,
@@ -55381,6 +55521,40 @@
     ],
     "why": "Issue describes a clear user-visible failure (image-only submission rejected with 'session input requires a prompt string') and provides ordered repro steps, but no code anchors, no root-cause evidence, and no identified code surface. The pre-task evidence explicitly flags no_code_surface and reproduction_or_validation_missing, and probe_ready is false. Without a located validation path in the desktop session-input handling, the fix is not yet actionable as a code contribution."
   },
+  "b4f821f2a72b43ffb7d7e0021c49ef923c308952c889ece3757e49f9166be21d": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims deterministic reproduction but public_repro_signals=0 and reproduction_evidence is empty"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/config/vllm.py MambaModelConfig.verify_and_update_config normalization reaching all ranks",
+      "cross-worker KV-spec consistency for mamba hybrid cache"
+    ],
+    "risks": [
+      "PR #52244 may already fix the same root cause, making this duplicate work",
+      "AI disclosure policy conflict blocks public submission",
+      "Multi-node GB10/RoCE hardware may be required to reproduce"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce 2-node TP hybrid GDN/mamba boot with --enable-prefix-caching and confirm the KV-spec assert",
+      "Verify --mamba-cache-mode align workaround removes the assert and yields prefix_cache_hits_total > 0",
+      "Add regression test asserting identical MambaSpec across ranks"
+    ],
+    "unknowns": [
+      "Whether PR #52244 covers this exact cross-worker derivation gap",
+      "Whether the repository's AI disclosure policy permits this contribution",
+      "Whether the reporter's fork-specific config is required to reproduce"
+    ],
+    "why": "Issue provides a plausible root cause (head-only mamba_cache_mode derivation not reaching remote rank) and a workaround, but the supplied evidence shows no public reproduction and an unresolved semantic-overlap PR (#52244) touching mamba/mamba_cache_mode that may already cover the same root cause; the disclosure policy conflict also blocks automated action."
+  },
   "b517f746a4663db054678461770fb9f31edd4545a80a83c6c12bdd8c7605d04b": {
     "confidence": 0.85,
     "contradictions": [
@@ -56059,6 +56233,40 @@
       "No maintainer design preference confirmed; issue is still in triage."
     ],
     "why": "Issue provides a clear root cause: EventedAgent overrides executeWorkflow() and never calls deleteRunSnapshots() on terminal states, leaving stale snapshot rows that pollute listActiveRuns() and cause recoverActiveRuns() to re-execute finished runs. Reproduction steps and expected/actual behavior are concrete, with code anchors and a suggested fix direction."
+  },
+  "b74e42ba38f34e4cddaeb67f176afb98370b878406b0bd0b3cea8c1084171f47": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims model_architecture/numerics_quantization mechanisms, but the issue is a continuous-batching processor-slot lifecycle bug",
+      "candidate.actionability_evidence.root_cause_signal is false while collaborator comments identify a specific upstream root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Dependency/backport decision for mlx-lm processor-slot fix, not a new algorithm implementation"
+    ],
+    "risks": [
+      "Upstream fix is 49 commits beyond the released tag; a commit-built package is not a small change",
+      "Existing PR #787 may overlap semantically but does not directly cover the root cause",
+      "The candidate's algorithm-track classification (model_architecture/numerics_quantization) does not match the actual batching/processor-slot defect"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Re-run the issue's sequential constrained→unconstrained→constrained reproduction against the backported mlx-lm fix with the original Schematron-3B checkpoint and MLX 0.32.2 environment to confirm resolution"
+    ],
+    "unknowns": [
+      "Whether the upstream mlx-lm fix fully resolves the original Schematron-3B/MLX 0.32.2 reproduction",
+      "Whether the maintainers will accept a narrow backport vs. a full dependency upgrade",
+      "Whether any new code contribution is needed beyond the dependency update decision"
+    ],
+    "why": "The issue is a real, well-reproduced bug, but the collaborator evidence attributes the root cause to an upstream mlx-lm processor-slot alignment defect already fixed upstream (mlx-lm commit e2f2fb2aef987f86878d17638446183cffe21fe4), with a narrow backport already validated against the released 0.31.3 baseline. The remaining work is a supported dependency update/backport decision, not a new algorithm implementation. Additionally, the candidate's algorithm_evidence claims model_architecture/numerics_quantization mechanisms, but the actual issue is a continuous-batching processor-slot lifecycle bug in constrained decoding, not a training objective, quantization/numerical method, or evaluation methodology. The open PR #787 has only semantic overlap (response_format keyword) with no direct code overlap and does not reference the issue."
   },
   "b74f525ad9cddf97da19ebd0684b3946e07e2bb503117d53d897f930de7bd7ed": {
     "confidence": 0.85,
@@ -56811,6 +57019,42 @@
       "No maintainer approval yet; but that is not a blocker for actionability."
     ],
     "why": "Issue provides a clear root cause (routing identity mismatch between ThunderAgent and KV router under DP>1), a concrete reproduction path, and a detailed design with code-level changes. The proposed fix is technically actionable and addresses a real bug."
+  },
+  "b9641d7775b3c789a0f960ff92003dc16f997c7ac7d8fbe17a13e981b538642e": {
+    "confidence": 0.7,
+    "contradictions": [
+      "open_pr_assessment reports PR #7101 as semantic_overlap_requires_review while issue_data.recent_comments shows a contributor claiming they are opening a PR, leaving duplicate coverage unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/google/adk/agents/llm_agent.py bypass resolution path",
+      "src/google/adk/tools/discovery_engine_search_tool.py tool naming/description",
+      "src/google/adk/tools/vertex_ai_search_tool.py parameter forwarding"
+    ],
+    "risks": [
+      "PR #7101 may already cover the fail-fast dependency portion, making a new task duplicative",
+      "Changing tool naming/aliasing could alter public API behavior beyond the reported bug",
+      "The issue mixes a bug report with design proposals, risking scope creep"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test constructing an Agent with VertexAiSearchTool(bypass_multi_tools_limit=True) plus a second tool and asserting the resolved tool name/description and dependency error behavior",
+      "Run targeted unit tests for llm_agent and discovery_engine_search_tool"
+    ],
+    "unknowns": [
+      "Whether PR #7101 already fixes the root cause or only the dependency-error symptom",
+      "Which of the four suggested improvements maintainers consider in scope",
+      "Whether assignment is required before work can proceed"
+    ],
+    "why": "Issue describes a real leaky-abstraction problem in VertexAiSearchTool's bypass_multi_tools_limit path, but the supplied evidence shows an open PR (#7101) with semantic overlap on the same code path and a contributor comment claiming they are opening a PR, so duplicate/coverage status is unresolved. The issue also bundles four distinct suggested improvements (naming, alias resolution, deprecation, fail-fast dependency error), so the actionable scope is not yet pinned down."
   },
   "b9bea567ff660854ce5fba7a19d344bc07ed2b50306eeef84de07e7e4aa91d88": {
     "confidence": 0.7,
@@ -73309,6 +73553,39 @@
     ],
     "why": "Issue reports a user-visible bug with a plausible root cause (Gemini 3.5 API change) and a minimal repro, but the fix requires design confirmation: whether to map reasoning_effort to thinking_summaries on generateContent or add Interactions API support. No maintainer input or help-wanted signal, and the only open PR is unrelated. Actionability is blocked by missing maintainer direction on the intended API behavior."
   },
+  "eabf8d2ad6a6d650c505b891fa4ff82931bb366ac6de53b459896e57543c7fb8": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "apps/cli/src/commands/hook.ts: avoid full-snapshot dispatch per reasoning.delta",
+      "apps/cli/src/utils/reasoning.ts: batch/throttle reasoning delta events",
+      "SQLite hub event persistence: reduce fsync frequency or skip transient streaming deltas",
+      "apps/cli/src/utils/context.ts: send minimal delta payloads instead of context.snapshot"
+    ],
+    "risks": [
+      "Changing hook dispatch semantics may affect plugins relying on per-delta events",
+      "Throttling/batching could alter streaming UX or event ordering guarantees",
+      "SQLite synchronous setting change may trade durability for performance"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with cline@3.0.61 and a reasoning model, measure RSS and hub-events DB growth over a multi-step task",
+      "Add regression test asserting hook.onEvent is not called per reasoning delta and payload size stays bounded",
+      "Verify SQLite commit/fsync count drops while preserving event durability semantics"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference for hook event batching/throttling",
+      "Exact code path in apps/cli/src/commands/hook.ts that constructs the full snapshot per delta"
+    ],
+    "why": "Issue provides a detailed, ordered reproduction and concrete code anchors (reasoning.delta, hook.onEvent, context.snapshot, JSON.stringify/parse, fsync) tying the memory/disk churn to full-snapshot hook dispatch per reasoning delta and synchronous=FULL SQLite commits. This is an actionable agent-infra performance fix with a clear validation path (bounded RSS, reduced event count, throttled/batched deltas)."
+  },
   "eaf0274a23ace44033561a735e5645e4aedbcf7cb61b81456461dc0d76288c65": {
     "confidence": 0.7,
     "contradictions": [],
@@ -76975,6 +77252,38 @@
       "Whether maintainers intend to support the reported CLI usage without --model-type"
     ],
     "why": "Issue reports a CLI argument error for MiniMax-H3 in sglang serve, but comments indicate a workaround (adding --model-type diffusion) and a merged PR (#33365) that may already address the root cause. The open PR lookup timed out, so competition status is unknown. The issue is a user-facing bug with a clear repro, but the fix may already be merged or require maintainer confirmation on intended CLI behavior."
+  },
+  "f7010d1613f3f055952e3bdb5564469d8abc2601e9929df2a8efcda9ef11f99f": {
+    "confidence": 0.6,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while the issue body provides a specific code path and root-cause explanation"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py",
+      "drop_params handling for reasoning_effort on non-reasoning OpenAI/Azure models"
+    ],
+    "risks": [
+      "Changing drop_params semantics for reasoning_effort could alter behavior for other unsupported params",
+      "Overlap with open PR #40920 may mean the fix is already in flight"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test asserting get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) raises UnsupportedParamsError or forwards the param",
+      "Run the targeted package unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether open PR #40920 or the other reasoning_effort PRs already fix this exact OpenAI/Azure chat path",
+      "Maintainer-preferred behavior: forward the param vs raise UnsupportedParamsError under drop_params"
+    ],
+    "why": "Issue describes a concrete user-visible bug with reproduction steps and code anchors, but the supplied duplicate assessment flags semantic overlap with open PR #40920 and other open PRs touching reasoning_effort; whether the root cause is already covered is unresolved, which materially determines whether new code work is actionable."
   },
   "f7020a1413496f0fe1d0a8280d120c6beff7116d4c5bfd2bdb4bfca2996e8cf8": {
     "confidence": 0.9,
