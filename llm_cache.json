@@ -66982,6 +66982,47 @@
     ],
     "why": "The issue provides a precise root cause: DSV4's compressed KV cache geometry (num_states=2) violates the paged MQA kernel's compile-time block_kv template constraint (32/64), causing an assert or silent memory corruption. It includes code anchors, reproduction environment, and a concrete validation path (test on GB10 hardware). The track is llm_algorithm and the issue qualifies as a kernel algorithm bug with numerical/quantization aspects."
   },
+  "c2ba202171c990ef8f1347c81fd0ef5cf2ee917938b20c3f81edb68494291779": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Comment 1 attributes the hang to PCIe ACS/P2P and reports NCCL_P2P_DISABLE=1 + --disable-custom-all-reduce as the fix, while a later comment reports those flags did not help",
+      "Another comment attributes the same symptom to slow HF model download, and the py-spy dump attributes it to flashinfer sampling with VLLM_USE_FLASHINFER_SAMPLER=0 as the fix",
+      "Code anchors point at sampling/model_runner paths while the reported log line is the core-engine startup wait in v1/engine/utils.py"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/engine/utils.py core-engine startup wait/timeout path",
+      "custom all-reduce / NCCL_P2P capability gating in the worker",
+      "flashinfer sampler fallback path in vllm/v1/sample/ops/topk_topp_sampler.py"
+    ],
+    "risks": [
+      "Multiple contradictory workarounds may mask distinct root causes (PCIe ACS vs flashinfer sampler vs model download)",
+      "Hardware-specific (PCIe-only, no NVLink) behavior is hard to reproduce in CI",
+      "Repository AI-disclosure policy conflict is unresolved"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the hang on a 4x L4 PCIe-only topology with TP=4 and capture py-spy dumps of the EngineCore process",
+      "A/B test NCCL_P2P_DISABLE=1 + --disable-custom-all-reduce vs VLLM_USE_FLASHINFER_SAMPLER=0 to isolate which subsystem blocks startup",
+      "Add a startup-timeout regression test that fails fast instead of hanging indefinitely"
+    ],
+    "unknowns": [
+      "Which subsystem actually blocks startup (custom all-reduce init, flashinfer sampler warmup, or model download)",
+      "Whether the hang is reproducible without the specific PCIe-only 4x L4 topology",
+      "Whether the AI-disclosure policy conflict permits any automated contribution"
+    ],
+    "why": "The issue is a startup hang ('Waiting for core engine proc(s) to start') with multiple mutually inconsistent community explanations: NCCL_P2P_DISABLE/--disable-custom-all-reduce (PCIe ACS), HF model download time, and a py-spy stack pointing at flashinfer top_k_top_p_sampling_from_logits with VLLM_USE_FLASHINFER_SAMPLER=0 as the fix. The supplied code anchors (sampling, model_runner, eplb_utils) do not match the reported hang location (v1/engine/utils.py core_client wait loop), and the algorithm evidence's matched terms (awq, fp8, tensor parallel, logits) are keyword-level, not a concrete training objective, numerical method, or evaluation methodology. No single root cause is established, so no reference-vs-implementation or numerical regression test can be defined."
+  },
   "c2ba984a75a3e46267061baf5863fc5cb1d727660637abf0f65fa5b866ddda15": {
     "confidence": 0.85,
     "contradictions": [
