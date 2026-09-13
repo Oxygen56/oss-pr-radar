@@ -1,4 +1,43 @@
 {
+  "000ff788b3c270fdc9fb021b9788d7c9aa37d720aaedeca0d69bc7d2aca144c2": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body frames the regression as possibly kernel/attention (FlashInfer 0.6.18) while maintainer ZJY0516 attributes it to tool call / vllm frontend",
+      "algorithm_evidence claims qualified=true with 4 mechanisms, but formula_signal and experiment_signal are both false and rootCauseCoverage is false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints frontend tool-call parsing path",
+      "rust/src/parser/src/reasoning/glm45.rs (if parser is implicated)",
+      "hybrid KV/prefix-cache state handling only if a repro isolates it"
+    ],
+    "risks": [
+      "No standalone reproduction exists; the only evidence is a build A/B and rollback, so any fix cannot be validated",
+      "Maintainer attributes the cause to frontend tool-call parsing, which is ordinary API/parser plumbing outside the llm_algorithm track",
+      "Potential duplicate #55238 shares only generic stack signatures, so overlap is unconfirmed",
+      "AI-disclosure policy conflict blocks automated public action"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a deterministic long multi-turn agentic transcript (fixed seed, fixed chat template, clear_thinking on/off) that reproduces the degeneration on the bad build and is clean on the good build",
+      "A/B the same transcript with prefix caching disabled and with FlashInfer pinned to 0.6.17 to isolate kernel vs frontend vs cache",
+      "Add a regression test asserting no repeated-token collapse across N appended tool-call turns"
+    ],
+    "unknowns": [
+      "A deterministic reproduction of the degeneration is missing",
+      "Whether the root cause is frontend tool-call parsing (non-algorithm) or a kernel/numerical issue is unresolved",
+      "Whether the AI-disclosure policy conflict can be satisfied for this repository"
+    ],
+    "why": "The issue reports a real regression (GLM-5.3-Flash FP8 degenerates into repeated-token word salad in long multi-turn agentic sessions), but the reporter explicitly could not reproduce it synthetically and provides no standalone repro. A maintainer comment attributes it to 'tool call / vllm frontend', which is parser/frontend plumbing rather than a concrete LLM algorithm mechanism (no training objective, model mechanism, distributed invariant, quantization/numerical method, kernel algorithm, or evaluation methodology is established). The candidate's own algorithm_evidence is keyword-matched (attention, bf16, fp8, tensor parallel) without a formula or experiment signal, and rootCauseCoverage is false. The related-issue overlap (#55238) is based only on generic stack signatures (clang/gcc/collect_env.py) and is not a genuine duplicate. The AI-disclosure policy conflict is also unresolved."
+  },
   "001de1ed89d629b7a4b02f43e427431631bc6bfcc9d2eaa018f7537fd6da0831": {
     "confidence": 0.85,
     "contradictions": [],
@@ -7119,6 +7158,44 @@
     ],
     "why": "Issue clearly identifies a bug where max_end_user_budget_id is not persisted to DB, causing budget reset to fail. However, an existing PR (#25387) directly addresses this issue but is closed with failing CI and no tests, and a newer PR (#36328) may partially overlap. Maintainer confirmation is needed to decide whether to revive, supersede, or create a new PR."
   },
+  "17d88262d5e02e6e7b780b2dc20811f6711298446bfba58eaafba9aa253ee1d4": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/soup_cli/trainer/sft.py: invoke shared v028 helper after LoRA, avoiding double Cut-CE/FP8 application",
+      "src/soup_cli/utils/v028_features.py: split or flag-gate pre-load vs post-load feature application",
+      "src/soup_cli/config/schema.py: add nvfp4 (and explicit fp8_attention) to supports_v028_features offender validation",
+      "tests/test_trainer_coverage_v035.py: replace SFT two-feature exemption with per-flag coverage check"
+    ],
+    "risks": [
+      "Double-applying Cut-CE or FP8 training if the helper is called naively from SFT",
+      "Vision/audio/streaming SFT branches may need separate handling or explicit rejection",
+      "nvfp4 hardware gate (SM >= 10) cannot be exercised on CPU, so runtime behavior on Blackwell remains untested locally",
+      "Overlapping related issues (#801, #826, #834) could cause scope creep if not kept separate"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Tiny CPU model SFTTrainerWrapper setup with apply_nvfp4/apply_fp8_attention monkeypatched to record calls; assert both are invoked (fails on current main).",
+      "Config-load test asserting nvfp4: true on task: distill and other non-applying tasks is rejected with a message naming the task.",
+      "Count apply_cut_ce invocations during SFT setup to assert exactly one application.",
+      "Per-flag coverage test: for each flag read by the helper, every supported trainer reaches the helper or reads the flag itself."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer splitting the helper versus a skip flag for SFT's pre-load Cut-CE",
+      "Exact intended behavior for vision/audio/streaming SFT branches (wire vs reject)"
+    ],
+    "why": "Issue pinpoints a concrete wiring defect: apply_v028_speed_memory is called by 11 trainers but not by SFTTrainerWrapper, so training.nvfp4, training.fp8_attention and training.kernel_auto_compose are accepted and silently ignored on task: sft. It supplies grep evidence, exact code anchors (v028_features.py flag readers, sft.py inline Cut-CE/FP8, schema.py validators), a real config-load reproduction showing nvfp4 accepted on seven tasks that never apply it, and a per-flag coverage-test exemption that only checks two of the features. This is a quantization/numerical-method wiring defect with a reference-vs-implementation validation path (patch apply_nvfp4/apply_fp8_attention and assert calls; count apply_cut_ce calls), not mere CLI plumbing."
+  },
   "17db2bb256066e3e0430df34097be84ed1465ecdd545c45992640c7f2d7a267f": {
     "confidence": 0.8,
     "contradictions": [],
@@ -12665,6 +12742,44 @@
     ],
     "wait_reason": null,
     "why": "Issue clearly identifies an unbounded query in view_spend_logs causing OOM, with concrete code anchors and suggested fixes. No competing PR or maintainer assignment found."
+  },
+  "295d25ecb6e490150a838bb3f00986df55f214101fc865df1f1d985829835026": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue proposes a website docs PR, but candidate is tracked against alibaba/spring-ai-alibaba with track=agent_ai_infra",
+      "Collaborator comment points to agentic-spring-ai/website while PR #282 is on spring-ai-alibaba/website"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docs/quick-start.md: change FunctionToolCallback examples to a record/POJO inputType",
+      "docs/quick-start.md: move @ToolParam onto record components",
+      "docs/quick-start.md: align tool names in SYSTEM_PROMPT and HumanInTheLoopHook with registered names",
+      "docs/quick-start.md: unify dependency version 1.1.2.0/1.1.2.1"
+    ],
+    "risks": [
+      "Docs-only change may be out of scope for this repository (website repo owns the page)",
+      "PR #282 already covers the same page and fix, risking duplicate work",
+      "Framework-side behavior (FunctionToolCallback schema generation) is not changed by a docs fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's no-network probe: print FunctionToolCallback.builder(...).inputType(String.class).build().getToolDefinition().inputSchema() and assert type=string",
+      "Repeat with a record inputType and assert type=object with properties/required",
+      "Optionally run the quick-start agent call against DashScope to confirm the 400 disappears"
+    ],
+    "unknowns": [
+      "Whether the docs fix belongs in this repo or the website repo",
+      "Whether PR #282 already fully resolves the issue, making further work redundant",
+      "Whether maintainers want a framework-side guard instead of a docs change"
+    ],
+    "why": "Issue is a docs-only defect in spring-ai-alibaba/website quick-start (inputType(String.class) yields type:string schema, DashScope 400). Root cause is well evidenced, but the fix is a documentation edit, not a code contribution, and an open PR (#282) already targets the same docs page with the same fix, so independent implementation space is unresolved."
   },
   "295fb033dde03fc750ccf5cd264197a7ab5f778e96769156c11abd18d79295df": {
     "confidence": 0.85,
@@ -35737,6 +35852,38 @@
     ],
     "why": "Issue reports a silent no-op for prefix caching on Mamba-2/GDN hybrids, but root cause is not fully confirmed (no code path analysis). A collaborator referenced PR #50991 which may address this, but open PR lookup failed due to timeout, so competition status is unknown. Maintainer input is needed to confirm design direction (warn vs. support recurrent state caching)."
   },
+  "6cae41cd393d79350b284187980b239210e7cbf1332458c26026fe74601b9a6d": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/tracing/otel.py: wire instrument_otel/manual_instrument_otel into the request-serving/engine-loop path",
+      "vllm/tracing/__init__.py: ensure tracing initialization invokes span creation",
+      "vllm/config/vllm.py: verify --otlp-traces-endpoint / --collect-detailed-traces config actually gates span emission"
+    ],
+    "risks": [
+      "Repo policy status is ai_disclosure_conflict, which may block automated public submission",
+      "Fix may overlap with existing tracing coverage issue #9952",
+      "Wiring spans into the hot path could add latency if not gated by config"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Start vllm serve with --otlp-traces-endpoint pointing at a local OTel collector and --collect-detailed-traces all",
+      "Send a chat completion request and assert otelcol_receiver_accepted_spans increments and a request span arrives",
+      "Add a regression test that asserts instrument_otel/manual_instrument_otel are reachable from the serving path"
+    ],
+    "unknowns": [
+      "Whether #9952 already covers this exact symptom or has an in-flight fix",
+      "Whether maintainers have a preferred instrumentation point (engine loop vs request handler)"
+    ],
+    "why": "Issue reports a concrete, reproducible user-visible bug: --otlp-traces-endpoint initializes the tracer/exporter (confirmed via /proc environ and ESTABLISHED TCP connection) but instrument_otel/manual_instrument_otel are never invoked outside vllm/tracing, so no spans are emitted. Reproduction command and collector-side verification (otelcol_receiver_accepted_spans) are supplied, and code anchors point to vllm/tracing/otel.py and __init__.py. This is actionable tracing plumbing work in an inference-serving repo, not an algorithm contribution, so track=agent_ai_infra is appropriate."
+  },
   "6caed21d693686bca309ef1e550b44e8bbd67dc00a43c5c3a8ed56d9b0cbe886": {
     "confidence": 0.6,
     "contradictions": [
@@ -37000,6 +37147,40 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue provides a clear root cause and reproduction for a real bug in SGLang's host memory pre-flight check, but lacks maintainer confirmation or design preference on the fix approach. The proposed fix (adding HugePages free bytes to available memory) is plausible but needs maintainer input to avoid unintended behavior changes."
+  },
+  "6f0210cb86af1b8681029fbaff036f5ca5f7be8e1087ca18aa63bc5a7b5f755e": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment lists #23776 as direct code overlap referencing this issue but state CLOSED with root_cause_coverage false and status human_review_required"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/mcp build/generateTypes config: remove hono from vendored types",
+      "packages/mcp package.json: declare hono as peer dependency",
+      "public MCPServer declarations (connectHonoSSE, getSseHonoTransport) import hono types from consumer install"
+    ],
+    "risks": [
+      "Closed PR #23776 may already cover this fix, making new work redundant",
+      "Changing hono to a peer dependency is a packaging/API surface change that may need maintainer design sign-off",
+      "Vendored hono-mcp-server-sse-transport declarations may still pull in a conflicting hono copy"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the TS2322 error with the issue's repro.ts against the published tarball",
+      "After fix, run tsc on the repro with moduleResolution bundler and skipLibCheck true to confirm no error",
+      "Add a type-level regression test asserting consumer hono SSEStreamingApi is assignable to connectHonoSSE's parameter"
+    ],
+    "unknowns": [
+      "Whether closed PR #23776 was merged, rejected, or superseded, and whether it already fixes the vendored hono types",
+      "Maintainer preference on peer-dependency vs alternative packaging fix"
+    ],
+    "why": "Issue documents a concrete root cause (vendored hono .d.ts in @mastra/mcp dist/_types causing nominal type mismatch for consumer-supplied SSEStreamingApi) with a minimal repro and a proposed fix mirroring #23774. However, the supplied duplicate assessment flags PR #23776 ('fix(mcp): declare hono as peer dependency and stop vendoring its types') as direct code overlap with the same issue, but its state is CLOSED and coverage is unconfirmed ('human_review_required'). Whether that closed PR already resolves the issue is a materially blocking unknown that determines whether new code work is actionable."
   },
   "6f150ce740d6b69e420725756cd86fe5b09bb454426044e770aa27814bc0a710": {
     "confidence": 0.6,
@@ -46621,6 +46802,40 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports formatting/parsing bugs in Muse-Glimmer and Qwen3.6 with LaTeX escape errors and missing thinking blocks. The root cause is unclear; comments suggest it may be model output, parser selection, or rendering. No concrete algorithm mechanism or reproducible code path is identified. The gate decision is HUMAN_REVIEW, and the submission policy indicates a conflict with AI disclosure, so no automatic action is allowed."
+  },
+  "8d7c140490e687bf9f4506abc6dccc340bbe9586b9a7d9db5dc38a9b291de77c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/omni/omni_handler.py: propagate response_format into EngineInputs",
+      "components/src/dynamo/vllm/omni/output_formatter.py: honor explicit b64_json vs url delivery",
+      "runtime FFmpeg build/backport guard for MMXEXT swscale corruption"
+    ],
+    "risks": [
+      "FFmpeg defect is in a bundled third-party binary; fix may require runtime rebuild/backport rather than repo code",
+      "Changing response_format handling could alter existing url-delivery behavior if not gated",
+      "Two independent defects may warrant splitting into separate PRs"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test asserting EngineInputs carries response_format=b64_json and the formatter emits nonempty data[0].b64_json",
+      "Add a model-free RGB-quadrant encode/decode round-trip regression asserting pixel correctness through encode_to_video_bytes and the bundled ffmpeg",
+      "Replay the issue's /v1/videos request against rebuilt version-identified images and verify decodable inline MP4"
+    ],
+    "unknowns": [
+      "Whether the FFmpeg guard fix is already merged/shipped in a usable release",
+      "Whether maintainers want the codec fix in this repo vs upstream FFmpeg/runtime image"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause for the b64_json drop (missing response_format=req.response_format in _engine_inputs_from_video in omni_handler.py, with the formatter defaulting to url) plus a model-free RGB-quadrant reproduction isolating the FFmpeg MMXEXT color defect. Reproduction steps, request payload, and acceptance criteria are explicit, so a reference-vs-implementation regression test is constructible."
   },
   "8d833737cd3d71936adb59b4b324de95db54780e38729779ef176cf2f4bb9125": {
     "confidence": 0.85,
@@ -66796,6 +67011,48 @@
     ],
     "why": "Issue provides a concrete user-visible race condition with reproduction steps, expected/actual behavior, suspected root cause in non-atomic read-modify-write on pending approvals, and code anchors. The suggested fix direction is actionable and testable."
   },
+  "cb6f8a65aecf5403be54fcde5c51c85adb7ceba068229a6026550c8870101078": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims drafter re-scans full accumulated KV every cycle; commenter corrects that DFlash is single-pass with one draft forward per decode step",
+      "Commenter's DCP-sharding root cause was self-retracted after checking 0.28.1rc0 source",
+      "Measured 28.85 ms draft overhead is ~17x above what layer-count and sharding geometry predict, leaving magnitude unexplained"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py: add sequence-length axis to dynamic speculative K lookup",
+      "vllm/config/scheduler.py: expose num_speculative_tokens_per_seq_len / speculative_disable_by_seq_len",
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py: only if a drafter-side attention fix is confirmed"
+    ],
+    "risks": [
+      "Root cause is contested: the DCP-sharding explanation was retracted and the single-pass correction invalidates the per-draft-step cost framing",
+      "Direction 1 overlaps open PR #48944 and proposal #54801, risking duplicate work",
+      "Measurement method (forced all-reject) may inflate costs and is not yet calibrated",
+      "Repository policy reports an AI disclosure conflict, blocking automated public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce at 185k single-stream on hybrid GDN target + DFlash drafter, comparing SPEC_OFF vs DT4 tok/s with fixed seed and repeated medians",
+      "Run the synthetic_acceptance_rates all-zeros vs all-ones control to separate rejection-path cost from draft-forward cost",
+      "Kernel trace attributing the per-cycle drafter attention time to confirm or refute the full-context scan hypothesis",
+      "Regression test that long-context requests fall back to non-speculative decode when the seq-len threshold is exceeded"
+    ],
+    "unknowns": [
+      "Whether the true cost driver is draft KV size vs compressed MLA latent or a measurement artifact",
+      "Whether open PR #48944 / #54801 already covers the per-seq-len control direction",
+      "Whether the repository's AI disclosure policy permits any contribution on this issue"
+    ],
+    "why": "The issue reports a concrete long-context DFlash slowdown with profiler-backed root cause (drafter full-context cross-attention scan), but the supplied comment thread materially contradicts the proposed mechanism: the DCP-sharding explanation was retracted by its author, the 'drafter rescans full KV every cycle' framing was corrected (DFlash is single-pass), and the measured 28.85 ms overhead is ~17x larger than layer-count/sharding geometry allows. The remaining candidate causes (draft KV size vs MLA latent, measurement method artifact) are explicitly unresolved, and the issue's own suggested direction 1 (per-seq-len disable hook) is already claimed by an open PR (#48944) and a parallel proposal (#54801), so duplicate/coverage status is unresolved."
+  },
   "cbaf30d88c9d462560ca08d1a797d0074945d57108a2d4f5ec08ae49a7024128": {
     "confidence": 0.7,
     "contradictions": [],
@@ -81841,6 +82098,38 @@
       "Maintainer design preference on whether to filter via request parameter or parse-time check"
     ],
     "why": "Issue provides a precise root cause (funding execType not filtered), code anchors, reproduction steps, and observed impact. The proposed fix is concrete and testable."
+  },
+  "f5d4477aeff57a9a33344752059e2266781d1f589be73e221b16502e3dee8f2a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/openai/encoding_dsv4.py: accept str or dict arguments and validate result is a dict, restoring #28035 behavior",
+      "Add regression test where encode_arguments_to_dsml() receives an already-normalized dictionary"
+    ],
+    "risks": [
+      "Fix must be applied on the b12x-vision branch, not only main, or the affected images remain broken",
+      "Image republish and cookbook digest update are release steps outside the code change",
+      "Overlap with #38386 is detector-side and does not cover this prompt-construction path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test calling encode_arguments_to_dsml({'name':'read','arguments':{'filePath':'/tmp/example.txt'}}) and asserting a single DSML parameter name=\"filePath\" string=\"true\" with no nested arguments wrapper",
+      "Regression test for the original JSON-string input path to confirm no behavior change",
+      "Negative test that non-object arguments raise ValueError"
+    ],
+    "unknowns": [
+      "Whether the b12x-vision branch is the intended merge target or the fix should land on main and be cherry-picked",
+      "Whether a maintainer has already scheduled an image refresh for this regression"
+    ],
+    "why": "Issue pinpoints a concrete regression in encode_arguments_to_dsml(): unconditional json.loads() on an already-normalized dict raises TypeError, caught and wrapped as {\"arguments\": dict}, producing an extra DSML parameter layer. Root cause, affected commit/branch, and expected vs actual output are all supplied, with code anchors encoding_dsv4.py and serving_chat.py."
   },
   "f5f865e683b56e39b01086fcf2f4cc3f6254456ca732f57f723fc9a0a0fae0d3": {
     "confidence": 0.7,
