@@ -3127,6 +3127,45 @@
     ],
     "why": "Issue reports a reproducible degenerate output (identical token and logprob at every decode position) on DeepSeek-V4-Flash with SM120, isolated across TP and DP+EP, and confirmed independent of environment via clean-venv reproduction. The evidence includes concrete code paths (attention.py, cache_utils.py, flashinfer_sparse.py) and a clear numerical signature, supporting a reference-vs-implementation test. The track is llm_algorithm with mechanisms like model_architecture, numerics_quantization, and kernel_algorithm, and the issue is actionable for root-cause investigation."
   },
+  "09d7e9faec622ed6aadf000e15c1e5c48be703f79c3b808d4142c074b7af1b3d": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue attributes cost to unavoidable full-context drafter attention; commenter's DCP-sharding hypothesis was explicitly retracted and the measured 28.85 ms draft overhead is unexplained",
+      "Commenter's own geometry estimate (~1.7 ms) is ~17x below the measured overhead, leaving the mechanism unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py: add sequence-length dimension to dynamic speculative K lookup",
+      "vllm/config/scheduler.py: expose num_speculative_tokens_per_seq_len / disable-by-seq-len config",
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py: only if drafter-side attention cost is confirmed"
+    ],
+    "risks": [
+      "Root cause may be misattributed: comment thread shows the DCP-sharding explanation was retracted and the 28.85 ms draft overhead is ~17x above geometry expectations",
+      "A per-seq-len disable hook is a scheduling/config change, not an algorithm fix, and may not address the actual drafter attention cost",
+      "Measurement method (synthetic all-reject) may overstate worst-case cost and is not yet calibrated"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce at 185k single-stream on hybrid GDN target + DFlash drafter, comparing SPEC_OFF vs DT4 tok/s with fixed seed and repeated medians",
+      "Add a regression test asserting the scheduler selects K=0 above the configured sequence-length threshold",
+      "Run a controlled A/B with the new seq-len hook enabled vs disabled at 185k to confirm the slowdown is removed"
+    ],
+    "unknowns": [
+      "Whether the drafter's full-context attention is truly the dominant cost or whether another mechanism (e.g., KV size, rejection path) explains the 28.85 ms",
+      "Whether the proposed per-seq-len disable hook is the maintainer-preferred direction versus a drafter-side or kernel-side fix",
+      "Whether the synthetic all-reject measurement method is representative of real serving cost"
+    ],
+    "why": "The issue reports a concrete long-context DFlash slowdown with profiling (~182 ms/cycle drafter FA), but the supplied comment thread materially contradicts the proposed mechanism: the DCP-sharding asymmetry hypothesis was retracted, and the commenter's own magnitude estimate (28.85 ms measured vs ~1.7 ms geometry-allowed) remains unexplained. The issue's own root cause (full accumulated drafter KV rescan) is asserted but not independently confirmed, and the suggested fix (per-seq-len disable hook) is a scheduling/config change rather than an algorithm mechanism."
+  },
   "09df473bffb42c7beccea614ed85f2223ff5845edbaa00895f0e256a1acb1bea": {
     "confidence": 0.7,
     "contradictions": [],
@@ -9570,6 +9609,43 @@
     ],
     "wait_reason": null,
     "why": "Issue clearly describes a Windows-specific startup failure caused by unquoted paths with spaces when Claude Desktop invokes the server via cmd.exe. The existing PR #4499 is docs-only, lacks tests, and has been stale for 37 days, leaving room for a materially better PR that adds a regression test and a robust fix (e.g., proper quoting or path resolution)."
+  },
+  "1eb21027b47658f24f33408d7a0a3600a86d0e6247ce399c9087871c0d1bf342": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/processors/processors/structured-output.ts: register caller logger on structuring agent and forward errorStrategy/fallbackValue",
+      "packages/_internal-core/src/base/MastraBase.ts: logger propagation to inner agent",
+      "packages/core/src/stream/base/output.ts: MastraModelOutput accepts logger option",
+      "packages/core/src/stream/base/output-format-handlers.ts: honor errorStrategy in native path",
+      "packages/core/src/agent/workflows/prepare-stream/map-results-step.ts: pass agent logger and preserve fallback metadata"
+    ],
+    "risks": [
+      "Changing logger propagation could alter logging behavior for other inner-agent paths",
+      "Forwarding errorStrategy/fallbackValue may change strict-mode semantics if not scoped correctly",
+      "Maintainer may prefer a different logger-injection API surface"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's repro.mjs with fake models and assert console.error is never called for errorStrategy 'warn'/'fallback'",
+      "Assert logger.warn is invoked once under 'warn' and no error-level output under 'fallback'",
+      "Assert fallback object-result chunk carries metadata.fallback: true",
+      "Run targeted unit tests for StructuredOutputProcessor and the stream output-format handlers"
+    ],
+    "unknowns": [
+      "Whether maintainers want the logger injected via __registerPrimitives versus constructor option",
+      "Whether the linked fork branch is acceptable as the PR base"
+    ],
+    "why": "Issue provides a concrete, key-free reproduction with fake AI SDK models, exact code anchors (structured-output.ts:80-88/246-267, MastraBase.ts:22, output-format-handlers.ts:728-748, map-results-step.ts:329), and a clear root cause: the internal structurer Agent is built without a logger and without forwarding errorStrategy/fallbackValue, so validation failures hit the default ConsoleLogger at error level before the processor's own strategy applies. Expected behavior and a concrete validation path (console.error never called; logger.warn under 'warn'; fallback chunk tagged) are specified."
   },
   "1ebeb46d4c7f39910e33296bfcc1d34912ac92dfed604d8da99044d38c17661c": {
     "confidence": 0.8,
@@ -23351,6 +23427,41 @@
     ],
     "why": "Issue provides a clear root cause in the CLI permission flow: the ask tier silently denies when onToolPermissionRequest callback is missing, mislabeling denial as user rejection. Concrete reproduction steps and code anchors are supplied, making the fix actionable."
   },
+  "4a1496a4e25f9858a58eefd709af537d92edf5eecddc77e1ff39c58ba2f894d3": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports PR #23776 as CLOSED while also listing it as active/recently active and referencing the issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "packages/mcp package.json: declare hono as peerDependency",
+      "packages/mcp build/generateTypes config: remove hono from vendored types set",
+      "public declarations of MCPServer.connectHonoSSE/getSseHonoTransport import from consumer hono"
+    ],
+    "risks": [
+      "Closed PR #23776 may already cover the fix, making new work duplicative",
+      "Removing vendored hono types could break hono-mcp-server-sse-transport vendored declarations if they still reference the vendored path",
+      "Peer dependency addition is a semver/consumer-install behavior change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a type-level regression test (tsd/tsc) that imports SSEStreamingApi from 'hono/streaming' and passes it to MCPServer.connectHonoSSE, asserting no TS2322",
+      "Build @mastra/mcp and inspect dist/server/server.d.ts to confirm no '../_types/hono/...' import remains",
+      "Run targeted package unit tests and typecheck for @mastra/mcp"
+    ],
+    "unknowns": [
+      "Whether closed PR #23776 was merged, superseded, or rejected — determines if the fix is already covered",
+      "Whether maintainers have a preferred implementation (peer dep vs. re-export vs. bundler config)"
+    ],
+    "why": "Issue clearly identifies a real root cause (vendored hono .d.ts in @mastra/mcp dist/_types causing nominal type mismatch for consumer-supplied SSEStreamingApi) with a concrete repro and a proposed fix mirroring #23774. However, the only candidate PR (#23776) is CLOSED with no test files and rootCauseCoverage=false, and the duplicate/coverage status is 'human_review_required' — unresolved coverage by a closed PR is a materially blocking unknown for whether new code work is actionable."
+  },
   "4a1b1ba0d603870c8eee98ce120a8b4b9a2fc7b50857fd443298ea009153f81c": {
     "confidence": 0.85,
     "contradictions": [
@@ -31599,6 +31710,35 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports LaTeX escape errors and missing thinking blocks for multiple models, but lacks a confirmed root cause. The maintainer comment requests exact server commands, raw responses, and streaming vs non-streaming comparisons, indicating the bug is not yet isolated. The issue may be a duplicate of #48645 based on shared stack signatures, and the gate decision is HUMAN_REVIEW."
   },
+  "5fa5d0814afe1ca43cfdb3fda7428f764ea211e999f640b2aa1e98cd86c17d08": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "workflows/inngest/src/durable-agent/create-inngest-agent.ts: add Inngest-specific override for sendNotificationSignal so idle-thread wake routes through the durable execution entry point",
+      "packages/core/src/agent/thread-stream-runtime.ts: ensure idle wake path uses the durable agent's stream when invoked via the Inngest proxy"
+    ],
+    "risks": [
+      "Maintainer may prefer documenting the limitation rather than changing dispatch behavior",
+      "Override could alter behavior for non-notification fallback methods if implemented too broadly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the published gist reproduction (npm run repro:wake) and assert calls == ['durable.stream'] instead of ['base.stream']",
+      "Add a regression test in workflows/inngest that sends an urgent notification to an idle thread and verifies the durable stream entry point is selected",
+      "Run targeted unit tests for workflows/inngest and packages/core agent streaming"
+    ],
+    "unknowns": [
+      "Whether maintainers consider notification-driven durable execution in scope for this adapter"
+    ],
+    "why": "Issue provides a concrete, credential-free reproduction and traces the dispatch chain to a specific fallback binding in create-inngest-agent.ts where sendNotificationSignal is not overridden and falls through to the underlying Agent.stream. Root cause is well anchored to code paths and a clear expected-vs-actual assertion."
+  },
   "5fa7ed21b4febd1ca20d3d7e8ae088f4524744c662530127e4c5be73ddd958de": {
     "confidence": 0.6,
     "contradictions": [],
@@ -32010,6 +32150,38 @@
       "Whether maintainers require preserving attribution from earlier staged versions versus conservative omission, which determines the eligible-snapshot rule"
     ],
     "why": "Issue provides a concrete, reproducible attribution bug: built-in git commit interception only fills unattested holes and never re-diffs lines carrying stale AI attestation, while the known_human checkpoint path does. A commenter independently reproduced a narrower variant on the base SHA with explicit checkpoints and controls, and identified the reconciliation of pending working-log attribution as the locus. Code anchors (post_commit.rs, checkpoint.rs, working_log.rs, git_handlers.rs) and a validation path (blame before/after commit, known_human control) are supplied."
+  },
+  "613d41dc278fe045dfd6f7fe1b1ef36afb6660afad2e023ecbf0d20ba8ff9a50": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/utils/gpuDetection.js: add CUDA runtime/library compatibility check before offering the GPU download",
+      "src/helpers/whisperCudaManager.js: verify downloaded pack compatibility and surface activationFailed instead of silent CPU fallback",
+      "src/hooks/useGpuBannerAvailability.ts / gpuBannerPolicy.ts: suppress banner when a working CUDA-enabled whisper-server is already present"
+    ],
+    "risks": [
+      "Open PR #1982 overlaps on CUDA/GPU backend paths and may already cover part of the root cause",
+      "Changing banner/activation policy could alter user-visible behavior beyond the reported bug"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a Linux fixture with CUDA 13 and no libcudart.so.12; assert the GPU banner is suppressed or activation fails with a clear error rather than silently falling back to CPU",
+      "Regression test that a working bundled/distro whisper-server is preferred over the pinned CUDA-12 download"
+    ],
+    "unknowns": [
+      "Maintainer-confirmed policy for preferring an existing bundled/distro whisper-server over the pinned download",
+      "Required compatibility check granularity (CUDA major, library probe, or release metadata)",
+      "Whether PR #1982 already resolves the same root cause"
+    ],
+    "why": "The issue describes a plausible CUDA 12 vs CUDA 13 runtime mismatch and a banner that offers an incompatible download, but the supplied evidence leaves the intended fix policy unresolved: the contributor comment explicitly asks maintainers to confirm whether an existing bundled/distro whisper-server should be preferred and what compatibility check (CUDA major, library probe, or release metadata) is required. That policy choice determines the code change, so the opportunity is not yet actionable."
   },
   "61465f54d4d9a5323923c292bcb0891d912ff26f04b28bebe69f1ed621ad84d7": {
     "confidence": 0.85,
@@ -50006,6 +50178,40 @@
     ],
     "why": "Issue clearly identifies a bug in SFTTrainer's chunked_nll path for models without past_key_values/attentions, with a minimal fix and reproduction. However, the supplied gate decision is HUMAN_REVIEW, and existing PRs (e.g., #6514, #6571) overlap in the same file and chunked_nll semantics, requiring maintainer comparison to avoid duplicate work."
   },
+  "93ac1f9fabdb48cd2d87720cdf903e3db5c3dfbba3ec7a5acb5fadd58ceeed5d": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/processors/processors/structured-output.ts: record strict validation failure in processOutputStream and raise it from processOutputStep with abort(message,{retry:true}); reset one-shot guard",
+      "packages/core/src/loop/workflows/agentic-execution/llm-execution-step.ts: ensure retryRequested is honored for output-step tripwires within maxProcessorRetries",
+      "docs/agents/processors.mdx: clarify structured output retry behavior",
+      "changeset"
+    ],
+    "risks": [
+      "Behavior change to strict errorStrategy timing (failure surfaced at output-step instead of stream phase) could affect other consumers of stream-phase tripwires",
+      "Retry semantics must not double-invoke structuring or leak the one-shot guard across retries",
+      "Maintainer may prefer a different retry plumbing location"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's fake-model repro with maxProcessorRetries:2 and a structuring model that fails once; assert structuringCalls:2, object populated, finishReason:'stop'",
+      "Regression: maxProcessorRetries unset or exhausted → tripwire with retry:true and exactly one structuring call",
+      "Processor unit tests for strict errorStrategy deferral and single (non-doubled) tripwire reason"
+    ],
+    "unknowns": [
+      "Whether maintainers require triage label removal before PR submission (bot notice requests waiting, but this is a process gate, not a technical blocker)"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: StructuredOutputProcessor only implements processOutputStream, aborts without {retry:true}, and stream-phase tripwires are not converted to retryRequested by the agentic loop (which only reads processOutputStep/processToolResult tripwires). A no-API-key fake-model reproduction demonstrates structuringCalls:1 vs expected 2, and the proposed fix (defer strict failure to processOutputStep with abort(message,{retry:true})) is a minimal, testable change with a stated validation path."
+  },
   "940211bc7a43ee86f94ff053abf2d642f242cfc972259d3e870ac149e2d66a27": {
     "confidence": 0.8,
     "contradictions": [],
@@ -55730,6 +55936,40 @@
     ],
     "why": "The issue precisely identifies a semantic-convention violation in OTel GenAI message roles, with a minimal reproduction and confirmed root cause. However, the repository requires assignment and the existing PR #7261 is closed with CI failures, so maintainer direction is needed before starting new work."
   },
+  "a57e44b22774fffafb774eca3cc428754301b48df61263dbce35ed400a035476": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/diffusion_gemma.py: initialize _enable_mm_lora or restructure shared vision logic into a mixin",
+      "vllm/model_executor/models/gemma4_mm.py: defensive read or shared base for _enable_mm_lora and latent audio siblings",
+      "Add regression test sending one image request to DiffusionGemma"
+    ],
+    "risks": [
+      "Structural mixin refactor may be larger than maintainers prefer; smallest fix leaves class of bug open",
+      "Latent audio siblings are currently unreachable but could surface if audio support is declared",
+      "AI disclosure policy conflict may affect public submission workflow"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with nvidia/diffusiongemma-26B-A4B-it-NVFP4 and an image request; confirm AttributeError and EngineDeadError before fix",
+      "After fix, verify image request succeeds and EngineCore stays alive",
+      "Add regression test covering image input path for DiffusionGemma",
+      "Optionally assert latent audio attributes are guarded or defined"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer minimal attribute init vs structural mixin refactor",
+      "Whether repository AI disclosure policy blocks public PR submission"
+    ],
+    "why": "Issue provides a concrete traceback, exact code anchors (gemma4_mm.py:1317/1364, diffusion_gemma.py:289-301), a git-history bisection identifying the regression commit, and a clear root cause: DiffusionGemma borrows Gemma4 methods by class-level assignment but never sets _enable_mm_lora. This is a model-architecture/mechanism defect with a concrete reference-vs-implementation validation path (image request to DiffusionGemma should not crash EngineCore)."
+  },
   "a58db2ad970ce7b48eb1e56dfc08aa102391dcf1f263daf33edb66ac7046b223": {
     "confidence": 0.6,
     "contradictions": [
@@ -56197,6 +56437,44 @@
       "Exact server-side session keying logic"
     ],
     "why": "The issue describes a plausible stale-session bug in Continue's PR check pipeline, but the repository is now read-only post-acquisition, the open-PR lookup failed, and the deterministic gate requires HUMAN_REVIEW. The suggested fix direction is speculative and needs maintainer confirmation."
+  },
+  "a72b10926fc593a5a270c6a35c61f1212ef4dd10219a1765cef732110dacbeda": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter says no synthetic repro, yet maintainer asserts a known tool-call/frontend cause",
+      "Open PR #56635 claims a fix while rootCauseCoverage is false and semantic_overlap is false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints parser frontend handling of reasoning-end / tool-call boundary tokens",
+      "possible hybrid KV/prefix-cache state restoration path (unconfirmed)"
+    ],
+    "risks": [
+      "Root cause may be in FlashInfer 0.6.18 or transformers 5.16.1 rather than vLLM",
+      "Potential duplicate coverage by open PR #56635 and issue #47930",
+      "AI disclosure policy conflict flagged (ai_disclosure_conflict) may block automated public action"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a long multi-turn agentic session against the bad build vs good build",
+      "Run with --no-enable-prefix-caching to isolate prefix-cache state interaction",
+      "Pin flashinfer-python==0.6.17 to isolate kernel vs core regression",
+      "Add parser-level regression test for reasoning-end/tool-call boundary token handling"
+    ],
+    "unknowns": [
+      "Whether the degeneration is caused by the parser frontend, hybrid KV/prefix-cache state, or an upstream dependency bump",
+      "Whether PR #56635 actually resolves the reported symptom",
+      "Whether issue #47930 is a true duplicate or merely shares stack signatures"
+    ],
+    "why": "Issue reports a real GLM-5.3-Flash degeneration regression, but the reporter explicitly could not reproduce it synthetically; only build A/B and rollback evidence exists. A maintainer comment attributes it to 'tool call / vllm frontend', and an open PR #56635 claims a parser fix, but the supplied evidence does not establish a confirmed root cause or a concrete reference-vs-implementation validation path. The candidate's own components show rootCauseCoverage=false and keyPathCoverage=false, and the duplicate assessment flags potential overlap with #47930."
   },
   "a74e841872b55e6bf9121db322dce0bc2d11e0184b3c7a0ee053c2abacacf112": {
     "confidence": 0.7,
@@ -68760,6 +69038,39 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a crash in deep_gemm_moe_permute during cudagraph mode with deepep_v2, but the root cause is not fully diagnosed. A potential duplicate issue #52897 shares stack signatures, and an open PR #52632 directly addresses DeepEP-V2 cudagraph path but lacks tests and does not reference this issue. The deterministic gate is HUMAN_REVIEW, and the submission policy conflict blocks automatic action."
   },
+  "cd780eb84df4d186291ae26c8a5516211bbb021521f6569ba7aa4a4ec07b635e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "llama-moe-cache.cpp: chunk bank allocations or clamp n_slots so each bank stays under ggml_backend_buft_get_max_size()",
+      "common_fit_auto_moe_cache / common_params: clamp auto MoE cache budget to backend max allocatable size and warn instead of aborting",
+      "ggml-backend.cpp: consider a clearer diagnostic when cached tensor buffer is NULL"
+    ],
+    "risks": [
+      "Chunking banks may change view/offset layout and hit-rate behavior",
+      "Clamping auto-fit silently could mask tuning regressions",
+      "Separate llama-server out-of-bounds abort may share or differ in root cause and could confuse the fix scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with llama-completion --cpu-moe --moe-cache-mib 3072 on Vulkan and confirm the assert at ggml-backend.cpp:1568",
+      "Verify --moe-cache-mib 2048 still runs and that a clamped auto-fit value no longer aborts",
+      "Run CUDA path with the same cache sizes to confirm no regression",
+      "Add a regression test asserting bank tensor size <= ggml_backend_buft_get_max_size() for the Vulkan buffer type"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer chunked allocation vs. clamping auto-fit as the primary fix",
+      "Whether the llama-server tensor-access-out-of-bounds abort is the same defect or a distinct one"
+    ],
+    "why": "Issue provides a concrete, traceable root cause: llama_moe_cache builds per-projection bank tensors whose size can exceed the Vulkan buffer type's max_size (suballocation_block_size, default 1 GiB), causing split allocations with buffer==NULL and the ggml-backend.cpp:1568 assert. Reproduction is explicit (--cpu-moe --moe-cache-mib 3072 / --fit auto), with a threshold table and a workaround (GGML_VK_SUBALLOCATION_BLOCK_SIZE) that confirms the mechanism. Code anchors (llama-moe-cache.cpp, ggml-backend.cpp, ggml-vulkan.cpp, common_fit_auto_moe_cache) support a reference-vs-implementation test."
+  },
   "cd8e7574b90172332a6e6e63b8b6756237415124777cc1ca894a6ce1dbffad8a": {
     "confidence": 0.85,
     "contradictions": [
@@ -79505,6 +79816,46 @@
     ],
     "why": "Issue provides a precise root cause (Node --env-file literal expansion) and a concrete reproduction with empirical HMR evidence. The proposed fix (extend Vite watch.ignored) is actionable and testable. Existing PRs lack regression tests, leaving room for a proper contribution."
   },
+  "e966d4dc53e15da9f05b1d77e6eedc0b52a630de928200ebea73a5cc9b52aaba": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims drafter runs every step and writes context KV for all scheduled tokens, yet also claims unwritten draft blocks get registered with garbage content",
+      "Pre-task duplicate status is 'none' while related-issue assessment reports potential overlap with #56605"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.related_issue_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/block_pool.py: tie draft-group block hash registration to actual drafter coverage",
+      "vllm/v1/core/kv_cache_coordinator.py: exclude or gate draft-group blocks from content-agnostic caching",
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py: ensure precompute_and_store_context_kv coverage is tracked"
+    ],
+    "risks": [
+      "Root cause not pinned; fix may target the wrong registration path",
+      "Workaround #47926 discards valid local cache hits, so a full fix needs a different design",
+      "Potential duplicate #56605 unresolved",
+      "AI disclosure policy conflict may block automated public action"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a DFlash/DSpark drafter + automatic prefix caching on a shared ~20k-token prefix; measure spec_decode_num_accepted_tokens / num_draft_tokens before and after fix",
+      "Add a regression test asserting draft-group blocks are not registered when the drafter pass did not cover their tokens",
+      "Compare acceptance on unique short prompts vs shared-prefix traffic to isolate cache-restored draft context"
+    ],
+    "unknowns": [
+      "Which specific step registers unwritten draft-group blocks",
+      "Whether #56605 is a true duplicate covering the same failure",
+      "Resolution of the ai_disclosure_conflict policy status",
+      "Whether maintainers want the cache-layer fix or the masking workaround as the accepted shape"
+    ],
+    "why": "The issue itself admits the root cause is not pinned: 'We have not yet pinned which step registered unwritten draft blocks in our deployment.' The mechanism is a hypothesis about content-agnostic block registration, and the reporter explicitly asks maintainers where drafter coverage can lapse. The only concrete mitigation (#47926) is a conservative workaround that also discards valid draft context. Additionally, the pre-task evidence flags an ai_disclosure_conflict policy status, and the related-issue assessment reports a potential duplicate (#56605) sharing stack/failure signatures, which is unresolved. These are materially blocking unknowns for actionable code work."
+  },
   "e978276646fcd0104adc6abd64f55fb72a84bb630a2686a4b3ecf85be9527b09": {
     "confidence": 0.85,
     "contradictions": [],
@@ -86147,6 +86498,44 @@
       "Exact maintainer preference for fix approach (set cadence vs reject config) is not confirmed, but the issue suggests options and a collaborator asked for a PR, indicating openness."
     ],
     "why": "Issue identifies a precise root cause: next_decode_eligible_step is never set in the base scheduler, breaking the pp_size cadence guard under --no-async-scheduling, leading to out-of-bounds accesses and wrong output. The fix is a small, well-scoped change in the scheduler or config validation, with clear reproduction steps and controls."
+  },
+  "fb6be3f732650bc5e9f3ed8cbb1310f67fabf1d535f5dca1aec32330579ac952": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body claims a branch is ready to open as a PR, but the bot comment and 'status: needs triage' label indicate maintainers have not approved opening a PR"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/tool.ts: branch on outputValidation mode in Tool.execute",
+      "packages/core/src/tools/validation.ts: preserve raw result when mode is 'warn'",
+      "packages/core/src/tools/validation.test.ts: add unit tests for 'warn' mode",
+      "packages/core/src/tools/tool-builder/builder.e2e.test.ts: regression test for span/error behavior",
+      "docs: agents/tools.mdx and createTool reference"
+    ],
+    "risks": [
+      "API surface change to createTool/ToolAction may conflict with maintainer design preferences",
+      "Changing default behavior could break existing pinned tests if not strictly opt-in",
+      "Logger integration and warning format may need maintainer alignment"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test asserting that with outputValidation: 'warn' and a schema-mismatched result, Tool.execute returns the raw result and logs a warning with toolId",
+      "Add a regression test asserting default 'strict' behavior is unchanged (result replaced with validation error object)",
+      "Run targeted unit tests in packages/core/src/tools and the builder e2e test"
+    ],
+    "unknowns": [
+      "Whether maintainers approve the outputValidation: 'strict' | 'warn' API design",
+      "Whether a minimal reproduction exists or can be constructed from the issue",
+      "Whether the fork branch already contains a working implementation that could be reviewed"
+    ],
+    "why": "The issue clearly identifies the root cause (Tool.execute replaces results with a validation error object on outputSchema failure) and proposes a concrete opt-in API (outputValidation: 'strict' | 'warn'). However, the candidate's own actionability evidence shows reproduction_or_validation_missing (public_repro_signals: 0, reproduction_evidence: [], probe_ready: false) and needs_confirmation/design_confirmation true. The bot comment explicitly instructs waiting for maintainer triage before opening a PR, and the issue is labeled 'status: needs triage'. This is a materially blocking unknown: without maintainer design confirmation on the API shape and without a reproduction, the code work is not yet actionable."
   },
   "fb822ae7266e29d1b8c32167621b9fdf66f4a2796ce0e2cb9a9ca1bcbf4a469a": {
     "confidence": 0.9,
