@@ -3908,6 +3908,43 @@
     ],
     "why": "Issue provides a precise root cause (SQL NULL inequality in exclude_team_id filter), a concrete reproduction with curl commands and metric observations, and a suggested fix with code sketch. The bug is user-visible and affects monitoring reliability. The fix is localized and testable."
   },
+  "0c2ed3cc29763256534c2feca0328f7c8ba665cf2f33b9d9b486563e6d00d700": {
+    "confidence": 0.7,
+    "contradictions": [
+      "candidate.open_pr_assessment reports semantic_overlap_requires_review with PR #1982 while candidate.actionability_evidence sets needs_confirmation=false and design_confirmation=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/utils/gpuDetection.js: add CUDA runtime major-version compatibility check before offering the GPU download",
+      "src/helpers/whisperCudaManager.js: verify downloaded pack compatibility and surface activationFailed instead of silent CPU fallback",
+      "src/hooks/useGpuBannerAvailability.ts / gpuBannerPolicy.ts: suppress banner when a working CUDA binary is already present"
+    ],
+    "risks": [
+      "PR #1982 may already implement the same fix, making a new contribution duplicative",
+      "Maintainer policy on preferring distro/bundled binaries vs pinned downloads is unresolved",
+      "Behavior change to banner/activation logic could affect other platforms"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test gpuDetection with mocked nvidia-smi/CUDA runtime reporting CUDA 13 and no libcudart.so.12, asserting the GPU offer is suppressed or activation fails",
+      "Regression test that a pre-existing working whisper-server-linux-x64 binary prevents the download banner",
+      "Fixture-based test that an incompatible downloaded pack triggers activationFailed rather than silent CPU fallback"
+    ],
+    "unknowns": [
+      "Whether PR #1982 already fixes the CUDA runtime-version detection root cause",
+      "Maintainer-preferred policy for preferring an existing bundled/distro whisper-server over the pinned download",
+      "Required minimum compatibility check (CUDA major, library probe, or release metadata)"
+    ],
+    "why": "Issue clearly identifies a root cause (gpuDetection.js checks only compute capability, not CUDA runtime major version, so a CUDA-12-linked pack is offered on CUDA 13 hosts) and a concrete reproduction. However, the supplied evidence contains a materially blocking unknown: an open PR #1982 ('verify GPU backends and add Vulkan fallback') semantically overlaps on the CUDA/whisperCudaManager path with status 'semantic_overlap_requires_review', and the maintainer comment explicitly asks for policy confirmation on preferring an existing bundled/distro whisper-server and the minimum compatibility check. Whether the existing PR already covers the root cause determines if new code work is actionable."
+  },
   "0c4f0b2de15d2116505fb050cc35db70311810f38fe2e12c49a3b33a194ba76f": {
     "confidence": 0.7,
     "contradictions": [
@@ -6399,6 +6436,42 @@
     ],
     "why": "The issue provides a clear root cause: a data-dependent RuntimeError in _adjust_embedding_length during multimodal embedding length mismatch, which propagates to SIGQUIT and kills the entire engine, amplified by client retries across nodes. The evidence includes reproduction traces, code anchors, and a concrete validation path (abort request instead of server). Although an open PR #38155 exists, it lacks root-cause coverage and full validation, leaving actionable competition space. The track is llm_algorithm, and the issue involves model architecture and distributed training mechanisms with a concrete reference-vs-implementation test path."
   },
+  "1410a500593b781f6c5a0c0e1ba5d9cade41ee487162ad61137f2c7abd562bd3": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue says drafter runs every step and writes context KV before other kernels read blocks, yet also says it cannot pin which step registered unwritten draft blocks"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py: tie draft-group block registration to drafter coverage",
+      "vllm/v1/core/block_pool.py / kv_cache_coordinator.py: exclude or gate draft-group blocks from content-agnostic caching"
+    ],
+    "risks": [
+      "Root cause not localized; fix may target wrong layer",
+      "Overlap with open draft PR #56723 may duplicate or conflict",
+      "Multimodal corruption report suggests broader scope than draft KV alone"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Serve DFlash/DSpark drafter with APC on, sustained shared ~20k-token prefix, measure vllm:spec_decode_num_accepted_tokens / num_draft_tokens before/after fix",
+      "Regression: unique short prompts without shared prefix should retain ~20% acceptance",
+      "Compare against #47926 masking workaround to confirm same failure signature"
+    ],
+    "unknowns": [
+      "Which scheduling step registers unwritten draft-group blocks",
+      "Whether PR #56723 already covers the root cause",
+      "Whether the multimodal corruption in comments shares this root cause"
+    ],
+    "why": "Issue describes a plausible draft-KV/prefix-cache corruption mechanism with strong empirical acceptance-collapse evidence and a workaround PR (#47926), but the reporter explicitly states they have not pinned which step registers unwritten draft blocks, and the open PR #56723 (maintainer-owned, draft) overlaps the same speculator path with unresolved duplicate/coverage status. The root cause is not yet localized to a concrete code defect, so code work is not clearly actionable."
+  },
   "1414cd98cf5a7f7de6c1e32bc71a193903e4d0d6762b9f637e136b242484b513": {
     "confidence": 0.85,
     "contradictions": [],
@@ -7642,6 +7715,42 @@
     ],
     "why": "Issue identifies a clear protocol-conformance bug in McpServerSession and McpStatelessAsyncServer where empty Mono completions suppress JSON-RPC responses, with a concrete root cause and suggested fix. However, the repository requires assignment and AI disclosure, and the deterministic gate is HUMAN_REVIEW, so work should not start without maintainer confirmation."
   },
+  "18536deb0e98a494154a2547ec4e415d3d951d8a611df465ee9d9c9861fd7f66": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/apps/backend.py: add respawn path in `_watch_backend_health_sweeps` for tracked, gateway-spawned backends whose process exited while app remains enabled and gateway is not shutting down",
+      "Add bounded exponential backoff and consecutive-failure cap with explicit give-up log line and visible health reason",
+      "Ensure respawn re-runs the same health gate / MCP promotion as initial spawn and replaces the tracked record under `_lock`",
+      "Handle launcher-unavailable case (user systemd manager exited) without counting it as N crashes"
+    ],
+    "risks": [
+      "Respawn predicate must be checked under `_lock` against record identity to avoid racing a stop/start under the same name",
+      "Respawn through the same launcher may fail immediately after user-manager exit; must not be miscounted as repeated crashes",
+      "Give-up state needs a visible surface so it is not confused with the current silent dead-backend state",
+      "Policy decisions (backoff bounds, failure cap, launcher-loss handling) may need maintainer input, but do not block a concrete implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: enable an app with a gateway-managed backend, confirm /health 200, kill -TERM the backend pid, assert gateway respawns it and /health returns 200 again",
+      "Regression: call stop_app_backend / disable / uninstall / gateway shutdown and assert no respawn occurs",
+      "Backoff test: simulate repeated startup crashes and assert bounded backoff, give-up after N failures, and a clear log line plus visible unhealthy reason",
+      "Launcher-loss test: simulate user systemd manager exit and assert supervisor handles launcher-unavailable without exhausting the crash budget"
+    ],
+    "unknowns": [
+      "Exact backoff parameters and consecutive-failure cap are not specified in the issue",
+      "Whether maintainers have a preferred launcher-loss recovery strategy is not stated"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: `_watch_backend_health_sweeps` in `src/kiro_crew/apps/backend.py` treats an exited Popen as terminal, demotes the record, and never respawns, so an enabled app's backend stays dead after external termination. Reproduction steps and log evidence are supplied, and a maintainer-side verification comment confirms the analysis against main. This is a real supervisor-behavior bug with a clear validation path (kill backend, assert respawn with bounded backoff and re-promotion)."
+  },
   "18761d7767e27559a5e5cba43a7f2006eb9f54397543cd6eb3578ef85affe25e": {
     "confidence": 0.85,
     "contradictions": [
@@ -8371,6 +8480,43 @@
       "Whether PR #33182 actually addresses the root cause; maintainer confirmation needed."
     ],
     "why": "The issue provides a concrete, reproducible bug with clear root causes: CUDA graph capture hangs for hybrid GDN models, dtype mismatch in gdn_backend.py, and MTP memory allocation failure. It includes executable reproduction commands and specific code anchors, enabling a reference-vs-implementation test for quantization and numerical correctness."
+  },
+  "1aab369a3950cbbb83f7784934df1af560504c0c662f7b672cfe9339a09a12ae": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue suggests a fix is needed, but open PR #54309 already implements the smallest fix and a contributor comment says a fix already exists"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/diffusion_gemma.py: initialize or defensively read _enable_mm_lora",
+      "vllm/model_executor/models/gemma4_mm.py: harden borrowed-method attribute reads",
+      "regression test sending one image request to DiffusionGemma"
+    ],
+    "risks": [
+      "PR #54309 may already cover the root cause, making a new contribution duplicative",
+      "Structural mixin refactor (option 3) is larger and may conflict with the existing PR",
+      "Latent audio siblings are currently unreachable, so a fix may be untestable without declaring audio support"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on v0.29.0 or main with nvidia/diffusiongemma-26B-A4B-it-NVFP4 and an image request; confirm AttributeError and EngineDeadError",
+      "After fix, send one image request and confirm no crash and correct multimodal output",
+      "Add regression test covering image input to DiffusionGemma and the latent audio-modality siblings"
+    ],
+    "unknowns": [
+      "Whether PR #54309 will be merged or superseded, and whether it fully covers the root cause",
+      "Whether maintainers prefer the structural mixin fix over the minimal attribute fix"
+    ],
+    "why": "The issue gives a clear, bisected root cause (borrowed Gemma4 methods read _enable_mm_lora, which DiffusionGemma never sets) and a concrete reproduction path, but the supplied evidence shows an open PR #54309 that already implements the suggested fix on the same file, and a contributor comment states a fix already exists there. The duplicate/coverage status is explicitly 'semantic_overlap_requires_review', which is a materially blocking unknown for deciding whether new code work is actionable."
   },
   "1acfc834a95ee38dd86f6eec9043cf7fa5b74402a3351f5b56dfc8bff1aec3db": {
     "confidence": 0.85,
@@ -15737,6 +15883,42 @@
       "Whether enterprise/GCP-managed routing is preserved by the proposed change"
     ],
     "why": "Issue gives a plausible routing root cause (consumer accounts hitting cloudcode-pa instead of daily-cloudcode-pa) with reproduction steps and external corroboration, but the only concrete fix evidence is an unmerged third-party branch whose claimed endpoint (daily-cloudcode-pa.sandbox.googleapis.com) contradicts the issue's own expected host (daily-cloudcode-pa.googleapis.com). The correct endpoint for consumer production is therefore unresolved, which directly determines whether the code change is actionable."
+  },
+  "30486bd844f73d4c9a274886a51531d3a0d4f28b8c7f320ff522af534c792636": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Triage states the crash is very likely the same defect as #11500 (duplicate history-item keys), while the reporter's regression shows a unique-key nested-update failure that persists with #11743 applied",
+      "Triage labels status/need-information and asks for an artifact to separate new vs known driver, yet the reporter's follow-up already supplies that artifact"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/components/shared/VirtualizedList.tsx: make row-height measurement edge-triggered and defer the state write outside Ink's active commit",
+      "packages/cli/src/ui/components/shared/VirtualizedList.update-depth.test.tsx: keep the unique-key nested-update regression as the failing-first test"
+    ],
+    "risks": [
+      "Fix may be redundant with open draft PR #11761 covering the same VirtualizedList paths",
+      "Depends on private Ink layout-listener behavior, which maintainers may reject as a tradeoff",
+      "If the field crash is fully explained by duplicate history keys, this becomes hardening rather than a root-cause fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the focused VirtualizedList.update-depth.test.tsx on the reported base (main@05a54fc3) and confirm the unique-key case throws Maximum update depth exceeded through useBoxMetrics/emitLayoutListeners/resetAfterCommit",
+      "Re-run the same focused file with #11743 applied to confirm it still fails, isolating the layout-loop driver from the duplicate-ID driver",
+      "Re-run on current main with #11565's Ink patch applied to confirm the Qwen-side fix is still needed and the suite passes"
+    ],
+    "unknowns": [
+      "Whether maintainers accept the unique-key regression as a distinct root cause from #11500's duplicate-ID driver",
+      "Whether open draft PR #11761 already covers this fix and should be compared before any new implementation",
+      "Whether the private Ink layout-listener dependency is an acceptable tradeoff for the maintainers"
+    ],
+    "why": "Issue reports a real commit-phase layout feedback loop (useBoxMetrics -> heights -> offsets -> window/anchor -> remount) with a deterministic unique-key regression test, but the supplied triage evidence ties the field crash to duplicate history-item keys (#11500) whose fix (#11743) is still open/unmerged, and the reporter's own scope note concedes the regression does not prove the field crash is independent of that driver. Overlap with open PR #11761 (draft, same VirtualizedList paths) and merged #11565 leaves unresolved duplicate/coverage questions that determine whether new code work is actionable."
   },
   "3098e24e4bbd71590fb07ab9050c57f79e839c4c2ef89c445a5e267012f609e2": {
     "confidence": 0.85,
@@ -36831,6 +37013,34 @@
     ],
     "why": "Issue provides a concrete, real-provider reproduction and a minimal AnyIO-only repro in comments; root cause is clearly identified as GeneratorExit propagating through create_task_group().__aexit__ around the yield in dspy/streaming/streamify.py. A commenter offers a concrete three-case validation plan (partial aclose, full consumption, in-task exception) and notes a candidate fix direction, so the work is actionable without maintainer pre-approval."
   },
+  "6b39739d6e3243543568d6d5fc6fd0fb913f6a6db56a64b7e15e576c73096cd1": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/openai/encoding_dsv4.py: accept str or dict arguments and validate result is a dict, restoring #28035 behavior",
+      "Add regression test where encode_arguments_to_dsml() receives an already-normalized dictionary"
+    ],
+    "risks": [
+      "Fix targets branch b12x-vision; must confirm whether main already has the #28035 behavior and whether the change should be applied to main or the branch",
+      "Image republish and cookbook digest update are release steps outside the code fix and may not be actionable in a single PR"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's minimal example: encode_arguments_to_dsml({\"name\": \"read\", \"arguments\": {\"filePath\": \"/tmp/example.txt\"}}) and assert output contains parameter name=\"filePath\" string=\"true\" rather than a nested arguments parameter",
+      "Add a unit test covering both the raw JSON-string path and the already-normalized dict path, plus a non-object arguments case expecting ValueError"
+    ],
+    "unknowns": [
+      "Whether main currently contains the #28035 fix or the same regression, which determines the correct target branch for the patch"
+    ],
+    "why": "Issue pinpoints a concrete regression in encode_arguments_to_dsml() on branch b12x-vision: unconditional json.loads() on an already-normalized dict raises TypeError, caught and wrapped as {\"arguments\": dict}, producing an extra DSML parameter layer. Expected vs actual DSML output and the #28035 reference behavior are both supplied, giving a clear root cause and a reference-vs-implementation validation path."
+  },
   "6b3bb9794dfe202f061c90a589c07c6159ab171efad48765f233f76902848c41": {
     "confidence": 0.85,
     "contradictions": [
@@ -48871,6 +49081,44 @@
     ],
     "why": "Issue clearly identifies a bug in auth_scheme generation causing token retrieval failure, with a concrete fix suggestion. However, a contributor has already reproduced and is working on a fix, and the deterministic gate requires HUMAN_REVIEW. The existing PR #5509 is unrelated, so no competition. Actionability is high but maintainer confirmation is needed."
   },
+  "8d0bd6e0bd39b5e36fc002af63292b675a3126b162ae690cabfb3918938b27bd": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue attributes cost to drafter re-scanning accumulated KV each cycle; commenter retracts this, noting DFlash is single-pass with one draft forward per step",
+      "Commenter claims propose drops dcp_local_seq_lens; later comment shows capture and runtime are symmetric on 0.28.1rc0 and the derivation moved to the base class on main via merged #54277/#55212"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py dynamic_sd_lookup keying",
+      "vllm/config/speculative.py speculative config surface",
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py draft attention path"
+    ],
+    "risks": [
+      "Fixing a scheduling hook duplicates open PRs #48944/#54801",
+      "Acting on the retracted full-KV-rescan mechanism would target the wrong code path",
+      "Long-context 185k reproduction may not be feasible on available hardware"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the 185k single-stream DFlash DT4 vs SPEC_OFF throughput delta on the stated hybrid GDN target",
+      "Run the synthetic-zero acceptance calibration (rates 0.0 vs 1.0) to confirm the measurement method isolates draft cost",
+      "Kernel-trace the per-cycle draft attention time to attribute the reported ~182 ms before proposing a fix"
+    ],
+    "unknowns": [
+      "Whether the ~182 ms/cycle drafter attention cost is real or an artifact of the maximal-rejection measurement path",
+      "Whether the seq-len disable hook is already covered by open PRs #48944/#54801",
+      "Whether the reported slowdown reproduces on current main after #54277/#55212"
+    ],
+    "why": "The issue reports a concrete long-context DFlash slowdown with profiled ~182 ms/cycle drafter attention, but the supplied comment thread materially contradicts the proposed mechanism: one commenter retracts the 'drafter rescans full KV' framing (DFlash is single-pass, one draft forward per step), and another shows the DCP-sharding asymmetry claimed as the cause is already symmetric on the measured release and was moved (not dropped) on main by merged PRs #54277/#55212. The remaining unexplained 17x magnitude gap means the root cause is not established, and the issue's own Direction 1 (a seq-len scheduling hook) is already covered by open PR #48944 and #54801 per the comments."
+  },
   "8d0efb2cc63a5bc0fa58f256cb6d94726b91db6ea38584e7b2e47eaf00d2ffa2": {
     "confidence": 0.6,
     "contradictions": [],
@@ -56685,6 +56933,42 @@
       "Exact maintainer preference for redaction patterns and whether existing redaction utilities should be reused"
     ],
     "why": "Issue provides a clear, reproducible bug: redact_user_api_key_info is not applied to OpenTelemetry span attributes, leaking sensitive metadata. Root cause is identified in code path and a concrete fix is suggested. No competing PR exists."
+  },
+  "a41be21f1afa6306d5d4db3e3ed4f1fde12ad1b6cac479038618a241c467840e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims no existing report/PR found, but open PR #7444 directly references this issue with a bounded poll timeout fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ContextualAIParseTool._run() polling loop in the ContextualAI parse tool module",
+      "Add configurable max polling duration/attempts with a clear timeout error",
+      "Optionally add raise_for_status() handling for non-2xx status responses"
+    ],
+    "risks": [
+      "Existing open PR #7444 may already cover the same fix, making duplicate work low-value",
+      "Repository has an AI disclosure conflict policy that may restrict automated public contributions",
+      "Changing polling behavior could affect existing tool callers if defaults are not preserved"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Mock submit request returning a job id and repeated status responses returning 'processing'; assert _run() raises a bounded timeout instead of polling forever",
+      "Mock status responses returning 'completed' before the deadline; assert _run() exits normally",
+      "Mock a 4xx/5xx status response with JSON lacking 'status'; assert a clear HTTP error rather than KeyError"
+    ],
+    "unknowns": [
+      "Whether PR #7444 fully resolves the root cause or leaves gaps that independent work could fill",
+      "Whether maintainers have a preferred implementation (deadline vs max-attempts) or design constraints",
+      "Whether the repository's AI disclosure policy permits the required contribution workflow"
+    ],
+    "why": "The issue clearly identifies an unbounded `while True` polling loop in ContextualAIParseTool._run() with a concrete root cause and a plausible fix, but the supplied evidence shows an open PR #7444 that already directly references this issue and implements a bounded poll timeout with tests. The duplicate/coverage status is 'weak_pr_competition_possible' with rootCauseCoverage=false, leaving unresolved whether the existing PR already covers the actionable fix. This materially affects whether independent code work is warranted."
   },
   "a4284d967a499038b2f0cef8c6aaec18012a110ca1e74ab24fbe2d1a4873dc62": {
     "confidence": 0.7,
@@ -65725,6 +66009,38 @@
       "Maintainer preference on fix location (backend vs UI)"
     ],
     "why": "The issue reports a UI display bug where the tool schema is missing from hidden_params in the LiteLLM dashboard, despite being sent to Ollama. The root cause is unclear: it could be a serialization/redaction issue in the logging path or a UI rendering issue. No maintainer confirmation or design direction exists, and the track is agent_ai_infra, not llm_algorithm, so the required algorithm evidence is absent. The candidate is actionable but needs maintainer input to confirm the intended fix location."
+  },
+  "bf9ea0a6dfbd5266dbb83ecd326a8f8d1f34b61b2cb03c90d39f389b7bced79c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/deepgram/flux/stt_base.py: add incoming-event watchdog",
+      "src/pipecat/services/deepgram/flux/stt.py: reconnect on silence",
+      "src/pipecat/turns/user_turn_controller.py: consider turn-release safety"
+    ],
+    "risks": [
+      "Watchdog threshold could cause spurious reconnects on legitimate quiet periods",
+      "Behavior change to reconnect semantics may conflict with maintainer design preferences",
+      "No deterministic reproduction means the fix cannot be validated against the reported failure"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a fake Flux websocket that accepts audio but stops emitting events; assert the service detects silence and reconnects or releases the turn",
+      "Regression test that normal EndOfTurn flow is unaffected"
+    ],
+    "unknowns": [
+      "No reproducible trigger or public reproduction for the Flux-silence failure",
+      "Whether maintainers consider a service-level watchdog in scope",
+      "Whether the failure is a Deepgram-side issue rather than a pipecat defect"
+    ],
+    "why": "Issue describes a plausible production failure (Flux stream stays open but stops sending events, leaving an open user turn), but the reporter explicitly states it is not reproducible on demand and provides no public reproduction or deterministic trigger. The proposed fix (service-level watchdog calling _request_reconnect) is a design question the reporter is asking maintainers to confirm, not an established root cause. Without a reproducible failure or confirmed root cause, code work is not yet actionable."
   },
   "bfba891930a962208b74b80dc57b6d411452f3cc7c97311e2f77cdb290cd7db0": {
     "confidence": 0.9,
@@ -83042,6 +83358,44 @@
       "Whether existing PR #7604 can be improved or will be merged soon"
     ],
     "why": "Issue provides a clear root cause (system Chrome exits on --remote-debugging-port=0, and ensureChromiumExecutable() ignores PUPPETEER_EXECUTABLE_PATH) and a workaround. Existing PR #7604 is weak: it has failing CI and lacks full evidence, so a materially better PR with complete tests and root-cause coverage is plausible."
+  },
+  "ee0312755e0c8669e0b0b9e2ef259565038a7ff7139289c56561ee761b16b088": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Reporter says no synthetic repro, but maintainer asserts a known tool-call/frontend cause",
+      "PR #56635 is marked technical_complete but root_cause_coverage=false with failing pre-run-check"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints parser frontend handling of reasoning-end/tool-call boundary tokens",
+      "rust/src/parser/src/reasoning/glm45.rs boundary token handling",
+      "possible hybrid KV/prefix-cache state restoration path"
+    ],
+    "risks": [
+      "Root cause may be in FlashInfer 0.6.18 or transformers 5.16.1 rather than vLLM code",
+      "Open PR #56635 may already cover the fix, making duplicate work low value",
+      "No synthetic reproduction means a fix cannot be validated deterministically"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a deterministic multi-turn tool-call reproduction with fixed seed and compare parser output against a reference token stream",
+      "Run with --no-enable-prefix-caching and with FlashInfer pinned to 0.6.17 to isolate kernel vs frontend",
+      "Add a parser regression test asserting no reasoning/tool-call token bleed across turns"
+    ],
+    "unknowns": [
+      "Whether PR #56635 actually resolves the reported degeneration",
+      "Whether the regression is in vLLM core, FlashInfer 0.6.18, or transformers 5.16.1",
+      "Whether a deterministic reproduction can be constructed at all"
+    ],
+    "why": "Issue reports a real GLM-5.3-Flash degeneration regression with a build A/B, but the reporter explicitly could not reproduce synthetically; the only root-cause attribution is a maintainer comment ('known issue because of tool call / vllm frontend') and an open PR #56635 that claims a parser fix but lacks root-cause coverage and has a failing pre-run check. The duplicate/coverage status is unresolved, so it is not established whether code work is still actionable."
   },
   "ee06e838ee5d6a9dd293396f74fd3c420892cbca26256cfc759fce7cc6bd4516": {
     "confidence": 0.7,
