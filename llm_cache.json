@@ -3289,6 +3289,38 @@
     ],
     "why": "Issue reports a tool call error when switching moe-runner-backend from marlin to flashinfer_mxfp4, but lacks a minimal reproduction and root cause analysis. Open PR lookup timed out, and related PRs may overlap. Maintainer input needed."
   },
+  "0ae11579e957c12353af71e4c65bc10b9abdd99472dc62782282d546b6bed599": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Bump plumcp dependency to >=0.2.3 in the eca build config",
+      "Add a streaming/SSE regression test covering SSE events without a space after 'event:' and with reordered fields",
+      "Verify MCP HTTP transport initialize resolves against a gateway that emits spec-compliant but non-canonical SSE"
+    ],
+    "risks": [
+      "Dependency bump may pull in other plumcp behavior changes beyond the SSE parser fix",
+      "If eca pins plumcp transitively, the bump may need coordination with other consumers",
+      "Windows-specific npx.cmd workaround is orthogonal and should not be conflated with the fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's config pointing at a mock SSE server that emits 'id:1\\nevent:message\\ndata:{...}' and assert initialize resolves",
+      "Run the target package's unit tests and static checks after the dependency bump",
+      "Confirm the previously failing traceback at http_client_transport.cljc:86 no longer occurs"
+    ],
+    "unknowns": [
+      "Exact plumcp version currently pinned in eca's deps and whether 0.2.3 is compatible with the rest of the stack"
+    ],
+    "why": "Issue provides a concrete root cause (plumcp SSE parser requires 'event: message' with a space and fixed field order), a public reproduction path (config + curl + mcp-remote sanity checks), and a traceback pointing at http_client_transport.cljc:86. The upstream fix is released in plumcp 0.2.3, so the actionable work is a dependency bump plus a streaming regression test in eca."
+  },
   "0b43e6517ad85abd05efeaeeb923506390fc5fbe5de371ad9d2b0573f9d165c2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -16130,6 +16162,35 @@
       "Whether maintainers are aware or investigating"
     ],
     "why": "Issue reports a silent degenerate output on v0.27.0 with NVFP4 and TP8, but lacks a reproducible environment (collect_env not run on affected build) and has no maintainer confirmation. Existing PR #50617 overlaps semantically but is not linked and may not address the root cause. Gate requires HUMAN_REVIEW."
+  },
+  "36fd654a7fe726f71b8a65afad1b9189533c60eefbb3af4523cb5d363f3f1583": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "loopx/control_plane/coordination/runtime_shadow.py",
+      "loopx/control_plane/coordination/runtime_shadow.ts",
+      "loopx/control_plane/testing/authority_e2e_ladder.py"
+    ],
+    "risks": [
+      "Unresolved owner decision among three candidate fixes may change the implementation surface.",
+      "Assignment requirement not satisfied."
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test reproducing the archive-completed drift with a released lease, asserting inspect stays matched after the fix."
+    ],
+    "unknowns": [
+      "Whether the repository requires assignment before external contribution.",
+      "Which of the three candidate fixes the maintainer will choose."
+    ],
+    "why": "The issue provides a concrete reproduction, root cause, and three candidate fixes, but the submission policy is needs_assignment and the issue has no assignee; the repository requires assignment before work, which is a materially blocking unknown for actionable code contribution."
   },
   "37164d05319fea1a2d08fc83c2c420ccfb56239365c5fb4b6ce7988eba44b6ed": {
     "confidence": 0.82,
@@ -34758,6 +34819,40 @@
     ],
     "why": "The issue reports a concrete bug with a traced root cause, but recent comments indicate the root cause may already be fixed on the default branch by merged PR #26871. The open PR #36831 also overlaps semantically. This creates material uncertainty about whether the work is still actionable or already covered."
   },
+  "6d645b1502999f7bf3ba4a49e1b09058c1bcb2cb9542e17cb7b7695108b7e107": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with DESIGN_CONFIRMATION wait reason, yet gate_decision is HUMAN_REVIEW and actionability_evidence reports needs_confirmation=true and design_confirmation=true"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/message-list/prompt/download-assets.ts: make per-part download failure non-fatal or surface it to a processor hook",
+      "packages/core/src/utils/p-map.ts: consider per-item error isolation if pMap is the rejection point"
+    ],
+    "risks": [
+      "Three competing fix designs (placeholder substitution, processor hook, size cap) with no maintainer preference; implementing the wrong one wastes effort",
+      "Changing download failure semantics could mask genuine provider/network errors or alter existing error contracts",
+      "Bot triage notice explicitly requests waiting before opening a PR"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test that builds a prompt from a message with an unsupported URL part whose fetch returns 404 and asserts the step does not throw DOWNLOAD_ASSETS_FAILED",
+      "Regression test that a later turn in the same thread still succeeds after one attachment becomes unreachable"
+    ],
+    "unknowns": [
+      "No concrete reproduction or failing test is supplied (reproductionPathPlan=false, probe_ready=false)",
+      "No maintainer decision on which of the three proposed fixes is acceptable",
+      "Whether the maintainer triage label has been removed to permit a PR"
+    ],
+    "why": "Issue describes a plausible failure mode in downloadAssetsFromMessages/downloadFromUrl, but the supplied evidence lacks a concrete reproduction (no failing test, no probe, reproductionPathPlan=false) and the candidate itself flags reproduction_or_validation_missing. The issue also proposes three alternative fixes without a settled design, and the bot comment explicitly asks contributors to wait for maintainer triage before opening a PR."
+  },
   "6d684423a61e1da520c4c5b946f4649d701424b7a35d7693791705c44c1b7d00": {
     "confidence": 0.82,
     "contradictions": [],
@@ -39933,6 +40028,36 @@
       "Whether maintainers will accept a source-level mitigation"
     ],
     "why": "The issue is a detailed evidence dump of a rare device-side wedge in a TMEM allocation spin loop, but it explicitly asks for maintainer guidance on the correct owner and diagnostic path, not a code change. The root cause is undetermined (phase mismatch vs. visibility vs. hardware state), and the reporter lacks a reliable reproducer. The request is for instrumentation advice, not an actionable patch. The deterministic gate is ALLOW_PRIVATE_WORK, but the issue is not a clear implementation candidate; it requires maintainer input to proceed."
+  },
+  "7d1e8283d66a1428788019cba67038d7b49e0770ca283fdc51c5af76080c6eaf": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py: stop silently dropping reasoning_effort for non-reasoning OpenAI/Azure models, or raise UnsupportedParamsError even under drop_params",
+      "drop_params handling in get_optional_params for reasoning_effort on openai/azure providers"
+    ],
+    "risks": [
+      "Changing drop_params semantics for reasoning_effort could affect other providers/models that legitimately rely on silent dropping",
+      "Maintainer may prefer forwarding the param to let the provider reject it rather than raising locally"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test calling get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) and assert it no longer silently returns without reasoning_effort",
+      "Repeat for azure provider and gpt-4o/gpt-4o-mini variants",
+      "Run targeted unit tests for get_supported_openai_params and drop_params paths"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer forwarding the param vs raising UnsupportedParamsError under drop_params"
+    ],
+    "why": "Issue provides a concrete, reproducible defect: get_supported_openai_params omits reasoning_effort for gpt-4.1/gpt-4o, and drop_params silently strips it, converting a provider 400 into a silent 200 with reasoning_tokens:0. Reproduction steps, expected behavior, and code anchors are supplied; no duplicate or merged fix covers this path."
   },
   "7d26e0275f0e931401b7a9ade03791bfeaad3d300e3af5cfd5b850ad8756bddc": {
     "confidence": 0.6,
@@ -58246,6 +58371,47 @@
     ],
     "why": "Issue reports a clear bug: llm_as_a_judge guardrail fails when judge model is proxy-registered (vllm/openai-compatible) because it calls litellm.acompletion directly without router resolution. Contributor comment identifies root cause and proposes fix: pass llm_router to guardrail initializer and use router.acompletion. However, open PR and related issue lookup failed (timeout), so duplicate implementation cannot be excluded. Also, maintainer approval/design confirmation is absent, and the fix touches guardrail registry API, requiring maintainer input."
   },
+  "b9fddbb4421b5ab4f47f81fc47c2abd45c2c7e5d2436ae15e323f2529fb7d812": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Candidate labels track=llm_algorithm with distributed_training/numerics_quantization mechanisms, but maintainer comment and code anchors point to frontend tool-call parsing, not an algorithm mechanism",
+      "Candidate claims root_cause_signal=true while the issue body states the bug could not be reproduced synthetically and root cause is unknown"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm frontend tool-call parsing / reasoning parser (glm45.rs, glm47 parser) if the maintainer attribution holds",
+      "possibly hybrid KV/prefix-cache state handling if the FlashInfer/prefix-cache hypothesis holds"
+    ],
+    "risks": [
+      "Root cause unconfirmed; maintainer attributes to frontend tool-call parsing, which is out of scope for llm_algorithm track",
+      "No synthetic reproduction; validation depends on long real agentic sessions",
+      "Potential duplicate/overlap with open PR #56635 (fix glm frontend tool call parsing) and issue #55515",
+      "AI disclosure policy conflict flagged (ai_disclosure_conflict) blocks automated public action"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "A/B the two named builds on a long multi-turn agentic session with fixed seed and identical client transcript",
+      "Run with --no-enable-prefix-caching to isolate prefix-cache/hybrid-state interaction",
+      "Pin flashinfer-python==0.6.17 on the bad build to isolate kernel vs core regression",
+      "Add a regression test around the GLM tool-call/reasoning parser once root cause is localized"
+    ],
+    "unknowns": [
+      "Whether the regression is in vLLM core, FlashInfer 0.6.18, or transformers 5.16.1",
+      "Whether open PR #56635 already covers the fix",
+      "Whether the maintainer-attributed frontend tool-call parsing issue is the same defect as the reported degeneration",
+      "Whether the AI disclosure policy conflict permits any contribution"
+    ],
+    "why": "Issue reports a real regression (build A/B: clean on g487ecf187, degenerate on g385dce36b) but the reporter explicitly could NOT reproduce synthetically; only real long agentic sessions trigger it. A maintainer comment (ZJY0516) attributes it to 'tool call / vllm frontend', which is frontend/parser plumbing rather than an LLM algorithm mechanism, and the candidate's own algorithm_evidence shows no formula or experiment signal. The candidate's claimed mechanisms (distributed_training, numerics_quantization) are not grounded in the issue text; the actual anchors are parser/reasoning frontend files (glm45.rs, glm47 parser) and collect_env.py. Root cause is not established, and the only concrete repro path is a non-reproducible long-session scenario."
+  },
   "ba1368d41c3278cd9842c12097a24575fea4539ab07cc59d945a7b15832a4e1e": {
     "confidence": 0.7,
     "contradictions": [],
@@ -64557,6 +64723,43 @@
       "Maintainer approval for the specific implementation approach"
     ],
     "why": "Issue identifies a concrete bug: fast mode silently excludes scripts/ via hardcoded FAST_SKIP_DIRS in discover.c, with reproduction and maintainer acknowledgment. However, the deterministic gate requires HUMAN_REVIEW, and the issue lacks explicit maintainer approval or design confirmation for the fix approach. The competing PRs do not address this specific bug, so a new PR is plausible, but maintainer direction is needed."
+  },
+  "ce6a312b0dda3c23554f08ac6e861949196b56eafe9f10313e80c121df32f37c": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Triage bot's static AppImage inspection found no Python and no PYTHONHOME/PYTHONPATH exports, while the reporter claims the strings exist in AppRun.wrapped and that /proc environ shows them",
+      "Reporter initially attributed failure to PYTHONHOME/PYTHONPATH only, then added LD_LIBRARY_PATH as a second channel"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/mcp-client.ts (child env construction for stdio MCP servers)",
+      "packages/core/src/utils/sanitize-child-env.ts (which vars are scrubbed)",
+      "packages/cli/src/config/shared-env-keys.ts (env key policy)"
+    ],
+    "risks": [
+      "Fixing only PYTHONHOME/PYTHONPATH may leave the LD_LIBRARY_PATH leak that the reporter says still breaks sqlite-vec",
+      "Scrubbing LD_LIBRARY_PATH broadly could break other child processes that legitimately need it",
+      "The deferred-tradeoff status in sanitizeChildEnv means maintainers may reject a broad scrub"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce by spawning a stdio MCP server with PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH set to a fake mount path and assert the child starts with a neutral env",
+      "Add a regression test asserting sanitizeChildEnv strips PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH for user-configured stdio MCP children",
+      "Verify the AppImage AppRun.wrapped binary actually contains the PYTHONHOME=%s/usr/ format string before changing code"
+    ],
+    "unknowns": [
+      "Whether the published AppImage's AppRun.wrapped actually exports PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH",
+      "Whether maintainers want to reverse the deliberately deferred scrubbing tradeoff (#8653) and for which variables",
+      "Whether the fix should be scoped to MCP children only or all user-configured child processes"
+    ],
+    "why": "The issue reports a real, user-visible bug (AppImage env vars leaking into stdio MCP children), but the supplied evidence is contradictory: the triage bot's static inspection of the published AppImage found no Python and no PYTHONHOME/PYTHONPATH exports, while the reporter's follow-up claims the strings live in the AppRun.wrapped binary and adds a second leak channel (LD_LIBRARY_PATH). The root cause is therefore not settled, and the suggested fix (strip PYTHONHOME/PYTHONPATH) is explicitly described as a deliberately deferred tradeoff in sanitizeChildEnv, so the actionable change is unclear."
   },
   "ce6e596dad796c3a4adcbd33ced69743da1181d171de6050a81778451c471636": {
     "confidence": 0.85,
@@ -71787,6 +71990,41 @@
     ],
     "why": "Issue reports two defects: (A) missing response_format propagation in omni_handler.py with a concrete one-line diff, and (B) bundled FFmpeg MMXEXT color corruption. Defect A is actionable, but defect B's root cause is attributed to an upstream FFmpeg build/guard issue outside this repo, and the supplied evidence does not establish whether the fix belongs in dynamo or in the runtime image build. Additionally, open PR #13707 overlaps the same omni_handler.py/output_formatter.py paths and 'base64' semantics but is not linked to this issue, so duplicate coverage is unresolved."
   },
+  "e298f691ab711ab2092f3bf271b512a46327e8ff1ff4878f3114854615d6fa08": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body asserts the remote node 'never sees the derived value' and constructs config from CLI args, while the maintainer comment argues the headless path should re-derive 'align' from the same CLI flags and that the observed state requires either a missing flag or a config path bypassing __post_init__"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/config.py (MambaModelConfig.verify_and_update_config / HybridAttentionMambaModelConfig)",
+      "vllm/entrypoints/cli/serve.py headless config construction path",
+      "vllm/config/vllm.py try_verify_and_update_config / CacheConfig propagation"
+    ],
+    "risks": [
+      "Fixing the wrong branch (CLI flag propagation vs. worker config construction) would not resolve the assert",
+      "Changing config normalization/broadcast semantics could affect single-node hybrid mamba behavior",
+      "Open PR #52244 touches mamba_cache_mode/prefix-cache semantics and may overlap the eventual fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with identical --enable-prefix-caching flags on both nodes and dump rank 1 CacheConfig.enable_prefix_caching and mamba_cache_mode at construction; if flag is False remotely, add a regression test asserting the headless path preserves enable_prefix_caching from CLI args; if True and mode stays 'none', add a test asserting the remote worker's config runs verify_and_update_config before MambaSpec merge."
+    ],
+    "unknowns": [
+      "Rank 1's runtime enable_prefix_caching and mamba_cache_mode values",
+      "Exact node-2 launch command / whether --enable-prefix-caching is present on both nodes",
+      "Whether the remote worker's config construction bypasses VllmConfig.__post_init__",
+      "Whether open PR #52244 already covers this root cause"
+    ],
+    "why": "The issue reports a concrete cross-rank KV-spec assert on 2-node TP with prefix caching, and the reporter supplies an instrumented diff showing rank 0 mamba_cache_mode='align' vs rank 1 'none'. However, the maintainer-side comment explicitly states the static config flow should re-derive 'align' on the remote node and asks for rank 1's enable_prefix_caching/mamba_cache_mode or the exact node-2 launch command; the two candidate explanations (flag dropped on headless path vs. config bypassing __post_init__) are unresolved. Without that datum the actionable code path is not determined."
+  },
   "e29d8c9cea5577e1eeab5a533673e8069891f767a32d654aa4d9fa750dc2adab": {
     "confidence": 0.85,
     "contradictions": [],
@@ -73138,6 +73376,40 @@
       "Whether the fix applies cleanly to v0.27.1 branch"
     ],
     "why": "The issue provides a clear root cause: a regression in the DeepGEMM revision pinned by vLLM v0.27.1 causes CUDA illegal memory access during CUDA graph capture on SM90 (H20). A controlled A/B test with two DeepGEMM revisions confirms the fix, and the fix is already merged in main via PR #52035. The evidence includes concrete reproduction steps, code anchors, and a validation path."
+  },
+  "e6518bc335e876c8560feab42402f7b0963a4bbfaa5b700902915d4698840160": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Shared composer submission hook: add monotonic edit version and atomic clearIfUnchanged(submitVersion)",
+      "Draft persistence: serialize per-Session writes with latest-value-wins semantics",
+      "Failure restoration: apply version check so failed sends cannot overwrite newer input",
+      "Clear visible text, in-memory draft, attachments/references, and persisted draft in one transition"
+    ],
+    "risks": [
+      "Scope creep into message routing, agent execution, provider, or Group Chat ownership behavior",
+      "Unbounded per-Session coordinator cache if draft write coordination is not cleaned up after settling or disposal",
+      "String-comparison-only fix would not address out-of-order persistence"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Rendered E2E starting with real Command+Enter or Send click, asserting editor clears and transcript receives message",
+      "Regression test with reference/MCP/whitespace preprocessing that changes outbound text but not user intent",
+      "Test typing a second message during async preparation and asserting it is preserved",
+      "Test in-flight draft write cannot restore submitted text after clear, including session switch/remount/restart",
+      "Cover ordinary SDE, Member, and Group Chat consumers without replacing production submit path"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a concrete root cause: the clear guard compares original editor text against transformed displayText, misclassifying preprocessing changes as newer user input, plus an unordered debounced draft write race. Reproduction steps, code anchors, and a concrete validation path (rendered E2E with Command+Enter/Send, session switch/remount, persisted draft) are supplied. No duplicate or merged-fix coverage is indicated."
   },
   "e6651c0605472c2f2dfda08111e5e00e0fcb562259be8183715b0a60b9e242d1": {
     "confidence": 0.85,
@@ -81692,6 +81964,47 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a reproducible CUDA illegal memory access near context boundary with NEXTN on Qwen3.5 hybrid model. Existing PR #34270 has semantic overlap and is maintainer-owned, but does not reference this issue. Need maintainer to confirm whether PR addresses this root cause before creating a new task."
+  },
+  "ff2b1cb0d1aba59e63b8b58cddffa0e160fcf84dc217a855811093b7325fb982": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body lists scaled_mm_blockwise_sm120_fp8_dispatch.cuh as unclaimed, but a recent comment states it is covered by #56659"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "csrc/libtorch_stable/quantization/w8a8/cutlass/c3x/cutlass_gemm_caller.cuh",
+      "scaled_mm_sm90_fp8_dispatch.cuh",
+      "scaled_mm_blockwise_sm90_fp8_dispatch.cuh",
+      "scaled_mm_sm100_fp8_dispatch.cuh",
+      "scaled_mm_blockwise_sm100_fp8_dispatch.cuh",
+      "scaled_mm_blockwise_sm120_fp8_dispatch.cuh",
+      "tests/kernels/quantization/test_cutlass_scaled_mm.py"
+    ],
+    "risks": [
+      "All six callers already have open PRs, so a new contribution may duplicate existing work",
+      "Test-file collisions among #55537/#56248/#56480/#56659 require rebase coordination",
+      "SM120 validation requires RTX 5090 / RTX PRO Blackwell hardware",
+      "Repository policy reports an AI disclosure conflict, blocking automated public actions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's 512x512 padded-view reproducer against a CPU/high-precision reference and assert zero mismatches",
+      "Run tests/kernels/quantization/test_cutlass_scaled_mm.py including test_cutlass_subset and blockwise selections on SM90/SM100/SM120 hardware"
+    ],
+    "unknowns": [
+      "Whether any of the open PRs actually merge or fully cover the root cause",
+      "Whether a non-duplicative code contribution remains available",
+      "Resolution of the repository AI disclosure policy conflict"
+    ],
+    "why": "The issue is a concrete, well-evidenced CUTLASS C3x stride bug with a reproduction and a proposed fix, but the supplied evidence shows the remaining implementation coverage is already claimed by open PRs (#55537, #56248, #56480, #56659) covering all six callers, and the issue itself states it stays open until those merge. The duplicate/coverage status is 'semantic_overlap_requires_review' and no PR directly references the issue, so whether any code work remains actionable is unresolved."
   },
   "ff46f5b99fea04ca9fcb7ed3bf419664b8f9b3c5b0498984d2de70db9ab7b193": {
     "confidence": 0.85,
