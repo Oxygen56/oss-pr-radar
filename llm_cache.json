@@ -395,6 +395,41 @@
     ],
     "why": "The issue reports a real, well-localized rendering loop (React #185 from Ink commit-phase layout listeners feeding virtualized row-height state), but the supplied triage evidence states this is very likely the same defect as #11500, whose confirmed driver is duplicate history-item keys, and that the fix PR #11743 is still open and unmerged. The reporter's main repro commit predates #11743, so the evidence does not separate a new root cause from the known one. This unresolved duplicate/merged-fix coverage is a materially blocking unknown for deciding whether new code work is actionable."
   },
+  "019dc891b99a11e4121f6501603094c3184ab3ef806089a806aaf128e308f66a": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Triage bot asserts this is very likely the same defect as #11500 with duplicate history-item keys as the confirmed driver, while the reporter's unique-key regression still fails after #11743 is applied"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/components/shared/VirtualizedList.tsx: make row/container height measurement edge-triggered and defer the state write outside Ink's active commit",
+      "packages/cli/src/ui/components/shared/VirtualizedList.update-depth.test.tsx: keep the unique-key recursive-update regression as the guard"
+    ],
+    "risks": [
+      "Draft PR #11761 overlaps the same VirtualizedList paths and is unmerged; maintainers may prefer that implementation or consider this duplicative",
+      "The regression is a synthetic Profiler-driven fixture, not a replay of the full production notification/history pipeline, so it does not prove the field crash was initiated independently of the duplicate-ID driver",
+      "Reliance on private Ink layout-listener behavior may be an unacceptable tradeoff for maintainers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the focused VirtualizedList.update-depth.test.tsx regression on pre-fix main and confirm the Maximum update depth exceeded failure through useBoxMetrics/emitLayoutListeners/resetAfterCommit",
+      "Re-run the same regression with #11743 applied to confirm it still fails, isolating this driver from the duplicate-key driver",
+      "Run the rebased fix and confirm the focused suite passes (reported 34/34) plus targeted CLI UI unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers accept the private Ink layout-listener dependency as a reasonable tradeoff",
+      "Whether draft PR #11761 will be completed and supersede this work"
+    ],
+    "why": "Issue provides a concrete, source-anchored root cause: virtualized row-height measurement writes React state synchronously from Ink commit-time layout listeners (useBoxMetrics -> emitLayoutListeners -> resetAfterCommit), producing a measure->heights->offsets->window->measure cycle that exceeds React's nested-update limit. A deterministic unique-key regression test is supplied and shown to still fail with #11743 applied and pass with the proposed fix, so the work is actionable and separable from the duplicate-key driver."
+  },
   "01a09a9ee3afaabe638e279effd06836ee4834b586ea07d28095b926ed7d06be": {
     "confidence": 0.8,
     "contradictions": [
@@ -12292,6 +12327,41 @@
       "Whether maintainers want drop_params to raise for reasoning_effort specifically or change global drop semantics"
     ],
     "why": "Issue provides a concrete, reproducible defect: get_supported_openai_params omits reasoning_effort for gpt-4.1/gpt-4o, and drop_params silently strips it, converting a provider 400 into a silent 200. Reproduction steps, expected behavior, and code anchors are supplied; no duplicate or merged fix covers this OpenAI/Azure path."
+  },
+  "287050668e6db81a89a2c50fbe677b5be5686aff4003e39aaf17353bededc290": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "shared composer submission hook: replace string comparison with monotonic edit-version clearIfUnchanged(submitVersion)",
+      "draft persistence: serialize per-Session writes with latest-value-wins so an in-flight write cannot override a later clear",
+      "failure restoration: apply the same version check so a failed send cannot overwrite newer user input",
+      "clear visible text, in-memory draft, attachments/references, and persisted draft through one submission transition"
+    ],
+    "risks": [
+      "Broad shared-composer change could regress failure-restoration behavior if the version check is applied inconsistently.",
+      "Per-Session draft coordination must clean up after settling or Session disposal to avoid an unbounded coordinator cache.",
+      "Acceptance criteria span multiple surfaces (SDE, Member, Group Chat) and both Command+Enter and Send button, increasing test surface."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test where outbound preprocessing transforms text (reference/MCP/whitespace) and assert the composer clears after successful send.",
+      "Add a test where the user types a second message during async preparation and assert the newer input is preserved.",
+      "Add a test where a debounced draft write is in flight when send clears the draft and assert the persisted draft is not resurrected after Session switch/remount/restart.",
+      "Add a rendered E2E starting from a real Command+Enter or Send click verifying editor, transcript, Session switch/remount, and persisted-draft state across ordinary SDE, Member, and Group Chat consumers."
+    ],
+    "unknowns": [
+      "No maintainer design confirmation on the proposed edit-version/clearIfUnchanged approach, though this is normal review uncertainty rather than a blocker."
+    ],
+    "why": "Issue provides a concrete root cause: the shared composer compares original editor text against transformed displayText to decide whether to clear, so preprocessing-induced differences are misread as newer user input; a second race is the 300ms debounced draft write completing after the send-path clear. Reproduction steps, affected surfaces, and acceptance criteria are explicit, and the recommended fix (monotonic edit version plus clearIfUnchanged and per-Session latest-value-wins draft serialization) is actionable."
   },
   "288a8e0f0330f2c415921bf4d3c53e9965a0ab73100a764431779de13c7e028b": {
     "confidence": 0.85,
@@ -32142,6 +32212,44 @@
     ],
     "why": "The issue describes a concrete bug with a clear root cause: the HTTP handler returns 200 before the async abort task dereferences a non-existent attribute on GenerateReqInput, causing a false success. The reproduction steps are detailed and include logs. No competing PR or issue exists, and the fix is straightforward: either validate the request object or handle the attribute error, and ensure the abort endpoint reports actual success/failure."
   },
+  "627782ae444704f7c0c1e80c737b0e94bbd51f40e5270215a0a0b7235cad4e66": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Commenter proposed DCP-sharding asymmetry in DFlashSpeculator.propose, then retracted it after finding capture and runtime paths symmetric on 0.28.1rc0",
+      "Commenter's own magnitude estimate (28.85 ms vs ~1.7 ms geometry) is unexplained and method may be at fault"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py dynamic_sd_lookup keying",
+      "vllm/config/speculative.py speculative config schema",
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py drafter attention path"
+    ],
+    "risks": [
+      "Root cause may be measurement artifact rather than full-context drafter scan",
+      "Direction 1 overlaps open PRs #48944/#54801, risking duplicate work",
+      "Long-context 185k reproduction requires hardware not universally available"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce 185k single-stream decode with DFlash DT4 vs SPEC_OFF on hybrid GDN target and confirm the ~71 -> ~16 tok/s drop",
+      "Torch-profiler trace attributing per-cycle time to drafter cross-attention vs target layers",
+      "A/B test with a per-sequence-length disable threshold to confirm recovery to SPEC_OFF throughput"
+    ],
+    "unknowns": [
+      "Whether the full-context drafter KV scan is the confirmed root cause or a measurement artifact",
+      "Whether open PRs #48944/#54801 already cover the per-sequence-length control direction",
+      "Whether the 185k regression reproduces on a clean main build with the reporter's exact config"
+    ],
+    "why": "The issue reports a real long-context spec-decode regression with profiled ~182 ms/cycle drafter attention, but the supplied comment thread materially contradicts the proposed mechanism: the DCP-sharding asymmetry hypothesis was retracted after source inspection, and the commenter explicitly states the 28.85 ms magnitude is unexplained (17x above geometry) and that their measurement method may be at fault. The issue's own root cause (full accumulated drafter KV scan) is asserted but not independently confirmed, and the suggested Direction 1 (per-seq-len disable hook) is already claimed by open PR #48944 and #54801, so duplicate/coverage status is unresolved."
+  },
   "62857ed60354df98624a70f79fc4af272590b067985459bf7e253e9be57acfc6": {
     "confidence": 0.85,
     "contradictions": [
@@ -36239,6 +36347,44 @@
       "Maintainer preference between forwarding the param vs raising UnsupportedParamsError under drop_params"
     ],
     "why": "Issue describes a concrete user-visible bug with reproduction steps and code anchors, but the supplied duplicate assessment flags semantic overlap with open PR #40919 and other PRs touching reasoning_effort; the overlap is unresolved and could mean the root cause is already covered, which materially affects whether new code work is actionable."
+  },
+  "6cd469ed0f0006174ac877c9179ea2497b5d3157add94d894be4716775701d88": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge B@A into base weight and reinitialize A/B for a true ReLoRA restart, or rename feature and correct docstring",
+      "src/soup_cli/utils/relora.py: replace strict threshold mask with deterministic exact-count topk/stable-order selection so prune_ratio<1 always retains the requested entries",
+      "Optimizer-state pruning/reset should target optimizer moments rather than learned adapter weights",
+      "Explicit compatibility rejection for quantized bases, FSDP/DeepSpeed wrappers, and layer streaming"
+    ],
+    "risks": [
+      "Claim A fix is a maintainer contract decision (implement real restarts vs rename feature); a partial implementation could be worse than either",
+      "Tie-case production frequency is unmeasured; freshly-initialized lora_B is all zeros by PEFT convention, so the natural tie may fire on the first relora_steps interval",
+      "Numerical tolerance must be fixed and seed-controlled to distinguish math errors from float noise",
+      "Quantized/FSDP/DeepSpeed/streaming paths need explicit handling or rejection to avoid silent partial restarts"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: with random non-zero LoRA factors, assert base weight is unchanged and effective linear map MSE before/after callback is within numerical tolerance of a merge-then-reset control",
+      "Unit test: constant-magnitude A and B with prune_ratio=0.9 must retain exactly the requested keep count and leave non-zero gradient norm on both factors",
+      "Kernel-level test: ones(10) and arange(1..10) with prune_ratio=0.9 both yield the exact requested survivor count",
+      "Regression test: successive restarts accumulate low-rank updates in the base model",
+      "Compatibility test: unsupported quantized/distributed/streamed configurations fail loudly rather than partially applying a restart"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers full ReLoRA restart implementation or the smaller rename/docstring correction",
+      "Measured production frequency of the tie case beyond the constructed example"
+    ],
+    "why": "Issue identifies two concrete, independently reproduced defects in ReLoRACallback._prune_and_reset: (A) adapter weights are pruned without merging B@A into the base, so the effective linear map changes (MSE 142.12 vs control 8.77e-13) and the learned contribution is discarded rather than restarted; (B) strict `abs(t) > threshold` masking zeroes both factors on ties (0 kept where 4 requested), leaving zero gradients and a dead branch. Both are algorithm-level correctness issues with code anchors in src/soup_cli/utils/relora.py and a clear reference-vs-implementation validation path."
   },
   "6cd9ea858abf879b4280e46cb35487498cb5f9d63f90caaa0717424bf7c9fa83": {
     "confidence": 0.85,
@@ -46384,6 +46530,45 @@
       "Whether maintainers have prioritized this issue"
     ],
     "why": "Issue reports two distinct provider errors (Fireworks 504 timeout and OpenAI missing tool output) with no clear root cause; likely environment-specific (works on laptop) and may involve provider-side issues. No maintainer confirmation or design direction."
+  },
+  "8b3ab27e07e546f48a6934ca10df59b88f29dd5cd968ca1a137a40b551c24cdb": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue could not be synthetically reproduced, yet maintainer attributes it to a known frontend/tool-call cause",
+      "algorithm_evidence claims distributed_training/numerics_quantization mechanisms while comments point to parser/frontend",
+      "PR #56635 references the issue but has root_cause_coverage=false and no confirmed validation"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints parser frontend handling of reasoning-end/tool-call boundary tokens",
+      "rust/src/parser/src/reasoning/glm45.rs (and glm47) token boundary logic",
+      "regression test for multi-turn tool-call reasoning boundary handling"
+    ],
+    "risks": [
+      "Root cause may be in prefix-cache/hybrid state rather than parser, making a parser-only fix insufficient",
+      "Potential duplicate coverage with issue #55238 and PR #56635 without confirmed resolution",
+      "AI disclosure policy conflict may block automated public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a long multi-turn agentic session on GLM-5.3-Flash FP8 using the bad build vs good build A/B",
+      "Add a parser-level unit test asserting reasoning-end/tool-call boundary tokens do not bleed into subsequent output",
+      "Run with --no-enable-prefix-caching and pinned flashinfer 0.6.17 to isolate parser vs kernel/cache contributions"
+    ],
+    "unknowns": [
+      "Whether PR #56635's parser fix actually resolves the reported degeneration",
+      "Whether the true root cause is parser boundary handling or prefix-cache/hybrid state restoration",
+      "Whether issue #55238 is a genuine duplicate or only shares generic stack signatures"
+    ],
+    "why": "The issue reports a real GLM-5.3-Flash degeneration regression, and a maintainer comment (ZJY0516) attributes it to tool-call/vLLM frontend handling, with PR #56635 claiming a parser fix. However, the supplied evidence is contradictory and incomplete: the issue itself could not be reproduced synthetically, the candidate's own algorithm_evidence lists mechanisms (distributed_training, numerics_quantization) that do not match the frontend/parser root cause, and the duplicate assessment flags a potential overlap with issue #55238 sharing only generic stack signatures. The open PR #56635 has root_cause_coverage=false and no confirmed validation, so it is unclear whether the parser fix actually resolves the reported degeneration or whether a distinct root cause remains."
   },
   "8b6931d63178165a01655721004fdd844b81d100016a2e8ce5506bd5e5136674": {
     "confidence": 0.7,
