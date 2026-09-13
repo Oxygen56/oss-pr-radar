@@ -2792,6 +2792,44 @@
     ],
     "why": "The issue's causal chain is only half-verified: the spec rejection on kiro-cli 2.10.0 is plausible but unmeasured, and multiple contributors independently show kiro-cli 2.21.x accepts (and ignores) the `permissions` key, with an unknown-field control probe also accepted. The banner's link to the default-agent fallback is explicitly the reporter's inference. The `permissions` write is a deliberate, test-pinned design decision (#4614) whose removal breaks KAS profile loading, so no concrete, non-breaking fix is established."
   },
+  "08824c6c554e67f99d7966bde6edb6969d4d35a29de44cc992e4bd054997666f": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: _prune_and_reset restart semantics (merge B@A into base, reinitialize A/B, reset optimizer moments, re-warm LR) or rename/docstring correction",
+      "src/soup_cli/utils/relora.py: magnitude_prune_tensor mask selection (exact topk/stable-order keep count under ties)",
+      "module docstring at relora.py:3-5 conformance claim",
+      "regression tests for effective-map preservation and non-zero gradient after pruning"
+    ],
+    "risks": [
+      "Claim A fix is a maintainer contract decision (implement true restarts vs rename feature); a partial fix could leave docstring and behavior inconsistent",
+      "Tie scenario is constructed; production frequency of the all-zero lora_B tie at first relora_steps interval is unmeasured",
+      "Distinguishing mathematical semantics errors from floating-point/random variation requires fixed baselines, seeds, and tolerances",
+      "Quantized/distributed/streaming support scope may expand the change beyond the minimal fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Fixed-seed CPU reference: build small peft LoRA linear layer, capture effective map before/after callback, assert MSE within numerical tolerance for merge-then-reset path",
+      "Kernel unit test: constant-magnitude tensor with prune_ratio=0.9 must retain exactly the requested keep count (currently 0 vs expected 4)",
+      "Gradient regression: after pruning with prune_ratio<1, assert grad-norm of lora_A and lora_B is non-zero",
+      "Accumulation test: successive restarts accumulate low-rank updates in the base weight",
+      "Compatibility test: quantized/FSDP/DeepSpeed/streamed combinations fail loudly rather than partially applying a restart"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers full ReLoRA restart implementation or the smaller rename/docstring correction for Claim A",
+      "Measured production frequency of the tie-induced total-pruning path"
+    ],
+    "why": "Issue identifies two concrete, independently verified defects in ReLoRA's _prune_and_reset: (A) adapters are magnitude-pruned without merging B@A into the frozen base, so the learned function is discarded rather than restarted (base weight delta 0, effective-map MSE 142.12 vs 8.77e-13 for merge-then-reset control); (B) strict `abs(t) > threshold` masking zeroes all entries on ties, and with both A and B zeroed the branch receives zero gradients (measured 0.0), permanently dead. Owner confirmed both halves with a real peft LoRA model and a kernel-level reproduction. This is a concrete algorithm-conformance and numerical-correctness defect with a clear reference-vs-implementation validation path."
+  },
   "088a618f302285b4d2f40c0e4deb64d929bd345ce98c56a6c09cf3a5db773e78": {
     "confidence": 0.6,
     "contradictions": [],
@@ -8933,6 +8971,41 @@
       "Whether existing PRs #47629 or #54341 fully resolve this issue; requires manual comparison of code changes."
     ],
     "why": "The issue provides a clear root cause: fp8e4nv is unsupported on SM80, causing failure in the fused MoE kernel during initialization. The evidence includes a traceback and code anchors, and the track is llm_algorithm with concrete mechanisms (numerics_quantization, kernel_algorithm). A validation path exists via numerical regression on A100 hardware."
+  },
+  "1c45429d4942de20726a8a2c8a5d98787c60e6c0dbf2488f79cb9edbccfeb54b": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports PR #23776 as CLOSED with direct_code_overlap and semantic_overlap true, while duplicate status remains human_review_required and rootCauseCoverage=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "packages/mcp package.json: declare hono as peer dependency",
+      "packages/mcp build/generateTypes config: remove hono from vendored type set",
+      "public declarations for connectHonoSSE/getSseHonoTransport import from consumer hono"
+    ],
+    "risks": [
+      "Closed PR #23776 may already implement the same fix, making this redundant",
+      "Changing hono to a peer dependency is a breaking-ish packaging change requiring maintainer design sign-off",
+      "Vendored hono-mcp-server-sse-transport declarations must still resolve against consumer hono"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with @mastra/mcp 1.17.3 + hono 4.12.14 + TS 5.9.3 and the issue's repro.ts; confirm TS2322 before fix and clean typecheck after",
+      "Add a type-level regression test asserting consumer hono SSEStreamingApi is assignable to connectHonoSSE's stream parameter",
+      "Run targeted package build/typecheck for @mastra/mcp"
+    ],
+    "unknowns": [
+      "Whether closed PR #23776 already landed or fully covers this fix",
+      "Maintainer design preference on peer-dependency vs alternative packaging fix"
+    ],
+    "why": "The issue gives a concrete, well-evidenced root cause (vendored hono .d.ts in @mastra/mcp dist/_types causing nominal type mismatch for consumer-supplied SSEStreamingApi) and a clear fix direction (peer dep + drop hono from generateTypes). However, the supplied evidence shows a closed PR #23776 with direct code overlap and semantic overlap that appears to cover the same fix, and the duplicate status is 'human_review_required' with rootCauseCoverage=false. Whether the fix is already covered by that closed PR is a materially blocking unknown for actionability."
   },
   "1ca8cd3deca97b673859cbace91bbabe1969b203183862c033e9911b141fe3d1": {
     "confidence": 0.9,
@@ -28125,6 +28198,39 @@
     ],
     "why": "The issue reports an SM110 illegal memory access in Qwen GDN prefill warmup, and a commenter proposes a concrete root cause (SM110 missing from FUSED_GDN_DECODE_ARCHS) plus a workaround (VLLM_GDN_DECODE_KERNEL=triton). However, a maintainer comment states the fused-decode build gap is already covered by merged PR #53835 and explicitly asks whether the prefill warmup failure persists on current main/nightly. That unresolved duplicate/merged-fix coverage question determines whether any code work is still actionable, so the evidence is contradictory/incomplete."
   },
+  "55c4d1f51de999dad948e6f54d1641921be8d2c62e81c2258bed814cd4019919": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "extensions/gentle-shell.ts: make refreshChanges non-blocking in agent_end and tool_execution_end handlers",
+      "lib/shell-changes.ts: consider bounding untracked-content processing and excluding inherited home-root worktrees",
+      "session_start initial scan may also need async treatment"
+    ],
+    "risks": [
+      "Making refresh non-blocking may cause the widget to briefly show a stale snapshot",
+      "Unbounded untracked-file content reads and maxBuffer: Infinity could still cause heavy CPU/IO on large worktrees",
+      "Scope creep into session_start and home-root exclusion may exceed the minimal fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test asserting agent_end and tool_execution_end handlers return before the Git refresh promise resolves",
+      "Use the synthetic slow-git PATH wrapper fixture to verify tool result and final response are not delayed",
+      "Add fixture covering nested directory inheriting a home-rooted Git worktree to confirm bounded scan behavior"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the minimal void-await fix or a broader bounded-scan redesign",
+      "Whether session_start async change is in scope for the same PR"
+    ],
+    "why": "Issue provides a concrete root cause (awaited refreshChanges in agent_end/tool_execution_end lifecycle handlers), a validated fix (void refreshChanges), a synthetic slow-git reproduction, and timing evidence; a commenter independently reproduces on Linux and adds inherited home-root worktree scope. Track is agent_ai_infra, not llm_algorithm, so the algorithm gate does not apply."
+  },
   "55cfc14a925da2f1d985bc164e4d563f2d1ab1d67a29854f562440657912a90e": {
     "confidence": 0.6,
     "contradictions": [
@@ -40196,6 +40302,41 @@
       "Maintainer preference for the suggested fix approach (populating fields vs. backend split)"
     ],
     "why": "Issue provides a clear root cause (extend_prefix_lens_cpu not set in spec branch), a deterministic reproduction command, and a concrete suggested fix. The bug is user-visible and affects a key path (speculative decoding with NVFP4 KV cache)."
+  },
+  "7547e9e9920839d3bf508acf88bc9a917182fe26d4a987ed3c83308332af7243": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/commands/train.py: gate use_flash_attn/use_liger availability checks behind the task condition",
+      "src/soup_cli/autopilot/decisions.py: make decide_performance_flags task-aware so autopilot never emits flags the chosen task ignores",
+      "src/soup_cli/config/schema.py: shrink reasoning_effort/train_on_eot allowlist to {sft, distill} or wire the four extra tasks",
+      "src/soup_cli/trainer/sft.py: (alternative) wire attn_implementation/Liger patch into non-SFT trainer from_pretrained calls"
+    ],
+    "risks": [
+      "Two reasonable fixes (wire the flags vs. reject at config load) may diverge from maintainer preference; either satisfies the acceptance criteria.",
+      "Open PRs #911 (mlx_sft.py, use_liger) and #955 (config/schema.py, use_flash_attn/use_liger) overlap semantically but neither references this issue nor covers the train.py/decisions.py root cause, so duplicate coverage is not established.",
+      "rope_scaling_type is explicitly noted as a separate bug and should not be conflated with this fix."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build DPO and GRPO models on a tiny CPU model with use_flash_attn: true and a stubbed get_attn_implementation returning 'sdpa'; assert the kwarg reaches from_pretrained (fails today) or that config load rejects the flag for DPO.",
+      "Assert build_soup_config(goal='alignment') on a cc 8.0+ profile emits no flag the resulting task ignores.",
+      "Assert reasoning_effort/train_on_eot on task: pretrain are applied or rejected at load.",
+      "Assert soup train does not exit 1 over a missing package for a flag the task does not use."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer wiring the flags into non-SFT trainers or rejecting them at config load (both are accepted by the issue's acceptance criteria)."
+    ],
+    "why": "Issue pins a concrete, code-anchored defect: use_flash_attn/use_liger are consumed only by SFT's _setup_transformers (sft.py:1293, 882, 1351-1356) yet validated for every task at commands/train.py:1192-1214 and auto-enabled task-agnostically by autopilot/decisions.py:344-346, so DPO/GRPO/pretrain configs are refused or silently run eager attention. Reproduction is explicit (build_soup_config on cc 12.0 emits both flags for dpo/grpo/pretrain; validators exit 1 without the packages) and acceptance criteria give a reference-vs-implementation test (stub get_attn_implementation returning 'sdpa', assert kwarg reaches from_pretrained, or reject at config load)."
   },
   "75558a0439227e49aee0ebbc679ba79b5d349172a5b5df70b0f92dda2ada7561": {
     "confidence": 0.85,
@@ -72084,6 +72225,37 @@
     ],
     "why": "The issue clearly identifies a bug in the openai-compatible provider where top-level reasoning 'none' is dropped instead of forwarded as reasoning_effort 'none'. It provides a concrete reproduction, expected vs actual request bodies, and points to the exact code line causing the issue. The fix is straightforward and aligns with a previously fixed similar bug in xai."
   },
+  "d4c603b3fbaffff67a54321a650a9253be341d31634c18a5f8a765df5d2b28ed": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "integrations/agent-plugin-core/typescript/src/lifecycle.ts: defer marking memory IDs as seen until after successful delivery",
+      "integrations/deepseek-plugin/src/index.ts: ensure cancellation path does not commit seen-state for undelivered memories"
+    ],
+    "risks": [
+      "Changing seen-state timing could affect deduplication semantics for successfully delivered memories; must preserve dedup for delivered IDs",
+      "Repository has an AI disclosure conflict policy, so any public contribution action requires human handling of disclosure requirements"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the issue's inline regression test to the Harness lifecycle describe block in integrations/deepseek-plugin/tests/apply.test.ts",
+      "Run ./node_modules/.bin/vitest run tests/apply.test.ts -t \"Harness lifecycle\" and confirm the new test passes while the five existing tests still pass",
+      "Run package type check to confirm no type regressions"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer fixing seen-state in lifecycle.ts versus the deepseek adapter cancellation path"
+    ],
+    "why": "Issue provides a concrete offline reproduction with expected/actual diff, ordered steps, executable vitest command, and code anchors pointing to lifecycle.ts marking IDs seen before the adapter checks cancellation in index.ts. Root cause is specific and testable; no duplicate or open PR coverage found."
+  },
   "d4ccf82713410fd1d27a196f14591ed86ce9b70af698f8a2729553f628ce3887": {
     "confidence": 0.6,
     "contradictions": [],
@@ -78116,6 +78288,42 @@
       "Maintainer preference among suggested fixes"
     ],
     "why": "Issue identifies a concrete algorithmic bug: mamba state cache sizing silently caps concurrency on hybrid-KDA models, with measured throughput impact and a clear root cause in the scheduler's cache derivation. The proposed fixes are actionable and testable via concurrency sweeps and correctness checks."
+  },
+  "e4f534f5930dc85972e359d85043a4c1b20c5692be6b64299807257ec849eb6b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/llama-moe-cache.cpp: chunk bank allocation or cap n_slots per bank to stay under ggml_backend_buft_get_max_size()",
+      "common_fit_auto_moe_cache / common_params: clamp auto-sized MoE cache budget to backend max allocatable size and warn instead of aborting",
+      "ggml/src/ggml-backend.cpp: consider whether the scheduler assert should degrade gracefully when a cached tensor's buffer is NULL"
+    ],
+    "risks": [
+      "Chunking banks may change view/offset layout and could affect MoE cache hit-rate or performance; needs measurement",
+      "Clamping the auto-sized budget silently could mask the underlying allocation limit; a warning is required",
+      "The separately reported llama-server out-of-bounds assert may share or differ in root cause and should not be conflated",
+      "The issue notes the cache is slower than static --fit split on this hardware, so the fix addresses the crash, not the tuning question"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with llama-completion on a large MoE GGUF with --cpu-moe --moe-cache-mib 3072 on Vulkan; confirm the assert at ggml-backend.cpp:1568",
+      "Verify the boundary: --moe-cache-mib 2500 runs, 2700 asserts, matching the reported ~1 GiB down-bank threshold",
+      "After fix, confirm --fit auto (7345 MiB) no longer aborts and that GGML_VK_SUBALLOCATION_BLOCK_SIZE=4294967296 is no longer required",
+      "Regression: run the same sizes on the CUDA backend to confirm no behavior change"
+    ],
+    "unknowns": [
+      "No public reproduction artifact beyond the issue text; the specific GGUF is large and may not be readily available to a contributor",
+      "Whether maintainers prefer chunked allocation in llama-moe-cache.cpp versus clamping in common_fit_auto_moe_cache is undecided",
+      "Whether the llama-server out-of-bounds assert is the same defect or a separate one"
+    ],
+    "why": "Issue provides a concrete, traceable root cause: llama_moe_cache builds one bank tensor per expert projection, and when a bank exceeds the Vulkan buffer type's max_size (suballocation_block_size, default 1 GiB), the allocation is split and the resulting views have buffer == NULL, tripping GGML_ASSERT in ggml-backend.cpp:1568. The report includes a threshold table (runs at 2048/2500 MiB, asserts at 2700+ and at --fit auto 7345 MiB), a working workaround (GGML_VK_SUBALLOCATION_BLOCK_SIZE=4 GiB), and a CUDA control showing the failure is Vulkan-specific. This is a real user-visible crash on default invocations for large MoE models, with clear code anchors (llama-moe-cache.cpp, ggml-backend.cpp, ggml-vulkan.cpp, common_fit_auto_moe_cache)."
   },
   "e4fabda8a3fad5d8228b4abed96c24b301d866a617a82a0c7527d5ed0be36096": {
     "confidence": 0.85,
