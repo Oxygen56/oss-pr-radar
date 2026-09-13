@@ -7499,6 +7499,42 @@
     ],
     "why": "Issue identifies two concrete, separable algorithm defects in ReLoRACallback._prune_and_reset: (A) adapter weights are pruned without merging B@A into the frozen base, so the learned function is discarded rather than restarted, contradicting the module docstring's ReLoRA/Axolotl conformance claim; (B) strict '>' thresholding against kthvalue wipes all entries on ties, zeroing both factors and permanently killing the branch's gradients. Maintainer confirmed both halves with measured evidence (base weight delta 0, effective-map MSE 142.12 vs 8.77e-13 control; nonzero A/B = 0 with grad-norm 0.0). This is a genuine PEFT/training-objective mechanism with a clear reference-vs-implementation test path."
   },
+  "19e4d7c368b26009edabd932a1a5b1af696ab5f0c6fde95a6c3a546fa43544e8": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue reports stock v0.29.0 failure while merged PR #53835 already adds SM110 to FUSED_GDN_DECODE_ARCHS on main",
+      "Contributor states the traceback points at prefill warmup and should be investigated separately, but no confirmation exists that the prefill failure survives on current main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py prefill warmup kernel dispatch",
+      "fused GDN kernel availability/fallback path"
+    ],
+    "risks": [
+      "The reported failure may already be fixed on main by merged PR #53835, making the issue stale",
+      "Open draft PR #56618 may already cover the fail-closed fallback fix",
+      "SM110 hardware is required to reproduce and validate, limiting independent verification"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Retest stock v0.29.0 vs current main/nightly on SM110 AGX Thor with the reported Qwen GDN NVFP4 config and confirm whether the prefill warmup illegal memory access persists",
+      "Run the GDN prefill warmup path under CUDA_LAUNCH_BLOCKING=1 and compute-sanitizer to localize the faulting kernel",
+      "Add a regression test that exercises _warmup_prefill_kernels on SM110 or a mocked unavailable fused kernel image"
+    ],
+    "unknowns": [
+      "Whether the prefill warmup illegal memory access still reproduces on current main/nightly after PR #53835",
+      "Whether open draft PR #56618 fully resolves the remaining prefill path",
+      "Whether the failure is a build-arch gap or a distinct kernel bug in _warmup_prefill_kernels"
+    ],
+    "why": "The issue reports an SM110 GDN prefill warmup illegal memory access, but the supplied evidence shows the known SM110 fused-GDN build gap is already covered by merged PR #53835 (adds 11.0f to FUSED_GDN_DECODE_ARCHS), and an open draft PR #56618 already implements the fail-closed fallback with a test file. The remaining prefill-warmup root cause is explicitly flagged by a contributor as needing separate investigation and a retest on current main/nightly, so it is unresolved whether any code work remains actionable."
+  },
   "19ebf936d2f6b6457fb8849d525586cff38477d8c768e1b6f3fa72bb19b5c965": {
     "confidence": 0.85,
     "contradictions": [
@@ -34310,6 +34346,39 @@
     ],
     "why": "Issue reports a silent no-op for prefix caching on Mamba-2/GDN hybrids, but root cause is not fully confirmed (no code path analysis). A collaborator referenced PR #50991 which may address this, but open PR lookup failed due to timeout, so competition status is unknown. Maintainer input is needed to confirm design direction (warn vs. support recurrent state caching)."
   },
+  "6caed21d693686bca309ef1e550b44e8bbd67dc00a43c5c3a8ed56d9b0cbe886": {
+    "confidence": 0.6,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while issue body provides a clear code-path root cause",
+      "open_pr_assessment reports semantic overlap requiring review but no PR directly references the issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py",
+      "drop_params handling for reasoning_effort on non-reasoning OpenAI/Azure models"
+    ],
+    "risks": [
+      "Changing drop_params semantics for reasoning_effort could break callers relying on silent dropping",
+      "Existing open PRs may already implement a conflicting fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test asserting get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) raises UnsupportedParamsError or forwards the param",
+      "Run targeted litellm unit tests for get_optional_params and drop_params behavior"
+    ],
+    "unknowns": [
+      "Whether PR #40919 or the other overlapping PRs already fix this exact OpenAI/Azure reasoning_effort drop behavior",
+      "Maintainer preference between forwarding the param vs raising UnsupportedParamsError under drop_params"
+    ],
+    "why": "Issue describes a concrete user-visible bug with reproduction steps and code anchors, but the supplied duplicate assessment flags semantic overlap with open PR #40919 and other PRs touching reasoning_effort; the overlap is unresolved and could mean the root cause is already covered, which materially affects whether new code work is actionable."
+  },
   "6cd9ea858abf879b4280e46cb35487498cb5f9d63f90caaa0717424bf7c9fa83": {
     "confidence": 0.85,
     "contradictions": [],
@@ -42001,6 +42070,42 @@
     ],
     "why": "The issue provides a clear bug description with reproduction steps, expected vs actual behavior, and a detailed root-cause analysis identifying specific lifecycle gaps in cancellation propagation and SGLang request registration. The candidate is actionable with a concrete validation path."
   },
+  "854620e9017ff91b14e867b5acf87e4d26bc789684326d0c1b85b8a1229693e6": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Contributor's static analysis says the remote node should re-derive 'align' from its own CLI, contradicting the reporter's claim that the remote constructs config from CLI args and never sees the derived value"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/config.py (MambaModelConfig.verify_and_update_config derivation reach)",
+      "vllm/entrypoints/cli/serve.py headless config construction",
+      "vllm/config/vllm.py try_verify_and_update_config / CacheConfig propagation"
+    ],
+    "risks": [
+      "Fixing the wrong branch (flag propagation vs derivation bypass) would not resolve the assert",
+      "Open PR #52244 has semantic overlap on mamba/mamba_cache_mode and may already cover part of the root cause",
+      "Repository policy status ai_disclosure_conflict may block automated public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with identical --enable-prefix-caching flags on both nodes and dump rank 1 CacheConfig.enable_prefix_caching and mamba_cache_mode at construction",
+      "If flag is dropped, add a regression test asserting headless/remote config carries enable_prefix_caching and derived mamba_cache_mode='align'",
+      "If flag is present but mode stays 'none', add a test that the worker config path invokes verify_and_update_config and produces matching MambaSpec block_size across ranks"
+    ],
+    "unknowns": [
+      "Rank 1's actual enable_prefix_caching value at CacheConfig construction",
+      "Exact node-2 launch command / whether flags are identical across nodes",
+      "Whether PR #52244 already fixes this specific cross-worker spec mismatch"
+    ],
+    "why": "Issue reports a concrete cross-worker KV-spec assert on 2-node TP with prefix caching, and a contributor has narrowed the config-derivation path, but the decisive fact is unresolved: whether rank 1's enable_prefix_caching is False (flag dropped on headless path) or True with the derivation bypassed. The contributor explicitly asks for rank-1 runtime values or the node-2 launch command, so the root cause is not yet pinned to a single code path."
+  },
   "8553370484bdafa63adf6f0467c93a1aa84f8a5711c31a35e2520f80c57bd1b5": {
     "confidence": 0.7,
     "contradictions": [
@@ -45878,6 +45983,40 @@
     ],
     "why": "Issue documents a concrete, reproducible router behavior: single-deployment model groups are never cooled down unless allowed_fails/allowed_fail_policy is set, so every request during an outage burns num_retries+1 primary attempts before falling back. Root cause is anchored to the cooldown logic referenced by merged PR #8668, and the issue supplies an executable reproduction plus before/after latency numbers. The ask is primarily a docs clarification plus a design question about default cooldown behavior, which is actionable as a minimal docs/test change."
   },
+  "915d69c187dd903df21feb0eacb3e746508d9e82573663a77ebe0a144c54447f": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "tools/scripts/mysql_migration.py: normalize/cast model_type before bitwise & in _build_model_lookup",
+      "tools/scripts/mysql_migration.py: make stage failures exit non-zero instead of silent skip",
+      "tools/scripts/mysql_migration.py: include provider instance in lookup key",
+      "tools/scripts/mysql_migration.py: check() should verify referenced ids exist in tenant_model",
+      "api/utils/model_utils.py: get_model_type_human should tolerate non-integer model_type rows"
+    ],
+    "risks": [
+      "Potential overlap with issue #17578 covering related migration gaps; fix scope may need coordination",
+      "Changing failure behavior to non-zero exit could affect existing deployments relying on silent skip",
+      "Provider-instance key change may alter backfill resolution for existing data"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test feeding a string model_type into _build_model_lookup and assert no TypeError and correct lookup entries",
+      "Reproduce with a MySQL fixture where tenant_model.model_type is varchar containing 'ocr' and assert migration stage completes and records version",
+      "Regression test that GET /api/v1/models returns 200 when one row has non-integer model_type"
+    ],
+    "unknowns": [
+      "Whether #17578 already covers the same TypeError fix or is a distinct migration gap"
+    ],
+    "why": "Issue provides a concrete traceback, exact file/line anchors, a reproducible MySQL in-place upgrade path, and a verified workaround; the root cause (str vs int bitwise & in _build_model_lookup) is directly actionable with a minimal fix plus regression test."
+  },
   "9162b01c4797a3fad35e9a971badcf80343a8805473df3b0b4f6d5cb5ac69ef0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -46587,6 +46726,34 @@
       "Whether existing PRs #6514 or #6571 already address this exact issue; maintainer preference on the fix approach."
     ],
     "why": "Issue clearly identifies a bug in SFTTrainer's chunked_nll path for models without past_key_values/attentions, with a minimal fix and reproduction. However, the supplied gate decision is HUMAN_REVIEW, and existing PRs (e.g., #6514, #6571) overlap in the same file and chunked_nll semantics, requiring maintainer comparison to avoid duplicate work."
+  },
+  "940211bc7a43ee86f94ff053abf2d642f242cfc972259d3e870ac149e2d66a27": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docker/Dockerfile.database: bump LITELLM_BUILD_IMAGE and LITELLM_RUNTIME_IMAGE wolfi-base digests",
+      "docker/Dockerfile.database: optionally add UV_PYTHON_DOWNLOADS=never to make interpreter selection fail loudly"
+    ],
+    "risks": [
+      "Bumping the base digest may introduce other package drift or break unrelated layers",
+      "The exact current wolfi-base digest must be verified against the upstream registry",
+      "Maintainer may prefer a different pinning strategy (e.g., pinning apk package versions instead of the base digest)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run `docker build -f docker/Dockerfile.database -t litellm-test .` and confirm apk add and uv sync succeed",
+      "Run `docker run --rm --entrypoint sh <built-image> -c 'ls -l /app/.venv/bin/python'` and confirm the symlink resolves to a system interpreter present in the runtime stage",
+      "Run `docker run --rm --entrypoint python <built-image> -c 'import litellm'` to confirm the runtime image starts"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a concrete, reproducible Docker build failure with two distinct failure modes traced to a single root cause: the pinned wolfi-base digest has drifted from the apk package repository, so apk add python3 installs an interpreter requiring a newer glibc than the pinned base provides. The suggested fix (bump LITELLM_BUILD_IMAGE and LITELLM_RUNTIME_IMAGE digests, optionally set UV_PYTHON_DOWNLOADS=never) is specific and actionable, with a clear validation path via docker build and runtime import check."
   },
   "9428d5a1471415da0ecf458473a4667f6dec4f46e33299e11f8555aaf74e0369": {
     "confidence": 0.7,
@@ -50473,6 +50640,39 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly identifies a missing integration path in @mastra/mcp for MCP protocol revision 2026-07-28, with concrete code anchors and a suggested design. However, it is an infrastructure/API enhancement requiring maintainer design confirmation, and the gate decision is HUMAN_REVIEW."
+  },
+  "a087644ed594861dcebf86b25abf0f36820ed77db252b11c93d0343f47c83dd5": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue states /pause routes to ACP session/cancel per OpenHands#15912, but measured behavior shows it does not stop the ACP turn"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "openhands-sdk/openhands/sdk/agent/acp_agent.py: pause/cancel handling for in-flight ACP prompt",
+      "execution_status transition semantics (paused vs transitional pausing) around ACP turns"
+    ],
+    "risks": [
+      "Repository policy flags an AI disclosure conflict, which may block public automated submission",
+      "Changing execution_status semantics could affect API clients expecting immediate paused",
+      "Maintainer may prefer routing /pause to ACP session/cancel over a status change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with a long sequence of separate ACP tool calls, POST /pause, poll status and workspace file line count for 40s, assert no growth while paused",
+      "Regression test that /pause on an ACPAgent stops the turn or reports a non-paused transitional status until prompt() returns",
+      "Run targeted unit tests for the acp_agent package and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer fixing pause to cancel the ACP session versus introducing a transitional pausing status"
+    ],
+    "why": "Issue provides a concrete, reproducible divergence: /pause sets execution_status=PAUSED synchronously while ACPAgent's in-flight prompt() keeps running tool calls; root cause is identified in LocalConversation.pause() cooperative step-boundary semantics combined with ACPAgent treating one prompt() as one step. Code anchors (execution_status, paused, ACPAgent, PauseEvent) and a code path plan (acp_agent.py) support an actionable minimal fix plus regression test."
   },
   "a092ebb2a4ab0f5e65efe8ea7c28214defe4d1ef204b748057ca567ba2524142": {
     "confidence": 0.85,
@@ -54930,6 +55130,50 @@
     ],
     "why": "Issue provides a clear root cause (strict zod gate, runtime normalizer, and preview formatter all assume string-only or specific key), a concrete reproduction (object command with alias key fails with 'Invalid input' and preview shows '[object Object]'), and a proposed three-seam fix. Existing PR #13438 is open but lacks root-cause coverage, leaving room for a more complete contribution."
   },
+  "b01aaf03e2dc3525cde13887958c205c3183a0824ac3032ff1211ddcf39e4c8f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body lists scaled_mm_blockwise_sm120_fp8_dispatch.cuh as unclaimed, while a recent comment states it is covered by PR #56659",
+      "Issue body says PR #55537 partially addresses the issue, while the open-PR assessment marks all overlapping PRs as not referencing/closing the issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "csrc/libtorch_stable/quantization/w8a8/cutlass/c3x/cutlass_gemm_caller.cuh",
+      "scaled_mm_sm90_fp8_dispatch.cuh",
+      "scaled_mm_blockwise_sm90_fp8_dispatch.cuh",
+      "scaled_mm_sm100_fp8_dispatch.cuh",
+      "scaled_mm_blockwise_sm100_fp8_dispatch.cuh",
+      "scaled_mm_blockwise_sm120_fp8_dispatch.cuh",
+      "tests/kernels/quantization/test_cutlass_scaled_mm.py"
+    ],
+    "risks": [
+      "Multiple open PRs already cover the same callers; independent work may duplicate or conflict in the shared test file",
+      "SM100/SM120 callers require specific hardware (B300/SM103, RTX 5090/SM120) that may not be available for validation",
+      "The proposed stride fix interacts with new alignment/min-leading-dimension guards in scaled_mm_entry.cu, which could reject some padded views",
+      "Repository has an ai_disclosure_conflict policy flag, which is a submission-policy blocker rather than a technical one"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's 512x512 sliced-view reproducer (A-only, B-only, output-only, and all-padded cases) against a CPU/high-precision reference and assert zero mismatches",
+      "Run tests/kernels/quantization/test_cutlass_scaled_mm.py -k test_cutlass_subset and the blockwise selection on SM90/SM100/SM120 hardware",
+      "Add a regression case asserting padded leading strides are honored and packed inputs remain unchanged"
+    ],
+    "unknowns": [
+      "Whether any of #55537/#56248/#56480/#56659 has merged or been closed, which determines if independent code work is still needed",
+      "Whether the remaining unclaimed SM120 blockwise caller is genuinely covered by #56659 or still open",
+      "Whether the repository's AI disclosure policy permits an automated contribution at all"
+    ],
+    "why": "The issue itself is a concrete, well-evidenced kernel correctness bug: C3x callers rebuild packed strides via make_cute_packed_stride and discard real leading strides, with a reproducible 8% mismatch matrix and a proposed stride fix. However, the supplied evidence shows the root cause is already being covered by multiple open PRs (#55537, #56248, #56480, #56659) that collectively claim all six C3x callers, including the last unclaimed SM120 blockwise caller now covered by #56659. The duplicate/coverage status is explicitly 'semantic_overlap_requires_review' and no PR is confirmed merged or closed, so whether independent code work is still actionable is unresolved."
+  },
   "b027b51de95571dc51caf125e2ca0febeca6e7c68e471833211ef1491ec86ed4": {
     "confidence": 0.85,
     "contradictions": [],
@@ -58760,6 +59004,41 @@
       "Exact backend configuration or adapter code responsible for tool handling"
     ],
     "why": "Issue provides a minimal curl repro, control models, and recent regression timeline; root cause is specific to Ox Alpha free model's tool path on both Zen routes. Evidence shows partial recovery on one route but Go route still failing, so actionable fix remains."
+  },
+  "bc67c458e0a2e8793b8059232c30da63a1b85ea6c77d50ee8cf52abea6c11eb2": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Triage bot states the AppImage contains no Python and exports neither PYTHONHOME nor PYTHONPATH; reporter's live /proc evidence and binary format string show the AppRun does export them"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/mcp-client.ts: extend child-env sanitization for stdio MCP spawns",
+      "packages/core/src/utils/sanitize-child-env.ts: add PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH handling",
+      "packages/cli/src/config/shared-env-keys.ts: keep shared-env key list consistent"
+    ],
+    "risks": [
+      "Scrubbing LD_LIBRARY_PATH broadly could break MCP servers that legitimately rely on bundled native libs",
+      "Maintainers may treat this as an intentional deferred tradeoff (#8653) and prefer scoping the AppRun export instead of child-env scrubbing",
+      "Attribution dispute between triage bot and reporter means the fix location could shift to packaging/AppRun"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: spawn a stdio MCP child with PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH set in process.env and assert the child env excludes them",
+      "Regression test: assert user-supplied mcpServerConfig.env still overrides sanitized values",
+      "Manual repro: run the minimal command PYTHONHOME=/tmp/.mount_XXXXXX/usr/ <venv>/bin/python -c \"print('ok')\" before and after the fix path"
+    ],
+    "unknowns": [
+      "Whether maintainers accept child-env scrubbing versus fixing the AppRun export",
+      "Exact final set of env vars to scrub (PYTHONHOME/PYTHONPATH only, or also LD_LIBRARY_PATH)"
+    ],
+    "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP children, breaking external Python interpreters. Reporter supplies a minimal repro command, /proc environ evidence, and a working workaround. Triage bot disputes the AppImage attribution, but the reporter's follow-up provides live /proc evidence with a mount prefix matching the Qwen AppImage and a binary-level format string, plus a second leak channel (LD_LIBRARY_PATH) with a reproduction matrix. Code anchors (mcp-client.ts, sanitize-child-env.ts, shared-env-keys.ts) point to a concrete spawn-env scrubbing change. No open PR or duplicate issue covers it. Remaining uncertainty is which env vars to scrub and whether maintainers accept the deferred-tradeoff reversal, which is normal implementation/review uncertainty rather than a blocking unknown."
   },
   "bc78007f03222bf59fb6fb64c02f0ec95696b8000ef9126f5eecaa7a7221fe1d": {
     "confidence": 0.85,
@@ -81337,6 +81616,49 @@
       "whether the MCP issue is a configuration problem rather than a code bug"
     ],
     "why": "Issue reports two user-visible failures but lacks a concrete root cause or minimal reproducer. The suggested investigation is speculative and the candidate's expected changes are vague. No maintainer confirmation or design direction exists, and the open PRs are only keyword-overlapping, not competing implementations."
+  },
+  "ff1a3434b83e507eb1d5059d96aad2170e3bc1074c1f01b9f23bcc8c4ccd8014": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Maintainer ZJY0516 attributes the issue to 'tool call / vllm frontend', while the candidate classifies it under llm_algorithm mechanisms (attention kernels, distributed_training, numerics_quantization)",
+      "Candidate code-path plan includes fused_moe/layer.py and glm45.rs parser, but no supplied evidence links either to the observed degeneration",
+      "algorithm_evidence reports qualified=true with 4 mechanisms, yet formula_signal and experiment_signal are both false and no concrete numerical or training invariant is stated"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/fused_moe/layer.py (only if hybrid/MoE path is confirmed)",
+      "rust/src/parser/src/reasoning/glm45.rs (only if frontend tool-call parsing is confirmed as the cause)",
+      "hybrid KV-cache / Mamba state restoration path (only if prefix-cache interaction is confirmed)"
+    ],
+    "risks": [
+      "Root cause may be frontend tool-call parsing rather than an algorithm/kernel defect, making the llm_algorithm track framing incorrect",
+      "Degeneration may be non-deterministic and hardware/session-length dependent, making a stable regression test hard to construct",
+      "Multiple simultaneous dependency bumps (FlashInfer, transformers) confound attribution",
+      "Repository AI-disclosure policy conflict blocks public submission regardless of technical merit"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the bad build with --no-enable-prefix-caching over a long multi-turn agentic session and compare degeneration rate against the default config",
+      "Pin flashinfer-python==0.6.17 on the bad build and re-run the same session to isolate kernel vs core regression",
+      "Bisect the vLLM commit range g487ecf187..g385dce36b with a fixed seed and identical multi-turn transcript to identify the introducing commit",
+      "Once a trigger exists, add a regression test that replays the minimal multi-turn transcript and asserts no repeated-token collapse"
+    ],
+    "unknowns": [
+      "Whether disabling prefix caching eliminates the degeneration (hybrid/Mamba state restoration hypothesis)",
+      "Whether pinning FlashInfer 0.6.17 eliminates the degeneration (attention kernel hypothesis)",
+      "Which specific commit in g487ecf187..g385dce36b introduces the regression",
+      "Whether the frontend tool-call parsing path is the actual root cause, as the maintainer suggests",
+      "Whether a deterministic minimal reproduction can be constructed at all"
+    ],
+    "why": "Issue reports a real regression (build A/B: clean on g487ecf187, degenerate on g385dce36b) but the reporter explicitly could not construct a synthetic reproduction; only real long agentic sessions trigger it. A maintainer comment (ZJY0516) attributes it to 'tool call / vllm frontend', which conflicts with the algorithm-track framing (attention kernels, hybrid/Mamba state, FP8 numerics) and with the candidate's own code-path plan (fused_moe/layer.py, glm45.rs parser). The candidate's algorithm_evidence claims mechanisms like distributed_training and numerics_quantization, but no supplied evidence ties the degeneration to a training/quantization/kernel invariant; the matched terms are keyword-level only. Root cause is unresolved between at least three candidate causes (FlashInfer 0.6.18 attention kernel, vLLM commit range, transformers 5.16.1 chat-template/tokenizer), and the only concrete narrowing steps (disable prefix caching, pin FlashInfer 0.6.17) are unexecuted suggestions. Without a reproducible trigger or a confirmed root cause, no concrete reference-vs-implementation or numerical regression test can be specified."
   },
   "ff1dfadd2472d617c4b4b24f8db0f38442c92dec0c39833aa30459843008bfae": {
     "confidence": 0.7,
