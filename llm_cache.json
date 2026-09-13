@@ -6930,6 +6930,43 @@
     "unknowns": [],
     "why": "Issue describes a concrete, reproducible unbounded-output bug in the Glob tool, but an open PR #2572 already implements the exact proposed fix (default limit 200, hard cap 1000, limit/offset pagination, truncation notice, regression tests) and is technically complete with passing checks. The remaining gap is only root-cause coverage depth, which is a normal review concern, not a distinct contribution opportunity."
   },
+  "17dcf31a046d1448dfa52ee5d46f5d55a8d320ac57691ebc3a4449f094e32f5f": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Triage bot claims the AppImage contains no Python and exports no PYTHONHOME/PYTHONPATH; reporter's live /proc evidence and ELF string inspection show AppRun.wrapped does export them"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/mcp-client.ts: scrub PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH from inherited env before spawning stdio MCP servers",
+      "packages/core/src/utils/sanitize-child-env.ts: extend sanitization policy for interpreter/loader variables",
+      "packages/cli/src/config/shared-env-keys.ts: align shared env key handling if applicable"
+    ],
+    "risks": [
+      "Over-scrubbing could break MCP servers that legitimately rely on inherited env vars",
+      "Maintainer may prefer scoping the fix to the AppImage entry point rather than the MCP spawn path",
+      "LD_LIBRARY_PATH scrubbing may affect non-Python dynamically linked MCP servers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: spawn a stdio MCP child with PYTHONHOME/PYTHONPATH/LD_LIBRARY_PATH set in process.env and assert they are absent from the child env",
+      "Integration test: configure a Python venv stdio MCP server, launch under a poisoned env (PYTHONHOME=/tmp/.mount_FAKE/usr/, LD_LIBRARY_PATH=/nonexistent), assert handshake succeeds",
+      "Regression: verify user-supplied mcpServerConfig.env still overrides sanitized values"
+    ],
+    "unknowns": [
+      "Whether maintainers want the scrub applied to all child processes or only stdio MCP servers",
+      "Whether the deferred scrubbing tradeoff (#8653) has a preferred design direction"
+    ],
+    "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP servers, breaking external Python interpreters. Reporter supplies executable minimal repro, /proc environ evidence, and a live diagnosis rebutting the triage bot's static 'no Python in AppImage' claim by locating the format string in the AppRun.wrapped ELF. Code anchors (mcp-client.ts, sanitize-child-env.ts, shared-env-keys.ts) point to the spawn env construction, and the suggested fix (strip/reset these vars for MCP children) is a bounded, testable change. No open PR or duplicate issue covers it. Remaining uncertainty is normal implementation choice (which vars to scrub, whether to scope to MCP only), not a blocking unknown."
+  },
   "1819e596acdcb588d0aad40aacf96610fa672b690084f9d67ac127e20d908ae4": {
     "confidence": 0.6,
     "contradictions": [
@@ -53497,6 +53534,81 @@
     ],
     "why": "The issue gives a precise root cause (snapshot assigns fresh ids to re-factored tool-call messages, breaking the client's id-keyed merge and causing ordering displacement) and proposes a concrete fix. However, maintainer triage is required: the gate says HUMAN_REVIEW, there are overlapping open PRs (#7423, #7479) that touch AG-UI snapshot/support paths, and a potential duplicate issue #7490 with shared behavior signals. The fix may also involve design choices about message identity that need maintainer confirmation."
   },
+  "ae7a7874f1d66a3796a5df33e2beb9c52fc5d2e57c7ed1efb1112aebd7b02141": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims drafter re-scans full accumulated KV every cycle; commenter retracts that mechanism stating DFlash is single-pass",
+      "Commenter attributes cost to missing DCP sharding in DFlashSpeculator.propose, contradicting the issue's full-context-scan root cause",
+      "Issue proposes per-seq-len disable hook while commenter argues a joint (batch, ctx) table is required"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py dynamic_sd_lookup keyed on (batch, seq_len)",
+      "vllm/config/speculative.py per-sequence-length speculative control",
+      "DFlashSpeculator.propose DCP metadata plumbing if DCP-sharding is confirmed"
+    ],
+    "risks": [
+      "Fixing the scheduling hook would mask rather than resolve the underlying drafter attention cost",
+      "If the DCP-sharding hypothesis is correct, the proposed per-seq-len disable hook is the wrong fix",
+      "Numerical/acceptance-rate trade-offs of any drafter-side windowing are unmeasured"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce 185k single-stream decode with DFlash DT4 vs SPEC_OFF on hybrid GDN target and confirm the ~71->16 tok/s regression",
+      "Run synthetic-zero acceptance sweep at DCP-1 vs DCP-8 to test whether drafter cost scales with DCP degree",
+      "Kernel trace attributing the per-cycle drafter attention time to confirm or refute the full-context-scan mechanism"
+    ],
+    "unknowns": [
+      "Whether the drafter attention is intended to be DCP-sharded",
+      "Whether the measured overhead is a real step cost or an artifact of the synthetic-zero rejection path",
+      "Which mechanism (full-context scan vs DCP metadata) actually dominates at 185k"
+    ],
+    "why": "The issue reports a concrete long-context spec-decode regression with profiled ~182ms/cycle drafter FA cost, but the supplied comment thread materially contradicts the proposed mechanism: one commenter retracts the 'drafter rescans full KV' explanation (DFlash is single-pass), and another attributes the cost to missing DCP sharding in DFlashSpeculator.propose with a 4x DCP-degree scaling observation. The root cause is therefore unresolved between at least two competing mechanisms, and the issue's own suggested fix (per-seq-len disable hook) is a scheduling workaround rather than a fix for the identified attention cost."
+  },
+  "ae8266774d3f522ac93ffc96b14f26e5ae6d261bfc010b80171ec759c884600a": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Commenter attributes the failure to SM110 missing from FUSED_GDN_DECODE_ARCHS, while the contributor comment says that build gap is already fixed by merged PR #53835 and the prefill warmup traceback should be investigated separately",
+      "Open PR #56618 is a draft with root-cause coverage and a test file, while merged PR #53835 lacks tests and root-cause coverage, leaving unclear which path is the intended fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py prefill warmup path",
+      "CMakeLists.txt FUSED_GDN_DECODE_ARCHS / fused GDN dispatch fallback behavior"
+    ],
+    "risks": [
+      "The reported crash may already be fixed by merged PR #53835, making a new fix redundant",
+      "The proposed CMake arch addition may not address the prefill warmup traceback, which the contributor says should be investigated separately",
+      "Repository policy indicates an AI disclosure conflict, which may block public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on SM110 with stock v0.29.0 and with current main/nightly to determine whether the prefill warmup crash persists after merged PR #53835",
+      "Run with VLLM_GDN_DECODE_KERNEL=triton to confirm the workaround and isolate the fused-kernel path",
+      "Add a regression test that exercises GDN prefill warmup on SM110 or a mocked unavailable fused kernel image"
+    ],
+    "unknowns": [
+      "Whether the prefill warmup illegal memory access still reproduces on current main/nightly after PR #53835",
+      "Whether the actual root cause is the CMake arch omission, the fused-kernel dispatch path, or a separate prefill kernel issue",
+      "Whether the repository's AI disclosure policy permits the required public contribution workflow"
+    ],
+    "why": "The issue reports an SM110 illegal memory access in the Qwen GDN prefill warmup path, and a commenter proposes a concrete root cause (SM110 missing from FUSED_GDN_DECODE_ARCHS in CMakeLists.txt) with a workaround (VLLM_GDN_DECODE_KERNEL=triton). However, a maintainer/contributor comment states the SM110 fused GDN build gap is already addressed by merged PR #53835, and explicitly asks whether the prefill warmup failure remains on current main/nightly. That unresolved duplicate/merged-fix coverage question determines whether any new code work is actionable, so the evidence is materially incomplete."
+  },
   "ae89e6f9369d1cdbb22b702619da4e6608bf738e30cd016ea758340f731e26ee": {
     "confidence": 0.7,
     "contradictions": [],
@@ -62306,6 +62418,46 @@
     ],
     "why": "The issue clearly identifies a race condition in the response-cache Wasm plugin where header-key requests are forwarded before asynchronous Redis lookup completes. The design provides a concrete fix (return HeaderStopAllIterationAndWatermark after successful dispatch) with a detailed verification plan including unit tests and real Envoy red-green testing. Maintainer approval is present, and the implementation task is well-defined."
   },
+  "ca0113f6d10061c494634bd1be3b5ad52f7b67dfa810a387acebee3c54d98679": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body lists several callers as unchecked/remaining, while recent comments state PRs #55537/#56248/#56480 already fix five of six callers",
+      "open_pr_assessment marks PRs as not root-cause-covering, but their titles and the comment table indicate they address the same stride defect"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "csrc/libtorch_stable/quantization/w8a8/cutlass/c3x/cutlass_gemm_caller.cuh runtime leading-stride assignment",
+      "scaled_mm_blockwise_sm120_fp8_dispatch.cuh stride handling (unclaimed caller)",
+      "tests/kernels/quantization/test_cutlass_scaled_mm.py strided-subset regression coverage"
+    ],
+    "risks": [
+      "Three open PRs already cover most callers; new work may duplicate existing fixes",
+      "Test-file insertion collisions among #55537/#56248/#56480 require rebase coordination",
+      "SM120 blockwise caller cannot be validated without SM120 hardware",
+      "Repository AI-disclosure policy conflict blocks automated public actions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's 512x512 sliced-view reproducer on SM90 and compare against torch.mm reference with fixed seed and tolerance",
+      "Run tests/kernels/quantization/test_cutlass_scaled_mm.py::test_cutlass_subset and the new strided-subset parametrization",
+      "For SM120 blockwise caller, validate on RTX 5090 / RTX PRO Blackwell hardware with padded leading strides"
+    ],
+    "unknowns": [
+      "Whether the unclaimed scaled_mm_blockwise_sm120_fp8_dispatch.cuh caller is the only remaining actionable code work",
+      "Whether any of the three open PRs will merge and thereby cover the issue",
+      "Whether SM120 hardware is available for validating the remaining caller"
+    ],
+    "why": "The issue itself is a strong, concrete kernel-algorithm bug: C3x callers rebuild packed strides via make_cute_packed_stride and discard real leading strides, with a reproducible 8% mismatch matrix and a proposed stride fix. However, the supplied evidence shows three open PRs (#55537, #56248, #56480) already covering the same callers and test file, and the issue's own coverage checklist marks several callers as already fixed by those PRs. Whether any remaining code work is actionable depends on unresolved duplicate/coverage facts, which is a materially blocking unknown rather than normal review uncertainty."
+  },
   "ca0acfc63e0d27b3c8a683de07e03d68db48ba544aba4a7b9a7ae26918c98c33": {
     "confidence": 0.8,
     "contradictions": [],
@@ -69009,6 +69161,35 @@
     ],
     "why": "The issue reports an OOM during vLLM serving of a Qwen3.8-Flash-Next FP8 model with tensor parallelism and expert parallelism. The error is a CUDA OOM, but the root cause is not clearly identified; it could be a memory allocation bug, a configuration issue, or a kernel problem. The issue includes a reproduction command and environment details, and there is a related PR (#54129) that touches overlapping code paths, but the root cause is not confirmed."
   },
+  "deaad001fec01ad04819657e28e040e84e322518ecaad7a2e6ee5604dcc95fc4": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue body presents the fix as unaddressed, while maintainer comment and open-PR assessment indicate PR #8070 already covers the same root cause and code path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new implementation recommended; existing PR #8070 already targets packages/dsh-runtime/src/index.ts for the assistant/chunk -> assistant/message mapping"
+    ],
+    "risks": [
+      "Creating a competing PR would duplicate PR #8070 and fragment review on the same code path",
+      "The OD_TOOL_TOKEN observation in the same issue is a separate run-environment concern and should be a focused follow-up, not bundled"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If pursuing, first compare against PR #8070's regression fixtures and confirm whether any uncovered edge case (e.g., double-counting when assistant/message follows streamed assistant/chunk deltas) remains unaddressed"
+    ],
+    "unknowns": [
+      "Whether PR #8070 fully covers the assistant/message path or only the legacy chunk path, since its title references 0.1.5 stream and settlement events and it has changes requested"
+    ],
+    "why": "Issue #8085 reports a concrete, well-evidenced root cause (dsh-runtime only emits text from assistant/chunk, discards assistant/message body, causing empty_output). However, a maintainer-side comment (lefarcen) states this is the same compatibility gap already tracked in #7992 and that PR #8070 is already open covering the legacy chunk path, newer stream/settlement paths, and regression fixtures. The open-PR assessment independently flags PR #8070 as semantic_overlap_requires_review with overlapping path packages/dsh-runtime/src/index.ts and distinctive overlap on assistant_chunk/assistant_message/dsh_runtime. This makes the opportunity already covered by an existing open PR, so a new contribution would be duplicative."
+  },
   "decfb4af480007e3c20f6277590b404625d330845775556fd7c93370356cc750": {
     "confidence": 0.85,
     "contradictions": [],
@@ -73258,6 +73439,36 @@
       "Open PR and related issue lookup failed, so duplicate work cannot be excluded"
     ],
     "why": "The issue reports tokenizer misbehavior on Windows CPU but lacks a clear root cause; a collaborator could not reproduce on Linux CPU, suggesting platform-specific or environment-dependent factors. The candidate's algorithm evidence is generic and not tied to a concrete mechanism or validation path."
+  },
+  "ea1eba67af7eb7bbc75d98db3951af66785d474aa89adec8bff8f2d66830e4c6": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py: surface reasoning_effort as unsupported for non-reasoning models",
+      "drop_params handling: raise UnsupportedParamsError instead of silently dropping reasoning_effort when the model cannot reason"
+    ],
+    "risks": [
+      "Behavior change for callers relying on drop_params to silently strip reasoning_effort",
+      "Scope creep into broader drop_params semantics beyond the reasoning_effort case"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test asserting get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) does not silently drop the param",
+      "Repeat for custom_llm_provider='azure'",
+      "Regression test that drop_params=True still drops genuinely optional unsupported params for other models"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer forwarding the param to the provider vs raising UnsupportedParamsError under drop_params"
+    ],
+    "why": "Issue provides a concrete, reproducible defect: get_supported_openai_params omits reasoning_effort for gpt-4.1/gpt-4o, and drop_params silently strips it, converting a provider 400 into a silent 200. Reproduction is executable via get_optional_params and a direct OpenAI curl, and the code anchor (get_supported_openai_params) is identified. No open PR directly covers this code path; the three listed PRs are keyword-overlap only with no overlapping paths or root-cause coverage."
   },
   "ea21ac9d15a5b1dd218ce49995abfddcc7a093598b94849a07bb50d3321cd4c5": {
     "confidence": 0.85,
