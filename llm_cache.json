@@ -24769,6 +24769,42 @@
     ],
     "why": "The issue provides a clear root cause (strict zod schema gate rejects object-form commands, runtime normalizer and preview formatter only handle 'command' key) and a concrete validation path (reproduce with object-form commands, verify execution and preview rendering). The suggested fix is technically sound and actionable."
   },
+  "50a2189524048269fd9f2ecb2342cf436409cb241ef4d6eb1ab041ec4159fd57": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Triage bot attributes the crash to duplicate history-item keys (#11500/#11743), while the reporter's unique-key regression still fails with #11743 applied"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/components/shared/VirtualizedList.tsx: make row-height measurement edge-triggered and defer the resulting state write outside Ink's active commit",
+      "packages/cli/src/ui/components/shared/VirtualizedList.update-depth.test.tsx: regression test asserting no synchronous recursive layout updates with unique keys"
+    ],
+    "risks": [
+      "Depends on private Ink layout-listener behavior; maintainers may reject that tradeoff",
+      "Overlap with open PR #11761 (draft, same VirtualizedList paths) and maintainer-owned PR #11743 could create duplicate/competing work",
+      "Regression fixture is synthetic (Profiler-scheduled height change) and does not replay the full production notification/history pipeline, so it does not prove the field crash was initiated independently of the duplicate-ID driver"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the focused regression file VirtualizedList.update-depth.test.tsx on the pre-fix implementation and confirm it throws 'Maximum update depth exceeded' through useBoxMetrics/emitLayoutListeners/resetAfterCommit",
+      "Re-run the same file with the VirtualizedList change applied and confirm it passes",
+      "Re-run with #11743's duplicate-ID fix applied but the VirtualizedList change reverted to confirm the unique-key case still fails, isolating this driver",
+      "Run the target package's directed unit tests and static checks after the change"
+    ],
+    "unknowns": [
+      "Whether maintainers accept a fix that depends on private Ink layout-listener semantics",
+      "Whether PR #11761 already covers this exact root cause or only overlaps paths"
+    ],
+    "why": "Issue provides a concrete, source-anchored root cause: virtualized row-height measurement writes React state synchronously from Ink commit-time layout listeners (use-box-metrics -> emitLayoutListeners -> resetAfterCommit), producing a measure->heights->offsets->window->measure cycle that exceeds React's nested-update limit. The reporter supplies a deterministic unique-key regression test that still fails with the known duplicate-ID fix (#11743) applied and passes with the proposed VirtualizedList change, which separates this driver from the duplicate-key driver. This is a real, actionable component-level fix with a concrete validation path."
+  },
   "50c26ffde7a7860e82bba6ce69b84887706f151ef750acb35b27df5475a1c7ab": {
     "confidence": 0.7,
     "contradictions": [],
@@ -25080,6 +25116,41 @@
     ],
     "why": "Issue reports a user-visible bug in .NET agent framework where HostedCodeInterpreterTool cannot access uploaded files. However, maintainer comment suggests the code sample uses Chat Completions API instead of Responses API, which is likely the root cause. No confirmed framework defect, no maintainer approval, and design confirmation is needed."
   },
+  "51444d6f9eeadd237adb5b6001535af645670171be90a8db22025e9a0733529a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate labels this agent_ai_infra with code-path expectations, but the issue is explicitly a documentation example fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docs/quick-start.md: change FunctionToolCallback inputType from String.class to a record/POJO request type",
+      "docs/quick-start.md: move @ToolParam onto record components",
+      "docs/quick-start.md: align tool names in SYSTEM_PROMPT with registered names",
+      "docs/quick-start.md: unify dependency version 1.1.2.0/1.1.2.1"
+    ],
+    "risks": [
+      "Docs-only change may be considered out of scope for this repository (website repo owns the file)",
+      "Overlaps open PR website#282, risking duplicate work",
+      "No regression test is feasible for a documentation example"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's no-API-key snippet printing tool.getToolDefinition().inputSchema() and assert type is object, not string",
+      "After doc fix, copy the quick-start example verbatim and confirm the second-round DashScope call no longer returns HTTP 400"
+    ],
+    "unknowns": [
+      "Whether website#282 already fully covers the requested doc fix",
+      "Whether this repository or the website repository is the correct target for the change"
+    ],
+    "why": "Issue is a docs-only quick-start example bug (inputType(String.class) producing a string schema that DashScope rejects with 400). Root cause is clearly established and a no-API-key reproduction exists, but the candidate is a documentation change, not a code contribution, and an open PR (website#282) already directly references the issue and overlaps the same code identifiers, so independent implementation space is unresolved."
+  },
   "5149bc867264d15b26455e113b6f10361d45240b67b21fad1fdcd7ea847f2c61": {
     "confidence": 0.85,
     "contradictions": [],
@@ -25144,6 +25215,41 @@
       "Whether the bug reproduces on NVIDIA/CUDA, which affects scope and validation"
     ],
     "why": "Issue is a well-documented ROCm segfault with a concrete reproducer and a plausible unsynchronised-access hypothesis, but the reporter explicitly states the root cause is 'not pinned, hence a report rather than a patch'. The candidate's own actionability evidence records root_cause_signal=false, and the open-PR assessment shows three semantically overlapping open PRs (#952 draft, #56342, #56441) that may already cover the fix, with duplicate status 'semantic_overlap_requires_review'. A materially blocking unknown remains: whether an existing PR already addresses the root cause, and which code path is actually responsible."
+  },
+  "5188948b4d3474b910bb4e86791a948fe42f09dc3aad86cf5014682df1572ee4": {
+    "confidence": 0.6,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while issue body provides a clear root cause in get_supported_openai_params/drop_params",
+      "open_pr_assessment status semantic_overlap_requires_review with best_score 34 but direct_code_overlap false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py: reasoning_effort handling for gpt-4.1/gpt-4o under drop_params",
+      "drop_params path: raise UnsupportedParamsError or forward param instead of silently dropping"
+    ],
+    "risks": [
+      "Changing drop_params semantics for reasoning_effort could break callers relying on silent dropping",
+      "PR #33468 may already cover the same code path, making a new fix redundant",
+      "Behavior change may need maintainer design preference on forward-vs-raise"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing unit test calling get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) and assert it raises or forwards rather than returning {'stream': False, 'extra_body': {}}",
+      "Repeat for custom_llm_provider='azure'",
+      "Run targeted litellm tests for get_supported_openai_params and drop_params behavior"
+    ],
+    "unknowns": [
+      "Whether PR #33468 actually fixes or covers the reasoning_effort drop_params behavior",
+      "Maintainer preference between forwarding the param and raising UnsupportedParamsError under drop_params"
+    ],
+    "why": "Issue describes a concrete user-visible bug with reproduction steps and code anchors, but the supplied duplicate assessment flags PR #33468 as semantic_overlap_requires_review with overlapping distinctive terms (gpt_4o, reasoning_effort) and no direct code overlap; this unresolved duplicate/coverage question materially determines whether new code work is actionable."
   },
   "519a39760aad59235b9135a317aa03898b2d8f1feecc899a1d3015de5cba59df": {
     "confidence": 0.7,
@@ -35477,6 +35583,47 @@
     ],
     "why": "The issue reports a reproducible distributed-training hang in DSPARK speculative decoding with TP>1, and maintainer comment identifies root cause as rank-divergent sampling due to floating-point differences, with a proposed fix in PR #33614. Evidence includes watchdog dumps showing rank disagreement in KV cache allocation and NCCL collective desync, plus a concrete validation path via the referenced PR."
   },
+  "6d3dab783fec9906aeb371af3231cf3c81e78b603ae2bb633f0b73e6070310ac": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate classifies this as llm_algorithm with attention/FP8/TP mechanisms, but the maintainer comment attributes it to tool call / vLLM frontend, and the reporter's own minimal reproduction attempts (single-turn, concurrency, 10-turn tool history, 34k context) all returned coherent output",
+      "algorithm_evidence lists numerics_quantization and distributed_training mechanisms while the issue shows no numerical or distributed-training invariant failure"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vLLM frontend tool-call parsing path (per maintainer comment)",
+      "possibly prefix-cache / hybrid Mamba state restoration if frontend is ruled out"
+    ],
+    "risks": [
+      "No standalone reproduction exists, so any fix cannot be validated deterministically",
+      "Root cause may be frontend parsing (non-algorithm), which would make this out of scope for track=llm_algorithm",
+      "Overlapping open PR #56635 (fix glm frontend tool call parsing) already targets the same area without tests",
+      "Potential duplicate/overlap with issue #55515 flagged via shared stack signatures"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a long multi-turn agentic client session against the bad build and confirm degeneration",
+      "A/B the same session with --no-enable-prefix-caching to isolate prefix-cache/state indexing",
+      "Pin flashinfer-python==0.6.17 on the bad build to separate kernel regression from vLLM core commits",
+      "If frontend is implicated, add a regression test around tool-call parsing over long histories"
+    ],
+    "unknowns": [
+      "Whether the degeneration originates in the frontend tool-call parser or in kernel/state management",
+      "Whether the FlashInfer 0.6.18 or transformers 5.16.1 bump is the actual regression source",
+      "Whether PR #56635 already resolves the reported behavior",
+      "Whether a deterministic reproduction can be constructed at all"
+    ],
+    "why": "Issue reports a real regression (build A/B: clean on g487ecf187, degenerate on g385dce36b) but the reporter explicitly could not construct a synthetic reproduction; only long real agentic sessions trigger it. A maintainer comment states it is a known issue caused by tool call / vLLM frontend, which points at frontend parsing rather than the algorithm mechanisms (attention kernels, FP8, tensor parallel) the candidate claims. The candidate's algorithm_evidence mechanisms (model_architecture, distributed_training, numerics_quantization, evaluation_method) are inferred from keyword matches (attention, bf16, fp8, overflow, tensor parallel) that appear only in the environment dump, not in the failure description, so the llm_algorithm classification is not substantiated by the issue text."
+  },
   "6d4412879fae16ba55d515d10f3bfac7bca55e8015b9115a31f442aed3614113": {
     "confidence": 0.8,
     "contradictions": [],
@@ -36004,6 +36151,44 @@
       "No maintainer confirmation on preferred fix approach; whether streaming response handling is acceptable."
     ],
     "why": "Issue identifies a concrete hang in OAuth discovery due to missing timeout on initial MCP GET, with clear repro steps and code anchors. Fix is bounded and testable."
+  },
+  "6e33fd777d6f1e54de6fbbc46b70d477f80f9ee58d205756dd8a64afe11ac049": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Contributor's static analysis says the remote node should re-derive 'align' from its own CLI, which conflicts with the reporter's observed rank-1 state of mamba_cache_mode='none' and block_size=max_model_len"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/config.py (MambaModelConfig.verify_and_update_config / HybridAttentionMambaModelConfig)",
+      "vllm/config/vllm.py (try_verify_and_update_config / VllmConfig.__post_init__)",
+      "vllm/entrypoints/cli/serve.py (headless config construction path)"
+    ],
+    "risks": [
+      "Fixing the wrong hypothesis (flag propagation vs. config-construction bypass) would not resolve the assert",
+      "Open PRs #52244 and #55027 have semantic overlap on mamba/mamba_cache_mode and may already cover part of the root cause; duplicate coverage is unresolved",
+      "Repository policy reports an AI-disclosure conflict, which is a submission-policy blocker independent of technical merit"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the assert on a 2-node TP hybrid GDN/mamba setup with --enable-prefix-caching and identical flags on both nodes",
+      "Dump rank 1's cache_config.enable_prefix_caching and mamba_cache_mode at CacheConfig construction to determine which hypothesis holds",
+      "Add a regression test asserting both ranks derive identical MambaSpec (block_size and mamba_cache_mode) for the same layer"
+    ],
+    "unknowns": [
+      "Rank 1's runtime enable_prefix_caching and mamba_cache_mode values",
+      "Exact node-2 launch command / whether --enable-prefix-caching is present on both nodes",
+      "Whether PR #52244 or #55027 already fixes this specific cross-worker derivation gap",
+      "Resolution of the ai_disclosure_conflict policy status"
+    ],
+    "why": "Issue reports a concrete cross-worker KV-spec assert on 2-node TP with prefix caching, and a contributor has narrowed the config-derivation path, but the supplied evidence leaves the actual root cause unresolved: the contributor explicitly states two mutually exclusive hypotheses (headless node missing --enable-prefix-caching vs. a config path bypassing VllmConfig.__post_init__) and requests a runtime dump from rank 1 to distinguish them. Without that datum, the fix location is undetermined, so code work is not yet actionable."
   },
   "6e368d44fe1e9cb126c26141c69dcb91ed981f397c32890dca295485f028ffc3": {
     "confidence": 0.8,
@@ -56889,6 +57074,39 @@
     ],
     "why": "Issue provides a precise root cause with code anchors, a concrete reproduction using a public MCP server, and a clear expected behavior. The triage confirms the static analysis and identifies implementation dependencies. The proposed fix direction is sound and actionable."
   },
+  "b16822dd43be6f55408ed3992deb6ace6f298e8731d3d2c8e21bcac676126c00": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "shared composer submission hook: replace string comparison with monotonic edit version and atomic clearIfUnchanged(submitVersion)",
+      "failure restoration path: apply same version check so failed sends cannot overwrite newer input",
+      "per-Session draft persistence: serialize writes with latest-value-wins and cleanup on settle/disposal",
+      "composer clear transition: clear visible text, in-memory draft, attachments/references, and persisted draft together"
+    ],
+    "risks": [
+      "Edit-version plumbing must cover all shared composer consumers without changing routing or provider behavior",
+      "Draft write coordinator must not leak per-Session state after settle or disposal",
+      "Failure restoration semantics must not clobber genuinely newer user input"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: submit with reference/MCP/whitespace preprocessing that changes displayText; assert composer clears and transcript receives message",
+      "Unit test: type a second message during async preparation; assert newer input is preserved",
+      "Unit test: start a debounced draft write, then clear; assert older write cannot restore submitted text",
+      "Rendered E2E: real Command+Enter and Send click across ordinary SDE, Member, and Group Chat; verify editor, transcript, Session switch/remount, and persisted draft"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a concrete root cause: the shared composer submission hook compares original editor text against transformed displayText to decide whether to clear, misclassifying preprocessing changes as newer user input, plus an unordered debounced draft write race. Reproduction steps, affected surfaces, and a concrete fix contract (edit version + clearIfUnchanged + serialized latest-value-wins draft writes) are supplied, with no duplicate open PR/issue and no assignment requirement."
+  },
   "b16fc0f9c7833537fe98440bd97e2abec8b79215157c310c9f81fadfec79cb4c": {
     "confidence": 0.55,
     "contradictions": [
@@ -64549,6 +64767,44 @@
     ],
     "why": "Issue identifies a clear transformers-API drift causing Qwen3-VL text encoder failure in ImageEncodingStage, with a concrete repro and suggested fix. However, the deterministic gate is HUMAN_REVIEW and existing PR #33569 has semantic overlap on Qwen3-VL paths, requiring maintainer comparison before creating a new task."
   },
+  "c91a4ec25fec7c528fa240793df92f80d8b5ba27c09bb2040152008ff912b3e9": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Commenter attributes the crash to SM110 missing from FUSED_GDN_DECODE_ARCHS, while a contributor says that build gap is already fixed by merged PR #53835 and the prefill warmup traceback remains a separate unresolved issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py prefill warmup kernel dispatch",
+      "CMakeLists.txt FUSED_GDN_DECODE_ARCHS / fused GDN kernel build for SM110"
+    ],
+    "risks": [
+      "Root cause may already be covered by merged PR #53835, making further code work redundant",
+      "Open draft PR #56618 already touches the same GDN path with a test file, creating competition/overlap",
+      "Potential duplicate issue #55569 shares a memory behavior signal and may cover the same failure",
+      "SM110 hardware is required for reproduction and validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on SM110 (AGX Thor) with stock v0.29.0 and the reported serve args, capturing the illegal memory access in _warmup_prefill_kernels",
+      "Retest with current main/nightly to determine whether the prefill warmup failure persists after merged PR #53835",
+      "Add a regression test that exercises GDN prefill warmup dispatch on SM110 or fails closed when the fused kernel image is unavailable"
+    ],
+    "unknowns": [
+      "Whether the prefill warmup illegal memory access still reproduces on current main/nightly after PR #53835",
+      "Whether issue #55569 is a true duplicate covering the same failure",
+      "Whether open draft PR #56618 already resolves the remaining prefill warmup root cause"
+    ],
+    "why": "The issue reports an SM110 illegal memory access in Qwen GDN prefill warmup, and a commenter proposes a concrete root cause (SM110 missing from FUSED_GDN_DECODE_ARCHS in CMakeLists.txt) with a workaround (VLLM_GDN_DECODE_KERNEL=triton). However, a contributor comment states the SM110 fused GDN build gap is already addressed by merged PR #53835, and that the traceback still points at the prefill warmup path, so the remaining root cause is unresolved. The supplied evidence also flags a potential duplicate issue #55569 sharing a memory behavior signal, and an open draft PR #56618 already covers the same path with a test file. These unresolved coverage/duplicate facts materially determine whether independent code work is actionable."
+  },
   "c93bfbd5eea47c38a6d8432ed2b5c3a66b3ed49cd31368a304a2626e6f7e0fe0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -66558,6 +66814,43 @@
       "Whether maintainers prefer a hard cap, chunked addAll, or lazy indexing as the accepted fix shape"
     ],
     "why": "Issue provides a concrete root cause anchored at extensions/vscode/src/util/FileSearch.ts: unbounded synchronous MiniSearch.addAll() over a full workspace walk in initializeFileSearchState(), with CPU profiles, extension-host logs, and Mach port counts as evidence. A commenter independently confirms the line and notes walkDirs already accepts a maxFiles limit used by other callers, giving a concrete minimal fix plus a lazy/findFiles alternative. This is agent/RAG indexing-path work with a clear reference-vs-implementation validation path (bounded/chunked indexing vs current unbounded walk)."
+  },
+  "cfb2e04dac5e676189933810679c5bb170454aa697a854cc181d05a314441eb1": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body lists scaled_mm_blockwise_sm120_fp8_dispatch.cuh as unclaimed, while recent_comments and open_pr_assessment show #56659 claims it",
+      "Issue body says 'I am preparing a focused fix', while the coverage checklist and comments show all six callers already have open PRs"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "csrc/libtorch_stable/quantization/w8a8/cutlass/c3x/cutlass_gemm_caller.cuh",
+      "scaled_mm_sm90_fp8_dispatch.cuh / blockwise SM90 / SM100 / SM120 dispatch headers",
+      "tests/kernels/quantization/test_cutlass_scaled_mm.py"
+    ],
+    "risks": [
+      "Duplicate/overlapping open PRs may already cover the root cause, making new code work redundant",
+      "SM120 validation requires hardware not generally available",
+      "New 16-byte alignment and minimum-leading-dimension guards in #55537 may reject some padded test views"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's 512x512 sliced-view reproducer (A-only, B-only, output-only, and all-padded cases) against a high-precision torch.mm reference and assert zero mismatches",
+      "Run tests/kernels/quantization/test_cutlass_scaled_mm.py -k cutlass_subset / blockwise on SM90 and SM120 hardware"
+    ],
+    "unknowns": [
+      "Whether the open PRs (#55537, #56248, #56480, #56659) fully cover the root cause or leave a distinct uncovered caller/behavior",
+      "Whether the repository's ai_disclosure_conflict policy permits the intended contribution path"
+    ],
+    "why": "The issue itself is a well-evidenced, concrete kernel-algorithm defect: C3x callers rebuild CUTLASS strides with make_cute_packed_stride, discarding real leading strides, with a reproducible 8% mismatch matrix and a proposed stride fix. However, the supplied evidence shows the issue's own remaining-coverage checklist is now fully claimed by open PRs (#55537, #56248, #56480, #56659), and the duplicate assessment explicitly returns semantic_overlap_requires_review with best PR #55537 touching the same caller and test file. Whether any actionable code work remains depends on comparing those open PRs' implementation boundaries, which the supplied evidence does not resolve."
   },
   "cfc1096c7c2f7eb6abe6c47b4b4e4562b09eb347d07436cbf88643f434e88946": {
     "confidence": 0.55,
