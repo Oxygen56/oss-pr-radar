@@ -19515,6 +19515,41 @@
     ],
     "why": "Issue identifies a real design flaw in capability ordering with a clear root cause and reproducible failure, but the proposed fix involves API design changes (new ordering tier, intra-tier ordering, public method) that require maintainer confirmation. The deterministic gate is HUMAN_REVIEW, and the issue is not assigned or approved."
   },
+  "3deb667d4967ab1471b9c6a07f9394556d32343859cf3aa0f53b0442caa06eca": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Shared composer submission hook: replace string comparison with monotonic edit version and atomic clearIfUnchanged(submitVersion)",
+      "Failure restoration path: apply same version check so failed sends cannot overwrite newer input",
+      "Per-Session draft persistence: serialize writes with latest-value-wins and cleanup on settle/disposal",
+      "Clear visible text, in-memory draft, attachments/references, and persisted draft through one submission transition"
+    ],
+    "risks": [
+      "Scope spans async submit pipeline, failure restoration, and ordered persistence; medium effort may expand",
+      "Per-Session draft coordinator must clean up to avoid unbounded cache",
+      "Must not alter message routing, Agent execution, provider, or Group Chat ownership behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: submit with reference/MCP/whitespace preprocessing that changes displayText; assert composer clears",
+      "Unit test: type a second message during async preparation; assert newer input preserved",
+      "Unit test: start debounced draft write, then clear; assert older write cannot restore submitted text",
+      "Rendered E2E: real Command+Enter and Send click across ordinary SDE, Member, and Group Chat; verify editor, transcript, Session switch/remount, and persisted draft"
+    ],
+    "unknowns": [
+      "No maintainer design confirmation, but issue itself specifies a recommended fix and scope boundaries; not blocking"
+    ],
+    "why": "Issue provides a concrete root cause: the clear guard compares original editor text against transformed displayText, misclassifying preprocessing changes as newer user edits, plus an unordered debounced draft write race. Code anchors (editorStillContainsSubmittedText, displayText, develop) and a specific introducing commit are supplied, along with ordered reproduction steps and a concrete validation path (rendered E2E starting from Command+Enter/Send click, checking editor, transcript, Session switch/remount, persisted draft)."
+  },
   "3dfd057704f0d2175e208b4265d8d44bb30c3830ca4d520496467eea9115dbf1": {
     "confidence": 0.85,
     "contradictions": [
@@ -45571,6 +45606,42 @@
     ],
     "why": "The issue identifies a concrete bug in the gemma4 tool parser: tool_choice='required' is not enforced, leading to prose-only responses with finish_reason='tool_calls' and empty tool_calls. Root cause is partially identified (finish_reason mislabeling) and the enforcement gap is clearly described. The issue provides a reproduction script and evidence of failure rates under load, enabling a concrete validation path. Although the exact trigger is content-dependent and not fully reproducible on idle servers, the root cause and expected behavior are clear, and the fix is actionable."
   },
+  "865bde0fc20efb354fbaa0d22faf3a295e48f2e5fe158cca79f0c983937bc6bd": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue proposes the same fix as closed PR #23776, but duplicate status is 'human_review_required' rather than confirmed covered or confirmed open"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/mcp package.json: move hono from dependency to peerDependency",
+      "packages/mcp build/generateTypes config: remove hono from vendored type set",
+      "packages/mcp public declarations: import SSEStreamingApi from consumer hono"
+    ],
+    "risks": [
+      "Closed PR #23776 may already cover the fix, making a new PR redundant",
+      "Changing hono to a peer dependency is a packaging/API change that may need maintainer design sign-off",
+      "Vendored hono-mcp-server-sse-transport declarations may still pull in conflicting hono types"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with @mastra/mcp 1.17.3 + hono 4.12.14 + TypeScript 5.9.3 and the issue's repro.ts; confirm TS2322 before fix",
+      "After fix, re-run tsc on repro.ts and assert no error",
+      "Add a type-level regression test that imports SSEStreamingApi from hono/streaming and passes it to connectHonoSSE"
+    ],
+    "unknowns": [
+      "Whether closed PR #23776 was merged, rejected, or superseded",
+      "Whether maintainers want hono as a peer dependency versus another resolution",
+      "Whether the issue's triage notice blocks PR submission until maintainer approval"
+    ],
+    "why": "The issue gives a concrete, reproducible root cause: @mastra/mcp vendors hono .d.ts files into dist/_types and its public API (connectHonoSSE, getSseHonoTransport) references them, causing nominal type conflicts for consumers. However, the supplied evidence shows a closed PR #23776 with direct code overlap and the same proposed fix (declare hono as peer dependency, stop vendoring types), and the duplicate/coverage status is explicitly 'human_review_required'. Whether that closed PR already resolves the issue is a materially blocking unknown that determines whether new code work is actionable."
+  },
   "86730bb2d1536f3e1c49e9998bfdb8dda4211cf1f6c27015efdfea1d6dbb3d4c": {
     "confidence": 0.85,
     "contradictions": [],
@@ -56339,6 +56410,40 @@
       "Maintainer preference on scope of changes"
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and the deterministic gate requires human review. Need maintainer confirmation to avoid duplicate work."
+  },
+  "a7060136994c5b23c4fb9ea5d54d564a6b9fcc8452954e51cd88bdf2ae47538b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/llama-moe-cache.cpp: chunk or size expert bank tensors to stay within ggml_backend_buft_get_max_size()",
+      "common_fit_auto_moe_cache / common_params: clamp auto MoE cache budget to backend max allocation and warn instead of aborting",
+      "ggml/src/ggml-backend.cpp: avoid asserting on views whose buffer is NULL after split allocation (or document invariant)"
+    ],
+    "risks": [
+      "Chunking banks may alter view/offset layout and hit-rate or performance",
+      "Clamping auto cache silently could mask tuning regressions",
+      "Separate llama-server out-of-bounds abort may share or confound the root cause"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with llama-completion --cpu-moe --moe-cache-mib 3072 on Vulkan and confirm the ggml-backend.cpp:1568 assert",
+      "Verify --moe-cache-mib 2048 runs and 2700+ asserts to bracket the 1 GiB bank threshold",
+      "After fix, run --fit auto on a large MoE model on Vulkan and confirm no abort with cache sized under backend max",
+      "Regression: run same sizes on CUDA to confirm no behavior change"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer chunked bank allocation vs clamping the auto cache budget",
+      "Whether the llama-server tensor-access-out-of-bounds abort is the same defect or a distinct one"
+    ],
+    "why": "Issue provides a concrete, reproducible Vulkan-only failure: MoE expert cache banks exceed the 1 GiB ggml-vulkan suballocation block, producing NULL buffers and a scheduler assert; --fit auto-sizing to 10% of experts makes defaults crash. Root cause is traced to llama-moe-cache.cpp bank allocation vs ggml_backend_buft_get_max_size(), with a clear threshold table and a working GGML_VK_SUBALLOCATION_BLOCK_SIZE workaround. No duplicate/merged fix found; open PRs are unrelated CUDA/benchmark drafts."
   },
   "a7081b9a3dc40edab43b7d211602e1765a75b35da09659bcae8ff05c4ced0660": {
     "confidence": 0.7,
@@ -73173,6 +73278,39 @@
     ],
     "why": "The issue provides a clear root cause: the stdio client never closes the server's stdin, causing every dispose to wait the full ShutdownTimeout and force-kill the server. The suggested fix is concrete and minimal, with a clear validation path via timing the dispose."
   },
+  "d834c27f52d2574a68fa792171b3b916c5a722ed298149ba06173f1f713f7c67": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/thread-stream-runtime.ts: distinguish forwarded-but-unconsumed signals from live self-echoes in the `signal-enqueued` subscriber instead of filtering purely on `sourceId`",
+      "packages/core/src/agent/thread-stream-runtime.ts: preserve duplicate-suppression for genuinely self-originated live signals while allowing retained replay of previously forwarded signals after warm takeover"
+    ],
+    "risks": [
+      "Removing or weakening the guard could reintroduce duplicate local delivery for genuine self-echoes",
+      "The fix may require a consumption/forwarding marker in the signal payload or transport, which is a broader change than a one-line guard edit",
+      "The container experiment used a custom DurableAgent/Inngest adapter, so stock recovery configurations are not fully proven to exhibit the same behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the gist reduction `npm run repro:replay` against a patched build and assert `warmSignals` contains `notification-N2` while the cold-runtime control still passes",
+      "Add a regression unit test in packages/core that subscribes the same runtime and a fresh runtime to an identical retained `signal-enqueued` event and asserts both enqueue the forwarded signal",
+      "Add a negative test asserting a live self-originated signal is still suppressed to prevent duplicate local delivery"
+    ],
+    "unknowns": [
+      "Whether maintainers want the consumed-vs-forwarded distinction encoded in the signal payload, the transport, or the runtime subscription state",
+      "Whether the retained-event transport fixture's semantics match the production Redis Streams replay path closely enough for the fix to be validated end-to-end"
+    ],
+    "why": "Issue provides a deterministic public reduction, a passing cold-runtime control, and a precise code anchor: the unconditional `data.sourceId === this.#id` guard in the `signal-enqueued` subscriber at packages/core/src/agent/thread-stream-runtime.ts:2915. The warm/cold asymmetry is explained by source identity being runtime-scoped rather than consumption-scoped, and the reporter explicitly notes that simply removing the guard is insufficient, implying a consumed-vs-forwarded distinction is needed. This is a concrete, testable runtime bug on the agent execution path, not plumbing."
+  },
   "d836701ae2f697fd1928df83add0e74039aaa48cfa24489081ffbd96690df112": {
     "confidence": 0.6,
     "contradictions": [],
@@ -79373,6 +79511,43 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue reports a reproducible AttributeError in ParallelLMHead with a plausible root cause identified in comments (missing output_size_per_partition in CompressedTensorsW8A8Fp8.create_weights). However, the supplied evidence indicates a potential duplicate issue #52407 sharing stack signatures, and the deterministic gate is HUMAN_REVIEW. The root cause is not fully confirmed by maintainers, and the fix is not yet implemented."
+  },
+  "e85d4f24b71ae48964bee2fc64ae8505748b32596b7f653df4eaacb41f9d8d22": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims drafter runs every step and writes context KV for all scheduled tokens, yet also claims unwritten draft blocks are registered — the mechanism is internally unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/block_pool.py: gate draft-group block hash registration on drafter coverage",
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py: ensure precompute_and_store_context_kv coverage tracking",
+      "vllm/v1/core/kv_cache_coordinator.py: exclude or validate draft groups in hit/cache bookkeeping"
+    ],
+    "risks": [
+      "Reporter has not identified the exact step that registers unwritten draft blocks, so a fix may target the wrong path",
+      "Masking workaround (#47926) discards valid draft context, so a naive fix could regress normal cache-hit acceptance",
+      "ai_disclosure_conflict policy status may block automated contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Serve DFlash/DSpark drafter with APC on, single instance, no KV connector; send sustained traffic sharing a ~20k-token prefix; measure vllm:spec_decode_num_accepted_tokens / vllm:spec_decode_num_draft_tokens before and after fix",
+      "Add a regression test asserting draft-group blocks are not registered when the drafter pass did not cover their tokens",
+      "Compare acceptance on shared-prefix vs unique-prompt workloads to confirm the gap closes"
+    ],
+    "unknowns": [
+      "Which code step registers unwritten draft-group blocks",
+      "Whether maintainers accept the proposed cache-layer fix shape",
+      "Resolution of the ai_disclosure_conflict policy status"
+    ],
+    "why": "The issue describes a plausible mechanism (draft-group KV blocks registered by content-agnostic BlockPool.cache_full_blocks without drafter coverage), but the reporter explicitly states they have not pinned which step registers unwritten draft blocks, and asks maintainers where drafter coverage can lapse. The root cause is therefore not established, and the proposed fix shape is explicitly deferred to maintainer input. Additionally, the pre-task evidence flags an ai_disclosure_conflict policy status, which is a materially blocking unknown for whether code work is actionable."
   },
   "e86d1f4e74c5fc71d76b479b6e7f95972511f57c323e2f8a0dbd5413dec5e918": {
     "confidence": 0.8,
