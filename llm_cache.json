@@ -2809,6 +2809,43 @@
     ],
     "why": "The issue identifies a concrete root cause: missing ze_ipc transport in UCX and a Level Zero driver bug (ZE_RESULT_ERROR_INVALID_ARGUMENT) on Intel BMG, with a clear reproduction path and measurable performance impact. It is actionable for vLLM maintainers to address the UCX/NEO integration for PCIe P2P KV transfer."
   },
+  "095f5f06bfe37a6c8e1687b4bf45d5b707b9021d437cbd22adeff197c82f97e3": {
+    "confidence": 0.7,
+    "contradictions": [
+      "candidate.actionability_evidence.needs_confirmation=false and design_confirmation=false conflict with the contributor comment explicitly requesting maintainer confirmation of the supported policy",
+      "candidate.open_pr_assessment reports semantic_overlap_requires_review with PR #1982 while the candidate is scored as a clean PR_COMPETITION_OPPORTUNITY"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/utils/gpuDetection.js: add CUDA runtime major-version compatibility check before offering the GPU download",
+      "src/helpers/whisperCudaManager.js: verify host CUDA runtime vs pinned pack before/after download and surface activationFailed instead of silent CPU fallback",
+      "src/hooks/useGpuBannerAvailability.ts / gpuBannerPolicy.ts: suppress banner when a working CUDA-enabled whisper-server is already present"
+    ],
+    "risks": [
+      "Open PR #1982 may already cover the same root cause, making a new contribution duplicative",
+      "Changing banner/activation policy could alter user-visible behavior beyond the reported bug",
+      "No maintainer confirmation of the intended preference policy for distro-provided binaries"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test gpuDetection with mocked nvidia-smi/CUDA 13 host and no libcudart.so.12 asserting the GPU offer is suppressed",
+      "Regression test that a pre-existing working whisper-server-linux-x64 is preferred over the downloaded pack",
+      "Fixture test that an incompatible downloaded pack triggers activationFailed rather than silent CPU fallback"
+    ],
+    "unknowns": [
+      "Whether PR #1982 already resolves the CUDA-12/13 incompatibility or banner-suppression behavior",
+      "Maintainer-preferred policy for preferring an existing bundled/distro whisper-server over the downloaded pack",
+      "Required minimum compatibility check (CUDA major, library probe, or release metadata)"
+    ],
+    "why": "Issue describes a concrete, reproducible Linux/CUDA-13 incompatibility with a clear root cause in gpuDetection.js and whisperCudaManager.js, but the supplied evidence contains an unresolved duplicate/overlap: open PR #1982 ('verify GPU backends and add Vulkan fallback') touches the same paths and CUDA semantics, and the duplicate status is explicitly 'semantic_overlap_requires_review'. A contributor comment also asks maintainers to confirm the supported policy for preferring an existing bundled/distro whisper-server and the minimum compatibility check, which is a materially blocking design unknown for this specific fix."
+  },
   "09658bbf48a2c35e197367c0eec5898d2ec01c4ad1c0bc4b0faceb737f80d851": {
     "confidence": 0.6,
     "contradictions": [
@@ -26694,6 +26731,42 @@
     ],
     "why": "The issue provides a clear root cause: the reset_tools schema does not reflect active tool groups, causing redundant model calls. It includes a concrete reproduction script and expected vs actual behavior, making the fix actionable. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "55b71b8fa34953106b975e9c63202b4e46c1ba8f38b3e5f16098348f8a5d2743": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Commenter attributes the crash to SM110 missing from FUSED_GDN_DECODE_ARCHS, while maintainer says that build gap is already fixed by merged PR #53835 and the prefill warmup failure may be separate",
+      "Open PR #56618 claims root-cause coverage with tests but is still a draft, while merged PR #53835 lacks tests and root-cause coverage"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py prefill warmup path",
+      "fused GDN kernel dispatch/fallback behavior when the compiled image is unavailable"
+    ],
+    "risks": [
+      "The reported failure may already be fixed by merged PR #53835, making further code work redundant",
+      "SM110 hardware is required to reproduce and validate, limiting independent verification",
+      "The proposed root cause (missing FUSED_GDN_DECODE_ARCHS entry) may not explain the prefill warmup traceback"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Retest stock v0.29.0 vs current main/nightly on SM110 with the reported Qwen GDN NVFP4 config and capture whether the prefill warmup illegal memory access remains",
+      "Run with VLLM_GDN_DECODE_KERNEL=triton and CUDA_LAUNCH_BLOCKING=1 to isolate the failing kernel",
+      "Add a regression test that exercises GDN prefill warmup on SM110 or a mocked unavailable fused kernel image"
+    ],
+    "unknowns": [
+      "Whether the prefill warmup illegal memory access still reproduces on current main/nightly after PR #53835",
+      "Whether the failure is caused by the fused-decode build gap or a distinct prefill kernel issue",
+      "Whether maintainers consider the issue already resolved or still want a separate fix"
+    ],
+    "why": "The issue reports an SM110 illegal memory access in Qwen GDN prefill warmup, and a commenter proposes a concrete root cause (SM110 missing from FUSED_GDN_DECODE_ARCHS) plus a workaround (VLLM_GDN_DECODE_KERNEL=triton). However, a maintainer comment states the fused-decode build gap is already covered by merged PR #53835 and explicitly asks whether the prefill warmup failure persists on current main/nightly. That unresolved duplicate/merged-fix coverage question determines whether any code work is still actionable, so the evidence is contradictory/incomplete."
+  },
   "55da9ba2f74413c87a68d276301056a834cd5426e1d657baefb75b0ff3c074e7": {
     "confidence": 0.7,
     "contradictions": [],
@@ -26868,6 +26941,43 @@
       "Whether maintainer has design preferences for timezone formatting (e.g., IANA id vs offset)."
     ],
     "why": "Issue provides a clear, verified root cause (UTC-naive timestamps in desktop SQL rendered without timezone conversion) and a concrete, mechanical fix with acceptance criteria and test fixtures. The candidate is actionable and valuable."
+  },
+  "56367bfe5147cb04f6fd1b1a91ca6109f38eb3b7c8218cd15d1d8b971beec51a": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body checklist lists scaled_mm_blockwise_sm120_fp8_dispatch.cuh as unclaimed, while the recent comment states it is covered by #56659"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "csrc/libtorch_stable/quantization/w8a8/cutlass/c3x/cutlass_gemm_caller.cuh: set runtime leading strides from tensor metadata instead of make_cute_packed_stride",
+      "tests/kernels/quantization/test_cutlass_scaled_mm.py: add padded/sliced leading-stride regression cases"
+    ],
+    "risks": [
+      "All six C3x callers are already claimed by open PRs, so new work risks duplicating in-flight fixes",
+      "Test-file insertions across #55537/#56248/#56480 collide at the same anchors, requiring rebase coordination",
+      "The tightened operator boundary in #55537 (16-byte pointer alignment, minimum leading dimension) may reject some padded test views",
+      "Repository AI-disclosure policy conflict blocks automated public action"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's 512x512-view reproducer on SM90 and confirm 0 mismatches vs the torch.mm reference after the fix",
+      "Run tests/kernels/quantization/test_cutlass_scaled_mm.py -k cutlass_subset and the blockwise selection on the target architecture"
+    ],
+    "unknowns": [
+      "Whether any C3x caller remains genuinely uncovered after #55537/#56248/#56480/#56659",
+      "Resolution of the ai_disclosure_conflict policy status",
+      "Whether the duplicate-overlap PRs are technically complete or will be superseded"
+    ],
+    "why": "The issue itself is a strong, concrete kernel-algorithm bug: C3x callers rebuild packed strides via make_cute_packed_stride and discard real leading strides, with a reproducible 8% mismatch matrix and a named fix in cutlass_gemm_caller.cuh. However, the supplied evidence shows the remaining actionable work is already claimed: the issue body's own coverage checklist maps every caller to an open PR (#55537, #56248, #56480, #56659), and the last unclaimed caller (scaled_mm_blockwise_sm120_fp8_dispatch.cuh) is now covered by #56659 per the recent comment. The duplicate assessment flags semantic overlap requiring review, and the pre-task policy status is ai_disclosure_conflict, which is a repository disclosure requirement that gates public action. These are materially blocking unknowns for whether any new code work is actionable."
   },
   "5642f05e6c9aaf635583758b5785782037a95198fc210dffcd00422436bf69b9": {
     "confidence": 0.7,
@@ -33810,6 +33920,42 @@
       "Whether the maintainer will accept an external PR for this issue"
     ],
     "why": "The issue identifies a concrete tracing-context gap in the skills resolver and provides a clear reproduction showing inconsistent AsyncLocalStorage behavior across entry points. However, the deterministic gate is HUMAN_REVIEW and the maintainer has only labeled for triage without confirming the proposed fix direction. The issue offers two viable fixes (adding tracingContext to AgentSkillsContext or resolving skills inside the agent-run span), requiring design confirmation before implementation."
+  },
+  "6a21658f067bea73b991138438110aa5f224475010a591e645089ea24b9156f9": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Triage asserts this is very likely the same defect as #11500 with duplicate history-item keys as the confirmed driver, while the reporter's regression shows a unique-key failure that #11743 does not fix",
+      "Reporter states the regression does not prove the field crash was initiated independently of the duplicate-ID driver"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/components/shared/VirtualizedList.tsx: make row-height measurement edge-triggered and defer the state write outside Ink's active commit",
+      "packages/cli/src/ui/components/shared/VirtualizedList.update-depth.test.tsx: keep the unique-key nested-update regression"
+    ],
+    "risks": [
+      "Overlap with maintainer-owned PR #11743 (duplicate history-item ids) may make this redundant rather than complementary",
+      "Draft PR #11761 depends on a private Ink layout-listener dependency whose acceptability is unconfirmed",
+      "Fixing only the layout feedback path may leave the confirmed duplicate-key driver unaddressed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the focused VirtualizedList.update-depth.test.tsx on current main with #11743 applied and confirm the unique-key case still throws Maximum update depth exceeded",
+      "Re-run the same suite with the VirtualizedList change applied and confirm it passes",
+      "Re-run with #11565's Ink patch applied to confirm the row+container subscriber case is not covered by the per-instance callback limit"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the layout-feedback path a distinct actionable defect or covered by #11743/#11500",
+      "Whether the private Ink layout-listener dependency is acceptable to maintainers",
+      "Whether #11743 will merge and close the remaining gap"
+    ],
+    "why": "The issue reports a real, user-visible React #185 crash with a concrete stack (useBoxMetrics -> emitLayoutListeners -> resetAfterCommit) and a deterministic unique-key regression test that still fails after #11743. However, the supplied evidence contains a material unresolved coverage conflict: triage states this is 'very likely the same defect as #11500' whose confirmed driver is duplicate history-item keys, and PR #11743 (maintainer-owned, open) targets that driver. The reporter's own scope note concedes the regression 'does not by itself prove that the original field crash was initiated independently of the duplicate-ID driver.' Whether the remaining work is a distinct actionable fix or is subsumed by #11743/#11565 is not settled by the supplied evidence."
   },
   "6a24359e93a1c61ac18373b4a9978cb3e09b334c9522e5cc41780c61276d2d48": {
     "confidence": 0.7,
@@ -46987,6 +47133,37 @@
     ],
     "why": "Issue provides a clear regression with version matrix and minimal reproducer. A recent comment traces the root cause to forced stream=true in transform_responses_api_request and incomplete aggregation in the streaming iterator, with a suggested fix location. This is actionable and technically valuable."
   },
+  "9198bbf0122bf7b108ce9e850ac185c5d18f94006e7647c07bec475112a3c891": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "loopx/control_plane/coordination/runtime_shadow.py",
+      "loopx/control_plane/coordination/runtime_shadow.ts",
+      "loopx/control_plane/testing/authority_e2e_ladder.py"
+    ],
+    "risks": [
+      "Three candidate fixes have materially different semantics (new writer entry vs. changed orphan rule vs. derived head), so implementing the wrong one wastes effort or changes invariants.",
+      "Changing the orphan rule would alter test_source_snapshot_preserves_inventory_without_projecting_orphan_leases and grow the live head via bootstrap baseline import.",
+      "Two-partition commit ordering and crash recovery need settle-from-receipts treatment if option 1 is chosen."
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the public CLI sequence: bootstrap, todo add, task-lease acquire, todo complete with lease, todo archive-completed, then coordination-shadow inspect; assert status=matched instead of drifted.",
+      "Add a regression test pinning the chosen fix behavior and a mutant within the qualification scope."
+    ],
+    "unknowns": [
+      "Repository requires assignment (assignmentRequired=true) and the issue has no assignee, so code work is not authorized.",
+      "Owner has not selected among the three candidate fixes, so the concrete implementation target is undetermined."
+    ],
+    "why": "The issue presents a clear, well-evidenced root cause and a concrete reproduction path, but the repository policy requires assignment (needs_assignment) and the issue has no assignee. This is a materially blocking unknown: without assignment, code work is not actionable under the repo's contribution policy. Additionally, the issue explicitly leaves the fix choice to the owner among three materially different designs, so the implementation direction is not yet determined."
+  },
   "91a6ecc87a3aa2efd0b9757b3c58154ea901c6244dec817ce568a3dfed9c9583": {
     "confidence": 0.55,
     "contradictions": [
@@ -53134,6 +53311,48 @@
     ],
     "why": "The issue precisely identifies a semantic-convention violation in OTel GenAI message roles, with a minimal reproduction and confirmed root cause. However, the repository requires assignment and the existing PR #7261 is closed with CI failures, so maintainer direction is needed before starting new work."
   },
+  "a58db2ad970ce7b48eb1e56dfc08aa102391dcf1f263daf33edb66ac7046b223": {
+    "confidence": 0.6,
+    "contradictions": [
+      "algorithm_evidence claims model_architecture/distributed_training/numerics_quantization mechanisms, but the maintainer comment attributes the issue to tool call / vLLM frontend",
+      "candidate.why claims verifiable LLM algorithm mechanisms while the issue body states no synthetic reproduction was achievable"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints/... GLM tool-call / chat-template frontend parsing path",
+      "rust/src/parser/src/reasoning/glm45.rs (if parser is implicated)",
+      "hybrid KV cache / prefix-cache state restoration path (only if the frontend hypothesis is disproven)"
+    ],
+    "risks": [
+      "Root cause may be frontend tool-call parsing rather than any algorithm/kernel mechanism, making the algorithm-track framing misleading",
+      "No synthetic reproduction exists, so a fix cannot be validated without a captured real session",
+      "PR #56635 already targets the same frontend area without tests, risking duplicate/conflicting work",
+      "Repository AI-disclosure policy conflict blocks public submission until resolved"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a long multi-turn agentic session against the bad build and confirm degeneration; then bisect the vLLM commit range g487ecf187..g385dce36b",
+      "A/B test with --no-enable-prefix-caching to isolate prefix-cache/hybrid-state interaction",
+      "Pin flashinfer-python==0.6.17 on the bad build to rule out the attention-kernel delta",
+      "Add a regression test that replays a captured multi-turn tool-call conversation and asserts no repeated-token degeneration"
+    ],
+    "unknowns": [
+      "Whether the frontend tool-call parsing hypothesis (per maintainer) or the kernel/FP8/hybrid-state hypothesis is correct",
+      "Whether a captured real agentic session can serve as a deterministic regression fixture",
+      "Whether PR #56635 already covers the intended fix and whether it will merge",
+      "How the repository's AI-disclosure policy applies to this contribution"
+    ],
+    "why": "The issue reports a real regression (build A/B: clean on g487ecf187, degenerate on g385dce36b) but the reporter explicitly could not construct a synthetic reproduction; only long real agentic sessions trigger it. A maintainer comment states it is a known issue caused by tool call / vLLM frontend, which points away from the algorithm mechanisms (attention kernels, FP8, hybrid/Mamba state) that the candidate's algorithm_evidence claims. The candidate's own open_pr_assessment shows PR #56635 ('fix glm frontend tool call parsing') already references this issue with root_cause_coverage=false and no tests, so the fix surface is contested and not established. The related_issue_assessment flags potential overlap with #55515 based only on generic stack signatures (clang/gcc/nvcc, collect_env.py), which is weak. The submission_policy is ai_disclosure_conflict, a repository-level disclosure requirement that is a materially blocking unknown for public action."
+  },
   "a599e97d1fe633eec9922fe4286c2060b0105f1314d9916cd7510b878a2c82b7": {
     "confidence": 0.82,
     "contradictions": [],
@@ -57394,6 +57613,43 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports a concrete AttributeError in ParallelLMHead with NVFP4 Marlin backend, and a commenter proposes a plausible root cause (missing ParallelLMHead branch in NVFP4 quant config) with a reference to #40999. However, the root cause is not confirmed by the reporter, and the proposed fix is speculative. The issue is a bug report, not a PR, and the track requires a concrete algorithm mechanism; while the bug touches distributed training and quantization kernels, the actionable code path is not yet established. The presence of a potential duplicate issue #52407 and the lack of maintainer confirmation further reduce actionability."
   },
+  "b46c7c329e9fb3d12f668b993edb7a977bc88dd21756b4458021729f908d68fa": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Contributor states remote node 'should' re-derive align from its own CLI, contradicting the observed rank-1 ('none', block_size=max_model_len) state"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/config.py (MambaModelConfig.verify_and_update_config / HybridAttentionMambaModelConfig)",
+      "vllm/config/vllm.py (try_verify_and_update_config / VllmConfig.__post_init__)",
+      "vllm/entrypoints/cli/serve.py (headless config construction path)"
+    ],
+    "risks": [
+      "Fixing the wrong branch (flag propagation vs. config-construction skip) would not resolve the assert",
+      "Broadcasting head config to workers may change multi-node config semantics beyond this bug",
+      "Existing open PRs (#52244, #55027) touch mamba_cache_mode semantics and may overlap"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce 2-node TP hybrid GDN/mamba boot with --enable-prefix-caching and capture rank-1 CacheConfig.enable_prefix_caching and mamba_cache_mode at construction",
+      "Add a regression test asserting both ranks derive identical MambaSpec (block_size, mamba_cache_mode) for the same layer under prefix caching",
+      "Verify workaround --mamba-cache-mode align yields matching specs and prefix_cache_hits_total > 0"
+    ],
+    "unknowns": [
+      "Rank-1 runtime value of enable_prefix_caching and mamba_cache_mode",
+      "Exact node-2 launch command / whether --enable-prefix-caching is present on both nodes",
+      "Whether an existing open PR already covers this exact root cause"
+    ],
+    "why": "Issue reports a concrete cross-rank MambaSpec mismatch on 2-node TP with prefix caching, and a contributor has narrowed the code path (HybridAttentionMambaModelConfig/MambaModelConfig.verify_and_update_config). However, the contributor's own analysis leaves two mutually exclusive root causes unresolved (remote node missing --enable-prefix-caching vs. a config-construction path bypassing VllmConfig.__post_init__), and explicitly requests rank-1 runtime values or the exact node-2 launch command. Without that datum, the fix location is undetermined, so code work is not yet actionable."
+  },
   "b473a398b9701a49a9403c2c05c72b960f40f5ad1080da8cec435bd902f94a3c": {
     "confidence": 0.85,
     "contradictions": [
@@ -59381,6 +59637,43 @@
       "Whether PR #52244 already fixes this root cause"
     ],
     "why": "Issue reports a concrete cross-rank KV-spec assert on 2-node TP with prefix caching, and the reporter supplies an instrumented diff (block_size 1600 vs 262144, mode align vs none) plus a working workaround. However, the maintainer-side trace (he-yufeng) explicitly states the remote node should re-derive 'align' from its own CLI and that two mutually exclusive explanations remain unresolved: (1) the node-2 launch command drops --enable-prefix-caching, or (2) the remote spec merge reads a config that bypassed VllmConfig.__post_init__. The requested runtime datum (rank 1's enable_prefix_caching/mamba_cache_mode or the exact node-2 launch command) is missing, so the actual code path to fix is not yet determined. Additionally, PR #52244 ('Restore hybrid GDN prefix-cache hits under MTP spec decoding') semantically overlaps on mamba/mamba_cache_mode and is flagged as semantic_overlap_requires_review, so duplicate coverage is unresolved. These are materially blocking unknowns rather than normal implementation uncertainty."
+  },
+  "ba11995e440c216433cc3a733fc73881b9d8c809f43907cd4ef08f005aa3cc5c": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Open PR #7101 overlaps the same flag and llm_agent.py path but does not reference this issue, so coverage is unresolved.",
+      "Contributor comment claims a PR is being opened, while PR #7101 already exists with overlapping semantics."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/google/adk/agents/llm_agent.py",
+      "src/google/adk/tools/discovery_engine_search_tool.py",
+      "src/google/adk/tools/vertex_ai_search_tool.py"
+    ],
+    "risks": [
+      "PR #7101 may already cover the root cause, making a new implementation duplicative.",
+      "Changing tool naming/aliasing could alter public API behavior and prompt semantics.",
+      "The issue bundles three distinct concerns (dependency error, paradigm shift, naming), so a minimal fix may not satisfy maintainers."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that constructs an Agent with VertexAiSearchTool(bypass_multi_tools_limit=True) plus a second tool and asserts the expected tool name/description and dependency error behavior.",
+      "Run targeted unit tests for the llm_agent tool-resolution path and discovery_engine_search_tool."
+    ],
+    "unknowns": [
+      "Whether PR #7101 fully resolves the root cause or only the ImportError sub-problem.",
+      "Whether maintainers want the flag deprecated versus fixed in place.",
+      "Whether the issue is assigned or the contributor's claimed PR supersedes new work."
+    ],
+    "why": "Issue describes a real leaky-abstraction problem in VertexAiSearchTool's bypass_multi_tools_limit path, but the supplied evidence shows an open PR #7101 with semantic overlap on the same flag and llm_agent.py path, plus a contributor comment claiming they are opening a PR. The duplicate/coverage status is explicitly 'semantic_overlap_requires_review', which is a materially blocking unknown for whether new code work is actionable."
   },
   "ba1368d41c3278cd9842c12097a24575fea4539ab07cc59d945a7b15832a4e1e": {
     "confidence": 0.7,
@@ -67236,6 +67529,35 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports an Entra OAuth failure but the reporter's environment uses the MCP SDK (mcp.server.fastmcp) rather than the standalone fastmcp package, and the maintainer's analysis shows the reported URL cannot be produced by the v3.4.7 AzureProvider path. The root cause is unclear and may be a client-side or configuration issue."
+  },
+  "d23a08e3b88641876c60157118b4ff5517ce2de6ce4c6570574d0df69ce268b1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py: gate reasoning_effort for non-reasoning models so drop_params raises UnsupportedParamsError instead of silently dropping",
+      "drop_params handling in get_optional_params for openai/azure chat path"
+    ],
+    "risks": [
+      "Changing drop_params semantics for reasoning_effort could affect other models/providers that legitimately accept the param",
+      "Maintainer may prefer forwarding the param to the provider rather than raising locally"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test asserting get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) raises UnsupportedParamsError rather than returning a dict without reasoning_effort",
+      "Repeat the same assertion for custom_llm_provider='azure'",
+      "Run the targeted litellm unit tests for get_optional_params and supported-params resolution"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer raising UnsupportedParamsError versus forwarding the param to the provider"
+    ],
+    "why": "Issue provides a concrete, reproducible defect: get_supported_openai_params omits reasoning_effort for gpt-4.1/gpt-4o, and drop_params silently strips it, converting a provider 400 into a silent 200. Reproduction steps and code anchors are supplied, and the fix path is localized to the supported-params/drop_params logic."
   },
   "d23c4207a8906a3c17dd4a7f8ed8d3b7983b11a8271f780a693084b494a85e1b": {
     "confidence": 0.7,
@@ -79060,6 +79382,39 @@
       "Whether maintainers have a preferred design for BCG replay fixes"
     ],
     "why": "Issue provides a clear single-GPU-only BCG replay failure with detailed bisection, repro commands, and evidence pointing to a concurrency bug in Z-Image's breakable graph replay. No competing PR addresses the root cause; related PR #34180 is cleanup only and #34182 is a mitigation. Actionable for a runtime/scheduler fix."
+  },
+  "f21d0a42fcf4af9a155ebee5263530a53d2bdf1830aef3531e4ee9db36f7fe48": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate score 8 and ALLOW_PRIVATE_WORK conflict with pretask reproduction_or_validation_missing and ai_disclosure_conflict"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "workflow execution history filter UI",
+      "execution log query API status parameter"
+    ],
+    "risks": [
+      "AI disclosure policy conflict blocks public automated action",
+      "No reproduction or validation path established",
+      "Feature scope may require maintainer design confirmation"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that filters execution history by Failure and verifies only failed runs are returned",
+      "Run targeted frontend/API tests for the execution log query path"
+    ],
+    "unknowns": [
+      "Whether maintainers have approved the filter design",
+      "Whether an existing implementation or duplicate covers this request",
+      "Exact API/query surface to modify"
+    ],
+    "why": "Issue requests a UI/API status filter for workflow execution history; no reproduction, root-cause, or algorithm evidence is supplied, and the pretask gate flags reproduction_or_validation_missing plus an AI disclosure conflict. This is ordinary product plumbing, not an agent/inference/RAG algorithm contribution."
   },
   "f227b389a06d7492b4840ffb6585a10370f6035f12c55de0b5bcc9845c6a793c": {
     "confidence": 0.7,
