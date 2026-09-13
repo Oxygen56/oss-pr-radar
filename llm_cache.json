@@ -7966,6 +7966,41 @@
     ],
     "why": "Issue clearly identifies missing pass-through of ElevenLabs diarization parameters in LiteLLM's speech-to-text provider, with concrete expected fields and a reproducible request shape. No competing PR or duplicate issue found, and the issue remains open with confirmation that it is still broken."
   },
+  "1b81868d3716c452020cff9af801f9b755ea6b8c80db7723e809d10c52caa173": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Add optional event-type subscription to Hub onEvent contribution",
+      "Filter reasoning deltas before requestCapability in CLI prompt-submit hook",
+      "Preserve unfiltered behavior for hooks without subscription",
+      "Throttle/batch SQLite persistence of transient streaming deltas"
+    ],
+    "risks": [
+      "Changing Hub contribution API may affect other hook consumers",
+      "Filtering could drop events needed for reconnect replay if subscription semantics are wrong",
+      "SQLite synchronous=FULL change may trade durability for write reduction"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Synthetic long reasoning stream: assert capability request count and serialized payload bytes drop to near-zero for filtered hooks",
+      "Regression: unfiltered hooks still receive all events",
+      "Exactly-once prompt submission and reasoning completion/redaction preserved",
+      "Reconnect replay still delivers durable events"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer subscription filtering vs. batching/throttling at the Hub layer",
+      "Exact scope of other onEvent consumers that could be affected by API change"
+    ],
+    "why": "Issue provides a detailed, reproducible memory/IO pathology with concrete code anchors (CLI onEvent filter at apps/cli/src/utils/hooks.ts, Hub proxy at sdk/packages/core/src/hub/server/hub-client-contributions.ts) and a commenter's targeted proxy measurement (1,000 capability requests, ~202 MB serialized payload) confirming the amplification mechanism. A concrete fix direction (event-type subscription filtering before requestCapability) and validation path (synthetic long stream measuring capability counts and persisted event volume) are established."
+  },
   "1ba8ba55a525ba4ec5911bdf810a6cd058fe4231da4ad21d78f3a52af4ae6ebd": {
     "confidence": 0.7,
     "contradictions": [],
@@ -51676,6 +51711,33 @@
     ],
     "why": "Issue describes a real leaky-abstraction problem in VertexAiSearchTool's bypass_multi_tools_limit path, but the supplied evidence shows an open PR #7101 with semantic overlap on the same flag and overlapping path llm_agent.py, plus a contributor comment claiming they are opening a PR. Duplicate/merged-fix coverage is unresolved, which materially blocks deciding whether new code work is actionable."
   },
+  "a657a053c500f08904936cbdca62148cf9a5829f9c6c0095e6ec2174d7228bf1": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate labels this agent/inference/RAG critical-path work, but the supplied evidence shows a workflow-configuration budget exhaustion, not a product defect."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Routing this to library code would target contract behavior pinned by docs and tests, burning PR effort on the wrong surface.",
+      "Recurring workflow spend leak continues silently absent a maintainer configuration decision."
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No product-code regression test applies; the raise is already pinned by tests/test_usage_limits.py and docs/agent.md Usage Limits example."
+    ],
+    "unknowns": [
+      "Which maintainer configuration lever (budget raise, prompt change, report-failure-as-issue, consolidated tracker) will be chosen."
+    ],
+    "why": "The issue is a gh-aw workflow engine failure: the sweep runner exhausted its own explicitly configured 200-request budget, and UsageLimitExceeded is the documented, test-pinned UsageLimits contract (default 50, so 200 is caller configuration). The bot status comment establishes this is repository-infrastructure configuration, not a product bug, and the fix levers are maintainer configuration decisions (raise budget, budget-aware prompt, report-failure-as-issue: false, consolidated tracker). No library code change is actionable."
+  },
   "a6a812194616c875dcc2ef51ad987ae8043eb7b514d52c334e7dd6ed87e9bd19": {
     "confidence": 0.85,
     "contradictions": [
@@ -62900,6 +62962,42 @@
       "Maintainer preference on backend-specific fixes"
     ],
     "why": "Issue reports a tool-call error when switching moe-runner-backend to flashinfer_mxfp4, but lacks a minimal repro and root cause analysis. Open PR lookup timed out, and related PRs may overlap. Maintainer input needed."
+  },
+  "cad8ff396d6109b6791336806dd09c9eb3f7693b935e64211f8dbdfdb7fa53b1": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with design_confirmation wait reason, while the issue body presents multiple acceptable solutions and no maintainer design preference is recorded"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/agent/message-list/prompt/download-assets.ts: make a permanently failing attachment download non-fatal per part (placeholder or skip) instead of rejecting the whole step",
+      "packages/core/src/utils/p-map.ts: ensure one rejected download does not abort the whole pMap batch",
+      "agent loop (durable and non-durable) around processLLMRequest/processInputStep: surface the failure to a processor hook if the placeholder approach is not chosen"
+    ],
+    "risks": [
+      "Behavior change may silently drop user attachments; maintainers may prefer a processor-hook design over a placeholder",
+      "Per-download size cap is a separate concern and could expand scope",
+      "Related issue #23705 suggests the same permanent failure also affects the Observational Memory observer, so a narrow fix may not cover all paths"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test in packages/core that builds a message list with an image part whose URL returns 404 and asserts the step does not throw DOWNLOAD_ASSETS_FAILED",
+      "Regression test that a later turn in the same thread still succeeds after one attachment becomes unreachable",
+      "Run targeted package tests for @mastra/core and static checks"
+    ],
+    "unknowns": [
+      "No maintainer triage/approval has been given, and the repo bot explicitly requests waiting before opening a PR",
+      "No concrete failing reproduction or probe result is supplied",
+      "Whether the intended fix should be a placeholder, a processor hook, or both is undecided"
+    ],
+    "why": "Issue describes a plausible failure mode in downloadAssetsFromMessages/downloadFromUrl, but the supplied evidence lacks a concrete reproduction (no failing test, no probe result) and the repository's own triage bot explicitly asks contributors to wait for maintainer triage/approval before opening a PR. The candidate's own actionability evidence marks reproduction_or_validation_missing and design_confirmation as a wait reason, so the code work is not yet actionable."
   },
   "caf167e133df12864241461e3ae99d8234769739ed4c713245e98896e7d3bc58": {
     "confidence": 0.85,
