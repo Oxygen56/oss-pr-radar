@@ -8364,6 +8364,45 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly identifies a retry-accounting bug in StreamableHTTPClientTransport with a concrete root cause and repro. However, an open PR #2638 overlaps semantically and touches the same file, so a new PR risks duplication until the existing PR's scope is compared."
   },
+  "1bb7b9dff3056da1417009a547d25c74a67b1f8d8d4726b6e16070ca6e54b2e9": {
+    "confidence": 0.55,
+    "contradictions": [
+      "algorithm_evidence claims qualified algorithm mechanisms while the issue body describes config validation and autopilot flag plumbing",
+      "open_pr_assessment reports semantic overlap with PR #911 but no direct issue reference or direct code overlap"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "commands/train.py task-scoped availability validation",
+      "autopilot/decisions.py task-aware performance flags",
+      "config/schema.py reasoning_effort/train_on_eot allowlist narrowing",
+      "trainer/sft.py or per-trainer attn_implementation wiring"
+    ],
+    "risks": [
+      "May be classified as CLI/config plumbing rather than an algorithm contribution",
+      "PR #911 may already cover the same code path",
+      "Fixing by rejection vs wiring changes user-visible behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build DPO/GRPO model on tiny CPU model with use_flash_attn true and stubbed get_attn_implementation returning sdpa; assert kwarg reaches from_pretrained",
+      "Assert build_soup_config(goal=alignment) on cc>=8.0 emits no flag the resulting task ignores",
+      "Assert soup train does not exit 1 for a missing package on a task that ignores the flag"
+    ],
+    "unknowns": [
+      "Whether PR #911 actually fixes the same root cause or only touches adjacent MLX reporting",
+      "Whether maintainers want wiring vs config-load rejection",
+      "Whether this repo/track treats config validation defects as in-scope algorithm work"
+    ],
+    "why": "The issue describes a plausible config/validation wiring defect (use_flash_attn/use_liger validated and autopilot-enabled for tasks that never consume them), but the supplied evidence is a config/CLI plumbing problem rather than a concrete LLM algorithm mechanism. For track=llm_algorithm this is ordinary API/CLI plumbing, and the open PR #911 has semantic overlap on use_liger and mlx_sft.py without referencing the issue, so duplicate/coverage is unresolved."
+  },
   "1bcf6e892c063190d2ab121baac92b50822ff51ec1d26e8cab82470ac2ebef94": {
     "confidence": 0.6,
     "contradictions": [],
@@ -13918,6 +13957,41 @@
     ],
     "why": "Issue provides a precise root cause (initialValues missing env_json, stdio save defaults to {}) with code references and a runnable PoC. A second user independently confirms the bug and adds a second affected code path. No competing PR or issue exists, and the fix is a minimal UI change with a clear regression test."
   },
+  "2c9315de7c856ac6150015d327e9ee39a344e63094fbb7172426be36f6b0e229": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.actionability_evidence reports public_repro_signals=0 and reproduction_evidence=[], while issue_data.issue_body and issue_data.recent_comments contain a concrete local reproduction and WinError 193 confirmation"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/mcp/client/stdio.py: detect resolved .ps1 command and wrap it in powershell/pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <script> with forwarded args",
+      "src/mcp/server/stdio.py: apply the same .ps1 launch handling if the server-side spawn path resolves commands",
+      "get_windows_executable_command / stdio spawn path: keep .cmd/.bat/.exe behavior unchanged"
+    ],
+    "risks": [
+      "Repository policy reports an AI disclosure conflict, so any public contribution must satisfy disclosure requirements before submission",
+      "Choosing between powershell and pwsh preference or argument ordering could differ from maintainer expectations",
+      "Broadening the change to non-.ps1 commands could alter existing Windows spawn behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a Windows-only regression test that resolves a .ps1 command and asserts the spawn argv is wrapped with powershell/pwsh -File rather than passing the .ps1 path directly",
+      "Reproduce the original failure with subprocess.Popen([r'C:\\path\\to\\echo-ok.ps1']) expecting WinError 193, then verify the wrapped PowerShell invocation succeeds",
+      "Run targeted stdio client/server unit tests and static checks on the changed modules"
+    ],
+    "unknowns": [
+      "Whether maintainers require a specific powershell vs pwsh selection or argument ordering",
+      "Whether the repository's AI disclosure policy permits the planned contribution workflow"
+    ],
+    "why": "Issue identifies a concrete Windows stdio bug: get_windows_executable_command() can resolve a .ps1 via shutil.which, but the spawn path passes it directly to CreateProcess/anyio.open_process, which cannot execute .ps1 and fails with WinError 193. A commenter independently reproduced the Win32 spawn failure and confirmed the expected fix shape (launch via pwsh/powershell with -NoProfile -NonInteractive -ExecutionPolicy Bypass -File and forward args). Code anchors and codePathsPlan point to src/mcp/client/stdio.py and src/mcp/server/stdio.py, giving a clear minimal-fix location."
+  },
   "2cab8693b5095842fea8a8af94d1ef5e7ccb999d415e26898425211f2656d162": {
     "confidence": 0.85,
     "contradictions": [],
@@ -15630,6 +15704,42 @@
       "Whether maintainers have already started investigation"
     ],
     "why": "Issue provides a clear, reproducible bug with exact commands, config, and observed behavior. The root cause is likely in the batching or kernel path for Qwen3.5 models, and the issue includes a concrete validation path (batch size > 3 vs <= 3, CUDA graph disabled still fails). This is a high-value bug fix opportunity."
+  },
+  "342ac0f136429355ac189b2451bb20e6dd92efd409f096f8fa8829d84b3aabb0": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Maintainer comment says #53835 merged fix addresses the SM110 build gap, while open_pr_assessment lists #53835 as merged but lacking root-cause coverage and tests",
+      "Issue claims stock v0.29.0 failure, but merged #53835 predates the release branch, leaving unclear whether main still fails"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py prefill warmup path",
+      "fused GDN kernel dispatch/fallback behavior on SM110"
+    ],
+    "risks": [
+      "Merged PR #53835 may already resolve the reported failure on main, making a new fix redundant",
+      "Open draft PR #56618 may cover the same fallback change",
+      "SM110 hardware may be required to validate the prefill-specific failure"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on SM110 AGX Thor with stock v0.29.0 and current main/nightly, capturing CUDA_LAUNCH_BLOCKING=1 traceback",
+      "Add a regression test asserting fused GDN prefill warmup either succeeds or falls back cleanly when the compiled kernel image is unavailable"
+    ],
+    "unknowns": [
+      "Whether the prefill warmup failure persists on current main/nightly after #53835",
+      "Whether draft PR #56618 fully covers the remaining prefill root cause",
+      "Exact root cause of the illegal memory access in _warmup_prefill_kernels beyond the build-arch gap"
+    ],
+    "why": "Issue reports an SM110 GDN prefill warmup illegal memory access with a concrete traceback and code anchors, but supplied evidence shows the suspected build gap (FUSED_GDN_DECODE_ARCHS missing 11.0f) is already covered by merged PR #53835, and an open draft PR #56618 already targets the same fallback path with a test. The remaining prefill-specific root cause is explicitly unresolved by the maintainer comment, and the duplicate/coverage status is contradictory, so code work is not yet clearly actionable."
   },
   "342f5b06a16e3b92ccbdae545ee2a4dcd4c829498a080014852cd375b90a9d98": {
     "confidence": 0.85,
@@ -25018,6 +25128,37 @@
       "Whether PR #11761 already covers this exact root cause or only overlaps paths"
     ],
     "why": "Issue provides a concrete, source-anchored root cause: virtualized row-height measurement writes React state synchronously from Ink commit-time layout listeners (use-box-metrics -> emitLayoutListeners -> resetAfterCommit), producing a measure->heights->offsets->window->measure cycle that exceeds React's nested-update limit. The reporter supplies a deterministic unique-key regression test that still fails with the known duplicate-ID fix (#11743) applied and passes with the proposed VirtualizedList change, which separates this driver from the duplicate-key driver. This is a real, actionable component-level fix with a concrete validation path."
+  },
+  "50baf687e3156b6851bd6e0a66627584c7a9ce267b302a0005108aa5d1037640": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py: ensure reasoning_effort is not silently dropped for non-reasoning models under drop_params, or raise UnsupportedParamsError",
+      "drop_params handling in get_optional_params for openai/azure chat path"
+    ],
+    "risks": [
+      "Changing drop_params semantics could affect other unsupported params and break existing callers relying on silent dropping",
+      "Maintainer may prefer forwarding the param to the provider rather than raising locally, changing the chosen fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test asserting get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) does not silently return without reasoning_effort",
+      "Repeat the same assertion for custom_llm_provider='azure'",
+      "Run targeted unit tests for get_supported_openai_params and get_optional_params"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer forwarding reasoning_effort to the provider versus raising UnsupportedParamsError under drop_params"
+    ],
+    "why": "Issue provides a concrete, executable reproduction (get_optional_params with drop_params=True silently drops reasoning_effort for gpt-4.1/gpt-4o on openai and azure), a clear root-cause anchor (get_supported_openai_params omits reasoning_effort, and drop_params then silently strips it), and a provider-side confirmation that the same request is a hard 400. This is a user-visible correctness bug with a well-defined validation path, not mere plumbing."
   },
   "50c26ffde7a7860e82bba6ce69b84887706f151ef750acb35b27df5475a1c7ab": {
     "confidence": 0.7,
@@ -46001,6 +46142,43 @@
     ],
     "why": "The issue provides a clear root cause: `num_speculative_tokens` is missing from the `SpeculativeConfig.compute_hash()` cache key, causing torch.compile artifacts to collide across different speculative token counts. It includes a minimal reproduction, expected vs actual behavior, and a concrete proposed fix. The track is llm_algorithm and the issue qualifies as a kernel/algorithmic bug with a numerical validation path (reproduce the assertion failure and verify the fix prevents it)."
   },
+  "8c7b25a2e6eb3eaa0b2dfd92dbf68d98b3a133f5e9abe41d665b20e562d637eb": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Triage asserts the defect is 'very likely the same as #11500' (duplicate-key driver), while the reporter's unique-key regression still fails after #11743 is applied",
+      "Reporter states the regression does not prove the field crash was initiated independently of the duplicate-ID driver, yet frames the fix as a distinct complementary hardening"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/components/shared/VirtualizedList.tsx: make row-height measurement edge-triggered and defer the state write outside Ink's active commit",
+      "packages/cli/src/ui/components/shared/VirtualizedList.update-depth.test.tsx: keep the unique-key regression as the failing-then-passing test"
+    ],
+    "risks": [
+      "Overlap with maintainer-owned PR #11743 and merged #11565 may make this redundant or conflicting",
+      "Draft PR #11761 depends on a private Ink layout-listener behavior, which maintainers may reject as an unacceptable coupling",
+      "Fixing only the layout loop while the duplicate-key driver remains could leave the field crash reproducible"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the focused VirtualizedList.update-depth.test.tsx on the reported base (main@05a54fc32a) to confirm the unique-key recursive-update failure",
+      "Re-run the same test with PR #11743's diff applied to confirm it still fails, isolating the duplicate-ID driver from the layout-loop driver",
+      "Re-run with #11565's Ink patch applied to confirm the row+container subscriber path still exceeds the nested-update limit",
+      "Verify the fix passes the focused suite and does not regress existing VirtualizedList rendering tests"
+    ],
+    "unknowns": [
+      "Whether the unique-key layout loop is a distinct defect or already covered by #11743/#11565",
+      "Whether maintainers accept the private Ink layout-listener dependency as a tradeoff",
+      "Whether the original field crash is reproducible with #11743 applied"
+    ],
+    "why": "The issue reports a real commit-phase layout feedback loop (useBoxMetrics -> emitLayoutListeners -> resetAfterCommit) with a deterministic unique-key regression test, but the supplied evidence leaves unresolved duplicate/coverage questions: triage states this is 'very likely the same defect as #11500' whose confirmed driver is duplicate history-item keys, and PR #11743 (maintainer-owned, open) targets that driver. The reporter's own comment concedes the regression 'does not by itself prove that the original field crash was initiated independently of the duplicate-ID driver.' Whether the remaining unique-key path is a distinct actionable defect or already covered by #11743/#11565 is a materially blocking unknown for deciding code work."
+  },
   "8c88b7ffb6e8e119f43db72d9966ab54d071d3bfc89d80c966ee82e55173c373": {
     "confidence": 0.9,
     "contradictions": [],
@@ -49863,6 +50041,43 @@
       "No confirmation whether the issue is client-side or server-side"
     ],
     "why": "Issue reports slow downloads but lacks a concrete root cause or reproducible code path. Comments suggest workarounds (HF_XET_HIGH_PERFORMANCE) and multiple users report similar symptoms, but no maintainer investigation or design confirmation. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the lack of a clear technical cause and maintainer input makes it premature to start work."
+  },
+  "985c6434079f3838605026974879284ae4b2a06f249f99066b5a5677519b51ac": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge adapter delta into base weight and reinitialize A/B (Kaiming/zeros) for a true ReLoRA restart, or rename the feature and correct the docstring",
+      "src/soup_cli/utils/relora.py: replace strict threshold comparison with deterministic exact-count index selection (topk/stable-order mask) honoring prune_ratio under ties",
+      "src/soup_cli/utils/relora.py: target optimizer moments rather than learned adapter weights when pruning/resetting optimizer state",
+      "src/soup_cli/utils/relora.py: explicit support or loud rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A is a maintainer contract decision (implement real restarts vs rename the feature); a partial fix doing half of the first would be worse than either coherent option",
+      "Tie frequency in production is unmeasured; the maintainer notes a freshly-initialized all-zero lora_B is the natural tie and may fire on the first relora_steps interval",
+      "Quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume need explicit handling or loud rejection to avoid silent partial restarts",
+      "Distinguishing mathematical semantics errors from floating-point/random variation requires fixed seeds, baselines, and tolerances"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: with random non-zero LoRA factors, assert the effective linear map is preserved across merge/reinitialization to numerical tolerance (MSE ~1e-12), mirroring the maintainer's merge_and_unload control",
+      "Regression test: constant-magnitude A and B with prune_ratio=0.9 must retain exactly the requested keep count and leave both factors non-zero with non-zero gradient norms",
+      "Kernel-level unit test: ones(10) with prune_ratio=0.9 keeps exactly 1 entry; arange(1..10) keeps exactly 1 entry",
+      "Test that successive restarts accumulate low-rank updates in the base model",
+      "Test that unsupported quantized/distributed/streamed combinations fail clearly rather than partially applying a restart"
+    ],
+    "unknowns": [
+      "Whether the maintainer will choose the full ReLoRA restart implementation or the smaller rename/docstring correction (both are actionable, but they are separable work items)"
+    ],
+    "why": "Issue identifies two concrete, independently reproduced defects in src/soup_cli/utils/relora.py: (A) _prune_and_reset never merges B@A into the frozen base before pruning, so the effective linear map changes (MSE 142.12 vs 8.77e-13 for a merge-then-reset control), contradicting the module docstring's ReLoRA/Axolotl conformance claim; (B) the strict `abs(t) > threshold` mask wipes all entries on ties, zeroing both lora_A and lora_B and leaving a permanently dead zero-gradient branch. Maintainer confirmed both halves with real peft LoRA runs and supplied a deterministic kernel-level reproduction (ones(10), prune_ratio=0.9 -> 0 kept where 1 expected)."
   },
   "986ceb96c5620291424d09fe66153de1a423ab850095ac13db6be05f89158019": {
     "confidence": 0.7,
@@ -81151,6 +81366,37 @@
     ],
     "why": "Issue provides a clear root cause (strict zod gate, runtime normalizer, and preview formatter each assume a fixed 'command' key), a concrete reproduction (object-form command under 'cmd' key), and a proposed three-seam fix with local patch. The maintainer comment indicates a fix in v4.1.11, but the issue remains open and the proposed fix is more comprehensive (key-agnostic across all seams). This is actionable and valuable."
   },
+  "f5a8e519973a6ac02211da17c0870ec2b6960ed33961509015ee8f8571ae549f": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate labels this PR_COMPETITION_OPPORTUNITY with score 10, but open_pr_assessment reports semantic_overlap_requires_review with PR #8070 overlapping the same code path and semantics"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/dsh-runtime/src/index.ts: emit text frame from assistant/message content and accumulate assistantOutput"
+    ],
+    "risks": [
+      "Duplicating PR #8070's already-open fix",
+      "Double-counting text when assistant/chunk and assistant/message both arrive"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Regression test asserting an execute produces at least one text frame with content PONG",
+      "Compare against PR #8070's existing fixtures to avoid duplicate coverage"
+    ],
+    "unknowns": [
+      "Whether PR #8070 fully resolves the assistant/message path or only the legacy chunk path",
+      "Whether #7992 is the canonical tracking issue and remains open"
+    ],
+    "why": "Issue #8085 reports a concrete, well-evidenced root cause (dsh-runtime only reads assistant/chunk, discards assistant/message body, producing empty_output), but a maintainer-adjacent contributor comment states this is the same compatibility gap already tracked in #7992 and that open PR #8070 already covers the legacy chunk path, newer stream/settlement paths, and regression fixtures. The duplicate/coverage evidence is unresolved and points to an existing fix, making a new contribution low-value."
+  },
   "f5b8b1139fa6151e14b9ff128277d8cbdc856ff8192ec91fb49fa1ea1610df3b": {
     "confidence": 0.85,
     "contradictions": [
@@ -82815,6 +83061,49 @@
       "Maintainer interest or design confirmation for the proposed approach"
     ],
     "why": "Issue provides a detailed root cause, quantified impact (26.7% of GGUF repos dropped), and a concrete proposed design. Existing PR #11005 is a draft with material gaps (still draft, no maintainer approval), leaving room for a stronger, more complete implementation."
+  },
+  "f9b37c6c0f914bde140aa66f3f5975e340353963f2525d2f378b4a00165c9a3d": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate claims algorithm mechanisms (model_architecture, distributed_training, numerics_quantization, evaluation_method) but maintainer comment attributes the bug to tool call / vllm frontend",
+      "Candidate track=llm_algorithm but the described failure is frontend/parser plumbing, not an algorithm mechanism"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vLLM frontend tool-call parsing for GLM (rust/src/parser/src/reasoning/glm45.rs, glm47 parser)",
+      "Possibly hybrid KV/prefix-cache state handling if frontend is ruled out"
+    ],
+    "risks": [
+      "Root cause unconfirmed: maintainer attributes to frontend tool-call parsing, not the algorithm mechanisms claimed",
+      "No standalone synthetic reproduction; only build A/B and rollback evidence",
+      "Open PR #56635 already covers the frontend tool-call parsing fix, risking duplicate work",
+      "Potential duplicate issue #55238 shares stack/failure signatures",
+      "ai_disclosure_conflict policy may block public contribution"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a real agentic client (Claude Code / OpenCode-style) over a long multi-turn session on the bad build vs good build",
+      "A/B test with --no-enable-prefix-caching to isolate prefix-cache/hybrid state",
+      "Pin flashinfer-python==0.6.17 on the bad build to isolate kernel vs core regression",
+      "Add a regression test for GLM frontend tool-call parsing once root cause is confirmed"
+    ],
+    "unknowns": [
+      "Whether the root cause is frontend tool-call parsing (per maintainer) or a kernel/numerical regression",
+      "Whether PR #56635 already resolves the issue, making this covered",
+      "Whether issue #55238 is a true duplicate",
+      "Whether the ai_disclosure_conflict policy permits a public contribution",
+      "No confirmed standalone reproduction path"
+    ],
+    "why": "Issue reports a real regression (GLM-5.3-Flash FP8 degenerating into repeated-token word salad in long multi-turn agentic sessions), but the reporter explicitly could NOT reproduce it synthetically; evidence is only a build A/B and rollback. A maintainer comment attributes it to 'tool call / vllm frontend', which points to frontend/parser plumbing rather than the claimed algorithm mechanisms (model_architecture, distributed_training, numerics_quantization, evaluation_method). The candidate's algorithm_evidence is keyword-matched (attention, bf16, fp8, tensor parallel) without a concrete training objective, kernel algorithm, or numerical invariant, and the issue supplies no reference-vs-implementation or numerical regression path. Additionally, an open PR #56635 ('fix glm frontend tool call parsing') already references this issue with COVERAGE relation, and a potential duplicate issue #55238 shares stack/failure signatures. The submission policy is flagged ai_disclosure_conflict, which is a materially blocking unknown for public action."
   },
   "f9bc8a43e7a33668697d3ef6f180d0fca3ca9d6ab117268f425be46527dbcd85": {
     "confidence": 0.85,
