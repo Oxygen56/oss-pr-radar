@@ -8905,6 +8905,48 @@
     ],
     "why": "Issue provides deterministic reproduction (gemini-2.5-flash-image with text-only prompt), concrete expected behavior across three API surfaces, and clear root cause: candidate with finishReason but no content is dropped, losing the reason. Evidence includes executable curl commands and exact responses, making the fix actionable."
   },
+  "1b1622587ae4c89388e182f17c7f17746b611ab04c7874ab218d278585866fe5": {
+    "confidence": 0.82,
+    "contradictions": [
+      "The issue's original framing called the connection-level scope an oversight, but the author retracts this and the triage bot confirms #8240 states it as a deliberate design decision in three places",
+      "The author initially claimed nested-agent approvals bypass the queue, then retracts it: SubAgentTracker's only production construction site (Session.ts:12651) injects the queued path at :12661"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/acp-integration/session/Session.ts: change permissionRequestTails key from AgentSideConnection to the Session, preserving intra-session one-at-a-time ordering",
+      "packages/cli/src/acp-integration/session/Session.ts: make queued-but-undispatched permission requests observable (queued kind / queued_behind_other_session state) so a blocked session is distinguishable from a thinking session",
+      "packages/core/src/telemetry/session-tracing.ts: set span status on TTL sweep so a hung turn does not end with status = UNSET",
+      "packages/cli/src/acp-integration/session/Session.ts: remove or re-document the unqueued Session.requestPermission, which has no non-test caller"
+    ],
+    "risks": [
+      "Changing the queue key reverses a deliberate design decision from #8240 (connection-boundary serialization), so it needs a maintainer call rather than being treated as a pure bugfix",
+      "A queue timeout (fix 1) would release a waiter by cancelling the head, resolving a human's pending question as cancelled on their behalf; no single value fits independent per-session answer latencies",
+      "Cancelling a session that is itself waiting replaces its tail with an already-settled one, so intra-session one-at-a-time remains best-effort",
+      "The central behavioral claim is currently established only against a mock client; Windows unit-test jobs are skipped by the PR matrix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Invert Session.test.ts:1959 so two sessions sharing one mockClient both reach client.requestPermission when neither is answered and neither aborts",
+      "Keep the adjacent test pinning one-at-a-time serialization within a single session",
+      "Run the proposed standalone repro (first session never answered and never cancelled) against the existing harness in Session.test.ts",
+      "Run the targeted Session.test.ts suite (943 tests) plus build and typecheck",
+      "Replace the mock-client behavioral claim with a real-daemon multi-session run (verify lane) since Windows has no unit coverage for this change"
+    ],
+    "unknowns": [
+      "Whether maintainers accept changing the serialization unit from connection to session, or prefer to keep connection scope and rely on observability plus a bounded wait",
+      "Whether PR #11802 (fix(cli): scope the ACP permission queue to the session, maintainer-owned, OPEN, no closing reference to this issue) already covers the root cause; it must be compared before any duplicate work",
+      "Whether a real-daemon multi-session verification run confirms the mock-client behavioral claim"
+    ],
+    "why": "Issue documents a concrete, code-anchored root cause: permissionRequestTails is a module-level WeakMap keyed on AgentSideConnection (Session.ts:443, get :10940, set :10962), while one daemon child owns one connection shared by N sessions (bridge.ts:936-940), so an unanswered prompt in an idle session holds the queue head indefinitely (DEFAULT_PERMISSION_TIMEOUT_MS = 0, bridge.ts:2750-2753) and blocks every other session silently (toSessionSummary reads only entry.pendingInteractions, bridge.ts:4271-4297). Triage bot independently verified every code claim at main 7e0beb9d. A concrete validation path exists: Session.test.ts:1959 already pins the head-of-line blocking as expected behavior, and the issue supplies a proposed standalone repro plus an A/B production control (same session, same client, same question delivered in 7.8s after the queue tail changed)."
+  },
   "1b2f163eed3187ee0334ece4388502c29b3139b15ddf764833cf79605f46f07f": {
     "confidence": 0.8,
     "contradictions": [
@@ -23081,6 +23123,45 @@
     ],
     "why": "Issue reports a user-visible bug with a clear repro, but root cause is ambiguous: the `[1m]` suffix may be invalid upstream or mishandled by LiteLLM. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Maintainer confirmation is needed before implementation."
   },
+  "44fddbf94299575153bceda6e7d03713c5eb1ed2ebc0d055ca825d187599b5b7": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Comment reports NCCL_P2P_DISABLE=1 plus --disable-custom-all-reduce fixes the hang, while another commenter reports the same workaround did not help.",
+      "A separate comment attributes the hang to the flashinfer sampler and fixes it with VLLM_USE_FLASHINFER_SAMPLER=0, which is unrelated to the NCCL/custom-all-reduce explanation.",
+      "Another comment attributes the apparent hang to slow HuggingFace model download rather than an engine startup deadlock."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/engine/utils.py startup wait/timeout handling",
+      "custom all-reduce enablement check vs NCCL_P2P_DISABLE",
+      "flashinfer sampler warmup path in vllm/v1/worker/gpu/warmup.py"
+    ],
+    "risks": [
+      "Multiple distinct root causes may be conflated in one issue, so a fix for one workaround may not resolve the reported hang.",
+      "Environment-specific PCIe ACS/NCCL behavior may not be reproducible in CI.",
+      "Changing custom all-reduce enablement could regress performance on NVLink topologies."
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the hang deterministically on a fixed GPU topology (e.g. L4/A2 PCIe, no NVLink) with a fixed model and TP size, then verify the chosen fix removes the hang and that a single-GPU reference run still produces identical outputs."
+    ],
+    "unknowns": [
+      "Which of the reported workarounds corresponds to the actual root cause for the original reporter's configuration.",
+      "Whether the hang is a deadlock in engine startup, a slow warmup, or a model download delay.",
+      "Whether the repository requires AI-usage disclosure that conflicts with automated contribution (policy status ai_disclosure_conflict)."
+    ],
+    "why": "The issue is an environment-dependent startup hang with multiple mutually inconsistent workarounds reported (NCCL_P2P_DISABLE=1 + --disable-custom-all-reduce, VLLM_USE_FLASHINFER_SAMPLER=0, HF cache mount), and one commenter reports the NCCL workaround did not help. The supplied evidence does not establish a single root cause or a deterministic reproduction, so no concrete algorithm-level change is actionable."
+  },
   "450a3235393fc7906ce3df5a200d35be2556d7e5f59e589a534ed74f77726078": {
     "confidence": 0.6,
     "contradictions": [
@@ -25078,6 +25159,42 @@
       "Whether the proposed fix will be accepted without assignment is pending."
     ],
     "why": "Issue identifies a concrete bug: streamed OpenAI Responses retains the requested router alias instead of the served model from the terminal event. Root cause is clear (model_name not refreshed from response.completed), with a runnable repro and public trace. A contributor has proposed a fix and tests, and a maintainer bot has confirmed the behavior and requested only a test file path. The fix is localized but touches shared merge logic; however, the issue is actionable with a clear validation path."
+  },
+  "4af04935374bd7696d10a403ad5c8801e3974ed736ab0aa2b301ba22690bc3d2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: implement merge-then-reinitialize restart (merge B@A into base, reinit A Kaiming / B zeros, reset optimizer moments, re-warm LR) or rename feature and correct docstring",
+      "src/soup_cli/utils/relora.py: replace strict threshold mask with deterministic exact-count topk/stable-order selection honoring prune_ratio under ties",
+      "Add regression tests covering effective-map preservation across restart and non-zero survivor guarantee for both factors"
+    ],
+    "risks": [
+      "Claim A fix is a maintainer design decision (real restart vs rename); implementing half of option 1 would be worse than either",
+      "Claim B production frequency depends on whether freshly-initialized all-zero lora_B hits the first relora_steps interval; constructed case is deterministic but frequency unmeasured",
+      "Quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume need explicit support or loud rejection to avoid partial restarts",
+      "Distinguishing mathematical semantics errors from floating-point/random variation requires fixed baselines, seeds, and tolerances"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Small peft LoRA model, fixed seed: capture effective linear map before/after callback, assert MSE within numerical tolerance (control merge_and_unload ~1e-13)",
+      "Constant-magnitude lora_A/lora_B with prune_ratio=0.9: assert exactly requested keep count retained and both factors non-zero",
+      "Kernel-level test: ones(10) with prune_ratio=0.9 must retain 1 entry (currently 0)",
+      "Verify optimizer-state reset targets optimizer moments, not learned adapter weights",
+      "Confirm unsupported quantized/FSDP/DeepSpeed/streamed combinations fail loudly rather than partially applying restart"
+    ],
+    "unknowns": [
+      "Which of the two coherent contracts (implement real ReLoRA restarts vs rename to periodic LoRA weight pruning) the maintainer will choose; this determines the scope of the code change but not its actionability"
+    ],
+    "why": "Issue identifies two concrete, independently verified defects in ReLoRA callback: (A) _prune_and_reset never merges B@A into base weight before pruning, changing the effective linear map (MSE 142.12 vs control 8.77e-13, base weight delta 0), contradicting the module docstring's ReLoRA conformance claim; (B) strict threshold mask (abs(t) > threshold) zeroes all entries on ties, killing both lora_A and lora_B and producing zero gradients. Maintainer confirmed both halves with real peft LoRA model runs and kernel-level reproductions. Code anchors (relora.py, lora_A, lora_B, magnitude_prune_tensor) and pinned SHA are supplied. This is a genuine algorithm-conformance and numerical-correctness issue with a concrete reference-vs-implementation validation path."
   },
   "4afcdd9cf1bd59bf7fc38669015b75defd0ae012d3fb96bf8ddf9b59fdc6ecc2": {
     "confidence": 0.85,
@@ -29410,6 +29527,43 @@
     ],
     "wait_reason": null,
     "why": "Issue reports a concrete, reproducible bug in Cline's command execution: explicit sequential instruction ignored, unquoted shell paths cause Git Bash failure, and subsequent hang. This is actionable for agent infra, with clear repro steps and expected behavior. No competing PR found."
+  },
+  "5584e76c7d526abd618d5a0d9f87a42f83fb96855a03773ebb2989ba5bf6e88d": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Triage bot attributes the crash to duplicate history-item keys (#11500/#11743), while the reporter's regression shows a unique-key commit/layout loop that still fails with #11743 applied",
+      "Reporter concedes the regression does not prove the field crash is independent of the duplicate-ID driver"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/components/shared/VirtualizedList.tsx: make row-height measurement edge-triggered and defer the state write outside Ink's active commit",
+      "packages/cli/src/ui/components/shared/VirtualizedList.update-depth.test.tsx: keep the unique-key recursive-update regression"
+    ],
+    "risks": [
+      "Fix depends on private Ink layout-listener behavior, which maintainers may reject as an acceptable tradeoff",
+      "May be redundant with #11761 (draft) or #11743 (maintainer-owned) if those already cover the root cause",
+      "Regression is a synthetic Profiler-driven fixture, not a replay of the production notification/history pipeline"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the focused VirtualizedList.update-depth.test.tsx on the reported base main@05a54fc32a with #11743 applied and confirm the unique-key case still throws Maximum update depth exceeded",
+      "Re-run the same suite with the proposed VirtualizedList change and confirm it passes",
+      "Re-run with #11565's Ink patch applied to confirm the Qwen-side fix is still needed"
+    ],
+    "unknowns": [
+      "Whether #11761 or #11743 already covers this commit/layout feedback path",
+      "Whether maintainers accept the private Ink layout-listener dependency",
+      "Whether the production crash is reachable without the duplicate-key driver"
+    ],
+    "why": "Issue reports a real commit-phase layout feedback loop (useBoxMetrics -> emitLayoutListeners -> resetAfterCommit) with a deterministic unique-key regression test, but the supplied triage evidence states the confirmed production driver is duplicate history-item keys (#11500) fixed by open PR #11743, and the reporter's own scope note concedes the regression does not prove the field crash is independent of that driver. Overlap with open PRs #11761 (draft, same VirtualizedList paths) and #11743 (maintainer-owned) is unresolved, so duplicate/merged-fix coverage is a materially blocking unknown."
   },
   "55a254b0f70fbf333e0e0f58c47441f2afb493a2b30bfe4ccb979a7cd83b1940": {
     "confidence": 0.85,
@@ -48131,6 +48285,35 @@
     ],
     "why": "The issue identifies a concrete bug in Anthropic usage calculation where provider-reported thinking_tokens are ignored, leading to incorrect reasoning_tokens. The root cause is clearly located in calculate_usage, and a minimal fix is proposed. No competing PR or issue exists, and the fix is actionable with a clear test path."
   },
+  "87e1e3883b8bcbdc45b2b762880717964635f4b88bdf38523ba82eaf48efc66c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "dspy/adapters/base.py: drop tool_choice/parallel_tool_calls when tools are not added",
+      "dspy/predict/react_v2.py: gate forced-submit tool_choice on lm.supports_function_calling or add text-mode submit instruction"
+    ],
+    "risks": [
+      "Open PRs #10244/#10252 touch react_v2.py and may overlap the same code path; compare before implementing",
+      "Changing adapter kwargs could affect other adapters relying on tool_choice passthrough"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test using NoToolLM(supports_function_calling=False) with JSONAdapter and ReActV2 max_iters=1, asserting no LMInvalidRequestError and that submit is reached",
+      "Run targeted dspy predict/react_v2 and adapters tests plus static checks"
+    ],
+    "unknowns": [
+      "Whether open PRs #10244/#10252 already fix this exact tool_choice/tools mismatch"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: adapters/base.py only adds tools when lm.supports_function_calling is True but never strips a caller-supplied tool_choice, while predict/react_v2.py forced submit always passes tool_choice. A minimal reproduction with a NoToolLM subclass is given, and the failure is a deterministic provider 400 error, so the fix is actionable and testable."
+  },
   "87eb60e77cd218898337d12853c5e7714160300693c5f26d35563cee47447c6d": {
     "confidence": 0.85,
     "contradictions": [],
@@ -48911,6 +49094,42 @@
       "Whether the sibling same-shape issues (#793, #798, #801-#804) are intended to be fixed together or separately."
     ],
     "why": "Issue pinpoints a concrete config/validation mismatch: use_flash_attn and use_liger are consumed only by SFT's _setup_transformers (sft.py:1293, 882, 1351-1356) but validated for every task at commands/train.py:1192-1214 and auto-enabled by autopilot/decisions.py:344-346 regardless of task. Reproduction with build_soup_config on cc 12.0 shows DPO/GRPO/pretrain configs carrying flags that soup train then rejects for missing packages, and acceptance criteria give a concrete reference-vs-implementation test (stub get_attn_implementation, assert kwarg reaches from_pretrained, or reject at config load)."
+  },
+  "8a6a8ef697b45e254353c4f355f281206df5a1f388be1d4a415fda4d87b1ce1a": {
+    "confidence": 0.7,
+    "contradictions": [
+      "open_pr_assessment reports PR #54309 with semantic overlap and overlapping path diffusion_gemma.py, while recent_comments confirms a fix already exists there"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/diffusion_gemma.py: set or defensively read `_enable_mm_lora`",
+      "vllm/model_executor/models/gemma4_mm.py: harden read sites at :1317 and :1364",
+      "add regression test sending one image request to DiffusionGemma"
+    ],
+    "risks": [
+      "PR #54309 may already cover the root cause, making a new contribution redundant",
+      "Structural mixin refactor may be preferred over the minimal attribute fix",
+      "Latent audio-path siblings are unreachable today but same class of bug"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Send a single image request to DiffusionGemma on v0.29.0/main and confirm EngineCore no longer dies with AttributeError",
+      "Run text-only request to confirm no regression",
+      "Add a regression test covering the image path and the latent audio siblings"
+    ],
+    "unknowns": [
+      "Whether PR #54309 will be merged or superseded, and whether maintainers want the minimal fix or the structural mixin refactor"
+    ],
+    "why": "The issue establishes a clear root cause (borrowed Gemma4 methods read `_enable_mm_lora`, which DiffusionGemma never sets) and a concrete reproduction path, but an open PR #54309 already targets the same fix and a maintainer comment confirms it exists, so duplicate/merged-fix coverage is unresolved and materially blocks deciding whether new code work is actionable."
   },
   "8a98725d72a8c447659eed073239182abd3067c9ede289d6e3510bf765b15820": {
     "confidence": 0.55,
@@ -51945,6 +52164,39 @@
     ],
     "why": "Issue provides a deterministic reproduction (gemini-2.5-flash-image with modalities:[\"image\"] and a text-only prompt yields finishReason NO_IMAGE with no content), exact curl commands for /v1/chat/completions, /v1/messages (stream and non-stream), and /v1/responses, and identifies the drop of candidates lacking content as the root cause. The fix surface is concrete: preserve the candidate, emit an empty assistant message, and map Gemini finishReason to OpenAI finish_reason, Anthropic stop_reason, and Responses incomplete_details. No open PR directly covers this issue; the only related PR (#40294) is merged and merely stopped the 500, leaving the missing reason unaddressed. The issue also correctly flags the overlapping MAX_TOKENS/no-content case (#36881, PRs #36870/#38301/#40252) as a dependency to build on rather than duplicate."
   },
+  "92edd48132e78d248045a73328a8cc9c03e76c5b7f36dff961ccd38cc575d5b1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/google/adk/memory/base_memory_service.py: add a removal method to the abstract surface",
+      "src/google/adk/memory/in_memory_memory_service.py: implement removal semantics",
+      "src/google/adk/sessions/base_session_service.py: decide whether delete_session cascades into memory"
+    ],
+    "risks": [
+      "Choosing the wrong removal key (session vs user vs memory entry) creates a public API that is hard to change later",
+      "Cascading delete_session into memory could silently change behavior for existing callers",
+      "Hosted backends (Vertex AI RAG, Memory Bank) may not support the chosen removal semantics"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py to confirm the surviving memory copy after delete_session",
+      "Add a regression test asserting search_memory no longer returns content for a removed session/user",
+      "Run the targeted memory and sessions package unit tests plus static checks"
+    ],
+    "unknowns": [
+      "Maintainer-preferred removal API shape and key",
+      "Whether delete_session should cascade into memory or removal should be a separate explicit call",
+      "Whether hosted memory backends can support the chosen removal semantics"
+    ],
+    "why": "The issue documents a real API asymmetry with a deterministic reproduction, but the required change is a new public API surface whose shape is explicitly left undecided by the reporter (session-keyed vs user-keyed vs entry-keyed removal), and the submission policy requires assignment before work. Without a maintainer-chosen API shape, the code work is not actionable."
+  },
   "92f2a8ef8fd06da4f7ec58d6febdfa2a7c69ae2d8bc0ecdfbec94a38bcf03a3f": {
     "confidence": 0.85,
     "contradictions": [
@@ -53496,6 +53748,42 @@
       "Exact graphiti-core version in the issue (0.18.9) vs current; whether the fix is already merged in a later version."
     ],
     "why": "Issue provides a minimal reproduction, expected vs actual behavior, and a traceback showing a pydantic Field required error. Comments identify the root cause as structured output mode incompatibility with Ollama, with a concrete fix (use json_schema mode) and validation across models. This is a user-visible bug in the LLM client path, actionable with a clear test plan."
+  },
+  "97b506bd44a8947dc460bb1ca5e792f3167d74fccf5a9e578f1b353a22d76881": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue reports no synthetic reproduction, yet maintainer asserts a known tool-call/frontend cause",
+      "Candidate labels this llm_algorithm with distributed/numerics mechanisms, but the cited fix path is parser frontend plumbing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints parser frontend handling of reasoning-end and tool-call boundary tokens",
+      "rust/src/parser/src/reasoning/glm45.rs boundary-token logic"
+    ],
+    "risks": [
+      "Root cause may be in prefix-cache/hybrid state restoration rather than the parser, making a parser-only fix ineffective",
+      "Overlap with open PR #56635 may duplicate effort",
+      "AI disclosure policy conflict blocks automated public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a deterministic multi-turn tool-call transcript that reproduces the repeated-token degeneration, then assert parser output does not bleed reasoning tokens into tool-call content",
+      "Run the parser unit tests for glm45/glm47 with fixed seed and compare against a reference parser implementation"
+    ],
+    "unknowns": [
+      "Whether the parser-frontend fix in PR #56635 actually resolves the degeneration",
+      "Whether the failure is parser-side or hybrid KV/prefix-cache state-side",
+      "Whether a deterministic reproduction exists for validation"
+    ],
+    "why": "Maintainer ZJY0516 states the degeneration is a known issue caused by tool call / vLLM frontend, and PR #56635 claims a parser-frontend fix, but the supplied evidence does not establish a concrete algorithm-level root cause or a reference-vs-implementation validation path; the issue itself could not be reproduced synthetically and the candidate's algorithm mechanisms (attention, bf16, fp8, tensor parallel) are keyword matches rather than demonstrated mechanisms."
   },
   "97b6160854c77ee1487433b3518beadfebf93c295228d75989317640856094e5": {
     "confidence": 0.85,
@@ -60288,6 +60576,39 @@
       "Exact implementation details of the fix and whether existing PRs are complete"
     ],
     "why": "The issue provides a deterministic reproduction and a comment identifies the root cause as an extra LoRA reference release in the parallel-sampling path, with existing fix PRs #25747 and #31808. This is a concrete, actionable algorithm bug in LoRA reference counting."
+  },
+  "ab934f3943a481ef59c327fa87fc99aadf10b733c4f24a5876bb0f5c3476ca7e": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims drafter re-scans full accumulated KV every cycle; a commenter retracts this, noting DFlash is single-pass with one draft forward per step",
+      "Commenter's DCP-sharding asymmetry claim is rebutted by another commenter showing capture and runtime paths are symmetric on the measured release"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py speculative K scheduling",
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py draft attention path"
+    ],
+    "risks": [
+      "Fixing a scheduling hook before the actual cost source is identified may not recover throughput",
+      "The reported mechanism was retracted by the reporter, so a fix targeting full-KV rescan could be misdirected"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce 185k single-stream decode with DFlash DT2/DT4 vs SPEC_OFF on the stated hybrid GDN target and confirm the tok/s regression",
+      "Kernel-trace the single draft forward at 131k/185k to attribute the unexplained per-step overhead before changing scheduling"
+    ],
+    "unknowns": [
+      "What accounts for the ~17x unexplained draft-forward overhead at long context",
+      "Whether the measured regression reproduces on current main after the referenced merged PRs"
+    ],
+    "why": "The issue reports a concrete long-context DFlash slowdown with profiled ~182 ms/cycle drafter attention, but the supplied comment thread materially contradicts the proposed mechanism: one commenter retracts the 'drafter rescans full KV' framing (DFlash is single-pass), and another shows the DCP-sharding asymmetry is not present on the measured release. The remaining 17x unexplained overhead means the root cause is not established, so a code fix cannot be confidently scoped."
   },
   "abad65a381be114e888f5bea8331fadb629e0cdb3b152d30e0717a052c83edd5": {
     "confidence": 0.85,
@@ -67531,6 +67852,43 @@
       "Maintainer preference on scope (images only vs all media types) and whether to accept unfamiliar image MIME types."
     ],
     "why": "Issue clearly identifies a security-relevant bug in shared download_item path with verified repro and suggested fix direction. However, existing PR #7334 already implements a fix but is auto-closed due to assignment policy; maintainer assignment/confirmation is required to proceed."
+  },
+  "c04ffa99dda59db6fe712c493523ef877009946877b86fd2665e549774c8356e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports root_cause_coverage=false for PR #8487 while the issue body itself supplies a detailed root cause; the PR gap is coverage, not absence of a root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "deepspeed/runtime/zero/linear.py: make AllGatherHandle.wait() idempotent (re-check INFLIGHT / completion flag)",
+      "deepspeed/runtime/zero/linear.py: make NoGatherHandle.wait() idempotent",
+      "Preserve released parameter as NOT_AVAILABLE so next fetch re-gathers from ds_tensor"
+    ],
+    "risks": [
+      "Existing draft PR #8487 already targets the same idempotency fix; competing work must add root-cause coverage or key-path coverage beyond the draft",
+      "Must distinguish the idempotency bug from unrelated empty-tensor causes in ZeRO-3",
+      "Fix must not break coalesced handle behavior or introduce double all-gather"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Handle-level 2-GPU test: all_gather_coalesced([victim, other]), wait, release victim, wait again; assert victim status is NOT_AVAILABLE and data is not AVAILABLE over 0 elements",
+      "Regression for stage3_allgather_sequential: true with two ordinary 4096x4096 weights in one process group",
+      "Regression for gather group spanning two process groups with victim alone in its bucket (AutoEP ep_size>1 shape)",
+      "Control cases: two/three weights in one process group and mixed bf16/fp32 group must remain correct"
+    ],
+    "unknowns": [
+      "Whether PR #8487 will be completed/merged before independent work lands",
+      "Whether maintainers require assignment or design confirmation before accepting a competing fix"
+    ],
+    "why": "Issue provides a concrete distributed-training invariant violation: AllGatherHandle/NoGatherHandle wait() is not idempotent, so a released ZeRO-3 parameter can be marked AVAILABLE over empty storage and later matmul runs on a 0-element weight. Root cause is anchored to specific code paths and a step-by-step sequence, with a handle-level 2-GPU reproduction and controls. This is a concrete distributed-training mechanism with a clear reference-vs-implementation validation path, not plumbing."
   },
   "c05639554b453e245b3d83d43830e5149b63bcccd42358b5fad11dfa9898d57c": {
     "confidence": 0.85,
@@ -76356,6 +76714,42 @@
     "wait_reason": null,
     "why": "Issue describes a concrete resource leak in Rust runtime: each Endpoint::client() call spawns a reconciliation task that retains the Client via primary_token, preventing drop of caller-owned clones. Root cause is clear from source links, and expected behavior is well-defined. No competing PR or issue found, and the gate allows work."
   },
+  "d79e415a191682c253d776c227f29dae7a164a0016c7f9b80729308db7b7c18f": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue is filed as Cloud-specific, but a commenter reports the same failure on self-hosted 1.16.1, so the scope is broader than the title suggests"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/controllers/mcp/mcp.py: replace sessionmaker(...).begin() context with a plain Session (expire_on_commit=False) and manage commits explicitly, including the _retrieve_end_user path",
+      "Add a regression test covering tools/call through the MCP controller so the closed-transaction failure is caught"
+    ],
+    "risks": [
+      "Open PR #40013 already targets the same file with the same fix shape but lacks tests; a competing change must add root-cause/test coverage to be worthwhile",
+      "Repository policy status is ai_disclosure_conflict, which may constrain automated public submission",
+      "Changing session lifecycle in the MCP controller could alter commit/rollback semantics for other MCP endpoints"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: configure an MCP client against the Dify MCP endpoint and invoke any tool; observe -32603 closed-transaction error",
+      "After fix: same call returns a normal tool response with no closed-transaction error",
+      "Add a targeted unit/integration test on the MCP controller tools/call path asserting the session remains usable after generation's internal commit",
+      "Run the target package's unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers intend #40013 (or the umbrella #37403 refactor) to be the canonical fix, which would make an independent PR redundant",
+      "Whether the required AI-disclosure policy permits a public contribution from this workflow"
+    ],
+    "why": "Issue reports a concrete user-visible regression (-32603 'Can't operate on closed transaction inside context manager') on the MCP tools/call path, with ordered reproduction steps, expected/actual pair, and multiple independent confirmations. Supplied evidence anchors the root cause to api/controllers/mcp/mcp.py wrapping request handling in sessionmaker().begin(), whose auto-commit on context exit conflicts with an internal commit in the generation pipeline, and points to the same fix pattern already merged for the RAG path (#36392). A concrete validation path exists (reproduce tools/call against the MCP controller, assert no closed-transaction error, add regression test)."
+  },
   "d7a04bdb4def010444f45071371431ed885071b0752c9868cfdba05f2a917e85": {
     "confidence": 0.8,
     "contradictions": [],
@@ -77441,6 +77835,39 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a CI failure with a plausible environment/cache root cause, but existing PR #52256 overlaps the exact test file and is maintainer-owned with passing CI. The issue is not verified on main and the failure may be node-specific. A new PR would risk duplicating #52256 or addressing a non-reproducible environment issue."
+  },
+  "da0d9b54bb89afa7d9a0038b6e6e0daa0e0b5b9ad1d40e72014ac0e2b808e10b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/llama-moe-cache.cpp: chunk or size expert bank tensors so each allocation stays within ggml_backend_buft_get_max_size()",
+      "common_fit_auto_moe_cache / common_params: clamp auto MoE cache budget to backend max allocation and warn instead of aborting",
+      "ggml/src/ggml-backend.cpp: consider clearer diagnostic when cached view tensor has NULL buffer"
+    ],
+    "risks": [
+      "Chunking banks may change view/offset layout and affect cache hit-rate or performance",
+      "Clamping auto cache size silently could mask user intent; needs a warning",
+      "Separate llama-server out-of-bounds abort may be conflated with this fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with --cpu-moe --moe-cache-mib 3072 on Vulkan and confirm the assert at ggml-backend.cpp:1568",
+      "Verify --moe-cache-mib 2048 still runs and that the fix makes 3072+ and --fit auto run without GGML_VK_SUBALLOCATION_BLOCK_SIZE override",
+      "Regression: run same sizes on CUDA to confirm no behavior change",
+      "Add a unit/integration test asserting each bank tensor allocation size <= ggml_backend_buft_get_max_size()"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer chunked banks vs clamping the auto budget",
+      "Whether the llama-server tensor-out-of-bounds abort shares this root cause"
+    ],
+    "why": "Issue provides a concrete, reproducible Vulkan-only failure: MoE expert cache banks exceed the 1 GiB ggml-vulkan suballocation block size, leaving view tensors with buffer==NULL and tripping the scheduler assert. Root cause is traced to llama-moe-cache.cpp bank construction vs ggml_backend_buft_get_max_size(), with a clear threshold table and a working workaround (GGML_VK_SUBALLOCATION_BLOCK_SIZE=4GiB), plus a CUDA control showing backend specificity. This is a real code-level fix with a concrete validation path."
   },
   "da4ba7872da5bad18a2d8dcf31fc312b519c4aa60e9c7473bba0cd024385ee6e": {
     "confidence": 0.82,
@@ -84872,6 +85299,37 @@
     "unknowns": [],
     "wait_reason": null,
     "why": "The issue is a dependency version mismatch: the PPO trainer requires trl>=0.8.6,<=0.9.6 while the package allows trl up to 0.24.0. This is an installation/configuration problem, not an algorithm defect. The track requires concrete training objective, model mechanism, or numerical method; this issue only concerns version pinning and error messaging, which is explicitly excluded."
+  },
+  "ed2fbcefa4de14161fad58d3d6c83f0eb1d706760a25ef79a61ad8174687100d": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Responses→Chat (and Anthropic) conversion layer: normalize function_call_output entries lacking call_id instead of emitting tool_call_id:\"\"",
+      "Proxy request handling for Codex /responses endpoint to preserve dispatched message text"
+    ],
+    "risks": [
+      "Upstream provider format (Responses passthrough vs Chat conversion) is unconfirmed, so the fix may need normalization in more than one layer",
+      "PR #7374 is open and unmerged; if it lands first, duplicate work",
+      "Changing tool-output handling could alter context semantics for legitimate tool calls"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test feeding a function_call_output without call_id through the Responses→Chat converter and assert no empty tool_call_id is emitted and the text is preserved",
+      "Reproduce end-to-end: send_message_to_thread to an existing task via CC Switch proxy and assert no HTTP 400 and the expected marker is returned"
+    ],
+    "unknowns": [
+      "Whether the reporter's upstream uses Responses passthrough or Chat conversion format, which determines the exact layer to patch",
+      "Whether PR #7374 will be merged and fully cover this issue"
+    ],
+    "why": "Issue reports a concrete, reproducible user-visible failure: cross-task send_message_to_thread produces upstream HTTP 400 'A function call output without a call_id requires a name', while direct input to the same task works. A contributor comment identifies a specific conversion-layer defect (function_call_output missing call_id becomes tool_call_id:\"\" in Responses→Chat conversion) and links PR #7374, which is open but not merged and lacks regression tests, so the issue is not yet covered by a merged fix. This is a proxy/request-transformation bug in an agent-infra path, not mere CLI/config plumbing, and a reference-vs-implementation test is feasible."
   },
   "ed7e2afd22e2396a609c0ce2971d85153ec290a1c93c057ba2e497ac014ba5e8": {
     "confidence": 0.7,
