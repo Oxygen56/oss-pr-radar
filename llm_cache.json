@@ -12277,6 +12277,41 @@
     ],
     "why": "Issue identifies a concrete bug in auth_scheme generation for service accounts, with a clear root cause and proposed fix. However, the deterministic gate requires HUMAN_REVIEW, and the submission policy indicates needs_assignment. No competing PR exists, but maintainer confirmation is needed before implementation."
   },
+  "255cb4959bd466c9342164660c2817ec82d28ee324776b231609513dff18916d": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Triage asserts the crash is very likely the same defect as #11500 (duplicate history-item keys), while the reporter's unique-key fixture still fails after #11743 is applied",
+      "Reporter simultaneously claims the regression proves a distinct commit/layout chain and concedes it does not prove the field crash was initiated independently of the duplicate-ID driver"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/components/shared/VirtualizedList.tsx: make row-height measurement edge-triggered and defer the state write outside Ink's active commit",
+      "packages/cli/src/ui/components/shared/VirtualizedList.update-depth.test.tsx: keep the unique-key recursive-update regression as the failing-first test"
+    ],
+    "risks": [
+      "Fix may be redundant with the confirmed duplicate-key driver in #11500 / PR #11743, producing a duplicate contribution",
+      "Draft PR #11761 overlaps the same paths and is unmerged, so implementation boundaries may conflict",
+      "Depending on a private Ink layout-listener behavior may be an unacceptable tradeoff for maintainers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the focused VirtualizedList.update-depth.test.tsx on the reported base (main@05a54fc32a) with #11743 applied and confirm the unique-key case still throws 'Maximum update depth exceeded' through useBoxMetrics/emitLayoutListeners/resetAfterCommit",
+      "Re-run the same focused suite on the candidate fix and confirm it passes, then run the target package's directed unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether the unique-key commit/layout loop is a distinct root cause or a secondary effect already covered by #11743/#11565",
+      "Whether maintainers accept the private Ink layout-listener dependency as a valid fix boundary",
+      "Whether the original field reproduction is reproducible without the duplicate-ID trigger"
+    ],
+    "why": "The issue describes a plausible commit-phase layout feedback loop in VirtualizedList, and the reporter supplies a deterministic unique-key regression that still fails with #11743 applied. However, the supplied evidence itself flags unresolved duplicate/overlap coverage: triage states this is 'very likely the same defect as #11500' whose confirmed driver is duplicate history-item keys, and the reporter concedes the fixture 'does not by itself prove that the original field crash was initiated independently of the duplicate-ID driver.' Whether the remaining work is a distinct actionable fix or already covered by #11743/#11565 is a materially blocking unknown, not normal implementation uncertainty."
+  },
   "2566e652e6fa8090066e3ad581d828156b7194fe38a86774a4165517c47e9746": {
     "confidence": 0.85,
     "contradictions": [],
@@ -12794,6 +12829,42 @@
       "Exact root cause not yet identified; the issue mentions a possible duplicate and an existing PR that may overlap, but these are not blocking."
     ],
     "why": "The issue describes a reproducible LLM generation bug (infinite exclamation marks) in vLLM, with a known workaround (setting max_num_batched_tokens equal to max_length) and a clear code path (batching/token limits). The evidence includes a concrete reproduction environment and a validation path via the workaround, indicating a root cause in the batching logic. Although the exact root cause is not fully diagnosed, the workaround and code anchors provide sufficient direction for a fix. The track is llm_algorithm, and the issue involves model architecture and distributed training mechanisms, with a concrete validation path (reproduce with and without workaround)."
+  },
+  "26aab3de4133406ca9b49d8f155a9cfb9b764c1db6ed248b6b51c39f151f5e0c": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue proposes per-session queue as primary fix, but triage comment states the per-connection serialization is a deliberate merged design decision from #8240"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cli/src/acp-integration/session/Session.ts — scope permissionRequestTails per Session instead of per AgentSideConnection",
+      "packages/acp-bridge/src/bridge.ts — bound DEFAULT_PERMISSION_TIMEOUT_MS or make queued wait bounded",
+      "packages/cli/src/acp-integration/session/Session.test.ts — rewrite the cross-session serialization test to assert independent dispatch"
+    ],
+    "risks": [
+      "Open PR #9921 may already implement or conflict with the proposed fix",
+      "Changing the deliberate per-connection serialization from #8240 may break clients that cannot render concurrent prompts",
+      "Unbounded default timeout change could alter behavior for existing deployments"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the existing Session.test.ts cross-session serialization test to confirm current behavior",
+      "Add the proposed regression test where session A's request is never resolved and never aborted, asserting session B's requestPermission is not called until A is aborted",
+      "After fix, assert both sessions dispatch independently on one shared connection"
+    ],
+    "unknowns": [
+      "Whether PR #9921 already covers the root cause or conflicts with the proposed per-session queue change",
+      "Whether maintainers accept changing the deliberate per-connection serialization contract"
+    ],
+    "why": "The issue presents a well-evidenced root cause (per-connection permission queue keyed on AgentSideConnection, unbounded default timeout) and a concrete proposed regression test, but the supplied evidence contains a materially blocking unknown: open PR #9921 overlaps the same code paths and semantics (ask_user_question, Session.ts, Session.test.ts) and is explicitly flagged as 'semantic_overlap_requires_review' with '已有 changes requested'. Whether that PR already covers or conflicts with the proposed fix determines whether new code work is actionable, so this cannot be resolved to NO_OBJECTION."
   },
   "26c9c73034ccd28569193ae393d4649e128510d71932d82b3cfa66056c5411cd": {
     "confidence": 0.7,
@@ -21756,6 +21827,41 @@
     "wait_reason": null,
     "why": "Issue reports a concrete streaming protocol bug on the Zen gateway: missing finish_reason and [DONE] for muse models, causing strict OpenAI clients to retry. Multiple user confirmations and related issues strengthen the case. The fix is actionable: ensure final chunk and [DONE] are emitted, possibly synthesizing stop reason. No competing PR found."
   },
+  "41b184a9c74ba21d34c7fcfb6d2086f8c21bc66fc6ba5f040ca19c12e23de996": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue body attributes the regression to a vLLM/FlashInfer/transformers delta, while maintainer ZJY0516 attributes it to tool-call/vLLM frontend handling"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "rust/src/parser/src/reasoning/glm45.rs: correct reasoning-end/boundary token handling so tool-call tokens do not bleed into normal output",
+      "vllm/entrypoints parser frontend: ensure finished_reason/clear_thinking transitions do not emit stale or repeated tokens"
+    ],
+    "risks": [
+      "Root cause is asserted by a maintainer but not yet isolated to a single commit; the fix may only partially address the degeneration",
+      "The reported symptom could also involve FlashInfer 0.6.18 attention kernels or transformers 5.16.1, which the parser fix would not cover",
+      "Duplicate issue #36802 shares only generic stack signatures (collect_env.py, clang/gcc) and is not a true duplicate"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a parser unit test feeding a multi-turn tool-call history (bash tool, tool_use-only assistant turns, shell-style tool_results) and assert no repeated-token bleed at the reasoning->tool-call boundary",
+      "Regression test comparing parser output before/after the fix on the GLM-5.3-Flash chat template with clear_thinking on and off",
+      "End-to-end multi-turn agentic session test on the bad build to confirm degeneration no longer occurs"
+    ],
+    "unknowns": [
+      "Whether the parser frontend fix alone resolves the degeneration or whether FlashInfer 0.6.18 / transformers 5.16.1 also contribute",
+      "Whether the linked PR #56635 fully covers the root cause or only the reasoning-end boundary case"
+    ],
+    "why": "Issue reports a concrete, reproducible-in-production regression (GLM-5.3-Flash FP8 degenerating into repeated-token word salad in long multi-turn agentic sessions) with a build A/B delta and a maintainer confirming the root cause is tool-call/vLLM frontend handling. A linked open PR (#56635) targets the parser frontend reasoning-end/boundary token handling, giving a concrete code anchor (rust/src/parser/src/reasoning/glm45.rs) and a validation path. This is a parser/frontend correctness fix, not installation/CLI/docs plumbing, so it is actionable code work."
+  },
   "4204b87388b85ced0ce57a0c019444bbfb2883f8e219a3a3a0a02207d03b61a6": {
     "confidence": 0.85,
     "contradictions": [],
@@ -22994,6 +23100,43 @@
       "Whether the issue is already fixed in a later version or by an existing PR"
     ],
     "why": "The issue identifies a concrete algorithmic bug: default MoE backend (FlashInfer TRTLLM) produces incorrect logprobs and degenerate sampling for DeepSeek V4 Pro Base, with a clear reproduction command and comparison to deep_gemm backend. Root cause is likely in the MoE kernel or quantization path (UE8M0 block-scale checkpoints), and the validation path is a numerical regression test comparing logprobs across backends."
+  },
+  "45420e4b03b6bc88e10fafc17c73a401c7b6a8016ba075bd4c898f0c8d1ae3a7": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue suggests structural mixin fix while open PR #54309 applies the minimal attribute-set fix"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/diffusion_gemma.py: set _enable_mm_lora or harden read sites",
+      "vllm/model_executor/models/gemma4_mm.py: getattr fallback at :1317 and :1364",
+      "regression test sending one image request to DiffusionGemma"
+    ],
+    "risks": [
+      "PR #54309 may already cover the root cause, making a new contribution redundant",
+      "Mixin refactor vs attribute-set vs getattr is an unresolved design choice",
+      "AI disclosure conflict flagged by policy"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce AttributeError with an image request to DiffusionGemma on v0.29.0/main",
+      "After fix, verify image request succeeds and text-only path unchanged",
+      "Add regression test covering image input to DiffusionGemma"
+    ],
+    "unknowns": [
+      "Whether PR #54309 will be merged or superseded",
+      "Which fix approach maintainers prefer"
+    ],
+    "why": "Root cause is well-evidenced (borrowed Gemma4 methods read _enable_mm_lora never set on DiffusionGemma), but an open PR #54309 already implements the same fix on the same file, and the issue's own suggested fix #3 (mixin refactor) is a design choice not yet settled. Duplicate/merged-fix coverage is unresolved, which materially determines whether new code work is actionable."
   },
   "459265ef9b79956ca08c9c455729cfb06493a1ecc6c77ede699b2854dd1031ce": {
     "confidence": 0.8,
@@ -41244,6 +41387,46 @@
     ],
     "why": "Issue provides a concrete CUTLASS C3x kernel defect: cutlass_gemm_caller.cuh rebuilds packed strides via make_cute_packed_stride, discarding actual leading strides of sliced/padded tensors, causing ~8% mismatched elements. A specific code fix (set runtime leading components from a.stride(0)/b.stride(1)/out.stride(0)) and a reproducible reference-vs-implementation test with a five-case stride matrix are supplied, satisfying llm_algorithm kernel/numerics requirements."
   },
+  "7449f795f5b0e76efcdacc913f89afa1cf4f64c11ba4b62d1fcbf1111a54cae6": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Comments attribute the hang to PCIe ACS/P2P custom allreduce, while the py-spy trace and code anchors point to flashinfer top_k_top_p sampling during warmup",
+      "One reporter says NCCL_P2P_DISABLE=1 and --disable-custom-all-reduce did not help, contradicting the accepted workaround"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/engine/utils.py startup wait/timeout handling",
+      "custom allreduce P2P enablement gating (NCCL_P2P_DISABLE)",
+      "vllm/v1/sample/ops/topk_topp_sampler.py flashinfer sampler path"
+    ],
+    "risks": [
+      "Two distinct failure modes may be conflated, leading to a fix that only masks one",
+      "Changing custom allreduce gating could regress performance on NVLink topologies",
+      "AI-disclosure policy conflict may block automated public contribution"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce hang on multi-GPU PCIe-only topology (no NVLink) with TP>1 and confirm whether NCCL_P2P_DISABLE=1 / --disable-custom-all-reduce resolves it",
+      "Separately reproduce with VLLM_USE_FLASHINFER_SAMPLER=0 to test the flashinfer warmup hypothesis",
+      "Add a regression test asserting engine startup completes within a bounded timeout under the identified condition"
+    ],
+    "unknowns": [
+      "Which of the two proposed root causes actually governs the reported hang",
+      "Whether the potential duplicate issue #36802 shares the same root cause or only a coincidental stack signature",
+      "Whether the AI-disclosure policy conflict permits any automated contribution"
+    ],
+    "why": "The issue is a hang during engine startup with multiple mutually inconsistent root causes proposed in comments (PCIe ACS/P2P custom allreduce vs flashinfer sampler warmup deadlock). The supplied code anchors point at sampling/warmup paths while the accepted workaround points at NCCL_P2P_DISABLE/custom allreduce, so the actual root cause is unresolved. Additionally the candidate is flagged with an AI-disclosure policy conflict and a potential duplicate issue, both of which are materially blocking for actionable code work."
+  },
   "745079e0e14acfe695f0717fca08c99bef4d14152cfe74f7c56bb08dd48d8305": {
     "confidence": 0.8,
     "contradictions": [],
@@ -51029,6 +51212,43 @@
     ],
     "why": "The issue provides a clear root cause: HTMLSerializer drops visible <code> elements when their id contains 'data' or 'state' due to an overbroad substring filter that ignores visibility. A deterministic reproduction with failing tests is supplied, and the fix is straightforward. An open PR exists but lacks root-cause coverage, leaving room for a more complete contribution."
   },
+  "917fc5975c10e69136557b320c4b0fe72148fcaceb8790d44ca9eba51e657baf": {
+    "confidence": 0.7,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal=false while the issue body contains a specific traceback pointing at config parsing",
+      "open_pr_assessment lists three semantically overlapping dsv4.1 PRs but none reference this issue, leaving coverage unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/utils/hf_transformers/config.py (model_type registration/fallback)",
+      "python/sglang/srt/configs/model_config.py (architecture resolution)",
+      "python/sglang/srt/arg_groups/cuda_graph_hook.py (arch lookup path in traceback)"
+    ],
+    "risks": [
+      "Fix may belong in transformers or the NPU adaptation PR rather than sglang core",
+      "Overlapping open PRs may already cover the root cause, risking duplicate work",
+      "NPU/Ascend950 hardware may be required to validate end-to-end"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the reported dsv41 checkpoint and confirm the KeyError 'deepseek_v41' in AutoConfig.from_pretrained",
+      "Add a regression test that loads a config with model_type deepseek_v41 through sglang's get_config path",
+      "Run targeted unit tests for hf_transformers config parsing and model_config resolution"
+    ],
+    "unknowns": [
+      "Whether the failure is a transformers version issue or a missing sglang model_type mapping",
+      "Whether any of PRs #38950/#39336/#39301 already fixes this exact error",
+      "Whether the fix is actionable without Ascend950 NPU hardware"
+    ],
+    "why": "Issue reports a concrete traceback (KeyError 'deepseek_v41' in transformers AutoConfig via sglang get_config), but the root cause is ambiguous: it may be a transformers version/registration gap, a missing model_type mapping in sglang's hf_transformers config path, or an incomplete NPU adaptation. The supplied evidence explicitly marks root_cause_signal=false, and three open PRs (#38950, #39336, #39301) semantically overlap on dsv4.1/checkpoint paths without directly referencing this issue, so duplicate/coverage status is unresolved."
+  },
   "9180c23cbe24abd7c03e2d04888e5adef9580d7c3460c744f0f575b7817f54db": {
     "confidence": 0.8,
     "contradictions": [
@@ -58901,6 +59121,46 @@
       "Exact test infrastructure for frontend components"
     ],
     "why": "Issue provides a clear user-visible bug with a concrete reproduction and a detailed root-cause analysis from a bot comment, identifying specific frontend logic errors and a backend 500. The fix is well-scoped and testable, and no competing PR directly addresses the MCP case."
+  },
+  "a8eaaca293d536abe237c24b3348d80149bb50002642df03b4d45b08d503273e": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue asserts drafter re-scans full accumulated KV every cycle; commenter retracts this, noting DFlash is single-pass with one draft forward per step",
+      "Commenter's DCP-sharding asymmetry hypothesis is refuted by source inspection of 0.28.1rc0 and main",
+      "Issue claims no per-sequence-length hook exists, but comments cite open PRs #48944 and #54801 adding a context/sequence-length axis"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/sched/scheduler.py: add sequence-length axis to dynamic speculative K lookup",
+      "vllm/config/scheduler.py: expose num_speculative_tokens_per_seq_len / disable-by-seq-len config",
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py: only if a drafter-side attention fix is confirmed"
+    ],
+    "risks": [
+      "Root-cause mechanism is contested in-thread; a fix built on the retracted 'full KV rescan' premise may not address the real cost",
+      "Direction 1 overlaps open PRs #48944 and #54801, risking duplicate work",
+      "Long-context 185k reproduction requires hardware/memory not generally available"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the 185k single-stream DFlash DT4 vs SPEC_OFF tok/s gap on the stated hardware/config",
+      "Run a synthetic-zero acceptance sweep to separate draft cost from acceptance, with an all-accepted control to validate the method",
+      "Kernel trace attributing the per-cycle drafter attention time to confirm or refute the full-context-scan mechanism"
+    ],
+    "unknowns": [
+      "Whether the ~182 ms/cycle drafter attention cost is actually full-context attention or another mechanism (e.g. larger per-token draft KV)",
+      "Whether the synthetic-zero measurement method is representative (control not yet reported)",
+      "Whether the per-seq-len control is already covered by open PRs #48944/#54801, making new work duplicative"
+    ],
+    "why": "The issue reports a concrete long-context DFlash slowdown with profiling (~182 ms/cycle drafter FA over accumulated KV), but the supplied comment thread materially contradicts the proposed mechanism: the DCP-sharding asymmetry hypothesis was refuted (capture and runtime paths are symmetric on 0.28.1rc0, and the derivation moved into the base class on main), and the commenter retracted the 'drafter rescans full KV every cycle' framing because DFlash is single-pass. The remaining 28.85 ms magnitude is unexplained, and the issue's own root cause (full-context attention in the drafter) is asserted rather than established against the retraction. Direction 1 (per-seq-len disable hook) is also already covered by open PR #48944 and #54801, so the actionable code work is not clearly unclaimed."
   },
   "a8fd3c9d605778dd1b78b6dbaf5d788c274f102e053c41ae86e2cc87457d3e6d": {
     "confidence": 0.85,
@@ -68131,6 +68391,43 @@
     ],
     "why": "Issue clearly describes a silent truncation bug in RemoteA2aAgent when A2A stream ends before terminal state, with reproduction steps and expected fixes. However, the deterministic gate requires HUMAN_REVIEW, and the submission policy needs assignment, so work should wait for maintainer confirmation."
   },
+  "c3ed41dc79cbd0877a2289e2033e3017246f0254496beae50f18903bbf94fa03": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue body attributes recovery to ProviderInstanceRegistry, but maintainer triage and author correction identify ProviderService.recoverSessionForThread; registry is the settings hot-reload path"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "apps/server/src/provider/acp/AcpAdapterSupport.ts: classify EOF / model unreachable / 1000 (OK) / Failed to rebuild agent as transient and emit a readable message",
+      "apps/server/src/provider/acp/AcpSessionRuntime.ts: treat clean close as disconnect + recover instead of a one-way latch",
+      "apps/server/src/provider/Layers/AntigravityAdapter.ts: retry startSession with backoff, falling back to a fresh session when resume/session/load hits the binary's failed rebuild"
+    ],
+    "risks": [
+      "Retry/backoff could mask genuinely fatal errors or duplicate in-flight prompts if not bounded",
+      "Fresh-session fallback may lose resume cursor/context, changing user-visible session continuity",
+      "Classification strings are proxy-generated and may drift across agy_acp_server versions"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test mapAcpToAdapterError with the masked EOF and 'received 1000 (OK)' strings, asserting a transient classification and non-raw user message",
+      "Simulate ConnectionTerminated then a clean close in AcpSessionRuntime and assert ensureConnected recovers rather than rethrowing the latched termination",
+      "Integration test: fail resume/session/load once, assert AntigravityAdapter retries with backoff and starts a fresh session instead of ending the turn"
+    ],
+    "unknowns": [
+      "Exact retry/backoff parameters and whether maintainers want the transient classification in shared mapAcpToAdapterError or Antigravity-specific mapAntigravityError",
+      "Whether fresh-session fallback is acceptable when resume cursor cannot be honored"
+    ],
+    "why": "Maintainer triage confirms a real T3-side reliability bug: mapAcpToAdapterError forwards raw transport strings with no transient branch, AcpSessionRuntime latches ConnectionTerminated without reconnect, and AntigravityAdapter has no retry/backoff. Concrete code anchors and a three-part fix are supplied; upstream proxy retry is explicitly out of scope, leaving actionable T3 work."
+  },
   "c3f6939e4fc4b42a5f49f7b72ebf12559fb9a1763336a39fb6fb474c80c17725": {
     "confidence": 0.85,
     "contradictions": [
@@ -71273,6 +71570,38 @@
       "The exact implementation details for passing effect_id through the existing durable unit context"
     ],
     "why": "The issue identifies a real architectural gap: capability hooks that touch external state are re-executed under durable execution, causing duplicate side effects. The proposal is technically sound and references existing code paths, but the maintainer has not approved the design and the issue explicitly requires design confirmation. The commenter also raises a valid concern about the 'exactly once' semantics, suggesting a stable effect identity, which needs maintainer input."
+  },
+  "cc052b9b94a69789fc3fee56307432dcc2ef2d116552a255064a81a46d489d28": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/deepgram/flux/stt_base.py: add incoming-event watchdog / reconnect trigger",
+      "src/pipecat/services/deepgram/flux/stt.py: reconnect_on_error handling for silent stream",
+      "src/pipecat/turns/user_turn_controller.py: consider releasing turn when transcriber is unresponsive"
+    ],
+    "risks": [
+      "Watchdog threshold may cause false reconnects on legitimate quiet periods",
+      "Behavior change in turn controller could conflict with existing design intent",
+      "No maintainer confirmation that a service-level watchdog is in scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a fake Flux websocket that accepts audio but stops emitting events after StartOfTurn; assert the service detects silence and calls _request_reconnect or marks itself unusable",
+      "Regression test that a normal EndOfTurn still releases the user turn and no spurious reconnect occurs"
+    ],
+    "unknowns": [
+      "No reproducible trigger or public reproduction for the silent-stream condition",
+      "Whether maintainers consider a service-level watchdog in scope",
+      "What event/keepalive cadence Flux normally emits, needed to set a safe watchdog threshold"
+    ],
+    "why": "The issue describes a plausible production failure (Flux stream stays open but stops sending events, leaving an open user turn), and code anchors are supplied. However, the reporter explicitly states it is not reproducible on demand and provides no public reproduction; the pre-task evidence also flags reproduction_or_validation_missing and probe_ready=false. Without a reproducible trigger or a concrete validation path for the 'server goes quiet' condition, it is not yet determinable whether a service-level watchdog is actionable code work or a speculative feature request."
   },
   "cc20b2fbc19436d608f26cea5dce0565d20391546fd87ed1d536115320168658": {
     "confidence": 0.85,
@@ -87065,6 +87394,42 @@
       "Whether a maintainer has already scheduled an image refresh for this regression"
     ],
     "why": "Issue pinpoints a concrete regression in encode_arguments_to_dsml(): unconditional json.loads() on an already-normalized dict raises TypeError, caught and wrapped as {\"arguments\": dict}, producing an extra DSML parameter layer. Root cause, affected commit/branch, and expected vs actual output are all supplied, with code anchors encoding_dsv4.py and serving_chat.py."
+  },
+  "f5d7c066ae7cb7937fb6c2de2ab99225809d515d42297cd5ef19a083283c6464": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Open PR #40013 is described as the fix shape but is marked technically incomplete with no root-cause coverage and no tests, while the issue evidence already establishes the root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/controllers/mcp/mcp.py: replace sessionmaker(...).begin() context with plain Session(db.engine, expire_on_commit=False) and explicit commit/rollback",
+      "api/controllers/mcp/mcp.py: apply the same session handling to _retrieve_end_user",
+      "Add regression test covering MCP tools/call after an internal generation commit"
+    ],
+    "risks": [
+      "Changing session lifecycle in the MCP controller could alter commit/rollback semantics for other MCP endpoints",
+      "Repository policy flags an AI disclosure conflict, which may constrain public submission even if the code fix is valid",
+      "Overlap with open PR #40013 could duplicate effort if that PR adds tests before this work lands"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that invokes the MCP tools/call path and asserts no 'closed transaction inside context manager' error",
+      "Run targeted API tests for api/controllers/mcp/mcp.py plus static checks",
+      "Verify the same test passes with the plain-Session fix and fails on the current sessionmaker().begin() code"
+    ],
+    "unknowns": [
+      "Whether maintainers intend to fix this only on Cloud infrastructure rather than in the open-source repo",
+      "Whether PR #40013 will be completed with regression tests, which would reduce the marginal value of a competing fix"
+    ],
+    "why": "Issue reports a concrete, reproducible -32603 'Can't operate on closed transaction inside context manager' failure on MCP tools/call, with ordered steps, expected/actual pair, and multiple-account confirmation. Supplied evidence (dosubot analysis plus a code-trail comment) localizes the root cause to sessionmaker().begin() in api/controllers/mcp/mcp.py, where a downstream internal commit closes the transaction before later ORM writes. A concrete validation path exists: reproduce tools/call against the MCP controller and assert no closed-transaction error after switching to a plain Session with explicit commit. Open PR #40013 covers the same path but lacks regression tests, so a test-backed fix remains actionable rather than fully covered."
   },
   "f5f865e683b56e39b01086fcf2f4cc3f6254456ca732f57f723fc9a0a0fae0d3": {
     "confidence": 0.7,
