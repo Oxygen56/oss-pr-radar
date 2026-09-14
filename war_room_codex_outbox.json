@@ -1,6 +1,41 @@
 {
   "channel": "codex",
-  "events": [],
+  "events": [
+    {
+      "actionKind": "USER_DECISION",
+      "attemptId": "56124a51cdca24e763fc812f764f7329582e8db6fe5205250628680614a2847f",
+      "candidateKey": "NVIDIA/physicsnemo#1990",
+      "card": {
+        "config": {
+          "wide_screen_mode": true
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "content": "**事项**：处理 NVIDIA/physicsnemo 的第 1990 号问题\n**原因**：需要你确认下一步，当前记录不足以安全继续。\n**下一步**：请确认是否继续，以及需要补充的要求。",
+              "tag": "lark_md"
+            }
+          }
+        ],
+        "header": {
+          "template": "yellow",
+          "title": {
+            "content": "处理 NVIDIA/physicsnemo 的第 1990 号问题",
+            "tag": "plain_text"
+          }
+        }
+      },
+      "eventId": "1d073b7805410d31db0c817a74ac7c8d394b0024e125f3563525dc2837b029c1",
+      "idempotencyKey": "1d073b7805410d31db0c817a74ac7c8d394b0024e125f35635",
+      "nextAction": "请确认是否继续，以及需要补充的要求。",
+      "notificationDigest": "28628f44365834b16e325a22f5679d67fd599f548b8e526f71199d612119e36e",
+      "reason": "需要你确认下一步，当前记录不足以安全继续。",
+      "status": "PENDING",
+      "taskId": null,
+      "title": "处理 NVIDIA/physicsnemo 的第 1990 号问题"
+    }
+  ],
   "schema": "oss-pr-radar.war-room-outbox.v1",
-  "sourceArtifactDigest": "81f816996b26700793d02744c48b29f4a871cd8ff73d2458427eb9932809502b"
+  "sourceArtifactDigest": "1e2d4036273e22dc2a5efa6cb9f287ecdf0ac80a11e4d0c687d911215e0051a6"
 }
