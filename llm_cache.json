@@ -14265,6 +14265,45 @@
     ],
     "why": "The issue is a real, well-reproduced continuous-batching bug, but the supplied evidence shows the root cause is already traced to an upstream mlx-lm defect (processor-slot alignment, fixed by mlx-lm commit e2f2fb2a and further by mlx-lm #1826), and a collaborator has already validated a narrow backport against the released 0.31.3 baseline. The remaining work is a dependency-update/backport decision owned by maintainers, not a new algorithm implementation. The candidate's own algorithm_evidence is generic (matched terms 'logits'/'quantization', no formula signal) and the expected_changes/test_path describe a quantization/numerics reference comparison that does not match this issue's actual mechanism (logits-processor slot bookkeeping). The open PR #787 is only semantically overlapping (response_format keyword) with no direct code overlap and does not reference the issue, so duplicate coverage is unresolved."
   },
+  "28bdbd636c06bfecac20c14918489061e7bccb3c65a183d6bfac439614a49814": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Reporter initially blamed _tilelang_qsa_mqa_prefill_kernel bounds, then retracted and called it an overlap-scheduler race",
+      "Commenter pinkgom first reported --disable-overlap-schedule resolved the crash, then reported it recurred 7 times with that flag enabled",
+      "Commenter attributed the fault to merged PR #38346 while the reporter explicitly stated #37638 should not be credited with fixing this issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/layers/attention/qsa/metadata.py (get_prefill_mqa_inputs host/device sequence-length consistency)",
+      "python/sglang/srt/layers/attention/qsa/qsa_indexer.py (compress gather bounds)",
+      "python/sglang/srt/managers/scheduler.py (overlap-schedule stream synchronization)"
+    ],
+    "risks": [
+      "Root cause is contested between a QSA kernel bounds bug, an overlap-scheduler race, and the already-merged #38346 clamp",
+      "Fixing the wrong layer would leave the production crash unresolved",
+      "Hardware-specific (H20/H200, FP8, TP8/EP8) reproduction may not be available to the contributor"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the reported bench_serving command at max-concurrency 8 on the same Qwen3.8-Flash-Next-FP8 TP8/EP8 H20 config and confirm the illegal memory access",
+      "Re-run the same workload on a build containing merged #38346 to determine whether the crash is already covered",
+      "Add a regression test that exercises chunked prefill whose final chunk is 1-3 tokens and asserts no out-of-range compress gather indices"
+    ],
+    "unknowns": [
+      "Whether merged PR #38346 already resolves this crash on current main",
+      "Whether the crash still reproduces on a build containing #38346",
+      "Which of the competing root causes (kernel bounds, overlap race, host/device sequence-length mismatch) is correct"
+    ],
+    "why": "The issue's own reporter retracted the QSA kernel bounds root cause and re-characterized the crash as an overlap-scheduler race; a later commenter then reported that --disable-overlap-schedule did not prevent recurrence and attributed the fault to merged PR #38346 (chunked-prefill tail clamp), which is already merged and predates the reporter's image. Supplied evidence therefore contains contradictory root-cause claims and unresolved duplicate/merged-fix coverage, so it is not established that any new code work is actionable."
+  },
   "28c1dcbb30293846510b755c7907e6e5856fc32c9dff56ab14017967d892fb22": {
     "confidence": 0.9,
     "contradictions": [],
@@ -16522,6 +16561,42 @@
       "No explicit maintainer approval or design confirmation, but issue is clear and actionable"
     ],
     "why": "Issue provides concrete measurements and a clear root cause: hook detection only matches command string, not args, and init recommends shell-wrapped form. This is a user-visible performance bug with a suggested fix. No competing PR or issue found."
+  },
+  "2dd81743aad7cd8a67445b82704e2b1a0e6321a778bcd0d03e3669515bfebe15": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate claims root_cause_signal=false while the traceback pinpoints the failing config lookup, leaving root-cause ownership ambiguous",
+      "Candidate category WAIT_MAINTAINER with gate HUMAN_REVIEW but no explicit maintainer wait reason is recorded"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/utils/hf_transformers/config.py (model_type registration/fallback for deepseek_v41)",
+      "python/sglang/srt/configs/model_config.py (architecture resolution)",
+      "python/sglang/srt/arg_groups/cuda_graph_hook.py (avoid eager ModelConfig construction before config resolution)"
+    ],
+    "risks": [
+      "PR #38950 already modifies the same hf_transformers config paths and may fix or conflict with this issue",
+      "Maintainer-owned PR #39370 overlaps semantically and may supersede any independent fix",
+      "Fix may require a transformers version bump rather than a sglang code change, making the issue non-actionable as a code task"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the reported dsv41 checkpoint and run_dsv41.sh on Ascend A5/NPU to confirm the KeyError 'deepseek_v41'",
+      "Add a regression test that loads a config with model_type deepseek_v41 through sglang's get_config path and asserts successful parsing",
+      "Run targeted unit tests for python/sglang/srt/utils/hf_transformers and model_config"
+    ],
+    "unknowns": [
+      "Whether PR #38950 or #39370 already resolves the deepseek_v41 config registration",
+      "Whether the intended fix is in sglang config parsing or a transformers dependency update",
+      "Whether the checkpoint's config.json model_type is expected to be remapped by sglang"
+    ],
+    "why": "Issue reports a concrete traceback (KeyError/ValueError on model_type 'deepseek_v41' in transformers AutoConfig) but the root cause is not established: it is unclear whether the fix belongs in sglang's config parsing (python/sglang/srt/utils/hf_transformers/config.py) or requires a transformers version/registration change, and the issue explicitly follows PR #38950 which already touches the same config paths. Open PR #38950 ([NPU][DSV4.1] Adapt NPU with DeepSeek V4.1) and maintainer-owned PR #39370 semantically overlap with this issue and may already cover the root cause, so duplicate/merged-fix coverage is unresolved."
   },
   "2e187b328f561d6825c5d57d2432e1afd121e8cbba7b56365c1fa26ee8282fb7": {
     "confidence": 0.7,
@@ -26561,6 +26636,40 @@
     ],
     "why": "The issue describes a plausible failure mode in downloadAssetsFromMessages/downloadFromUrl, but the supplied evidence marks root_cause_signal=false, reproductionPathPlan=false, probe_ready=false, and needs_confirmation/design_confirmation=true. The issue itself proposes three alternative fixes (placeholder replacement, processor hook, size cap), so the intended behavior is not settled. The only recent comment is a bot triage notice explicitly asking contributors to wait for maintainer triage before opening a PR."
   },
+  "4b5a2b1a61fb2828789d1c7d0600d08166f62d1d030b9b007f2d8e3aba84bafa": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims a clear production timeline and code anchors, but actionability evidence reports root_cause_signal=false and no reproduction evidence"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/deepgram/flux/stt_base.py: add incoming-event watchdog",
+      "src/pipecat/services/deepgram/flux/stt.py: reconnect or mark unusable on event silence",
+      "src/pipecat/turns/user_turn_controller.py: ensure open turn can be released when speaking source goes silent"
+    ],
+    "risks": [
+      "Watchdog threshold may falsely reconnect on legitimate quiet periods",
+      "Reconnect behavior could duplicate or drop audio",
+      "Maintainer may prefer a different recovery mechanism (switcher vs service-level reconnect)"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a fake Flux websocket that accepts audio but stops emitting events after StartOfTurn; assert the service detects silence and calls _request_reconnect or marks itself unusable",
+      "Regression test that a normal EndOfTurn still releases the turn and does not trigger the watchdog"
+    ],
+    "unknowns": [
+      "No deterministic reproduction or simulation of a silent-but-open Flux stream",
+      "No confirmation of expected recovery semantics (reconnect vs mark unusable)",
+      "No maintainer design preference on service-level watchdog scope"
+    ],
+    "why": "The issue describes a plausible production failure (Flux websocket stays open but stops sending events, leaving an open user turn), and code anchors are supplied. However, the reporter explicitly states it is not reproducible on demand and provides no public reproduction or deterministic validation path; the failure depends on Deepgram going quiet. The candidate's own actionability evidence shows public_repro_signals=0, reproduction_evidence=[], root_cause_signal=false, and probe_ready=false. Without a reproducible trigger or a concrete way to simulate a silent-but-open Flux stream, the code work is not yet actionable."
+  },
   "4b6ace56abf94950a4dadd478214b14243ec718b8c173058cbdca405780cde6d": {
     "confidence": 0.85,
     "contradictions": [
@@ -28955,6 +29064,44 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides detailed root-cause analysis and reproducible steps for a real bug, but existing PR #36599 overlaps semantically and touches the same code path, requiring manual comparison before new work."
+  },
+  "51b06ac2c881725e3701825690bb11e49324b21df543ec893b002310fa39d01b": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue suggests a structural mixin fix, while open PR #54309 implements the minimal attribute-setting fix; the two approaches differ in scope"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/diffusion_gemma.py: set `_enable_mm_lora` in `DiffusionGemmaForConditionalGeneration.__init__` or harden the two read sites in `gemma4_mm.py`",
+      "Add a regression test that sends one image request to DiffusionGemma and asserts no EngineCore crash"
+    ],
+    "risks": [
+      "PR #54309 may already cover the root cause, making a new contribution duplicative",
+      "The structural mixin fix suggested in the issue is larger and may conflict with the minimal fix in #54309",
+      "Repository AI disclosure policy conflict may block automated public action",
+      "Latent audio siblings (`_parse_and_validate_audio_input`, `_process_audio_input`) are currently unreachable but same class of defect"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on current main with `nvidia/diffusiongemma-26B-A4B-it-NVFP4` and one image request; confirm `AttributeError: 'DiffusionGemmaForConditionalGeneration' object has no attribute '_enable_mm_lora'` and EngineDeadError",
+      "After fix, rerun the same image request and assert successful multimodal inference; also run text-only request to confirm no regression",
+      "Add a unit/regression test exercising `embed_multimodal` on DiffusionGemma without LoRA configured"
+    ],
+    "unknowns": [
+      "Whether PR #54309 is the accepted/merged fix or will be superseded, which determines if new code work is actionable",
+      "Whether the repository's AI disclosure conflict can be resolved for this contribution",
+      "Whether maintainers want the minimal fix or the structural mixin refactor"
+    ],
+    "why": "The issue itself is a well-evidenced, concrete bug (borrowed Gemma4 methods read `_enable_mm_lora`, which DiffusionGemma never sets), but the supplied evidence shows an open PR #54309 that already implements the exact fix ('Set _enable_mm_lora on DiffusionGemma to fix image-input engine crash') with overlapping path `vllm/model_executor/models/diffusion_gemma.py` and distinctive overlap on `enable_mm_lora`/`gemma4`. A maintainer-adjacent contributor comment confirms the root cause and points to #54309 as the existing fix. This unresolved duplicate/merged-fix coverage is a materially blocking unknown: it is unclear whether any new code work is actionable or would merely duplicate #54309. Additionally, the repository policy status is `ai_disclosure_conflict`, which is a disclosure requirement that must be resolved before public action."
   },
   "51bf6ffb62b46b2059eb5499a842a746dc31b592f4131d66a9a4fcf224642298": {
     "confidence": 0.55,
@@ -44522,6 +44669,44 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue is a support request about a shared developer token quota, not a code bug. It asks for documentation and feature additions (custom token support) but lacks a concrete code path or maintainer confirmation. The only comment is an automated triage labeling it as support, and no maintainer has responded. The proposed changes are not actionable without maintainer input on token management and access tiers."
   },
+  "77b305e474a327931934f3d662a2819017c73024ed04f91a3036fc271dcde7a9": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter attributes root cause to agent-controller getString() on nested finish reason; maintainer triage says that path only writes metadata and normalizeFinishReason already unwraps one level, with the real fail-open gate in llm-execution-step.ts",
+      "Reporter claims provider-agnostic nested finish reason; triage says V4 spec and passing CI tests contradict the stated root cause and no core layer produces the nested shape"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/stream/aisdk/v5/transform.ts normalizeFinishReason",
+      "packages/core/src/loop/workflows/agentic-execution/llm-execution-step.ts finish-reason gate",
+      "packages/core/src/stream/base/output.ts finishReason storage"
+    ],
+    "risks": [
+      "Fixing the wrong layer (agent-controller metadata vs loop gate) would not stop the runaway",
+      "Recursive unwrapping could mis-handle provider-specific nesting depths and break SDK normalization",
+      "PR #23847 may already touch overlapping transform paths, risking duplicate/conflicting work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that feeds a nested/object finish reason through the transform and asserts the loop terminates at the correct step rather than maxSteps",
+      "Reproduce with a real @ai-sdk provider and maxSteps>1, comparing round trips/tokens before and after the fix",
+      "Run targeted core loop and stream transform unit tests"
+    ],
+    "unknowns": [
+      "Which exact code path actually produces the non-string finish reason in the reporter's environment",
+      "Whether PR #23847 already covers the same fix boundary",
+      "Whether the nested shape is reproducible without the reporter's specific provider/router setup"
+    ],
+    "why": "The issue reports a real, high-impact agent-loop runaway (maxSteps always reached, ~10x tokens), but the supplied evidence contains a direct contradiction about the root cause and location: the reporter blames agent-controller getString() on a nested {unified,raw} finish reason, while the maintainer triage trace says that path only writes metadata and that normalizeFinishReason already unwraps one level, with the actual fail-open gate in llm-execution-step.ts. The triage also states the report's stated root cause and blast radius are contradicted by the V4 spec and passing CI tests, and no core layer was found producing the nested shape. This unresolved root-cause contradiction, plus the semantic-overlap PR #23847 that is not linked to the issue and may cover adjacent code, makes the actionable fix boundary uncertain."
+  },
   "77b3ff6cc302eba5e65c28fde13894adbb5fb5f57f3e53a43bf5007ee09b3a46": {
     "confidence": 0.7,
     "contradictions": [],
@@ -58248,6 +58433,43 @@
     ],
     "why": "Issue provides a clear root cause: session shell output bypasses the 50 KiB tool-output limit, causing oversized model requests and provider failures. Reproduction steps and expected behavior are concrete, and the proposed fix (apply existing cap) is actionable."
   },
+  "9db0677eb03bb5e1d04c1cd3bd2879aebc36934e0efbd991b3b265bf926da4c0": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: _prune_and_reset restart semantics (merge B@A into base, reinitialize A/B, reset optimizer moments, re-warm LR) or rename/docstring correction",
+      "src/soup_cli/utils/relora.py: magnitude_prune_tensor mask selection (exact-count deterministic topk/stable-order instead of strict > threshold)",
+      "module docstring at relora.py:3-5 if the feature is renamed rather than made conformant"
+    ],
+    "risks": [
+      "Claim A is partly a maintainer contract decision (implement real ReLoRA restarts vs rename the feature); a partial implementation of option 1 would be worse than either complete option",
+      "Tie-case production frequency is unmeasured; the maintainer notes freshly-initialized lora_B is all zeros by PEFT convention, so the first relora_steps interval may hit the tie naturally",
+      "Numerical tolerance must be fixed and seed-controlled to distinguish real function change from floating-point noise",
+      "Quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume need explicit support or loud rejection"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reference-vs-implementation test: build a small peft LoRA model with fixed seed, capture the effective linear map before and after the callback, assert MSE ~0 for a merge-then-reset implementation and assert base weight delta is nonzero after restart",
+      "Numerical regression: constant-magnitude A/B with prune_ratio=0.9 must retain exactly the requested keep count and leave both factors nonzero with nonzero gradient norms",
+      "Kernel-level unit test: ones(10) and arange(1..10) with prune_ratio=0.9 both yield the exact requested survivor count",
+      "Successive-restart test: two consecutive restarts accumulate low-rank updates in the base weight",
+      "Compatibility test: quantized/FSDP/DeepSpeed/streamed configurations either work or fail loudly rather than partially applying a restart"
+    ],
+    "unknowns": [
+      "Which of the two coherent contracts (real ReLoRA restart vs rename to periodic LoRA weight pruning) the maintainer will accept; the maintainer states a preference for the first but explicitly leaves it open",
+      "Whether the tie case fires in ordinary training after PEFT's zero-initialized lora_B, which affects severity but not actionability"
+    ],
+    "why": "Issue identifies two concrete, independently verified defects in ReLoRACallback._prune_and_reset: (A) adapter weights are magnitude-pruned without merging B@A into the base weight, so the learned effective linear map is discarded rather than restarted (maintainer reproduced max|delta|=0 on base weight with MSE 142.12 vs 8.77e-13 for a merge-then-reset control); (B) strict '>' thresholding against kthvalue wipes all entries on ties, zeroing both lora_A and lora_B and producing zero gradient norms, permanently killing the branch. Both are algorithm-level (PEFT restart semantics, pruning mask correctness) with deterministic reproductions and a clear validation path."
+  },
   "9db0b04cde367f79a146dc04e2e407d9ef1ac00ca20a3acc32742892d814c6b1": {
     "confidence": 0.85,
     "contradictions": [
@@ -61450,6 +61672,39 @@
       "Maintainer preference for fix approach"
     ],
     "why": "Issue documents a real Windows watchdog failure but explicitly states root cause unknown and is blocked on a now-closed dependency (#1571) that must be re-verified. No concrete fix or test is proposed; investigation is needed before implementation."
+  },
+  "a70be68fe4cf37aa2bfb56c0340d7418dedd69e1add2a4a57ec36742a4f0c4ff": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/mooncake/conn.py: validate bootstrap_room against a real prefill request before creating transfer_infos[room], and pop transfer_infos[room] in the ABORT handler",
+      "python/sglang/srt/managers/scheduler.py: reject or bound bootstrap_room values that do not correspond to an in-flight prefill request",
+      "python/sglang/srt/managers/io_struct.py: tighten bootstrap_room validation beyond non-None"
+    ],
+    "risks": [
+      "Fix must not break legitimate PD transfer lifecycle where transfer_infos[room] is created before the KV chunk arrives",
+      "Cleaning up on abort could race with in-flight legitimate transfers if room validation is too aggressive",
+      "Maintainer may prefer a different validation/ownership model for bootstrap_room"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that drives the mooncake bootstrap handler with unique room ids and asserts transfer_infos size stays bounded and orphan entries are removed on abort",
+      "Reproduce with the issue's injection script against a 1P1D mooncake_tcp deployment and confirm Prefill RSS stays flat and no OOMKilled occurs",
+      "Run targeted unit tests for python/sglang/srt/disaggregation/mooncake and scheduler modules plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers consider bootstrap_room validation a security boundary or an internal invariant",
+      "Whether PR #39229 or #32566 incidentally touches the same transfer_infos lifecycle code"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: unconditional creation of transfer_infos[room] in mooncake/conn.py bootstrap thread, ABORT handler not popping the entry, and the only pop path requiring a KV chunk that orphan rooms never receive. Reproduction is a concrete ordered-steps HTTP injection against a 1P1D mooncake_tcp deployment with observed OOMKilled=true and dmesg evidence. Validation path is a reference-vs-implementation test: inject unique bootstrap_room values and assert transfer_infos does not grow unboundedly / orphan rooms are cleaned up. Open PRs #39229 and #32566 share only the bootstrap_room keyword and scheduler.py path, not the root cause (checksum feature and rust-server PD support respectively), so they do not cover this fix."
   },
   "a70ead2a13a5362311c7be630c9ecfac5aa6f900c72d994c13cd55ebcf20bcf8": {
     "confidence": 0.85,
@@ -87870,6 +88125,39 @@
       "Whether PR #13903 is considered a competing implementation or abandoned"
     ],
     "why": "Issue provides a detailed root cause and a public reproduction, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#13903) is closed with gaps (no tests, stale). Maintainer has not confirmed design or assignment, so work should wait for maintainer direction."
+  },
+  "eb1f7864435921ba391286485f77ad064228b22b56f9de670e5964ba0358b074": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Frontend request construction: strip or avoid duplicating inline data: URIs in extra_args.messages when multi_modal_data is present",
+      "Request-plane serialization path in lib/runtime/src/pipeline/network.rs and codec.rs to ensure single media copy",
+      "Optional docs clarifying DYN_HTTP_BODY_LIMIT_MB vs DYN_TCP_MAX_MESSAGE_SIZE relationship"
+    ],
+    "risks": [
+      "Stripping inline data from extra_args.messages may break chat-template paths that expect the original media reference",
+      "P/D prefill deliberately uses original media per docs; dedup must preserve that behavior",
+      "Maintainer may prefer a different dedup strategy (e.g., reference-once channel) over stripping"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that builds a chat-completions request with a large inline data: image and asserts the serialized request-plane frame contains the media payload only once and stays under DYN_TCP_MAX_MESSAGE_SIZE",
+      "Reproduce the original failure with a >32MiB inline image and verify no worker RST / HTTP 500 after the fix",
+      "Run targeted unit tests for the frontend request builder and runtime network codec"
+    ],
+    "unknowns": [
+      "Exact code location where extra_args.messages is populated with inline media is not pinned in the supplied evidence",
+      "Whether #14110's preflight check fully covers the 32-192MB window or only the transport half"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: inline data: media is forwarded twice (multi_modal_data and extra_args.messages), inflating the serialized request-plane frame past the 32MiB DYN_TCP_MAX_MESSAGE_SIZE cap, causing worker RST and HTTP 500. Code anchors (network.rs, codec.rs, egress/tcp_client.rs) and a maintainer comment scoping the remaining open half (dedup of inline media) confirm actionability. The transport preflight half was already fixed by #14110, leaving a clear, non-covered dedup fix."
   },
   "eb2a183aee1a3ffbd205610d01a5ba99396f41080cf788d30a76165eae359536": {
     "confidence": 0.8,
