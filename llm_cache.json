@@ -5979,6 +5979,41 @@
     ],
     "why": "Issue describes three concrete, high-impact correctness bugs in createInngestAgent.resume() with clear root causes and expected behavior. No competing PR or related issue found. Maintainer acknowledged and labeled, but no active investigation or design confirmation needed. Actionable fix with minimal repro."
   },
+  "127c06254e109c75c68b326785633ff242d9cb13aa4e30cb3888947437191597": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal=false and public_repro_signals=0, while the issue body contains a detailed source-level root-cause hypothesis and a dev replay control"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/deepgram/flux/stt_base.py: add incoming-event watchdog that triggers _request_reconnect() or marks the service unusable after N seconds of silence while audio is being sent",
+      "src/pipecat/services/deepgram/flux/stt.py: ensure reconnect_on_error=False path can be recovered via the new watchdog",
+      "src/pipecat/turns/user_turn_controller.py: consider releasing a stranded user turn when the STT source is deemed dead"
+    ],
+    "risks": [
+      "Watchdog timeout value may cause spurious reconnects on legitimately quiet streams",
+      "Reconnect may duplicate or drop audio mid-turn",
+      "Maintainer may prefer a different recovery mechanism (e.g., switcher-level) rather than service-level reconnect"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a fake Flux websocket that accepts audio but stops emitting events after StartOfTurn; assert the watchdog fires and _request_reconnect() is invoked within the configured timeout",
+      "Regression test that a normal EndOfTurn still releases the turn and does not trigger the watchdog",
+      "Run targeted unit tests for deepgram flux stt and user_turn_controller"
+    ],
+    "unknowns": [
+      "No reproducible trigger or public minimal reproduction; failure depends on Deepgram going quiet",
+      "Whether maintainers consider a service-level watchdog in scope versus a different recovery design",
+      "Whether the dev replay logs and redacted timeline would be sufficient to validate a fix"
+    ],
+    "why": "Issue describes a plausible production failure (Flux stream stays open but stops sending events, leaving an open user turn), but the reporter explicitly states it is not reproducible on demand and provides no public reproduction; the root cause is inferred from source reading rather than demonstrated. The request is also framed as a design question ('would a service-level watchdog be in scope'), so the concrete fix is not yet settled."
+  },
   "129933c2386a580c6789e500c12d74775d9f96cc96269c19296d48be6fb1d413": {
     "confidence": 0.95,
     "contradictions": [
@@ -7530,6 +7565,43 @@
       "Whether the maintainers prefer the one-liner fix or documentation-only workaround; however, the issue and comments indicate a fix is expected."
     ],
     "why": "The issue provides a clear root cause (LD_LIBRARY_PATH conflict shadowing PyTorch's bundled cuBLAS), a concrete reproduction command, and a minimal fix (clearing LD_LIBRARY_PATH in Dockerfile.ci). The algorithm evidence indicates a quantized GEMM kernel path, and the proposed fix is directly testable with a BAGEL FP8 smoke test."
+  },
+  "17b1d4541aebddb675f8dc244b6363281fc50e3eac3a70ddd550fd8d0e94c77e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports rootCauseCoverage=false for PR #8487 while the issue itself supplies a clear root cause; the PR's coverage gap is the competition opening, not a contradiction of the issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "deepspeed/runtime/zero/linear.py: make AllGatherHandle.wait() idempotent and re-check INFLIGHT",
+      "deepspeed/runtime/zero/linear.py: make NoGatherHandle.wait() idempotent and re-check INFLIGHT",
+      "Preserve NOT_AVAILABLE after release so next fetch re-gathers from ds_tensor"
+    ],
+    "risks": [
+      "Existing draft PR #8487 already targets the same idempotent-wait fix; competing work must add root-cause coverage or key-path tests to be non-duplicative",
+      "Fixing only one handle class may leave the other path broken",
+      "Idempotency must not mask genuine re-gather needs after release"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Handle-level 2-GPU test: all_gather_coalesced([victim, other]), wait, release victim, wait again; assert victim status is NOT_AVAILABLE and data is not AVAILABLE over 0 elements",
+      "Regression test with stage3_allgather_sequential: true and two ordinary 4096x4096 weights",
+      "Regression test with gather group spanning two process groups (AutoEP ep_size>1 shape) where victim is alone in its bucket",
+      "Control tests: two/three weights in one process group and mixed bf16/fp32 group remain correct"
+    ],
+    "unknowns": [
+      "Whether PR #8487 will be completed/merged before independent work lands",
+      "Exact maintainer preference between fixing both handle classes vs. a shared base-class guard"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: AllGatherHandle/NoGatherHandle wait() is not idempotent, so a second wait after release sets AVAILABLE over empty storage, causing the empty-weight matmul. Reproduction is described at handle level on 2 GPUs with two configurations and controls, and the expected fix (idempotent wait, re-check INFLIGHT) is concrete. This is a distributed-training invariant with a clear reference-vs-implementation validation path, not mere plumbing."
   },
   "17b27ffd19efef05f66d20d3156d1d21b71c1f90061b1cb12c6373c303be8cfd": {
     "confidence": 0.6,
@@ -12386,6 +12458,41 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly identifies a concrete bug in sandbox reattachment logic with a reproducible failure mode and suggests a fix, but the maintainer has not yet triaged or approved the approach, and the suggested fix involves API behavior changes (e.g., making start() reject on DESTROYED) that need design confirmation."
   },
+  "25d6d0144a02bab41faf8e74c5e72399478dedc0e9aeef91e7ce1fe0f1b952f9": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reporter claims a distinct unique-key root cause, but triage states the confirmed driver is duplicate history-item keys (#11743) and the repro base predates that fix",
+      "PR #11761 already covers the same VirtualizedList height-update path while the issue is still open"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/components/shared/VirtualizedList.tsx: make row-height measurement edge-triggered and defer the state write outside Ink's active commit",
+      "packages/cli/src/ui/components/shared/VirtualizedList.update-depth.test.tsx: keep the unique-key recursive-update regression"
+    ],
+    "risks": [
+      "Overlaps with open maintainer-owned PR #11743 and draft PR #11761; a duplicate fix may be rejected",
+      "Depends on private Ink layout-listener internals, which maintainers may not accept",
+      "Regression is synthetic (Profiler-driven) and may not reproduce the original field crash independently of the duplicate-key driver"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the focused VirtualizedList.update-depth.test.tsx on current main with #11743 applied and confirm it still fails with Maximum update depth exceeded through useBoxMetrics/emitLayoutListeners/resetAfterCommit",
+      "Confirm the same suite passes with the proposed VirtualizedList change, and run the target package's unit tests plus static checks"
+    ],
+    "unknowns": [
+      "Whether the unique-key layout loop is a genuinely separate root cause from #11743's duplicate-ID driver",
+      "Whether maintainers accept a fix depending on private Ink layout-listener internals",
+      "Whether #11761 or #11743 will land first and cover this path"
+    ],
+    "why": "The issue reports a real commit-phase layout feedback loop (useBoxMetrics -> emitLayoutListeners -> resetAfterCommit) with a deterministic unique-key regression test, but the supplied evidence shows unresolved duplicate/overlap coverage: PR #11743 (maintainer-owned, open) is the confirmed duplicate-history-key driver for the same symptom, and PR #11761 (draft) already targets the same VirtualizedList height-update path. The reporter's own comment concedes the regression does not prove the field crash is independent of the duplicate-ID driver, and the triage bot explicitly asks for an artifact to separate new vs known root cause. This is a materially blocking unknown about whether code work is actionable."
+  },
   "25e07f8d71cf1262698d4add8de8c6dcf8d12432d8f0832ff2a72b1383d794cc": {
     "confidence": 0.7,
     "contradictions": [],
@@ -14317,6 +14424,43 @@
       "Whether #22451's closed-unmerged approach is still the accepted direction"
     ],
     "why": "Issue pinpoints the exact seam: @mastra/inngest never calls runDurableFinishSideEffects (1.8.5) or wraps it in a nested step.run (>=1.8.6), so output processors and finish-time memory persistence are skipped. Concrete grep evidence, version matrix, and a minimal probe are supplied; the fix shape (call helper directly) is well-defined."
+  },
+  "2ae1fc100b155f229917521d5791817ed46a71e9c42f22956865aa64072cc011": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate claims a clear root cause and merge motivation, but the issue's own comment requests maintainer confirmation of the supported policy before patching",
+      "Candidate labels this a PR competition opportunity while the open PR #1982 is only semantic overlap with no direct code overlap or issue reference"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/utils/gpuDetection.js: add CUDA runtime major-version compatibility check before offering the download",
+      "src/helpers/whisperCudaManager.js: prefer an existing working bundled/distro whisper-server over the pinned CUDA-12 pack, or surface activationFailed instead of silent CPU fallback",
+      "src/hooks/useGpuBannerAvailability.ts / gpuBannerPolicy.ts: suppress the banner when a compatible local CUDA binary is already active"
+    ],
+    "risks": [
+      "Fix direction depends on an unresolved maintainer policy choice (prefer bundled binary vs. version-gate the download), so an implementation may be rejected on design grounds",
+      "Open PR #1982 touches the same whisperCudaManager/TranscriptionModelPicker paths and may already cover part of the root cause",
+      "CUDA 13 hardware/fixture may not be available to the contributor, limiting end-to-end validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit-test gpuDetection with a mocked nvidia-smi/CUDA-13 host lacking libcudart.so.12 and assert the GPU download offer is suppressed or activation reports failure",
+      "Regression test that a pre-existing working whisper-server-linux-x64 is not replaced by the downloaded pack",
+      "If hardware is available, reproduce on Arch with CUDA 13: click Enable GPU and confirm no silent mid-session CPU fallback"
+    ],
+    "unknowns": [
+      "Maintainer-preferred policy: suppress the banner when a working CUDA binary exists, or version-gate the downloaded pack",
+      "Whether PR #1982 already resolves the CUDA-12/CUDA-13 incompatibility or only adds Vulkan fallback",
+      "Whether a CUDA 13 test fixture or hardware is available for a concrete regression"
+    ],
+    "why": "Issue describes a concrete CUDA-12-vs-CUDA-13 runtime mismatch and a plausible root cause in gpuDetection.js, but the supplied evidence leaves the actionable fix undetermined: the reporter's own comment asks maintainers to confirm the supported policy for preferring an existing bundled/distro whisper-server and the minimum compatibility check for downloaded packs, and the open PR #1982 (Vulkan fallback, overlapping whisperCudaManager.js/TranscriptionModelPicker.tsx paths) may already cover part of the same surface. Without that policy decision, the code change could be banner suppression, a CUDA-major probe, or a binary-preference change."
   },
   "2aef9badc5f86056b78ab0f75f1805c5901585baedf2881c0c133752d990d581": {
     "confidence": 0.85,
@@ -52113,6 +52257,41 @@
     ],
     "why": "Issue clearly identifies a missing capability in server-side list handlers: cursor is ignored and nextCursor never set, with no way to replace handlers. Root cause is well-documented with code references and a concrete use case. The contribution is actionable: implement pagination or provide handler override."
   },
+  "95199c0f925bc2ea4f9379352aa8ca73ddfd20fd1fdc230a5cd51b5ddd8cc553": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment marks PR #23776 as CLOSED while also listing it as best coverage candidate with root_cause_coverage=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/mcp package.json: declare hono as peerDependency",
+      "packages/mcp build/generateTypes config: remove hono from vendored types set",
+      "public declarations of MCPServer.connectHonoSSE/getSseHonoTransport import from consumer hono"
+    ],
+    "risks": [
+      "Closed PR #23776 may already cover or have been rejected for this exact fix",
+      "Dropping vendored hono types could break consumers without hono installed",
+      "Peer dependency addition is a semver/API surface change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce TS2322 with the issue's minimal repro (hono 4.12.14, TS 5.9.3, moduleResolution bundler)",
+      "Add a type-level regression test asserting connectHonoSSE accepts a consumer-typed SSEStreamingApi",
+      "Run targeted package build/typecheck for @mastra/mcp"
+    ],
+    "unknowns": [
+      "Why PR #23776 was closed and whether it resolved this issue",
+      "Whether maintainers require triage label removal before PRs (bot comment)"
+    ],
+    "why": "Issue has a clear root cause (vendored hono .d.ts in @mastra/mcp dist/_types causing nominal type mismatch) and a concrete repro, but the only candidate fix PR #23776 is CLOSED with root_cause_coverage=false and no tests, and the duplicate/coverage status is explicitly 'human_review_required'. Whether the closed PR already resolved or was rejected for this issue is a materially blocking unknown for actionability."
+  },
   "952f7819438c05b3bf8941221e4768e60d7936a8d87970bd0b2e5f161ca4c132": {
     "confidence": 0.85,
     "contradictions": [],
@@ -57045,6 +57224,37 @@
       "Whether any existing PR is considered viable for revival"
     ],
     "why": "Issue clearly identifies a user-visible bug in mem0 v3: ADD-only extraction causes stale/contradictory facts to accumulate, with a concrete reproduction scenario. However, the deterministic gate requires HUMAN_REVIEW, and multiple PRs already attempt to address this issue (#4969, #4965, #5240), all closed without merge. Maintainer design direction is still being clarified (append-only vs CRUD), as seen in comments. This requires maintainer confirmation before new work."
+  },
+  "a36e78be4465b2fa32184764e8ee1ce8be9e2610e78d0fdffc0a0d7f13052111": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "@mastra/inngest durable finish path: call runDurableFinishSideEffects directly before emitFinishEvent instead of wrapping in params.engine.step.run",
+      "Ensure output processors (processOutputResult) and finish-time memory persistence run on the Inngest engine"
+    ],
+    "risks": [
+      "Nested step removal may interact with Inngest step semantics or retry/idempotency behavior",
+      "Finish-time memory persistence flush ordering relative to emitFinishEvent could change observable state",
+      "Prior PR #22451 was closed unmerged, so maintainer design preference on the fix shape is unconfirmed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using an OutputProcessor with processOutputResult that asserts it runs on a durable Inngest agent turn",
+      "Compare behavior against core's built-in createDurableAgent with the same probe to confirm parity",
+      "Verify the finish event is emitted without hanging (regression for #22450) on @mastra/inngest >=1.8.6"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred fix shape given #22451 was closed unmerged",
+      "Whether the closed PR #22451 already covered this exact change (duplicate/merged-fix coverage not fully resolved)"
+    ],
+    "why": "Issue pinpoints the exact seam: @mastra/inngest 1.8.5 never calls runDurableFinishSideEffects (grep count 0, direct emitFinishEvent call), while 1.8.6+ wraps it in a nested step.run causing the #22450 hang. Concrete code anchors and a documented contract in @mastra/core 1.63.0 establish root cause; a minimal probe with a custom OutputProcessor gives a reference-vs-implementation validation path."
   },
   "a39381d350c296c453b8596e37415d55cfc180a8996716eebdac0c301fe1f374": {
     "confidence": 0.8,
@@ -62760,6 +62970,41 @@
       "Whether the reporter's fork-specific config is required to reproduce"
     ],
     "why": "Issue provides a plausible root cause (head-only mamba_cache_mode derivation not reaching remote rank) and a workaround, but the supplied evidence shows no public reproduction and an unresolved semantic-overlap PR (#52244) touching mamba/mamba_cache_mode that may already cover the same root cause; the disclosure policy conflict also blocks automated action."
+  },
+  "b514cf7ab0d0f27762e7ec56eb33f0cb9887bbaa31be446f558dfa9818e12270": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue says drafter runs every step and writes context KV for all scheduled tokens, yet also claims garbage draft blocks are cached"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py draft context KV coverage",
+      "vllm/v1/core/block_pool.py draft-group block registration gating"
+    ],
+    "risks": [
+      "Root cause not pinned to a specific step that registers unwritten draft blocks",
+      "Open maintainer-owned draft PR #56723 may already cover the same speculator path",
+      "AI disclosure policy conflict flagged in preTaskEvidence"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Serve DSpark/DFlash drafter with APC on, replay ~20k-token shared-prefix traffic, measure vllm:spec_decode_num_accepted_tokens / num_draft_tokens before and after fix",
+      "Compare acceptance on shared-prefix vs unique-prompt workloads on same pod to isolate cache-restored draft context"
+    ],
+    "unknowns": [
+      "Which step registers unwritten draft-group blocks",
+      "Whether PR #56723 already fixes this root cause",
+      "Whether #47926 workaround is the intended fix shape"
+    ],
+    "why": "Issue describes a plausible DFlash/DSpark draft-KV corruption mechanism with strong empirical acceptance numbers, but the reporter explicitly states they have not pinned which step registers unwritten draft blocks, and the open PR #56723 (maintainer-owned, draft) already touches the same speculator path with semantic overlap. The duplicate/coverage question is unresolved, which materially determines whether independent code work is actionable."
   },
   "b517f746a4663db054678461770fb9f31edd4545a80a83c6c12bdd8c7605d04b": {
     "confidence": 0.85,
@@ -79795,6 +80040,41 @@
     ],
     "why": "The issue reports a real long-context spec-decode regression with profiled ~182 ms/cycle drafter attention cost, but the supplied comment thread materially contradicts the proposed mechanism: one commenter retracts the 'drafter rescans full KV' explanation (DFlash is single-pass), another attributes the cost to missing DCP sharding in DFlashSpeculator.propose, and the magnitude is unexplained (~17x beyond geometry). Direction 1 (per-seq-len disable hook) is also already covered by open PR #48944 and a separate proposal #54801, so the actionable code path is unresolved."
   },
+  "e337a431eaeeee17432fdef990b6629091629b75d7a51ca436fca08687927566": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ui/litellm-dashboard/next.config.mjs: bake basePath \"/ui\" (env-overridable)",
+      "ui/litellm-dashboard/src/utils/uiHref.ts: collapse to identity for links, retain for absolute URLs",
+      "ui/litellm-dashboard/src/utils/uiBase.ts: remove NODE_ENV development special case",
+      "litellm/proxy/proxy_server.py: verify /ui StaticFiles mount serves __next.*.txt payloads without change"
+    ],
+    "risks": [
+      "Custom server_root_path deployments lose soft navigation since \"/ui\" cannot be safely string-replaced at runtime",
+      "Broad uiHref() usage across ~12 files may introduce link regressions if not all call sites are audited",
+      "Dev/prod parity change (dev now serves at /ui) may break existing dev workflows"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build the static export and serve via proxy at /ui; click sidebar links and assert no full document navigation (no reload, URL updates client-side)",
+      "Assert prefetch requests to /ui/... return 200 and are served from router cache on revisit",
+      "Regression: verify asset URLs and custom server_root_path deployments still resolve correctly"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer baking basePath vs. an alternative router-ownership approach",
+      "Whether the /litellm-asset-prefix sentinel and extra _next mounts must be adjusted for the baked basePath"
+    ],
+    "why": "Issue provides a concrete, well-argued root cause: Next.js static export built with basePath \"\" but mounted under /ui, so the client router does not own /ui-prefixed hrefs and falls back to MPA navigation, discarding the prefetch cache and firing 404 prefetches. Code anchors (next.config.mjs, uiHref.ts, proxy_server.py StaticFiles mount) and a clear before/after user flow are supplied, and no duplicate or open PR covers it."
+  },
   "e340917d1462d511f2c9f32651e642385ff132150e5fed4914523c305645f134": {
     "confidence": 0.85,
     "contradictions": [],
@@ -89681,6 +89961,42 @@
       "Maintainer preference on the fix approach"
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and may already address the same code paths. The deterministic gate requires HUMAN_REVIEW, and the overlap must be manually compared before creating a new task."
+  },
+  "fd479f828c536e18fd61afef4cd9fd38de45c4d469fa6ee4e3d7e5aee5766b10": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue frames the connection-scoped queue as an oversight, while triage notes #8240 deliberately serialized prompts at the shared connection boundary"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/cli/src/acp-integration/session/Session.ts: scope permissionRequestTails to the Session instance instead of the shared AgentSideConnection",
+      "packages/cli/src/acp-integration/session/Session.test.ts: rewrite the cross-session serialization test to assert independent dispatch per session",
+      "packages/acp-bridge/src/bridge.ts / permissionMediator.ts: bound the queued wait rather than DEFAULT_PERMISSION_TIMEOUT_MS=0",
+      "packages/acp-bridge/src/bridge.ts toSessionSummary: surface a queued/blocked state instead of isWaitingForUserQuestion=false"
+    ],
+    "risks": [
+      "The per-connection serialization was a deliberate design decision in #8240; changing it may conflict with maintainer intent for clients that cannot render concurrent prompts",
+      "Open PR #9921 touches the same Session.ts/Session.test.ts paths and has changes requested; overlapping implementation may already partially cover the area",
+      "Changing queue scope alters documented behavior and requires updating pinned tests"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the issue's proposed regression test: two Sessions on one mockClient, first request never resolved and never aborted, assert second requestPermission is not dispatched; then abort the first and assert the second dispatches immediately",
+      "Run the existing Session.test.ts serialization tests and update the assertion at the cross-session case to the new per-session contract",
+      "Run targeted unit tests for permissionMediator timeout behavior with a finite timeout"
+    ],
+    "unknowns": [
+      "Whether maintainers want per-session scoping or an opt-in client capability for connection-level serialization",
+      "Whether PR #9921's changes overlap the queue-scope fix or only the cancellation-reason path"
+    ],
+    "why": "Issue provides a precise, code-anchored root cause: permissionRequestTails is a module-level WeakMap keyed on AgentSideConnection (Session.ts), while one daemon child multiplexes N sessions over one connection, so an unanswered ask_user_question on session A blocks session B indefinitely (DEFAULT_PERMISSION_TIMEOUT_MS=0). Triage bot independently verified every code claim on current main, including the test that pins the behavior as expected. Concrete fix (per-session queue scope, bounded wait, observability) and a proposed regression test are supplied."
   },
   "fd5d41c70924600ac55be68afecf8f59d3ebb0c05f65b87d45f8bf6eb779dae6": {
     "confidence": 0.6,
