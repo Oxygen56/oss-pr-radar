@@ -17141,6 +17141,40 @@
     ],
     "why": "The issue provides a clear frontend-only bug with a concrete root cause: the sidebar reads from the null 'metrics' field instead of the populated 'stats.usage_to_metrics' path. It includes a reproducible command, expected vs actual behavior, and acceptance criteria with a regression test requirement. No competing open PRs or duplicates were found."
   },
+  "31bfc9c97c8d8e0ba72e1c31e42dd902ab73adcb8a6b43b18dc4e9ab868ff0ef": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims a clear code-level mechanism, but actionability_evidence reports root_cause_signal=false and reproduction_or_validation_missing."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/deepgram/flux/stt_base.py (incoming-event watchdog)",
+      "src/pipecat/services/deepgram/flux/stt.py (reconnect/health signaling)",
+      "src/pipecat/turns/user_turn_controller.py (turn release when speaking source goes silent)"
+    ],
+    "risks": [
+      "A service-level watchdog could trigger spurious reconnects during legitimate quiet periods, causing transcript loss or duplicate turns.",
+      "The true root cause may be server-side (Deepgram Flux behavior) rather than a pipecat defect, making a client-side fix a workaround rather than a fix.",
+      "Changing user_turn_controller timeout semantics could affect other STT providers that rely on the current open-turn behavior."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a fake/mock Flux websocket that accepts audio but stops emitting events after StartOfTurn; assert the service detects the stall and either reconnects or releases the turn within a bounded time.",
+      "Regression test that a normal EndOfTurn path is unaffected and that the watchdog does not fire during legitimate long silences."
+    ],
+    "unknowns": [
+      "No deterministic reproduction or captured event trace that isolates the stall condition.",
+      "Whether the stall is a Deepgram server-side issue or a pipecat state-machine defect.",
+      "Whether maintainers consider a service-level watchdog in scope versus a documented workaround."
+    ],
+    "why": "The issue describes a plausible production failure (Flux stream stays open but stops sending events, leaving an open user turn), and it points at concrete code anchors (flux/stt_base.py watchdog, flux/stt.py reconnect_on_error=False, user_turn_controller.py stop-timeout gating). However, the supplied evidence explicitly records reproduction_or_validation_missing: no public repro, no reproduction evidence, root_cause_signal=false, probe_ready=false. The failure is not reproducible on demand and depends on Deepgram going quiet, so the root cause (server-side silence vs. client-side state handling) is not established. Without a deterministic reproduction or a concrete validation path, it is not yet clear whether a code change is actionable or what behavior to assert in a regression test."
+  },
   "31d40577730745541a9d9a43730298093e8f9fbb26b3dc199d63a5386a795825": {
     "confidence": 0.6,
     "contradictions": [
@@ -31532,6 +31566,39 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue is a user bug report about a TRL version incompatibility in LLaMA-Factory's PPO training. The traceback clearly shows a version check failure (trl==0.24.0 vs required >=0.8.6,<=0.9.6). This is an environment/dependency issue, not an algorithm defect. The candidate's claim of an LLM algorithm mechanism is not substantiated; the error is operational and the fix is to install the correct TRL version or disable the check. No concrete algorithm improvement or validation path is provided."
+  },
+  "57c5c204ab6366c57cacbf2992ecd74665607080ad33d33bdf975066a0e9a683": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "clients/web/src/domains/chat/hooks/use-conversation-history.ts: gate missing-reason raise on isClaudeConnected() (paint if false/unknown), keep auth_required unconditional, re-assert activeConversationId/!pendingAcpConnect/acpConnectRevision after await",
+      "clients/web/src/domains/chat/transcript/acp-connect-affordance.tsx: optionally make alreadyConnected tri-state and return null while undefined for missing-reason prompts",
+      "clients/web/src/domains/chat/interaction-store.ts: avoid suppressing later legitimate restores via dismissAcpConnect on connected:true"
+    ],
+    "risks": [
+      "Awaiting isClaudeConnected in the history hook could race with conversation switches; the re-assertion of activeConversationId/pendingAcpConnect/acpConnectRevision must be correct",
+      "Tri-state alreadyConnected change may affect other callers of the affordance component",
+      "Maintainer may prefer the durable server-side route (acpConnectCardStillWarranted) over the client-side minimal fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing regression test that opens/switches to a conversation with a persisted acp_claude_oauth_missing marker and a stored token, asserting the connect card is not painted",
+      "Throttle/delay isClaudeConnected resolution and assert the card does not flash for missing-reason prompts but still paints when the check is false or throws",
+      "Verify auth_required prompts still raise unconditionally and that switching away and back does not re-raise after a connected:true answer"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the minimal client-side gate or the durable conversation-scoped route exposing acpConnectCardStillWarranted"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: the raise path in use-conversation-history.ts paints the ACP connect card without a currency check, while the self-heal in acp-connect-affordance.ts dismisses it one RTT later; resetAll clearing dismissedAcpConnectToolUseIds explains recurrence. Reproduction steps and a throttling probe are supplied, and the suggested client-side fix is specific and testable."
   },
   "57d1c83069094028bd469db9289160f278af37fe42bb19e0fcfbfeb2dc0aa0cb": {
     "confidence": 0.72,
@@ -46393,6 +46460,42 @@
     ],
     "why": "Issue provides a deterministic reproduction and clear root cause for connection-per-exchange in legacy streamable HTTP mode, but the repository requires assignment and AI disclosure, and the gate decision is HUMAN_REVIEW. Existing PR #2712 directly addresses the same root cause but lacks tests and is stale; a materially better PR is plausible, but maintainer confirmation is needed before starting."
   },
+  "7da710c03e0503eb6a1f9390b7d2c46358997aa32942488f4c90e0676ac41b6d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: _prune_and_reset merge-then-reinitialize contract or rename/docstring correction",
+      "src/soup_cli/utils/relora.py: magnitude_prune_tensor exact-count mask (topk/stable order) honoring prune_ratio under ties",
+      "optimizer-state reset targeting optimizer moments rather than learned adapter weights",
+      "explicit rejection or support for quantized/FSDP/DeepSpeed/streamed bases"
+    ],
+    "risks": [
+      "Tie scenario is constructed; production frequency of Claim B is unmeasured, though freshly-initialized lora_B is all zeros by PEFT convention",
+      "Claim A fix is a maintainer contract decision (implement restarts vs rename feature); a partial fix could leave docstring/behavior inconsistent",
+      "Quantized/distributed/streamed base support may require loud compatibility rejection rather than full implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: apply callback to a small peft LoRA model with fixed seed; assert base weight unchanged only in the rename path, or assert effective linear map preserved to numerical tolerance in the merge-then-reset path",
+      "Regression test: constant-magnitude lora_A/lora_B with prune_ratio=0.9 must retain exactly the requested keep count and leave nonzero entries in both factors",
+      "Gradient test: after callback, assert grad-norm of lora_A and lora_B is nonzero so the branch is not permanently dead",
+      "Kernel-level test: ones(10) with prune_ratio=0.9 keeps 1 entry; arange(1..10) keeps 1 entry"
+    ],
+    "unknowns": [
+      "Which of the two coherent contracts (real ReLoRA restart vs rename to periodic LoRA weight pruning) the maintainer will accept",
+      "Whether the first relora_steps interval after initialization actually hits the all-zero lora_B tie in practice"
+    ],
+    "why": "Issue identifies two concrete, independently reproduced defects in ReLoRACallback._prune_and_reset: (A) adapter weights are pruned without merging B@A into the base, so the learned effective map is discarded (base weight delta 0, MSE 142.12 vs merge-then-reset control 8.77e-13); (B) strict '>' thresholding wipes all entries on ties, zeroing both lora_A and lora_B and producing zero gradients (kernel ones(10) prune_ratio=0.9 -> 0 nonzero, expected 1). Owner confirmed both halves with real peft LoRA model evidence, and the fix path (merge/reinit or rename+docstring, plus exact-count topk mask) is concrete and testable."
+  },
   "7dacc82a2484bdd41577347706b206eded07d38010fe7907078734a3fb8f8101": {
     "confidence": 0.7,
     "contradictions": [
@@ -52743,6 +52846,43 @@
     ],
     "why": "The issue identifies a concrete bug in the gemma4 tool parser where tool_choice='required' is not enforced, leading to prose-only responses mislabeled as tool calls. The root cause is partially known (finish_reason logic) and the enforcement gap is clearly described. The issue provides a reproduction script and analysis, making it actionable despite the lack of a minimal reproducer."
   },
+  "8fb8587aa8be090bbe3d881441b683861c47c49ee110a3cc2069700289a4bd5d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body and comment assert root cause is confirmed, but open_pr_assessment reports rootCauseCoverage=false for the existing PR #13271",
+      "Comment author states they cannot build/run tests locally yet proposes a concrete fix, leaving implementation status uncertain"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "extensions/vscode/src/util/FileSearch.ts: cap indexed file count and/or chunk MiniSearch.addAll with event-loop yielding",
+      "extensions/vscode/src/util/FileSearch.ts: remote-workspace handling (findFiles/listWorkspaceContents) or lazy index build",
+      "default ignore list / directory pruning for out-of-source build trees"
+    ],
+    "risks": [
+      "PR #13271 may already cover the same fix, making a new implementation duplicative",
+      "Changing indexing behavior (cap, lazy build, remote findFiles) could alter @file completion semantics",
+      "Remote-SSH crash reproduction requires large workspace and remote setup, limiting local validation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that constructs FileSearch with a mocked walkDirs returning >cap paths and asserts the index is capped and the event loop yields between batches",
+      "Reproduce on a large Remote-SSH-like workspace fixture and verify extension host responsiveness / no unbounded synchronous addAll",
+      "Run targeted VS Code extension unit tests and static checks for the changed package"
+    ],
+    "unknowns": [
+      "Whether open PR #13271 already fully resolves issue #13249 or leaves independent implementation space",
+      "Whether maintainers have a preferred fix approach (cap vs chunking vs lazy/remote findFiles) that would make a competing PR redundant"
+    ],
+    "why": "Issue #13249 provides a detailed, code-anchored root cause (unbounded synchronous MiniSearch.addAll in FileSearch.initializeFileSearchState) with CPU profiles and logs, and a concrete validation path exists. However, open PR #13271 directly references this issue, overlaps the exact file and distinctive identifiers (filesearch_initializefilesearchstate, remote_ssh), and is only 1 day old and still open. The duplicate/coverage status is explicitly 'human_review_required' with best_score 29, and the supplied evidence does not establish whether #13271 already resolves the issue or leaves independent implementation space. That unresolved coverage question materially determines whether new code work is actionable."
+  },
   "9005630a49d1a8b7b165b5039fda692e43c089be36f1783555f42e742495570a": {
     "confidence": 0.85,
     "contradictions": [
@@ -56452,6 +56592,43 @@
     ],
     "why": "Issue provides a precise root cause (Pydantic JSON mode serializes non-finite floats as null, failing client schema validation), a minimal reproduction, and a clear fix direction (reject non-finite floats at return with a clear message, matching existing practice). This is a concrete, actionable bug in the MCP SDK's core tool-call path."
   },
+  "9a9c5dddd49b3ba54a513fcd4ec11a2ba6a0deed34f43d9917b17bc22118fec3": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reporter attributes root cause to agent-controller getString() on stepResult.reason; maintainer triage states that path only writes metadata and stepResult.reason is already normalized",
+      "Reporter claims nested {unified,raw} shape is broken; triage says normalizeFinishReason already unwraps one level and no core layer produces the nested shape",
+      "Reporter says bug is not provider-specific; triage says trigger needs a non-conforming nested finish reason"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/loop/workflows/agentic-execution/llm-execution-step.ts (finish-reason gate / TERMINAL_FINISH_REASONS handling)",
+      "packages/core/src/stream/aisdk/v5/transform.ts (normalizeFinishReason totality, if confirmed)"
+    ],
+    "risks": [
+      "Fixing the wrong layer (agent-controller metadata) would not stop the runaway",
+      "Recursive unwrapping could mis-handle providers with differing nesting depth",
+      "Changing the gate to fail-closed could truncate legitimate multi-step tool turns"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that drives the agentic loop with a non-string/object finish reason and asserts the loop terminates at the first terminal reason rather than maxSteps",
+      "Run targeted packages/core loop and stream transform unit tests plus static checks"
+    ],
+    "unknowns": [
+      "Which concrete code path actually produces the non-string finish reason reaching the loop gate",
+      "Whether the fail-open gate in llm-execution-step.ts is the true root cause or a secondary symptom",
+      "Whether open PR #23847 (token totals, overlapping transform paths) already covers or conflicts with the fix"
+    ],
+    "why": "Issue reports a real, high-impact agent-loop runaway (maxSteps always reached, ~10x tokens), but the supplied maintainer triage directly contradicts the reporter's stated root cause and location: the reporter blames agent-controller getString() on stepResult.reason, while triage shows that path only writes metadata and that stepResult.reason is already normalized by normalizeFinishReason in transform.ts. Triage locates the actual fail-open gate in llm-execution-step.ts (TERMINAL_FINISH_REASONS.includes(object) === false) and states no core layer was found producing the nested shape. The root cause is therefore unresolved/contradictory, which materially determines whether a code fix is actionable."
+  },
   "9a9f47c5fb22dc86f13467e3fb0a1cc6fc60034b70383f63cddf00a8f864f472": {
     "confidence": 0.8,
     "contradictions": [],
@@ -60138,6 +60315,46 @@
       "Whether in-container vLLM upgrades are a supported workflow; maintainer decision pending."
     ],
     "why": "Issue provides a clear root cause (flashinfer-jit-cache version skew), a concrete reproduction command, and a verified workaround. The suggested fixes are actionable and the maintainer triage indicates engagement. Although the original skew no longer reproduces on 1.4.x, the structural hazard remains and the issue is still open, making a documentation or packaging fix valuable."
+  },
+  "a491735ca438566d0ff5023e6aca1963a89c4eb18bd233034a0a40a8ecb1a37c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body blames TileLang QSA prefill MQA kernel tail masking; reporter's later comment retracts this and calls it an overlap-scheduler race",
+      "Reporter's comment credits #37638 as the fix, then retracts that claim",
+      "Commenter reports --disable-overlap-schedule resolved the crash, then reports it recurred 7 times with disable_overlap_schedule=True",
+      "Commenter attributes the crash to merged #38346 (compress gather clamp) while the issue body rules out other QSA issues"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/layers/attention/qsa/metadata.py get_prefill_mqa_inputs host/device sequence-length snapshot consistency",
+      "python/sglang/srt/layers/attention/qsa/qsa_indexer.py prefill path",
+      "python/sglang/srt/managers/scheduler.py overlap-schedule stream interaction"
+    ],
+    "risks": [
+      "Fixing a kernel bounds issue that is already covered by merged #38346 would be wasted work",
+      "The overlap-scheduler race hypothesis is unconfirmed and may not be reproducible on available hardware",
+      "Crash is probabilistic, so a passing run is not proof of a fix"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with bench_serving --max-concurrency 8 on Qwen3.8-Flash-Next-FP8 TP8 and confirm crash vs. pass at c=4",
+      "Re-run the same reproducer on a build containing merged #38346 to determine whether the crash is already covered",
+      "Add a regression test that packs ragged multi-row prefill with chunk lengths 4096*k+{1,2,3} and asserts no illegal access with torch.cuda.synchronize()"
+    ],
+    "unknowns": [
+      "Whether merged #38346 already covers this crash signature",
+      "Whether the overlap-scheduler race hypothesis is reproducible and what the actual bad address derives from",
+      "Whether any remaining unfixed code path exists after #38346 and the retracted #37638"
+    ],
+    "why": "The issue's own reporter retracted the QSA kernel bounds root cause and re-characterized the crash as an overlap-scheduler race; a later commenter reports the merged #38346 clamp (chunked-prefill tail gather) as the likely fix and that --disable-overlap-schedule was NOT sufficient. The supplied evidence therefore contains contradictory root-cause claims and unresolved duplicate/merged-fix coverage, so it is not established that actionable code work remains."
   },
   "a4a9b8abca860f2895cecbf4d15a3db008406c854fcdf9ce38e1e67aef3dbb49": {
     "confidence": 0.8,
@@ -64259,6 +64476,44 @@
       "Maintainer's intended fix approach unknown; assignment suggests they will implement."
     ],
     "why": "Issue describes a specific KV offload bug with a concrete reproduction geometry and a fix concept, but lacks a minimal code-level reproducer and maintainer confirmation of the proposed design. The maintainer has assigned themselves, indicating active investigation, so private work may duplicate or conflict."
+  },
+  "b0bd0bab886ed19e2a899122949609f8eb93d41a8d5ffb5a00ef9bfd71cfaf22": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue blames #56512 async prefetch for the Qwen4Exp PLE CPU-offload decode flake, while maintainer ZJY0516 states #56512 should only affect deepseek v4.1f",
+      "Issue reports clean isolated 7-run repro but collapse only in the full sweep, weakening the stated root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/kv_cache_utils.py (prefetch stream / record_stream / wait_stream path)",
+      "PLE CPU-offload lookup tensor scheduling on the decode path"
+    ],
+    "risks": [
+      "Causal attribution may be wrong; the maintainer comment contradicts the suspected PR's applicability",
+      "Flake only reproduces in a long full-sweep sequence, so a fix cannot be validated by the isolated repro",
+      "Local kv_cache_utils.py overlay and non-public resharded checkpoint reduce reproducibility for maintainers",
+      "Potential duplicate/overlap with issue #56605 sharing stack failure signatures"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the full llama-benchy sweep (all four depths, c1+c4, --runs 3) on eed1f3d0 vs dc36fcce with identical config and compare ctx_tg @ d32768 (c1) mean/sd",
+      "Bisect the eed1f3d0..dc36fcce range with the prefetch side-stream disabled to confirm or refute #56512 as the cause",
+      "Verify whether the affected path is reachable for Qwen4Exp PLE CPU-offload given the maintainer's statement that #56512 only affects deepseek v4.1f"
+    ],
+    "unknowns": [
+      "Whether the prefetch side-stream code path is actually exercised by Qwen4Exp PLE CPU-offload",
+      "Whether the collapse is caused by #56512 or another commit in the eed1f3d0..dc36fcce range",
+      "Whether the non-public resharded checkpoint and local overlay are required to reproduce"
+    ],
+    "why": "The issue attributes a decode-throughput flake to #56512's async prefetch side-stream, but the only supplied maintainer comment (ZJY0516, MEMBER) states #56512 'should only affect deepseek v4.1f', directly contradicting the claimed causal path on a Qwen4Exp PLE CPU-offload stack. The reproduction also requires a private/resharded checkpoint, a local overlay in kv_cache_utils.py, and a full ~14-minute sweep sequence that does not reproduce in isolation, so the root cause is not established and the causal claim is contradicted by supplied evidence."
   },
   "b0d0dd1aae319e2a2001c18848aeb947d38cc1af85b93df92ba505f062d39d70": {
     "confidence": 0.8,
@@ -78036,6 +78291,42 @@
     ],
     "why": "The issue clearly identifies a bug in the openai-compatible provider where top-level reasoning 'none' is dropped instead of forwarded as reasoning_effort 'none'. It provides a concrete reproduction, expected vs actual request bodies, and points to the exact code line causing the issue. The fix is straightforward and aligns with a previously fixed similar bug in xai."
   },
+  "d4c053cac7e881286555298bf921ba706fc468c466abd8cc4c0ebd8a9525768e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Duplicate assessment says semantic overlap requires review while candidate category is WAIT_MAINTAINER with no maintainer confirmation",
+      "Issue checklist marks 'bug persists in latest version' as unchecked, leaving version validity uncertain"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/utils/hf_transformers/config.py (model_type registration/fallback)",
+      "python/sglang/srt/configs/model_config.py (architecture resolution)",
+      "python/sglang/srt/arg_groups/cuda_graph_hook.py (prefill cuda graph default path that triggers config load)"
+    ],
+    "risks": [
+      "PR #39370 or #38950 may already fix the same root cause, making a new contribution duplicative",
+      "Fix could be a transformers version bump rather than a code change, which is not an actionable code contribution",
+      "NPU/A5 hardware-specific behavior may not be reproducible in CI"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the reported dsv41 checkpoint and confirm KeyError 'deepseek_v41' in AutoConfig.from_pretrained",
+      "Add a regression test that loads a config with model_type deepseek_v41 through sglang's get_config path",
+      "Run targeted unit tests for hf_transformers config parsing and model_config resolution"
+    ],
+    "unknowns": [
+      "Whether PR #39370 or #38950 already resolves the deepseek_v41 model_type registration",
+      "Whether the failure is caused by transformers version rather than sglang code",
+      "Whether the checkpoint's config.json model_type is expected to be supported by sglang or is a checkpoint-side error"
+    ],
+    "why": "Issue reports a concrete traceback (KeyError 'deepseek_v41' in transformers AutoConfig via sglang ModelConfig.get_config), but the root cause is ambiguous: it may be a missing model_type registration in sglang's HF config parser, an outdated transformers version, or a checkpoint config mismatch. The supplied duplicate assessment flags PR #39370 (maintainer-owned, semantic overlap on checkpoint/dsv4/dsv4_1) and PR #38950 (NPU DSV4.1 adaptation) as potentially covering the same code paths, and duplicate status is 'semantic_overlap_requires_review' — unresolved coverage is a materially blocking unknown. No algorithm evidence is supplied, and the track is agent_ai_infra with no concrete training/kernel/numerical objective."
+  },
   "d4c603b3fbaffff67a54321a650a9253be341d31634c18a5f8a765df5d2b28ed": {
     "confidence": 0.82,
     "contradictions": [],
@@ -80589,6 +80880,40 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports four scheduler defects; comments confirm bugs 1, 3, 4 fixed in v1.46/main, leaving bug 2 (recipe settings ignored on scheduled runs) as the remaining actionable defect. A contributor has a local patch for the bounded scope but has not opened a PR pending maintainer design confirmation. Existing PR #11110 overlaps scheduler paths but lacks tests and does not reference this issue. The remaining work is well-defined but requires maintainer scope decision and comparison with existing PR."
+  },
+  "db11d77adc83bea5c4d6659abc97defaf593b8476c4caaa395edc3a8fa80e40c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body says raw request/response comparison not done and fault location uncertain, while comment asserts a definite corresponding defect in the transform layer"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src-tauri/src/proxy/providers/transform_codex_chat.rs: handle function_call_output lacking call_id without emitting empty tool_call_id",
+      "Add regression test for call-less function_call_output with name/namespace"
+    ],
+    "risks": [
+      "PR #7374 may already cover the root cause, making a new fix duplicative",
+      "Upstream Responses passthrough format may require separate normalization not covered by the Chat transform fix",
+      "Changing mapping semantics could alter tool-call context behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a Responses payload containing function_call_output with name but no call_id and assert no tool message with empty tool_call_id is produced",
+      "Run targeted unit tests for the codex chat transform module"
+    ],
+    "unknowns": [
+      "Whether PR #7374 fully resolves this issue or leaves gaps",
+      "The actual upstream provider format (Responses passthrough vs Chat Completions) for the reporter's setup"
+    ],
+    "why": "Issue has a concrete reproduction and a plausible root cause in transform_codex_chat.rs (function_call_output without call_id becomes tool_call_id:\"\"), but open PR #7374 already targets the same code path and semantics with a fix, and the issue reporter explicitly states the raw request/response comparison is not done and it is unclear whether the fault is in Codex, CC Switch, or the upstream compatibility boundary. The unresolved duplicate/merged-fix coverage and the unconfirmed upstream format materially determine whether independent code work is actionable."
   },
   "db313caf6a0d33d27cd37125f53b0b27df2f448c2ea6b9c1bb4c0e06b3520c41": {
     "confidence": 0.85,
@@ -85909,6 +86234,46 @@
       "Maintainer preference on fixing vs. waiting for extensible KV cache"
     ],
     "why": "Issue provides strong evidence of a memory accounting discrepancy between MRv1 and MRv2, with a deterministic OOM repro and community A/B isolating CUDA graph capture headroom. However, root cause is not fully confirmed (eager residual unexplained), and an existing draft PR #49233 attempts a fix but is incomplete. Maintainer direction is needed to avoid duplicating or conflicting with ongoing work."
+  },
+  "e854cb2e8f5260ab87343ac3530827fe0161d7143516a165c58a4228a3344e2c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue groups two failures under one report while stating they may not share a root cause",
+      "Retries of the exact same batch succeed, arguing against a deterministic shape-only failure, yet no runtime-value evidence is captured"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "megatron/core/transformer/experimental_attention_variant/dsa_kernels.py",
+      "megatron/core/transformer/experimental_attention_variant/csa_cp_layout_kernels.py",
+      "megatron/core/transformer/experimental_attention_variant/csa.py",
+      "megatron/core/transformer/experimental_attention_variant/deepseek_v4_hybrid_attention.py"
+    ],
+    "risks": [
+      "Two distinct failure modes may have different root causes and require separate fixes",
+      "Intermittent, non-deterministic failures may be hardware/driver/compile-cache related rather than a code defect",
+      "Existing PRs #6848, #6910, #6939, #7169 may already cover parts of the root cause, requiring comparison before new work",
+      "The reporter's downstream patch and provider override (apply_dsa_kernel_fusion=True on SM90) deviate from upstream defaults and may confound reproduction"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a small deterministic reproducer with fixed seed, packed THD, CP>1 on SM90 and CUDA_LAUNCH_BLOCKING=1 to localize the failing kernel",
+      "Compare against a CPU/single-GPU reference for DSA sparse-attention backward and build_attention_indices outputs",
+      "Run the target algorithm unit tests with fixed tolerance and seed once a candidate fix exists"
+    ],
+    "unknowns": [
+      "No minimal deterministic reproduction or isolated failing kernel",
+      "Whether #6848/#6206/#6910/#6939 already fix either failure",
+      "Which current MCore revision should be used to retest the path",
+      "Whether the downstream patch or SM90 fusion override contributes to the failures"
+    ],
+    "why": "Issue reports two intermittent CUDA runtime errors (cudaErrorInvalidValue in cuDNN SM90 DSA backward, cudaErrorUnknown in packed-THD build_attention_indices) with no deterministic reproducer; the reporter explicitly states they do not know whether the two failures share a root cause and that CUDA_LAUNCH_BLOCKING was off, so the reported call may not be the originating kernel. No minimal reproduction, no isolated failing kernel, and no confirmed root cause are supplied."
   },
   "e858e22117ac15654826d1f9e649c8925e70f251a3514c66e4652bb2b24e8450": {
     "confidence": 0.7,
