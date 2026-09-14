@@ -10363,6 +10363,43 @@
     ],
     "why": "Issue reports a real bug with detailed reproduction and ruled-out factors, but open PR and related issue lookups timed out, so duplicate work cannot be excluded. The repository requires AI disclosure, which conflicts with automated public action. Maintainer approval is absent and design confirmation is needed for the suspected areas."
   },
+  "1f583d65847c1dbbd160f7ced28bbd6bdb1710574d7ae4044dcb645c96cc853c": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Candidate labels category WAIT_MAINTAINER with score 10 while actionability_evidence shows root_cause_signal=false and maintainer_approved=false",
+      "Open PR #38950 is cited as the reproduction guide yet is also flagged as semantic overlap requiring duplicate review"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/utils/hf_transformers/config.py (model_type registration/fallback for deepseek_v41)",
+      "python/sglang/srt/configs/model_config.py (architecture resolution)",
+      "possibly python/sglang/srt/arg_groups/cuda_graph_hook.py (arch lookup path in traceback)"
+    ],
+    "risks": [
+      "PR #38950 may already cover the same DSV4.1 NPU adaptation, making a new fix duplicative",
+      "Fix could be a Transformers version/checkpoint issue rather than an sglang code defect",
+      "NPU/Ascend A5 hardware may be required to validate the full path"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the reported dsv41 checkpoint and run_dsv41.sh on Ascend A5/NPU to confirm the ValueError",
+      "Add a regression test that loads a config with model_type deepseek_v41 through sglang's get_config path and asserts it resolves without AutoConfig KeyError",
+      "Run targeted unit tests for python/sglang/srt/utils/hf_transformers and model_config"
+    ],
+    "unknowns": [
+      "Whether PR #38950 already fixes the deepseek_v41 model_type resolution",
+      "Whether the failure is caused by sglang config handling or an outdated Transformers install",
+      "Whether the reporter's exact checkpoint/config is available for reproduction"
+    ],
+    "why": "Issue reports a concrete failure (ValueError: model type deepseek_v41 unrecognized by Transformers) with a full traceback and reproduction steps, but the root cause is not established: it is unclear whether the fix belongs in sglang's HF config parsing (python/sglang/srt/utils/hf_transformers/config.py) or in the Transformers version/checkpoint, and the candidate's own evidence marks root_cause_signal=false. Additionally, open PR #38950 ([NPU][DSV4.1] Adapt NPU with DeepSeek V4.1) directly overlaps the same DSV4.1/NPU code paths and is the very guide the reporter followed, so duplicate/coverage status is unresolved and must be compared before any code work is actionable."
+  },
   "1f6683530f2549b9ce6f60d6d7af84a2e9bf5786926df775a6947112b0a4e41d": {
     "confidence": 0.9,
     "contradictions": [
@@ -29389,6 +29426,43 @@
     ],
     "why": "Issue provides a concrete ZeRO-3 distributed-training invariant violation: wait() is non-idempotent on AllGatherHandle/NoGatherHandle, leaving a released parameter marked AVAILABLE over zero-element storage, with a precise sequence, handle-level 2-GPU reproduction, and code anchors in linear.py/engine.py. This is a real algorithm-mechanism bug with a reference-vs-implementation validation path, not plumbing."
   },
+  "5552347f5745b02b38c00175c3001984120da271aa1e3127d2e35f619d6e3081": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Triage bot asserts the confirmed driver is duplicate history-item keys (#11500/#11743), while the reporter's regression shows a unique-key commit/layout loop that still fails with #11743 applied",
+      "Reporter frames the change as complementary hardening but also concedes it does not prove the field crash was initiated independently of the duplicate-ID driver"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/cli/src/ui/components/shared/VirtualizedList.tsx: make row-height measurement edge-triggered and defer the state write outside Ink's active commit",
+      "packages/cli/src/ui/components/shared/VirtualizedList.update-depth.test.tsx: keep the unique-key recursive-update regression"
+    ],
+    "risks": [
+      "Depends on a private Ink layout-listener behavior, which maintainers may reject as an acceptable tradeoff",
+      "Overlaps with open PR #11761 (draft) and maintainer-owned #11743, risking duplicate/competing work",
+      "Fixing the layout loop may mask rather than remove the duplicate-key trigger if #11743 lands"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the focused VirtualizedList.update-depth.test.tsx on the reported base main@05a54fc32a with #11743 applied and confirm the unique-key case still fails",
+      "Re-run the same suite with the proposed VirtualizedList change applied and confirm it passes",
+      "Re-run against current main with #11565's Ink patch applied to confirm the row+container subscriber case still reproduces"
+    ],
+    "unknowns": [
+      "Whether #11743 (duplicate-ID fix) actually resolves the reported field crash once merged",
+      "Whether maintainers accept the private Ink layout-listener dependency as a tradeoff",
+      "Whether the draft PR #11761 is the intended implementation vehicle for this issue"
+    ],
+    "why": "Issue reports a real commit-phase layout feedback loop (useBoxMetrics -> emitLayoutListeners -> resetAfterCommit) with a deterministic unique-key regression test, but the supplied triage evidence explicitly states the confirmed driver for the same symptom is duplicate history-item keys (#11500, fix #11743 still open/unmerged), and the reporter's own comment concedes the regression does not prove the field crash was initiated independently of that driver. Duplicate/merged-fix coverage is therefore unresolved, which is a materially blocking unknown for deciding whether new code work is actionable."
+  },
   "5555692e98bfb824463d95c4d2a35de31e603a149859264d976fc32d436840c1": {
     "confidence": 0.85,
     "contradictions": [],
@@ -32910,6 +32984,39 @@
       "Exact maintainer design preference for handling idle GET streams; whether a fix should be in rmcp or Goose client layer."
     ],
     "why": "Issue provides a clear regression from 1.49.0 to 1.50.0, bisected to a specific commit, with a detailed root cause analysis and a minimal reproduction path. The expected behavior is well-defined, and the code anchor is identified."
+  },
+  "5e1bc8c419d4411c15dfb3e2e3cee8d4c460a7265186c546cce1fcea6bc5d981": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue author could not reproduce synthetically, yet maintainer states it is a known tool-call/frontend issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "rust/src/parser/src/reasoning/glm45.rs reasoning-end/boundary token handling",
+      "parser frontend tool-call token gating to prevent reasoning bleed"
+    ],
+    "risks": [
+      "Root cause is maintainer-asserted; without a captured failing transcript the fix may not cover the actual degeneration path",
+      "FlashInfer 0.6.17->0.6.18 and transformers 5.15.1->5.16.1 remain unexcluded alternative causes",
+      "Existing PR #56635 already covers the parser frontend fix, so independent work may be redundant"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add parser unit test feeding a multi-turn tool-call transcript with reasoning end tokens and assert no reasoning content bleeds into tool-call output",
+      "Regression test comparing parser output before/after fix on a captured degenerate session transcript"
+    ],
+    "unknowns": [
+      "No captured failing transcript or minimal parser-level reproduction is supplied",
+      "Whether PR #56635 fully resolves the degeneration or only partially covers it"
+    ],
+    "why": "Maintainer ZJY0516 confirms root cause is tool-call/vLLM frontend (parser) handling, and PR #56635 targets reasoning-end/boundary token handling in the parser frontend. Issue provides build A/B delta and concrete symptom, but no standalone synthetic repro; root cause is asserted by maintainer rather than demonstrated by a minimal failing test."
   },
   "5e4c0b3cfb0725a76c5e7aa225a5522cd8ed546062942df83393323f4505a9c0": {
     "confidence": 0.7,
@@ -40833,6 +40940,43 @@
       "Whether the proposed repro test actually fails on current main (reporter did not execute it)"
     ],
     "why": "The issue presents a well-evidenced root cause (connection-keyed permission queue in Session.ts:443/10940/10962, unbounded DEFAULT_PERMISSION_TIMEOUT_MS=0, invisible queueing in toSessionSummary) and a concrete validation path. However, the supplied evidence contains a materially blocking unknown: open PR #11802 ('fix(cli): scope the ACP permission queue to the session', maintainer-owned, COLLABORATOR, 2 files/38+/33-, 1 test file, overlapping path packages/cli/src/acp-integration/session/Session.ts) is flagged semantic_overlap_requires_review with direct_code_overlap=false and root_cause_coverage=false. Whether that PR already covers the actionable fix determines whether independent code work is warranted, so the duplicate/coverage question must be resolved before proceeding."
+  },
+  "71b7ef1a3257a9f53e7a879d4a0503f574c8a174b08329a7a515d23760c1f190": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Comment reports NCCL_P2P_DISABLE=1 + --disable-custom-all-reduce fixes the hang, while another reporter says neither helped",
+      "py-spy trace implicates flashinfer sampling warmup, but other comments attribute the hang to custom all-reduce/P2P and to model download time"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/warmup.py or sampler warmup path if flashinfer hang is confirmed",
+      "custom all-reduce enablement logic if NCCL_P2P_DISABLE interaction is confirmed"
+    ],
+    "risks": [
+      "Fixing the wrong layer (sampler vs. all-reduce vs. download) would not resolve the reported hang",
+      "Environment-specific PCIe ACS/topology behavior may not be reproducible in CI",
+      "Repository AI-disclosure policy conflict blocks public submission regardless of technical merit"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the hang with a minimal vLLM serve invocation on the reported topology (multi-GPU PCIe-only, no NVLink) and capture py-spy stacks",
+      "A/B test VLLM_USE_FLASHINFER_SAMPLER=0 vs NCCL_P2P_DISABLE=1 vs --disable-custom-all-reduce to isolate the blocking component",
+      "Add a regression test that engine startup completes within a bounded timeout under the isolated configuration"
+    ],
+    "unknowns": [
+      "Which component actually blocks engine startup in the reporter's environment",
+      "Whether the hang is deterministic and reproducible on a controlled multi-GPU PCIe-only setup",
+      "Whether the repository's AI-disclosure policy permits any public contribution for this issue"
+    ],
+    "why": "The issue is a startup hang with multiple mutually inconsistent root-cause hypotheses in the comments (NCCL_P2P_DISABLE/custom all-reduce vs. flashinfer sampler warmup vs. model download). The py-spy trace points at flashinfer sampling during warmup, while other reporters say disabling custom all-reduce fixed it and one says neither helped. No single confirmed root cause or reproducible minimal case is established, so the actionable code change is undetermined."
   },
   "720dafaa2fe122d41285b9e71ac03cafc7d7259e9d3dedd42a481bc0bf35dbd3": {
     "confidence": 0.7,
@@ -53398,6 +53542,45 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides a detailed root cause and a sound fix proposal for a real resource leak, but an existing PR (#2982) directly references the issue and overlaps semantically, requiring maintainer review to avoid duplicate work. The issue also carries a HUMAN_REVIEW gate and needs maintainer confirmation."
   },
+  "968fa4063a61f9e3c2fedfedb85f37e9c856cc45aec2c3c896ebe5090530580a": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue says drafter runs every step and writes context KV for all scheduled tokens, yet also says it has not pinned which step registered unwritten draft blocks",
+      "Mitigation #47926 recovers acceptance but is described as discarding valid draft context, so it is not a confirmed correct fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/block_pool.py: gate draft-group block hash registration on drafter coverage",
+      "vllm/v1/core/kv_cache_coordinator.py: exclude or validate draft groups in hit/cache bookkeeping",
+      "vllm/v1/worker/gpu/spec_decode/dflash/speculator.py: ensure precompute_and_store_context_kv coverage is tracked per block"
+    ],
+    "risks": [
+      "Root cause not pinned: which step registers unwritten draft blocks remains unknown, so a fix may target the wrong path",
+      "Proposed workaround discards valid draft context restored by ordinary local cache hits, so a naive fix may regress acceptance on non-shared-prefix traffic",
+      "Open draft PRs #56723/#56752 may already cover the root cause; duplicate work risk",
+      "Repository ai_disclosure_conflict policy may block automated contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Serve DFlash/DSpark drafter with automatic prefix caching on, single instance, no KV connector; send sustained traffic sharing a ~20k-token prefix and measure vllm:spec_decode_num_accepted_tokens / vllm:spec_decode_num_draft_tokens before/after fix",
+      "Add a regression test asserting draft-group blocks are not registered when no drafter pass covered their tokens, with fixed seed and synthetic batch"
+    ],
+    "unknowns": [
+      "Which execution step registers unwritten draft-group blocks",
+      "Whether PRs #56723/#56752 already fix or subsume this issue",
+      "Whether the ai_disclosure_conflict policy permits an automated contribution",
+      "Whether the corruption is purely acceptance collapse or also silent output corruption as reported in comments"
+    ],
+    "why": "Issue describes a plausible DFlash/DSpark draft-KV corruption mechanism with code anchors and a workaround (#47926), but the reporter explicitly states they have not pinned which step registers unwritten draft blocks, and the mitigation is acknowledged as a conservative workaround that also discards valid draft context. Two open draft PRs (#56723, #56752) semantically overlap on dflash_dspark paths without referencing the issue, so duplicate/coverage status is unresolved. The repository also carries an ai_disclosure_conflict policy flag, which is a materially blocking unknown for contribution actionability."
+  },
   "969a63ac9e6cce272d2ee269b285308201797baf7fe9817f4e7f242342f352a5": {
     "confidence": 0.85,
     "contradictions": [
@@ -65360,6 +65543,45 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue is a well-reproduced bug with clear root cause and suggested fix, but PR #7656 overlaps in code paths and semantics, requiring manual comparison to avoid duplicate work. Maintainer has not approved or confirmed design, and the issue is under active investigation by a contributor."
   },
+  "b8e9e2bf1a96ae1488f021ce08754a82d632ad2e3ff3751d048ec999cf882dde": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body blames TileLang QSA prefill MQA kernel OOB reads; the same reporter later retracts this and attributes the fault to replicated scheduler metadata under the overlap scheduler",
+      "Comment claims #37638 fixes the issue, then explicitly retracts that claim",
+      "One comment reports --disable-overlap-schedule fully mitigates; a later comment reports the same signature recurring 7 times with disable_overlap_schedule=True",
+      "Merged PR #38346 is credited as the likely fix by one commenter while the open-PR assessment marks it as lacking root-cause coverage and tests"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/layers/attention/qsa/metadata.py get_prefill_mqa_inputs: single consistent snapshot of sequence_lengths for host packing and device row-range derivation",
+      "python/sglang/srt/layers/attention/qsa/qsa_indexer.py prefill path: bounds/consistency assertion between row_ends and packed compressed_keys/logits"
+    ],
+    "risks": [
+      "Fixing the wrong layer: the retracted kernel-bounds theory may still be partially correct, so a metadata-only fix could leave the fault",
+      "Race is probabilistic and hardware/traffic dependent, so a passing soak is weak evidence",
+      "Overlap-scheduler change could regress throughput or scheduling correctness"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the reporter's bench_serving command at --max-concurrency 8 on Qwen3.8-Flash-Next-FP8 TP8/EP8, with and without CUDA_LAUNCH_BLOCKING=1, confirming the illegal access disappears when launches are serialized",
+      "Add a regression test that packs ragged multi-row prefill metadata with staggered starts/ends and asserts row_ends[-1] <= compressed_keys.shape[0] and compressed_locs.max() < compressed_buffer.shape[0] across layers",
+      "Re-run the 4096*k+{1,2,3} cold-prefill chunk-tail case with and without the #38346 clamp to separate that fix from the overlap-scheduler race"
+    ],
+    "unknowns": [
+      "Which code path actually produces the bad address (metadata snapshot vs kernel bounds vs chunk-tail gather)",
+      "Whether merged #38346 fully covers this issue or only the 1-3 token chunk-tail case",
+      "Whether the fault is reproducible without the custom Qwen3.8-Flash-Next runtime referenced in the launch command"
+    ],
+    "why": "The issue's own reporter retracted the QSA kernel bounds root cause and the #37638 coverage claim; the surviving hypothesis (host/device sequence-length disagreement in get_prefill_mqa_inputs under the overlap scheduler) is explicitly unconfirmed, and a later comment shows --disable-overlap-schedule is not sufficient, while the merged #38346 clamp is only a sanity-checked candidate. Root cause and duplicate/merged-fix coverage are therefore unresolved, which materially determines whether code work is actionable."
+  },
   "b8fa56b900fcce5f52f773e3686fffd6e998e62cdf3b7abe28f53f985f90d25d": {
     "confidence": 0.85,
     "contradictions": [],
@@ -66902,6 +67124,39 @@
     ],
     "why": "Issue provides a clear root cause (GenericStreamingChunk branch does not pin response_id, causing new uuid per chunk) and a concrete repro via GigaChat streaming. The fix is localized to the generic streaming path and aligns with existing behavior for OpenAI chunks. An open PR exists but lacks root-cause coverage and has CI failures, leaving room for a more complete contribution."
   },
+  "bd62b70a78379ed53c61760987eb61260891818bdc408a0f01b15311f5a50f62": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Candidate metadata labels the issue 'cloud' while a commenter reports the same failure on self-hosted 1.16.1, so the affected surface is broader than the label implies"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/controllers/mcp/mcp.py: replace sessionmaker(...).begin() context manager with a plain Session and explicit commit/rollback handling in the MCP request path and _retrieve_end_user"
+    ],
+    "risks": [
+      "Session lifecycle change could alter commit/rollback semantics for other MCP endpoints if not scoped carefully",
+      "Cloud-side deployment is separate from the repo fix, so the issue reporter's Cloud symptom may persist until deployed",
+      "Repository policy flags an AI disclosure conflict, which may constrain how a contribution is submitted"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that drives the MCP tools/call endpoint through the controller with a downstream AppGenerateService.generate() path that performs an internal commit, asserting no 'closed transaction' error and a successful tool response",
+      "Run the targeted api/controllers/mcp test module plus static checks on the changed file"
+    ],
+    "unknowns": [
+      "Whether maintainers consider #40013 the canonical fix and would reject a competing PR",
+      "Whether the AI disclosure policy blocks an automated contribution to this repository"
+    ],
+    "why": "Issue supplies a concrete reproduction (n8n MCP client -> Dify Cloud MCP tools/call -> -32603 'Can't operate on closed transaction inside context manager'), and the bot comment plus a user comment pin the root cause to api/controllers/mcp/mcp.py wrapping request handling in sessionmaker(...).begin(), which auto-commits and closes the transaction before downstream generation code commits again. A concrete fix shape exists (plain Session + explicit commit, mirroring merged PR #36392), so the code work is actionable. The only competing PR #40013 is open, untested, and unmerged, so it does not establish coverage."
+  },
   "bd87ffcd99fed6039d974e198646eff75345e2be5c33db657867b246a740a9ae": {
     "confidence": 0.85,
     "contradictions": [
@@ -68141,6 +68396,34 @@
       "No maintainer design confirmation on the edit-version/clearIfUnchanged approach, though the issue itself specifies the contract and this is normal review uncertainty rather than a blocker"
     ],
     "why": "Issue provides a concrete root cause: the clear guard compares original editor text against transformed displayText, so preprocessing-induced differences are misread as newer user input, plus a debounced draft-write race. It names the offending commit, code anchors, and a concrete fix contract (edit version + clearIfUnchanged + ordered per-Session draft writes) with acceptance criteria and a rendered E2E validation path."
+  },
+  "c1382763dcdd350a724bc57b92c6171a1582ce7f30636ae4a93fe118597e1959": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crewai/tools/tool_usage.py: narrow the inner fallback to schema/argument-filtering exceptions only, or remove the redundant second invoke",
+      "Ensure `_use` and `_ause` share consistent retry semantics"
+    ],
+    "risks": [
+      "Narrowing the except clause may change behavior for tools relying on the unfiltered-argument fallback",
+      "Repository AI disclosure policy conflict may block automated public submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test using the issue's self-contained snippet asserting the tool function is invoked at most `_max_parsing_attempts` times",
+      "Run targeted unit tests for crewai/tools/tool_usage.py and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the broad inner fallback intentional"
+    ],
+    "why": "Issue provides a self-contained, no-LLM reproduction and pinpoints the root cause: the inner `except Exception` fallback in `ToolUsage._use`/`_ause` re-invokes `tool.invoke()` on any exception, doubling invocations per outer attempt (6 vs expected 3). Code anchors and expected behavior are concrete."
   },
   "c13cd9c32b7c22806624fc78e120aa48bd8d57c97c1cea0c2290051894ce54eb": {
     "confidence": 0.8,
@@ -70853,6 +71136,41 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly identifies a capability gap: sdd-explore and sdd-verify lack Write tool while their skills require artifact creation. Maintainer explicitly set needs-design and requested backend ownership contract and minimum capabilities per phase. A contributor proposed a detailed contract, but no maintainer approval yet. Existing PRs overlap semantically but do not reference this issue, and the fix may conflict with #1976. Work is actionable but requires design confirmation before implementation."
+  },
+  "c8371c43afa7f677ecce1683df912632ef3cbb6cf3de8486ffd8c2ee89452046": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/soup_cli/trainer/sft.py: invoke shared v028 helper post-LoRA without double-applying Cut-CE/FP8",
+      "src/soup_cli/utils/v028_features.py: split or flag-gate pre-load vs post-load feature application",
+      "src/soup_cli/config/schema.py: add nvfp4 (and explicit fp8_attention) to supports_v028_features offender validation",
+      "tests/test_trainer_coverage_v035.py: replace two-feature SFT exemption with per-flag coverage check"
+    ],
+    "risks": [
+      "Double-applying Cut-CE or FP8 training if the helper is called naively after SFT's inline patches.",
+      "Vision/audio/streaming SFT subclasses (TTS, BitNet) may need separate handling or explicit rejection.",
+      "Hardware-gated NVFP4/FP8 paths may not be exercisable on CI CPU, requiring patched-call tests rather than real kernel runs."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run SFTTrainerWrapper setup on a tiny CPU model with apply_nvfp4/apply_fp8_attention patched to record calls; assert both are invoked (fails on current main).",
+      "Assert config load rejects nvfp4: true on task: distill and other non-applying tasks with a message naming the task.",
+      "Count apply_cut_ce calls on SFT to confirm exactly-once application.",
+      "Re-run test_trainer_coverage_v035.py to confirm SFT is no longer exempted by the two-feature check."
+    ],
+    "unknowns": [
+      "Whether maintainers prefer splitting the helper versus adding a skip flag for SFT's post-load call."
+    ],
+    "why": "Issue identifies a concrete wiring defect: training.nvfp4, fp8_attention, and kernel_auto_compose are only applied via apply_v028_speed_memory in src/soup_cli/utils/v028_features.py, which trainer/sft.py never calls, so the default task silently ignores these flags. It supplies grep evidence, exact code anchors (sft.py:1312, sft.py:1551-1569, v028_features.py:89/101/112, schema.py:4282/5716, test_trainer_coverage_v035.py:358-365), a reproduction script with observed ACCEPT/REJECT output, and four concrete acceptance criteria including a call-recording test that fails on current code. This is a verifiable quantization/numerics wiring defect with a reference-vs-implementation validation path, not mere CLI plumbing."
   },
   "c88577243fe2d90b662fa589f31b0f88f870ad880e4736d30d8401b59e0e5b11": {
     "confidence": 0.8,
@@ -78560,6 +78878,38 @@
       "Whether the reported environment (main-stable image) is outdated relative to the fix."
     ],
     "why": "The issue provides a detailed root cause analysis with code anchors and a concrete reproduction path. However, recent comments indicate the reported bug may already be fixed on the default branch by merged PR #26871, which hydrates persisted credentials. This creates uncertainty about whether a new PR is needed, but the issue remains actionable for verification and potential additional fixes (e.g., env var resolution, scope handling)."
+  },
+  "dc6c685ff68af960bbd65329af4e8968087170c3c10986013a4b8fb233fb4964": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/decode.py: add Bootstrapping deadline handling in _update_handshake_waiters",
+      "python/sglang/srt/disaggregation/mooncake/conn.py: extend receiver poll timeout to cover Bootstrapping",
+      "python/sglang/srt/disaggregation/common/conn.py: reuse SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT on receiver side"
+    ],
+    "risks": [
+      "Open PR #39368 (maintainer-owned) only skips the flaky test and does not fix the root cause or the missing deadline; a competing fix may conflict",
+      "Changing receiver timeout semantics could affect legitimate slow-bootstrap paths if the timeout is too aggressive",
+      "Primary handshake stall root cause remains unknown, so the deadline fix may mask rather than resolve the underlying issue"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that forces a decode-side Bootstrapping stall and asserts the request fails within the configured bootstrap timeout instead of hanging",
+      "Re-enable TestDisaggregationDecodeRadixHiCacheFileBackend and run the file to confirm no unbounded hang",
+      "Run targeted disaggregation unit tests for decode.py and mooncake/conn.py"
+    ],
+    "unknowns": [
+      "Root cause of the decode-side handshake stall (request never reaching DecodePreallocQueue.add vs _resolve_pending_reqs loop vs ZMQ push block) is not determined",
+      "Whether maintainers prefer a deadline fix versus root-cause fix for this issue"
+    ],
+    "why": "Issue provides a concrete, code-anchored amplifier: decode-side KVPoll.Bootstrapping has no deadline (decode.py:926 bare pass; mooncake/conn.py:2742 only checks WaitingForInput timeout; _check_bootstrap_timeout exists only on sender side in common/conn.py:1548), causing an unbounded decode hang even when prefill times out at 300s. This is a well-scoped, independently actionable fix with a clear validation path (reproduce stall, assert bounded failure). The primary root cause of the handshake stall remains unknown, but the deadline fix is separable and does not depend on it."
   },
   "dce7cfc8bee1655008e21d4ead2902ed8c265397eafd36072f0658b1ed203d09": {
     "confidence": 0.9,
@@ -90910,6 +91260,38 @@
     ],
     "why": "Issue clearly identifies a real bug with root cause and reproduction, but an existing PR (#25387) directly targets the same fix and is closed with CI failures and no tests. The deterministic gate requires HUMAN_REVIEW, and the PR's status and maintainer intent are unresolved."
   },
+  "fc0cd2d65876c8210b93b23ad711b4ff59f3d0f363729e0b3db6f35c0cd9a652": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "dspy/adapters/base.py: drop tool_choice/parallel_tool_calls when tools are not added",
+      "dspy/predict/react_v2.py: gate forced-submit tool_choice on lm.supports_function_calling or add text-mode submit instruction"
+    ],
+    "risks": [
+      "Behavior change for LMs that do support function calling if the guard is too broad",
+      "Overlap with open PRs #10244/#10252 in react_v2.py may cause merge conflicts",
+      "Text-mode forced submit needs an alternative instruction to still reliably call submit"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test using a dspy.LM subclass with supports_function_calling=False and JSONAdapter, asserting the forced-submit LM kwargs contain no tool_choice when tools are absent",
+      "Run the issue's minimal ReActV2 reproduction with max_iters=1 and confirm no LMInvalidRequestError",
+      "Run targeted dspy predict/adapters unit tests and ruff"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the adapter-level or react_v2-level fix",
+      "Whether PR #10244/#10252 will be extended to cover this tool_choice path"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: ReActV2's forced submit passes tool_choice while adapters/base.py omits tools when lm.supports_function_calling is False, producing a provider 400. A minimal reproduction with a NoToolLM subclass and a clear validation path (assert no tool_choice without tools, forced submit succeeds) are supplied. Open PRs #10244/#10252 touch react_v2.py but address Signature output-field retention on terminal/failure exits, not the tool_choice-without-tools mismatch, so they do not cover this root cause."
+  },
   "fc218c9da843331f587869de20b0af67bc06830cca7f3949c8640984bba7cacf": {
     "confidence": 0.85,
     "contradictions": [],
@@ -91842,6 +92224,41 @@
       "Exact code location for the shape bug (frontend vs plugin) not yet identified"
     ],
     "why": "Issue provides a minimal ONNX model, exact reproduction script, and clear expected vs actual output shapes, establishing a concrete root cause in Expand shape handling for empty target shape. The fix is localized and testable."
+  },
+  "fe634aba69fac3dad4c77014885e740ae7eee358fc8a007bff0608c6396f9be6": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue states failures are non-deterministic and identical batches succeed on retry, yet candidate.actionability_evidence sets root_cause_signal=true and probe_ready=true"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "megatron/core/transformer/experimental_attention_variant/dsa_kernels.py",
+      "megatron/core/transformer/experimental_attention_variant/csa_cp_layout_kernels.py",
+      "megatron/core/transformer/experimental_attention_variant/csa.py"
+    ],
+    "risks": [
+      "Non-deterministic failures may be hardware/driver/compile-cache related rather than a code defect, making a code fix unverifiable",
+      "Existing PRs #6848/#7169/#6939 may already cover the root cause, risking duplicate work",
+      "The reported base revision 0e6ac576 has been substantially refactored at 3703d4e3, so any fix may not apply to current main"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "First obtain a deterministic or high-frequency reproducer (e.g., CUDA_LAUNCH_BLOCKING=1, fixed seed, minimal packed-THD CP32 config) before proposing any fix",
+      "If a reproducer is found, add a numerical/regression test comparing fused CSA/DSA forward/backward against a reference implementation under packed THD + CP"
+    ],
+    "unknowns": [
+      "No deterministic reproduction or root-cause evidence exists",
+      "Whether PRs #6848, #6206, #6910/#6939, or #7169 already fix either failure is unresolved",
+      "Which current MCore revision should be used to retest the path is unanswered by the issue"
+    ],
+    "why": "The issue reports two intermittent CUDA runtime failures (cudaErrorInvalidValue in cuDNN SM90 sparse-attention backward, cudaErrorUnknown in packed-THD build_attention_indices) that only reproduce after hundreds of steps on 32 nodes with CP32, and the reporter explicitly states there is no small deterministic reproducer. The failures are non-deterministic and the exact same batches succeed on retry, so no root cause is established. The issue itself asks maintainers whether existing PRs (#6848, #6206, #6910/#6939) already cover these failures, and the supplied open-PR assessment flags semantic overlap with PR #7169 (score 46) requiring human comparison. Without a reproduction, a confirmed root cause, or resolution of the duplicate/coverage question, code work is not actionable."
   },
   "feacb19b7cf392f775baf197c9c83a1b3750f61bca8020cf5aff7308ae69be1a": {
     "confidence": 0.7,
