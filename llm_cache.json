@@ -1378,6 +1378,42 @@
     ],
     "why": "Issue identifies a concrete distributed-training invariant violation: process-wide global for Ulysses KV head count corrupts second model with different head count. Root cause is clear, code path anchored in layer.py, and validation path via multi-model regression test is concrete."
   },
+  "0425e428dfa712bf7769f34f830202539dd3bf56dff817986c81e27b8ae317d5": {
+    "confidence": 0.82,
+    "contradictions": [
+      "open_pr_assessment reports PR #10130 as technically_complete with tests but root_cause_coverage=false, while the issue itself supplies a clear root cause and reproduction"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ChunkedCrossEntropyLoss.backward in swift/sequence_parallel/sequence_parallel.py must allocate a separate gradient tensor instead of overwriting the saved logits input",
+      "Preserve logits for retained-graph reuse and avoid in-place mutation of leaf/nonleaf inputs",
+      "Add regression tests covering leaf, nonleaf (tanh), and auxiliary-loss (logits.square().mean()) cases"
+    ],
+    "risks": [
+      "Distinguishing true autograd semantics error from floating-point/random variation requires fixed seed and tolerance",
+      "Additional logits-sized gradient buffer increases memory; issue notes memory was measured, so confirm acceptable overhead",
+      "Open PR #10130 may already cover the fix; avoid duplicate implementation unless adding missing root-cause/test coverage"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied minimal reproduction on CPU with fixed seed: logits=torch.randn(7,11,requires_grad=True); labels=torch.arange(7); ChunkedCrossEntropyLoss.apply(logits,labels,3).mean().backward(); assert no RuntimeError and logits unchanged",
+      "Compare gradients against torch.nn.functional.cross_entropy reference within numerical tolerance",
+      "Add nonleaf case logits=raw.tanh() and auxiliary loss logits.square().mean() to confirm no version-counter error",
+      "Verify retained-graph reuse does not observe overwritten logits values"
+    ],
+    "unknowns": [
+      "Whether PR #10130's fix and tests fully resolve the leaf/nonleaf/auxiliary-loss cases described in the issue"
+    ],
+    "why": "Issue identifies a concrete autograd defect in ChunkedCrossEntropyLoss.backward: gradient chunks are written into the saved input logits and that mutated tensor is returned as the gradient, breaking leaf/nonleaf autograd and version counters. A minimal CPU reproduction is supplied, the affected code path (swift/sequence_parallel/sequence_parallel.py, per_token_loss_func_sp) is named, and the expected behavior (separate gradient buffer preserving logits) is clear. This is a real numerical/autograd mechanism, not plumbing."
+  },
   "0427f9c5a4099ecc2b92bc99698c4480df23dd2d9d6e5bd6e88c410bf77c49cc": {
     "confidence": 0.85,
     "contradictions": [],
@@ -1916,6 +1952,43 @@
       "Whether the FFmpeg guard fix is available in a buildable upstream release for the shipped runtime"
     ],
     "why": "Issue provides a concrete, reproducible root cause for the primary defect: _engine_inputs_from_video() omits response_format=req.response_format, so the formatter defaults to url and drops b64_json. Code anchors, ordered reproduction steps, an executable curl command, and a minimal diff are supplied. The secondary FFmpeg color defect is isolated with a model-free RGB-quadrant reproduction and controlled cpuflags comparisons, giving a concrete validation path. No duplicate or merged-fix coverage is reported."
+  },
+  "05f342629ef107eb04218c5641bd7019a297f261562904392fa412d8543cf7d2": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge B@A into base weight before reset, or rename feature and correct docstring",
+      "src/soup_cli/utils/relora.py: replace strict threshold mask with deterministic exact-count topk/stable-order selection",
+      "src/soup_cli/utils/relora.py: target optimizer moments rather than learned adapter weights",
+      "tests: regression covering effective-map preservation and non-zero gradient after prune_ratio<1"
+    ],
+    "risks": [
+      "Two separable fixes (A: merge/reinit semantics; B: tie-safe mask) — a partial PR addressing only one may be rejected or mislabeled",
+      "Maintainer explicitly requests a comment before opening a PR and a statement of which half is being taken",
+      "Quantized/FSDP/DeepSpeed/streaming combinations need explicit support or loud rejection to avoid partial restarts",
+      "Tie-case production frequency is unmeasured; the constructed case is deterministic but severity of the natural all-zero lora_B path is unconfirmed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Small peft LoRA model, fixed seed: assert max|delta| on base weight is non-zero after restart and MSE(effective map before/after) is within numerical tolerance",
+      "Constant-magnitude A/B with prune_ratio=0.9: assert exactly the requested keep count survives and both gradient norms are non-zero",
+      "Kernel-level check: ones(10) with prune_ratio=0.9 keeps 1 survivor (currently 0)",
+      "Successive restarts accumulate low-rank updates in the base model"
+    ],
+    "unknowns": [
+      "Whether the maintainer's hold for SatvikMishra08 has been released, which affects claimability but not technical value",
+      "Whether the natural all-zero lora_B initialization actually triggers the tie wipe on the first relora_steps interval"
+    ],
+    "why": "Issue identifies a concrete algorithm-conformance defect in ReLoRA restart: _prune_and_reset magnitude-prunes lora_A/lora_B without merging B@A into the frozen base, and strict '>' thresholding can zero both factors on ties, killing gradients. Maintainer independently reproduced both claims on a pinned checkout with measured MSE deltas (142.12 vs 8.77e-13 control) and zero gradient norms, and confirmed the docstring conformance gap at relora.py:3-5. This is a parameter-efficient-finetuning mechanism with a clear reference-vs-implementation validation path."
   },
   "05f4d2b870d883a6f63a07bd14d84d0ad470bdb97ff9f2c282d5c00cd35d16e4": {
     "confidence": 0.85,
@@ -18086,6 +18159,42 @@
     ],
     "why": "Issue provides a clear, reproducible bug with exact commands, config, and observed behavior. The root cause is likely in the batching or kernel path for Qwen3.5 models, and the issue includes a concrete validation path (batch size > 3 vs <= 3, CUDA graph disabled still fails). This is a high-value bug fix opportunity."
   },
+  "342978c9d5768ab837ba46d743592302a6c9d707c096d6ef6836c3bb114ca72e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports rootCauseCoverage=false for PR #8487 while the issue body itself supplies a clear root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "deepspeed/runtime/zero/linear.py: make AllGatherHandle.wait() idempotent / re-check INFLIGHT",
+      "deepspeed/runtime/zero/linear.py: make NoGatherHandle.wait() idempotent / re-check INFLIGHT",
+      "Preserve NOT_AVAILABLE for released params so next fetch re-gathers from ds_tensor"
+    ],
+    "risks": [
+      "Fix must not break legitimate re-gather semantics for coalesced handles",
+      "MultipleAllGatherHandles delegates to sub-handles, so idempotency must be enforced at the leaf handle classes",
+      "Existing draft PR #8487 may overlap; verify no duplicate implementation before coding"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Handle-level 2-GPU repro: all_gather_coalesced([victim, other]), wait, release victim, wait again; assert victim stays NOT_AVAILABLE and data is not AVAILABLE over 0 elements",
+      "Regression with stage3_allgather_sequential: true and two 4096x4096 weights",
+      "Regression with gather group spanning two process groups (AutoEP ep_size>1 shape) where victim is alone in its bucket",
+      "Control cases: two/three weights in one process group and mixed bf16/fp32 group remain correct"
+    ],
+    "unknowns": [
+      "Whether draft PR #8487 already fully covers the same fix and tests, which would make independent work redundant"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: AllGatherHandle/NoGatherHandle wait() is not idempotent, so a second wait sets AVAILABLE over freed (0-element) storage, causing empty-weight matmul. Reproduction is described at handle level on 2 GPUs with two configurations and controls, and the expected fix (idempotent wait, leave released params NOT_AVAILABLE) is concrete. This is a distributed-training invariant with a clear reference-vs-implementation validation path."
+  },
   "342ac0f136429355ac189b2451bb20e6dd92efd409f096f8fa8829d84b3aabb0": {
     "confidence": 0.6,
     "contradictions": [
@@ -21165,6 +21274,41 @@
       "Maintainer's intended fix scope"
     ],
     "why": "The issue reports a VSCode BYOK integration failure with LiteLLM proxy, but the root cause is unclear: a commenter suggests a URL configuration issue, while the reporter says it persists across URL styles. The problem may be in VSCode's client behavior or LiteLLM's /v1/models response format, requiring maintainer confirmation of the intended fix scope."
+  },
+  "3c3e336834a66f92761d84050637a15c02c5ef6f5d66f5e76f3fd46c0063c69f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims 'no further Flux event of any kind', but the amendment retracts this, stating production logging could not have captured Update events and only 'no EndOfTurn and no transcript' is proven."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/deepgram/flux/stt_base.py watchdog/event handling",
+      "src/pipecat/services/deepgram/flux/stt.py reconnect logic",
+      "src/pipecat/turns/user_turn_controller.py turn-release safety"
+    ],
+    "risks": [
+      "Root cause may be server-side (Deepgram going quiet) rather than a pipecat defect, making a code fix inappropriate.",
+      "A service-level watchdog could cause spurious reconnects on legitimately quiet streams.",
+      "The reporter's production row uses custom user_turn_strategies and idle handlers, so the observed behavior may not reproduce on stock defaults."
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build the reporter's proposed stock repro: unmodified voice-deepgram-flux.py on FastAPIWebsocketTransport + TelnyxFrameSerializer at 8 kHz mulaw with a received-message counter, to distinguish 'no final transcript' from 'no incoming messages'.",
+      "Add a regression test that simulates a Flux stream that stays open but stops emitting events and asserts the turn is released or the service reconnects."
+    ],
+    "unknowns": [
+      "Whether Flux actually stopped sending messages or pipecat failed to process/log them.",
+      "Whether the stall reproduces on stock defaults without custom turn strategies.",
+      "Whether maintainers consider a service-level watchdog in scope."
+    ],
+    "why": "The issue reports a plausible production stall in DeepgramFluxSTTService, but the reporter's own amendment retracts the key claim: stored evidence only shows no EndOfTurn/transcript, not that Flux stopped sending messages. The root cause (server silence vs. client-side event handling) is unresolved, and the reporter explicitly states the failure is not reproducible on demand and is planning a stock repro. No reproduction or validation path currently exists."
   },
   "3c4dcf10d1d8dc26eedfe23463cc73ab6da4d8f795ed7e500b7f80967637a3a2": {
     "confidence": 0.9,
@@ -24804,6 +24948,39 @@
       "Whether existing PRs (e.g., #46849) already fix the issue"
     ],
     "why": "The issue reports a CUDA illegal memory access in the GDN kernel with multiple reproductions, but the root cause is unclear and may involve multiple paths (e.g., FlashInfer allreduce fusion, GDN prefill, or speculative decoding). Existing PRs overlap semantically but none directly reference the issue, and the deterministic gate requires HUMAN_REVIEW. The candidate is algorithmically relevant but needs maintainer confirmation and comparison with existing PRs."
+  },
+  "4681c5e8bae01ccc8a34f9f64a01070153a32ee00af72dc3c13c6a7caa50294c": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue suggests a structural mixin fix, while the existing PR #54309 only sets the flag on the borrower"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/diffusion_gemma.py: set `_enable_mm_lora` in `__init__` or harden the two read sites in gemma4_mm.py",
+      "Add a regression test that sends one image request to DiffusionGemma"
+    ],
+    "risks": [
+      "PR #54309 may already cover the root cause, making a new contribution duplicative",
+      "The structural mixin fix is larger and may conflict with the existing PR",
+      "The latent audio siblings are currently unreachable and may be out of scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run a DiffusionGemma image request on a bare borrower that never runs Gemma4.__init__ and assert no AttributeError and correct no-MM-LoRA path",
+      "Add a regression test covering image input to DiffusionGemma and the latent audio siblings"
+    ],
+    "unknowns": [
+      "Whether PR #54309 will be merged or superseded",
+      "Whether the maintainers want the structural mixin refactor instead of the minimal fix"
+    ],
+    "why": "The issue itself is a well-evidenced, concrete bug (borrowed Gemma4 methods read `_enable_mm_lora`, which DiffusionGemma never sets), but the supplied evidence shows an open PR #54309 with the same title and overlapping code path that already fixes the root cause, and a contributor comment confirming that fix exists. The duplicate/merged-fix coverage is unresolved, which materially determines whether new code work is actionable."
   },
   "46ab74884ce598c08f8d5fc5bb1e394a46ad2b9d15c1d9b1c3520dcbd2e767d2": {
     "confidence": 0.85,
@@ -36791,6 +36968,40 @@
     ],
     "why": "Issue provides a clear root cause (synchronous glob on event loop, unbounded directory) with profiling evidence and a concrete, minimal fix (enable retention via env var). No competing PR or issue found. The fix is actionable and testable."
   },
+  "640b77d8691b33ca2579bf061c4613ba3c67b3aac7ab321ec07ee88cf6b53a38": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body claims no existing report, but open PR #7444 directly references issue #7440 with a bounded poll timeout fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ContextualAIParseTool._run() polling loop bounded by configurable deadline or max attempts",
+      "Optional raise_for_status() handling for non-2xx status responses"
+    ],
+    "risks": [
+      "Overlapping open PR #7444 may already cover the fix, making duplicate work low-value",
+      "Repository AI disclosure policy conflict may restrict public submission",
+      "Expanding scope to raise_for_status() could change API behavior beyond the reported bug"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Mock submit returning a job id, repeated `processing` status responses, and a monotonic clock crossing the deadline; assert bounded timeout instead of infinite polling",
+      "Mock `completed` status before the deadline; assert normal exit",
+      "Run targeted unit tests for the ContextualAI tool package and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #7444 fully resolves the root cause or leaves gaps that justify independent work",
+      "Whether maintainers require AI disclosure handling that blocks public contribution"
+    ],
+    "why": "The issue clearly identifies an unbounded `while True` polling loop in ContextualAIParseTool._run() with a concrete monotonic-deadline fix and a deterministic mock-based regression test, so the root cause and validation path are established. However, an open PR #7444 already directly references this issue and implements a bounded poll timeout with tests, and the supplied evidence marks root-cause coverage as incomplete/uncertain. That unresolved duplicate/coverage question materially determines whether independent code work is actionable."
+  },
   "640c0847bfed799f543f90552c8e159668a065e70a6d81594aeffd9317cef07c": {
     "confidence": 0.8,
     "contradictions": [],
@@ -46304,6 +46515,44 @@
       "Whether usage.input_tokens includes system prompt or tool schemas is unclear."
     ],
     "why": "The issue identifies a concrete algorithmic bug in token estimation (fixed bytes/4 heuristic) with benchmark data showing 1.84x-3.09x underestimation, a clear root cause in count_tokens, and a reproducible script. The open PR #2397 is incomplete (lacks root-cause coverage), leaving room for a more complete fix. The evidence supports a numerical regression test against actual model usage."
+  },
+  "7be64afe64df75ab712e42da1f0bb04771850b1deadaa0fca07b4e594c87002b": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Candidate labels category WAIT_MAINTAINER with score 10, but actionability_evidence has root_cause_signal=false and maintainer_approved=false",
+      "Duplicate status is 'semantic_overlap_requires_review' yet no PR references the issue and no direct code overlap is recorded"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/utils/hf_transformers/config.py (AutoConfig fallback for unrecognized model_type)",
+      "python/sglang/srt/configs/model_config.py (model type/architecture resolution)",
+      "python/sglang/srt/arg_groups/cuda_graph_hook.py (arch lookup path that triggers config load)"
+    ],
+    "risks": [
+      "Fix may be a transformers version/checkpoint config issue rather than an sglang code defect, making a code PR low-value",
+      "PR #38950 (NPU DSV4.1 adaptation) may already cover the same config path, risking duplicate work",
+      "PR #39370 is maintainer-owned and touches DSV4.1 checkpoint handling, so design direction may already be set",
+      "Requires Ascend A5/NPU hardware to validate end-to-end"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's run_dsv41.sh on the dsv41 checkpoint and confirm the KeyError 'deepseek_v41' in AutoConfig.from_pretrained",
+      "Add a regression test that loads a config with model_type deepseek_v41 through sglang's get_config/ModelConfig.from_server_args and asserts it resolves without raising",
+      "Run targeted unit tests for python/sglang/srt/utils/hf_transformers and python/sglang/srt/configs"
+    ],
+    "unknowns": [
+      "Whether the correct fix is in sglang config parsing or in the transformers/checkpoint model_type registration",
+      "Whether PR #38950 or #39370 already resolves this exact failure",
+      "Whether the dsv41 checkpoint config is expected to be supported by the pinned transformers version"
+    ],
+    "why": "Issue reports a concrete failure (KeyError/ValueError for model_type 'deepseek_v41' in AutoConfig.from_pretrained) with a full traceback and ordered reproduction steps, but the root cause is not established: it is unclear whether the fix belongs in sglang's HF config parsing path or in the transformers version/checkpoint config, and the candidate's own actionability evidence marks root_cause_signal=false. Additionally, three open PRs (#38950, #39370, #39392) semantically overlap on dsv4/dsv4_1/checkpoint, and the duplicate assessment is 'semantic_overlap_requires_review' with no direct code overlap or issue linkage, so coverage is unresolved."
   },
   "7bed06ef6e24083f5e886c2b92c7e22ffd90c7461276fd55f01fdef6cb350369": {
     "confidence": 0.85,
@@ -80275,6 +80524,37 @@
     ],
     "why": "Issue clearly identifies an unguarded `chunk.choices[0]` access causing IndexError on empty-choices chunks in the Anthropic streaming adapter, with a concrete repro and suggested fix. However, the deterministic gate is HUMAN_REVIEW and an existing PR (#36507) has semantic overlap with the same code path, requiring maintainer comparison before creating a new task."
   },
+  "d7613470cf4396a094de2f895958e438f3e8a34e3c96b8b5473c7c9cf5ba25d4": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/workflow_service.py: validate Start-node variable max_length on the write path (sync_draft_workflow/publish_workflow) or coerce integral floats to int",
+      "VariableEntity max_length handling: accept integral floats or bound the field with a documented maximum",
+      "Frontend Start-node Max length input: preserve typed integer value and/or bound input to avoid exponential-notation serialization"
+    ],
+    "risks": [
+      "Repository policy reports ai_disclosure_conflict, so any public AI-assisted submission may violate disclosure requirements",
+      "Fix could be placed on either write-path validation or read-path coercion; maintainer preference unknown but not blocking",
+      "Broadening VariableEntity to accept floats may mask genuinely invalid configurations if not bounded"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that saves/publishes a workflow whose Start-node paragraph variable has max_length=1e+29 and asserts publish fails loudly or the value is normalized to an int",
+      "Unit-test VariableEntity with max_length values 256, 1e18, 1e19, 1e29 as int and float to confirm the int_parsing_size boundary",
+      "Run targeted api/services workflow tests and static checks after the minimal fix"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer write-path validation, read-path coercion, or frontend bounding as the canonical fix"
+    ],
+    "why": "Issue provides a concrete, reproducible round-trip bug: the Start-node max_length is persisted as a float (1e+29) by the UI, while the read path's VariableEntity declares max_length: int | None, so Pydantic rejects floats >= 1e+19 with int_parsing_size. The write path (validate_graph_structure) never validates Start-node variables, so publish succeeds and every run fails. Root cause is anchored to api/services/workflow_service.py and VariableEntity, with an expected/actual pair and ordered reproduction steps."
+  },
   "d7636630c5cf5195b0093f1ec7ca4c81b4698fc0ed2293d6e2771a0c12c6281f": {
     "confidence": 0.7,
     "contradictions": [],
@@ -88311,6 +88591,47 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides a precise root cause (last_id='$' race) with a one-line confirmation and a proposed per-subscription cursor fix. However, an open PR #39706 touches the same files and may partially address the race, requiring manual comparison before a new PR is created. The submission policy also blocks automatic public actions due to AI disclosure conflict."
   },
+  "ea7b0e2238b811a7a98198ec30aef8ee48412e8412e4203e0053bcd17871045c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body blames TileLang MQA prefill kernel bounds; author's later comment retracts this and points to an overlap-scheduler race",
+      "Author states #37638 should not be credited with fixing this issue, while open_pr_assessment lists #37638 as root_cause_coverage=true",
+      "pinkgom reports --disable-overlap-schedule resolved the crash, then later reports it was not sufficient",
+      "pinkgom attributes the signature to merged #38346 while the original reporter's hypothesis remains unconfirmed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "qsa/metadata.py get_prefill_mqa_inputs host/device sequence-length consistency",
+      "qsa_indexer.py compress gather bounds (already merged in #38346)",
+      "overlap-schedule stream synchronization between forward_stream and schedule_stream"
+    ],
+    "risks": [
+      "Fixing the wrong layer (kernel bounds vs scheduler race) leaves the crash reproducible",
+      "Merged #38346 may already cover the low-concurrency signature, making further work duplicative",
+      "Hardware-specific (H20/H200, TP8/TP2) reproduction may not be available to the contributor"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with bench_serving --max-concurrency 8 on Qwen3.8-Flash-Next-FP8 TP8 and confirm crash",
+      "Verify suppression under CUDA_LAUNCH_BLOCKING=1 and --disable-overlap-schedule",
+      "Cold-prefill test with input_ids lengths 4096*k+{1,2,3} to exercise the #38346 clamp path",
+      "Add regression test asserting row_ends <= packed buffer size and compressed_locs within compressed_buffer bounds"
+    ],
+    "unknowns": [
+      "Whether merged #38346 fully covers this issue's crash signature",
+      "Whether the host/device sequence-length mismatch hypothesis is correct",
+      "Whether the crash is reproducible on hardware available to the contributor"
+    ],
+    "why": "The issue's own author retracted the QSA kernel bounds root cause and now hypothesizes an overlap-scheduler race between host sequence_lengths snapshot and device-derived row ranges; the merged PR #38346 (compress gather clamp) is claimed by a second reporter to match the low-concurrency signature, but the original reporter explicitly says #37638 should not be credited and the overlap-path fix is still unconfirmed. Root cause is unresolved and duplicate/merged-fix coverage is contradictory."
+  },
   "ea8c4d6a087e45855f487e879dbe1b52088e0e33062c845599cff3f09ea5202a": {
     "confidence": 0.8,
     "contradictions": [],
@@ -95152,6 +95473,41 @@
       "Which fix option maintainer prefers for Claim A"
     ],
     "why": "Issue provides concrete algorithm-conformance bug with root cause: ReLoRA pruning without merging and strict thresholding zeroing both factors on ties. Maintainer confirmed both claims with measured evidence. Clear fix options and acceptance criteria."
+  },
+  "fbae8339bae5fb837265e3fa612c71d28c7405cb2e51ddef6594c02630580ea5": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue reports supports_reasoning=true and non-streaming reasoning present, yet streaming reports reasoning_tokens=0, but the upstream streaming payload was never independently verified"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/alibabacloud (or dashscope-compatible) streaming transformation",
+      "streaming chunk normalization mapping upstream reasoning field to delta.reasoning_content",
+      "usage/reasoning_tokens propagation in streaming final chunk"
+    ],
+    "risks": [
+      "Fixing the wrong layer (LiteLLM normalizer vs upstream adapter) if the upstream never emits reasoning in streaming",
+      "Provider-specific field naming may differ, causing an incorrect mapping",
+      "Broadening API behavior beyond the reported provider"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture raw upstream SSE from the alibabacloud endpoint to determine whether reasoning_content is emitted upstream",
+      "Add a streaming regression test asserting delta.reasoning_content and non-zero reasoning_tokens for a reasoning-capable alias",
+      "A/B test stream=true vs stream=false on the same prompt to confirm parity"
+    ],
+    "unknowns": [
+      "Whether the upstream alibabacloud DeepSeek SSE stream actually contains reasoning_content or an equivalent field",
+      "Which code path (provider adapter vs stream normalizer) drops the field",
+      "Whether an explicit thinking-mode parameter is required upstream"
+    ],
+    "why": "Issue documents a clear streaming vs non-streaming discrepancy for reasoning_content on the alibabacloud DeepSeek alias, but the root cause is explicitly unresolved: the reporter states the direct upstream provider response was never tested, so it is unknown whether the loss occurs in the upstream adapter or in LiteLLM's stream normalization. No code path or mechanism is identified, and the candidate's own actionability evidence has root_cause_signal=false. Without knowing which layer drops the field, a concrete fix cannot be scoped."
   },
   "fbaed4e87b6f777ec3c1dda23e6491cf9e258ddd6250cb78448fffb87fa938fc": {
     "confidence": 0.7,
