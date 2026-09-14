@@ -7756,6 +7756,36 @@
     ],
     "why": "Issue provides a concrete, code-anchored root cause: AllGatherHandle/NoGatherHandle wait() is not idempotent, unlike the coalesced handle classes, so a second wait can set AVAILABLE over freed (0-element) storage. Reproduction is described at handle level on 2 GPUs with two configurations and controls, and the expected behavior (idempotent wait, re-gather from ds_tensor) is a concrete distributed-training invariant. This is a genuine algorithm-mechanism bug, not plumbing."
   },
+  "16275a7111d9745216909cdb96318fe31f7c1508b1d4a781e3e3c8073d7f5145": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims no way to control recap language, but triage shows general.outputLanguage already reaches the side query; the valid remaining gap is only the default 'auto' case"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/services/sessionRecap.ts: add a language-matching instruction to RECAP_SYSTEM_PROMPT so the recap follows the conversation language in the default 'auto' case"
+    ],
+    "risks": [
+      "Prompt-only change may be non-deterministic across models; verify with a controlled non-English conversation",
+      "Avoid conflicting with the existing general.outputLanguage override behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add/extend a unit test around the session-recap side query asserting the system prompt includes the language-matching instruction and that the recap follows the recent user-message language",
+      "Run the targeted core package tests (e.g. sessionRecap/sideQuery tests) and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the prompt-bullet fix over a dedicated setting, though triage indicates the setting is unnecessary"
+    ],
+    "why": "Triage evidence confirms the root cause: RECAP_SYSTEM_PROMPT is English-only and the default 'auto' output-language rule does not reach this side query, so recaps default to English. The remaining gap is a concrete, minimal prompt change (restore the language-matching bullet), with a clear validation path via the recap side query and existing sideQuery tests."
+  },
   "163570de939eb00e618b7ac5c46581395a0130b93836e8bf9dff5870b03d4db6": {
     "confidence": 0.85,
     "contradictions": [
@@ -43954,6 +43984,46 @@
     ],
     "why": "Issue pinpoints a concrete wiring defect: build_lora_config_kwargs forwards rank_pattern/alpha_pattern but is only called by SFT text and pretrain paths, while 18 other trainer sites construct peft.LoraConfig by hand, so DPO/KTO silently train q_proj at r=16 despite config r=4. Reproduction with tiny CPU Llama and adapter-shape inspection is supplied, and the sibling target_parameters validator shows the intended scope-gating pattern."
   },
+  "72847ed1930a222883adf5a4b6ea2f07283ae0c8a2738c6053b65f00e4193907": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter attributes the regression to a vLLM/FlashInfer/transformers version delta, while maintainer JaredforReal reports being unable to reproduce the garbage output",
+      "Comment claims PR #56635 fixes this issue, but the maintainer states that PR is for a separate issue",
+      "Candidate labels the issue as an LLM-algorithm mechanism (distributed_training, numerics_quantization) while the described symptom and code anchors point to parser/chat-template plumbing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/entrypoints parser / reasoning-boundary handling for GLM tool-call tokens",
+      "possible attention-kernel or chat-template path if the regression is in FlashInfer or transformers rather than vLLM"
+    ],
+    "risks": [
+      "Root cause may lie outside vLLM (FlashInfer 0.6.18 or transformers 5.16.1), making a vLLM code change ineffective",
+      "Degeneration is intermittent and only observed in real agentic clients, so a fix cannot be validated without a reliable reproduction",
+      "Overlap with open PR #56635 is unresolved: maintainer says it addresses a separate issue, so duplicate/coverage status is contradictory"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a deterministic multi-turn agentic harness replay (fixed seed, fixed tool-call history) that reproduces the degeneration on the bad build and is clean on the good build",
+      "Bisect the vLLM commit range g487ecf187…g385dce36b with FlashInfer and transformers pinned to isolate the responsible component",
+      "Add a parser regression test asserting reasoning-end/tool-call boundary tokens do not bleed into content"
+    ],
+    "unknowns": [
+      "Which component in the version delta actually causes the degeneration",
+      "A deterministic, vLLM-only reproduction that does not depend on an external agentic client",
+      "Whether the required fix is in vLLM at all versus FlashInfer or transformers",
+      "Whether PR #56635 covers this issue or a distinct one"
+    ],
+    "why": "The issue reports a real GLM-5.3-Flash degeneration regression, but the reporter explicitly could not reproduce it synthetically and attributes it to a three-way version delta (vLLM commit range, FlashInfer 0.6.17→0.6.18, transformers 5.15.1→5.16.1). A maintainer (JaredforReal) states they could not reproduce the garbage output and that PR #56635 targets a separate issue. The only concrete repro command in the comments is a cross-reference to an sglang issue, not a vLLM-confirmed reproduction. Root cause is therefore not established, and the candidate's own evidence marks rootCauseCoverage=false and keyPathCoverage=false."
+  },
   "728fd9dfee48442beceb511650a5e8f905a21872d61ac0ece3b1f88a92d1ef48": {
     "confidence": 0.85,
     "contradictions": [],
@@ -45602,6 +45672,43 @@
     ],
     "why": "Issue provides a concrete, executable reproduction (get_optional_params with drop_params=True silently drops reasoning_effort for gpt-4.1/gpt-4o on openai and azure), a clear root-cause anchor (get_supported_openai_params omits reasoning_effort, and drop_params then silently discards it), and a provider-side 400 confirming the drop hides a real rejection. No open PR directly covers this code path; the closest PRs only share the reasoning_effort keyword and target different paths (gpt5 gating, bedrock grok, responses drop_params)."
   },
+  "76accb3f224fc035464bacd6033abcf50a9b8e2c64e9505c3a101f986d9f3511": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body asserts the launch race / sidecar-not-ready is the cause, but the same logs show a fatal 'No compatible hub runtime is available' error and a failed login-shell PATH resolution, which are distinct failure modes",
+      "Candidate actionability evidence lists code anchors and ordered steps but sets root_cause_signal=false and probe_ready=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "apps/examples/desktop-app/src-tauri/src/main.rs (get_desktop_backend_endpoint readiness/retry behavior)",
+      "sidecar startup login-shell PATH resolution timeout",
+      "webview transport_connect gating on backend endpoint readiness"
+    ],
+    "risks": [
+      "Multiple plausible root causes (PATH probe timeout vs hub runtime incompatibility vs missing CFBundleURLTypes) may lead to fixing the wrong layer",
+      "Environment-specific (Intel macOS, Choosy/Brave, nvm) reproduction may not be available to the implementer",
+      "Changing readiness gating could mask genuine sidecar startup failures"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on Intel macOS with nvm-managed Node and a non-Chrome default browser: launch 0.0.27 and attempt browser OAuth immediately; capture code.log",
+      "Add a regression test that asserts get_desktop_backend_endpoint retries until sidecar ready rather than failing the webview connect once",
+      "Verify OAuth completes when the login-shell PATH probe exceeds 3s"
+    ],
+    "unknowns": [
+      "Which of the logged failures is the actual blocker for OAuth (PATH probe, hub runtime, or endpoint readiness)",
+      "Whether the sidecar eventually becoming ready on port 3126 means the race is transient or deterministic",
+      "Whether a maintainer has already scoped the intended fix layer"
+    ],
+    "why": "The issue provides ordered reproduction steps and log excerpts, but the root cause is not established: the logs show multiple independent failures (login-shell PATH resolution failure, 'No compatible hub runtime is available' fatal error, and a webview transport error) and the reporter's own 'suggested fix' lists four alternative remedies. It is unclear which failure actually blocks OAuth, and the candidate's own actionability evidence marks root_cause_signal=false and probe_ready=false. Without a confirmed root cause or a probe, the concrete code change is not yet determined."
+  },
   "76b5c7c494964a6b044d1a2dc434e4bccf6ebbfc0123dd8ab67d992d87438234": {
     "confidence": 0.7,
     "contradictions": [],
@@ -47170,6 +47277,35 @@
       "Whether maintainer has already started a fix"
     ],
     "why": "Issue provides detailed reproduction, multiple configurations, and maintainer-requested recording evidence confirming audio stops reaching the session. Root cause is localized to audio routing in AudioRecognition or track subscription, with clear validation path via session recording and DEBUG logs."
+  },
+  "7b427924fc44f9c30485b69c35d36eddd49a8b2542d2bb0dbdee7430237d08c2": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports direct code overlap and COVERAGE relation for PR #39399 while duplicate status remains human_review_required rather than resolved."
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/moe/ep_moe_kernels.py: pass expert_start and num_experts to _fwd_kernel_ep_scatter_2 in ep_scatter_from_psum"
+    ],
+    "risks": [
+      "Duplicate/overlapping open PRs may already cover the fix, making a new contribution redundant.",
+      "The issue is a missing-argument plumbing bug rather than an algorithmic/numerical contribution, which may fall outside the llm_algorithm track's intended scope."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that calls ep_scatter_from_psum with a small synthetic MoE batch and asserts no TypeError and correct scatter output; run the deepep_v2 prefill path on a small EP configuration."
+    ],
+    "unknowns": [
+      "Whether PR #39399 or #37211 already fully resolves the issue and will be merged.",
+      "Whether the maintainers consider this a valid independent contribution given the existing open PRs."
+    ],
+    "why": "Issue describes a concrete TypeError from missing positional args in ep_scatter_from_psum, but the supplied evidence shows an open PR #39399 with direct code overlap on the same path and a second PR #37211 also targeting the same fix; duplicate/coverage status is explicitly human_review_required, which is a materially blocking unknown for whether independent code work is actionable."
   },
   "7b71933caccca17af79798f06baa3d1a64a554f8e95201c87417c0379d97418b": {
     "confidence": 0.6,
@@ -50940,6 +51076,43 @@
       "Whether the issue's triage notice blocks PR submission until maintainer approval"
     ],
     "why": "The issue gives a concrete, reproducible root cause: @mastra/mcp vendors hono .d.ts files into dist/_types and its public API (connectHonoSSE, getSseHonoTransport) references them, causing nominal type conflicts for consumers. However, the supplied evidence shows a closed PR #23776 with direct code overlap and the same proposed fix (declare hono as peer dependency, stop vendoring types), and the duplicate/coverage status is explicitly 'human_review_required'. Whether that closed PR already resolves the issue is a materially blocking unknown that determines whether new code work is actionable."
+  },
+  "86635b1d864bfa8f184ad682c7d76d1630bae44f86d5f74d5e1deb904a435a94": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate labels category WAIT_MAINTAINER with score 10 while its own actionability evidence sets root_cause_signal=false and pre-review failed (base_sha_changed, no_code_surface)",
+      "Open PR #38950 is cited by the reporter as the guidance followed yet is not linked as closing/reference to this issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/utils/hf_transformers/config.py (AutoConfig fallback for unrecognized model_type)",
+      "python/sglang/srt/configs/model_config.py (architecture resolution for deepseek_v41)",
+      "python/sglang/srt/arg_groups/cuda_graph_hook.py (model_config_of call path in traceback)"
+    ],
+    "risks": [
+      "PR #38950 may already implement the same config-registration fix, making a new change duplicative",
+      "Fix could be a Transformers-version/checkpoint issue rather than an sglang code defect",
+      "NPU A5 hardware and custom image may be required to validate end-to-end"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the reported checkpoint config.json containing model_type=deepseek_v41 and confirm the AutoConfig KeyError",
+      "Add a regression test that sglang resolves deepseek_v41 architecture without requiring an upstream Transformers release",
+      "Run targeted unit tests for sglang.srt.utils.hf_transformers.config and sglang.srt.configs.model_config"
+    ],
+    "unknowns": [
+      "Whether PR #38950 already fixes the deepseek_v41 AutoConfig registration",
+      "Whether the intended fix is in sglang or in the Transformers/checkpoint side",
+      "Whether the failure reproduces on the current main base SHA 6e755e411440bb3e42df59a9d0bc4e250615cf09"
+    ],
+    "why": "Issue reports a concrete failure (Transformers AutoConfig KeyError for model_type deepseek_v41) with a full traceback and reproduction steps, but the root cause is not established: it is unclear whether the fix belongs in sglang's HF config parsing path or in the Transformers/checkpoint registration, and the candidate's own actionability evidence marks root_cause_signal=false. Open PR #38950 ([NPU][DSV4.1] Adapt NPU with DeepSeek V4.1) is explicitly cited by the reporter as the guidance followed and overlaps the exact config paths (model_config.py, hf_transformers/common.py, hf_transformers/config.py), so duplicate/merged-fix coverage is unresolved. The issue is also an environment/setup report (NPU A5, custom image, run script) rather than an algorithm contribution, and the candidate's pre-review failed with base_sha_changed and no_code_surface."
   },
   "86636443f47cbae6d8398e33f420e421505df5b3f8a2bf5c1fe4b55760091292": {
     "confidence": 0.55,
@@ -57325,6 +57498,36 @@
     ],
     "why": "Issue clearly identifies a missing capability id hint in a durable-exec error message, with a minimal repro and root cause. However, open PR #6696 has semantic overlap and may already address the code path; maintainer design preference is unknown and no assignment is confirmed."
   },
+  "978838c99ab75044954755a3086d641126f43ee1d6076743bdcccf333a2fdf07": {
+    "confidence": 0.6,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm streaming normalizer for alibabacloud/DashScope reasoning_content",
+      "reasoning_tokens usage propagation in streaming chunks"
+    ],
+    "risks": [
+      "Fixing the wrong layer (normalizer vs adapter) if the upstream field shape is unknown",
+      "Broadening API behavior for other providers"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's curl streaming request against a mock/recorded upstream SSE stream and assert delta.reasoning_content and reasoning_tokens are populated",
+      "Add a regression test comparing stream=true vs stream=false reasoning output for the alibabacloud deepseek alias"
+    ],
+    "unknowns": [
+      "Whether the upstream SSE actually contains a reasoning field and under what key",
+      "Which code path (adapter vs normalizer) drops the field",
+      "Whether reasoning_tokens zero originates upstream or from LiteLLM"
+    ],
+    "why": "Issue documents a clear streaming/non-streaming discrepancy for reasoning_content on the alibabacloud deepseek-v4.1-flash alias, but the supplied evidence explicitly lacks a root-cause signal and the reporter did not test the upstream provider directly. The loss could be in the upstream adapter, the stream normalizer, or the provider itself, so the code surface to change is not yet determined."
+  },
   "97b330fa148903db2755a89d867a04223c5d39252d7ec9ceffaee19c6d9f3dd5": {
     "confidence": 0.7,
     "contradictions": [],
@@ -62486,6 +62689,44 @@
       "Whether the issue is reproducible on other Apple7 devices or only M1 Max"
     ],
     "why": "Issue identifies a reproducible, hardware-specific kernel defect in the wgpu-msl backend causing exponentially growing LoRA gradients on M1 Max. Root cause is narrowed to an autotune-selected kernel with a suspected data race, evidenced by nondeterministic behavior and Heisenbug. This is a concrete algorithm/kernel bug with a clear validation path via controlled experiments and numerical regression."
+  },
+  "a505962edddb1d425d18f2e725cd4ad18015695a11bb312f62db24baed43c342": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports semantic overlap requiring review while related_issue_assessment reports no related issues",
+      "Contributor claims to be taking the fix while duplicate status remains unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Scope use_flash_attn/use_liger validation in commands/train.py to tasks that read them",
+      "Make autopilot decide_performance_flags task-aware so it never emits ignored flags",
+      "Shrink reasoning_effort/train_on_eot allowlist in config/schema.py to {sft, distill} or wire the four tasks"
+    ],
+    "risks": [
+      "Open PRs #983/#965/#955 may already cover the root cause, making a new contribution duplicative",
+      "Contributor comment indicates active ownership, risking conflicting work",
+      "Distinguishing intended task-scoping from broader config-schema refactor may change fix boundary"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build DPO/GRPO model on tiny CPU model with use_flash_attn:true and stubbed get_attn_implementation returning 'sdpa'; assert kwarg reaches from_pretrained, or config load rejects the flag",
+      "Assert build_soup_config(goal='alignment') on cc>=8.0 profile emits no flag the resulting task ignores",
+      "Assert soup train does not exit 1 over a missing package for a flag the task does not use"
+    ],
+    "unknowns": [
+      "Whether PR #983 or #955 already resolves the issue's root cause",
+      "Whether the contributor's in-progress work has produced a PR that supersedes this issue"
+    ],
+    "why": "Issue #806 describes a concrete, code-anchored defect: use_flash_attn/use_liger are validated for every task and auto-enabled by autopilot for DPO/GRPO/pretrain, yet only SFT's _setup_transformers reads them. Root cause and acceptance criteria are clear. However, three open PRs (#983, #965, #955) semantically overlap on the same fields and config schema, and a contributor comment claims to be actively taking the fix. The duplicate/coverage status is 'semantic_overlap_requires_review' and no PR is confirmed to close the issue, so whether code work is still actionable is materially unresolved."
   },
   "a51d0bfdb88e17baa5d0e47c56f0686bfbc16bce15b05b10276a84b8882a089d": {
     "confidence": 0.8,
@@ -72836,6 +73077,40 @@
     ],
     "why": "The issue clearly identifies a user-visible 500 error caused by the Agent configuration UI incorrectly querying the builtin credential endpoint for MCP providers. The root cause is well described: the route resolves via ToolManager.get_builtin_provider, which fails for MCP server identifiers. No competing PR addresses this specific bug, and the fix is localized to the credential-info route and UI request logic."
   },
+  "c162cecca7593d6456f67028a0e8efad94f4243b72297ed782342675279ca14a": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body attributes failure to duplicate ONNX module identities and proposes an import.meta.resolve fix, while the recent comment states upgrading Bun to 1.4.2 solved the problem"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/plugin/src/features/magic-context/memory/embedding.ts: change onnxruntime-web import to a resolved URL or otherwise deduplicate module identity"
+    ],
+    "risks": [
+      "The Bun 1.4.2 comment may mean no code change is required, making the proposed fix unnecessary",
+      "import.meta.resolve behavior may differ across runtimes/bundlers and could break other environments",
+      "Changing the import form may affect bundling or plugin packaging"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with OMP 18.1.19 + Bun 1.3.14 calling loadTransformersForLocalEmbedding(\"auto\") twice in-process and confirm the backend registration error",
+      "Re-run the same reproduction on Bun 1.4.2 to determine whether the upgrade alone fixes it",
+      "If code fix is still needed, add a regression test asserting a single ONNX backend registration across successive loader calls"
+    ],
+    "unknowns": [
+      "Whether the failure still reproduces on Bun 1.4.2 with the unmodified code",
+      "Whether the maintainer considers the Bun upgrade an acceptable resolution or wants a code-level fix",
+      "Whether the candidate fix is validated against the current base SHA"
+    ],
+    "why": "Issue reports a concrete local-embedding failure with a plausible module-identity root cause and a candidate fix, but the only recent comment claims the problem is resolved by upgrading Bun to 1.4.2, which contradicts the proposed code fix and leaves the actual root cause unresolved."
+  },
   "c173fe0cae61d4de0de62a65b5ab3f89a0cc9e9c97dabb5680b9b1625e032d6f": {
     "confidence": 0.72,
     "contradictions": [
@@ -72968,6 +73243,42 @@
       "Exact maintainer preference for min_gb value; issue suggests 8 or 12 but not definitive."
     ],
     "why": "Issue provides detailed root cause: test never runs due to min_gb=32 vs 18GB runner, and assertion ill-defined due to flat-index pairing and top-k tie-breaking. Concrete validation path via measured memory footprint and bit-level logit comparisons. Existing PR #53647 overlaps but does not close issue; no blocker."
+  },
+  "c1abbd8d8c0e1a359bf7468073b97a707a69b866f0d80a4b88e52693ed2eedd9": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports deterministic failure on a bundled CPython install, but a contributor could not reproduce it on current main in an isolated Linux pod under a relocatable CPython 3.12 with relative $ORIGIN/../lib RPATH, including a cold uv cache run"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/apps/builtins/pptx_maker/backend/provision.py::_run child env handling",
+      "src/kiro_crew/apps/builtins/pptx_maker/backend/engine.py::_spawn child env handling",
+      "possibly engine_source.install_engine staged-validate rollback messaging"
+    ],
+    "risks": [
+      "Re-admitting LD_LIBRARY_PATH into the strictest sandbox spawn narrows a trust boundary four modules deliberately enforce",
+      "Appending to an inherited LD_LIBRARY_PATH would re-import the injection vector the scrub removes",
+      "A fix that exports an empty or wrong path could break statically linked or macOS framework installs"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce POST /api/apps/pptx-maker/engine/provision on the affected packaged install and capture readelf -d / ldd plus the physical path of the isolated PEP 517 build interpreter",
+      "Diff that layout against a source-worktree venv that succeeds",
+      "If a fix is chosen, add a regression test asserting the child env is a no-op on statically linked libpython and correct on relocatable CPython"
+    ],
+    "unknowns": [
+      "The packaging-specific relocation shape on the affected host that makes the build interpreter's RPATH fail",
+      "Whether maintainers will permit any loader-path exception in the strict sandbox spawn, or prefer avoiding build isolation / pinning a prebuilt wheel",
+      "Whether the non-reproduction reflects a narrower trigger or an already-changed behavior on main"
+    ],
+    "why": "The issue gives a plausible root cause (uv's isolated PEP 517 build interpreter loses libpython via RPATH after relocation) and a verified manual workaround, but the only independent reproduction attempt on current main failed twice, including a cold UV_CACHE_DIR run, so the trigger is not established. The proposed fix also requires a security ruling: LD_LIBRARY_PATH is explicitly classified as a code-injection variable in name_grant.py, update_provider.py, cron_script.py, and mcp_discovery.py, and the affected spawn is the strictest sandbox path. Whether the fix is actionable depends on an unresolved maintainer security decision and on reproduction evidence that only the reporter's host can supply."
   },
   "c1b355b67a9c0e1b9d33d66f9a8b527007098b86dda4eee73f96a83001125452": {
     "confidence": 0.8,
@@ -90656,6 +90967,44 @@
     ],
     "why": "Issue provides a concrete reproduction (n8n MCP client calling Dify Cloud MCP tools/call), an exact error string, and a bot comment plus user comments that pin the root cause to sessionmaker().begin() in api/controllers/mcp/mcp.py where an internal commit closes the transaction before conversation.override_model_configs is set. A concrete fix shape (plain Session with explicit commit) and a validation path exist, so the work is actionable despite the open competing PR."
   },
+  "ebbe5189ead7fe17e52d41f94d9515af836e6424efb495810b3e0a5e927068d5": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body blames TileLang QSA prefill MQA kernel bounds; reporter's later comment retracts this and blames an overlap-scheduler race",
+      "Reporter says --disable-overlap-schedule suppresses the crash; pinkgom reports the same signature recurring 7 times with disable_overlap_schedule=True",
+      "pinkgom attributes the fault to merged PR #38346, while the issue remains open as an unfixed bug"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/layers/attention/qsa/metadata.py get_prefill_mqa_inputs host/device sequence-length snapshot consistency",
+      "python/sglang/srt/layers/attention/qsa/qsa_indexer.py compress gather bounds (already covered by #38346)"
+    ],
+    "risks": [
+      "Fixing an already-merged root cause (#38346) would be duplicate work",
+      "The overlap-scheduler race hypothesis is unconfirmed and may be a red herring",
+      "Crash is probabilistic, so absence of reproduction is weak evidence"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with bench_serving --max-concurrency 8 on Qwen3.8-Flash-Next-FP8 TP8 and confirm crash",
+      "Re-run the same reproducer on a build containing merged #38346 to determine whether the fault is already fixed",
+      "Add a regression test for chunked-prefill requests whose final chunk is 1-3 tokens (input_ids length 4096*k+{1,2,3})"
+    ],
+    "unknowns": [
+      "Whether the crash still reproduces on a build containing merged #38346",
+      "Whether the host/device sequence-length mismatch in get_prefill_mqa_inputs is real or only a hypothesis",
+      "Whether any remaining root cause is distinct from #38346 and the related issues #32470/#39173/#34152/#38207"
+    ],
+    "why": "The issue's own reporter retracted the QSA kernel bounds root cause and re-characterized the crash as an overlap-scheduler race; a later commenter reports the crash persists with --disable-overlap-schedule and attributes it to merged PR #38346 (chunked-prefill last-chunk 1-3 tokens reading past token_k), which is already merged. Supplied evidence therefore contains contradictory root-cause claims and unresolved duplicate/merged-fix coverage, so it is not established that actionable code work remains."
+  },
   "ebf8284ce21821bc9e8f10aa538a9a2693ff66fb87a33b5f76b13afc0d51fffd": {
     "confidence": 0.85,
     "contradictions": [
@@ -93969,6 +94318,41 @@
       "Whether maintainer has verified the routing hypothesis against a Google AI Pro account"
     ],
     "why": "The issue gives a plausible routing hypothesis (consumer accounts must use daily-cloudcode-pa instead of cloudcode-pa) with external corroboration, but the supplied evidence contains a direct contradiction: the issue claims the consumer production host is daily-cloudcode-pa.googleapis.com, while a commenter reports the working endpoint is daily-cloudcode-pa.sandbox.googleapis.com. The correct endpoint determines whether the code change is actionable, and the maintainer explicitly requires verification against a Google AI Pro account before shipping."
+  },
+  "f5222b9ccfbbedecf8177af6a6c6efe379569647b19cada7391cfa8a895dc76b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Duplicate assessment says 'none' while the bot comment lists five closely related encrypted_content issues",
+      "Open PRs target the same error but are scored as keyword-overlap-only with no direct code overlap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "session/provider reasoning state handling for encrypted_content replay (unconfirmed module)"
+    ],
+    "risks": [
+      "Fix may already be covered by open PRs #48908/#48918",
+      "Root cause may be provider-side rather than in this repository",
+      "Multiple duplicate issues may fragment the correct fix location"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the exact model/session sequence and capture the request payload containing the stale reasoning item",
+      "Add a regression test that replays a session with stale encrypted reasoning and asserts graceful recovery instead of invalid_request_error"
+    ],
+    "unknowns": [
+      "Which code path emits/replays the encrypted reasoning item",
+      "Whether #48908/#48918 already resolve this issue",
+      "Whether the error originates in this repo or the upstream provider"
+    ],
+    "why": "Issue is a provider-side error report ('reasoning encrypted_content was not issued to this caller') with only a UI-level reproduction (select model, send chat). No code anchor, no root-cause evidence, and no reproduction/validation path in the supplied evidence. The bot comment lists multiple potentially overlapping issues (#48805, #48915, #48741, #48947, #48319) covering the same encrypted_content error, so duplicate/coverage status is unresolved. Two open PRs (#48908, #48918) already target stale encrypted reasoning recovery, but the assessment marks them keyword-overlap-only with no direct code overlap, leaving whether the fix is already covered materially uncertain."
   },
   "f5291b3ed368cc09ca3498995c556dec0398d2df5c2d30593fe2d8af01bb5f77": {
     "confidence": 0.8,
