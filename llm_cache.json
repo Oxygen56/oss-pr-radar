@@ -17350,6 +17350,38 @@
     ],
     "why": "The issue provides a clear reproduction with exact commands and traceback, identifying the root cause as the generated CLI wrapping optional string parameters in json.loads(). The expected behavior is explicitly stated, making the fix actionable."
   },
+  "2f99b5e3fe8d541bf93a47aa9a9218ec7f7a2753e36c3a092609030104720dba": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue suspects a provider-specific tool-call formatting issue, but the bot comment links it to a generic intent-narration loop (#46492) and a Muse Spark-specific stall (#44659), leaving the actual locus unresolved."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/opencode/src/tool/task.ts",
+      "packages/cli/src/commands/handlers/service/stop.ts"
+    ],
+    "risks": [
+      "Fixing a provider/model behavior in opencode could mask the real cause and add brittle heuristics.",
+      "Overlap with #46492 and #44659 may make this a duplicate with no distinct code change."
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the named model and capture the raw provider response (finish_reason, tool_calls) to determine whether the stall is provider-side or opencode-side before writing a regression test."
+    ],
+    "unknowns": [
+      "Whether #46492 or #44659 already cover or fix this symptom.",
+      "Raw provider response showing finish_reason and absence of tool_calls.",
+      "Whether the stall is reproducible without the superpowers plugin/skills."
+    ],
+    "why": "The issue reports a model/provider behavior stall (announcement without tool call) with only a narrative reproduction and no root-cause evidence. The bot comment points to two potentially covering issues (#46492, #44659) with the same core symptom, and duplicate/merged-fix coverage is unresolved. The candidate's own actionability evidence shows root_cause_signal=false and probe_ready=false, so it is not yet established whether code work in this repo is actionable."
+  },
   "2fbbc13c2e6e0403f7892ba6a2135ca3d6c4a8fcfcaa18a8d3a3ba9be423b5c4": {
     "confidence": 0.7,
     "contradictions": [
@@ -34780,6 +34812,42 @@
     ],
     "why": "The issue provides a clear regression range, a minimal repro, and a confirmed root cause in a comment: PR #53968 enabled gp-relative relaxation in active-ERISC kernels without initializing gp on BH ACTIVE_ETH proc 0, causing the local handshake atomic to target a wrong NoC address. The proposed fix (initialize gp in active_erisc-crt0.cc) is concrete and testable."
   },
+  "5d745fb4f44a1928ebd25651d513c3f3e5d227e6a17a8f6b3804205f0d4f06f0": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue suggests a structural mixin fix, while open PR #54309 applies the minimal attribute-set fix; the commenter also suggests read-side hardening, so the preferred implementation is unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/diffusion_gemma.py: set `_enable_mm_lora` in `__init__` or harden the two read sites in gemma4_mm.py",
+      "Add a regression test that sends one image request to DiffusionGemma"
+    ],
+    "risks": [
+      "PR #54309 may already cover the root cause, making a new contribution duplicative",
+      "The structural mixin fix is larger and may conflict with the existing PR's approach",
+      "Latent audio siblings are currently unreachable but could surface later"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on current main: serve DiffusionGemma with image input enabled and send one image request; confirm AttributeError/EngineDeadError",
+      "After fix, re-run the same image request and confirm no crash; also verify text-only requests still work",
+      "Add a regression test covering the image path for DiffusionGemma"
+    ],
+    "unknowns": [
+      "Whether PR #54309 is intended to close this issue and whether it will be merged",
+      "Whether the maintainers prefer the minimal fix or the structural mixin refactor"
+    ],
+    "why": "The issue itself is a well-diagnosed, reproducible bug with a clear root cause (borrowed Gemma4 methods read `_enable_mm_lora`, which DiffusionGemma never sets), but the supplied evidence shows an open PR #54309 that already implements the fix on the same code path, and the candidate's own duplicate assessment is 'semantic_overlap_requires_review'. The unresolved duplicate/merged-fix coverage is a materially blocking unknown for whether new code work is actionable."
+  },
   "5d91d83dbbf7bdbd21dfd6b09b99dd83d48b0e6550b9cb370cb904506f42d0a4": {
     "confidence": 0.85,
     "contradictions": [],
@@ -37425,6 +37493,42 @@
       "Whether maintainers prefer a different default retention value or a more comprehensive fix (e.g., offloading glob to thread pool) before merging."
     ],
     "why": "Issue provides a clear root cause (synchronous glob on event loop, unbounded directory) with profiling evidence and a concrete, minimal fix (enable retention via env var). No competing PR or issue found. The fix is actionable and testable."
+  },
+  "63f3cf05b1256309365e8f34f58e01bab1d05ae0730211b43f59b3c40d13d711": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue attributes root cause to Bedrock invoke_handler post_call logging, while chrikrah's reproduction locates the loss in proxy cancellation handling gated by cancel_on_disconnect",
+      "Issue claims non-streaming calls lose spend tracking generally, but chrikrah reports non-reproducibility on default config"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/common_request_processing.py cancellation/cleanup path",
+      "litellm/utils.py exception handling around CancelledError",
+      "spend logging for non-streaming requests on client disconnect"
+    ],
+    "risks": [
+      "Fixing cancellation handling could alter proxy 499 semantics or double-count spend",
+      "Overlap with open PRs #41101/#40938 may duplicate or conflict with in-flight work",
+      "Bedrock-specific billing behavior may require live AWS validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with general_settings.cancel_on_disconnect enabled and disabled, disconnecting a non-streaming Bedrock /v1/chat/completions client mid-request, and assert a success/failure spend event is recorded with full input+output cost",
+      "Regression test comparing streaming shielded-cleanup billing behavior against non-streaming path"
+    ],
+    "unknowns": [
+      "Whether the fix should target the proxy cancellation path or the Bedrock provider logging path",
+      "Whether open PRs #41101/#40938 already cover the same root cause",
+      "Whether maintainers require a specific design for cancel_on_disconnect spend accounting"
+    ],
+    "why": "The issue describes a plausible spend-tracking gap for non-streaming Bedrock calls on client disconnect, but the most recent comment (chrikrah) materially narrows and partly contradicts the original root cause: the loss only reproduces with general_settings.cancel_on_disconnect, and the failure path is in proxy request cancellation (common_request_processing.py:2398/1468, utils.py:1881/2003/2087) rather than the Bedrock invoke_handler post_call path cited in the issue. The supplied open-PR assessment also flags semantic overlap requiring review (PR #41101, #40938) without direct code overlap or issue linkage, so duplicate coverage is unresolved. These are materially blocking unknowns for scoping an actionable fix."
   },
   "640b77d8691b33ca2579bf061c4613ba3c67b3aac7ab321ec07ee88cf6b53a38": {
     "confidence": 0.6,
@@ -42534,6 +42638,43 @@
     ],
     "why": "Issue provides a precise root cause (two writers of requestContext user slot with different shapes) and a verified workaround. Existing PR #20690 is weak due to failed CI and incomplete coverage of two other readers, leaving room for a materially better PR that addresses all readers and passes CI."
   },
+  "6ecc945c60cdc3f8ea24252fdabaad66cf0dfa9138365a1dded0659023161b20": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims no existing open PR covers this interaction, but open_pr_assessment reports PR #56825 with strong semantic overlap on the same code path"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/v1/attention/backends/mla/index_group.py: event recording/wait semantics for logical_topk_ready",
+      "vllm/compilation/breakable_cudagraph.py: eager_break_during_capture/add_eager handling of stranded cross-stream events"
+    ],
+    "risks": [
+      "Fix may conflict with or duplicate PR #56825's approach",
+      "Cross-stream event semantics under piecewise capture are subtle; a naive wait_stream substitution could introduce races",
+      "Hardware-specific (GB200/aarch64) reproduction may not be available to all contributors"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with GLM-5.3-Flash fp8, TP=4, default flags on GB200 NVL; confirm crash at index_group.py:133 during determine_available_memory",
+      "After fix, verify startup reaches 'Application startup complete.' and KV cache sizing completes",
+      "Regression: run existing SparseMLA/index_group unit tests and a piecewise-cudagraph capture test to confirm no event-wait failures"
+    ],
+    "unknowns": [
+      "Whether PR #56825 already fixes the exact root cause described in this issue",
+      "Whether issue #56900 is a true duplicate or merely shares generic stack signatures",
+      "Whether the repository's AI disclosure policy blocks automated contribution on this issue"
+    ],
+    "why": "Issue presents a concrete root-cause hypothesis (logical_topk_ready recorded inside a piecewise cudagraph capture segment, then waited on after eager_break_during_capture ends capture) with a bisected regression bracket and code anchors. However, supplied evidence shows an open PR #56825 with strong semantic overlap (21 distinctive terms including logical_topk_ready, eager_break_during_capture, piecewise) and an overlapping path (index_group.py), plus a potential duplicate issue #56900 sharing stack signatures. The duplicate/coverage status is explicitly 'semantic_overlap_requires_review', which is a materially blocking unknown: whether the fix is already covered determines whether new code work is actionable."
+  },
   "6efd5cabce57452838813df6796b0a5e096ac9e953d7c54297e1cc1c82ba0380": {
     "confidence": 0.7,
     "contradictions": [],
@@ -46184,6 +46325,45 @@
     ],
     "wait_reason": null,
     "why": "Issue describes a concrete bug with clear root cause in MCP auto-execute loop that hijacks client tool_use, breaking agentic clients. Code anchors and expected behavior are specific, and no competing PR exists."
+  },
+  "78e6c9c9805cc187b813c17cdee98762a938dde83008de55b4d43c9f5cf0cbe0": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims PR #36175 artifacts are present and the loud 'Invalid upload file' error is absent, yet the same gate chain is implicated; the silent-empty vs loud-error divergence is unexplained",
+      "Commenter asserts propagation loss is 'present in the exact dependency version' while also stating runtime confirmation of which thread runs loader vs granter is still needed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/core/app/file_access/scope.py (grant visibility / scope binding)",
+      "api/core/workflow/node_runtime.py (DifyRetrieverAttachmentLoader.load gate)",
+      "api/core/rag/retrieval/dataset_retrieval.py (grant_retriever_segment_access call site)",
+      "graphon worker context propagation (copy_context or node_run_context hook)"
+    ],
+    "risks": [
+      "Fix may require changes in the extracted graphon engine rather than dify, complicating the contribution path",
+      "Broadening scope visibility could weaken tenant isolation if not carefully constrained",
+      "Repository policy reports an AI disclosure conflict (ai_disclosure_conflict), which may block automated public submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a published Advanced Chat app invoked via POST /v1/chat-messages as END_USER vs Studio preview as ACCOUNT, asserting presence of #context_files# in workflow_node_executions.inputs",
+      "Add instrumentation logging get_current_file_access_scope() at the grant_retriever_segment_access call site and inside DifyRetrieverAttachmentLoader.load for one END_USER run to confirm whether the scope is None at grant time",
+      "Regression test asserting retrieved segment attachments resolve for END_USER while tenant isolation and the selected-retrieval-context constraint are preserved"
+    ],
+    "unknowns": [
+      "Whether the grant write and the loader read actually occur in different contexts/threads in the reporter's build (the decisive instrumentation result)",
+      "Whether the fix belongs in dify or in the extracted graphon engine",
+      "Whether the repository's AI disclosure policy permits the intended contribution workflow"
+    ],
+    "why": "The issue provides a strong A/B reproduction (END_USER vs ACCOUNT) and a plausible ContextVar-propagation hypothesis, but the root cause is explicitly unconfirmed: the reporter states they cannot reconcile 'grant is written' with 'grant is not visible', and the commenter admits 'I don't have a running multi-service environment to confirm the propagation point at runtime'. The decisive fact — whether the grant site and loader run in the same context/thread — is still an open instrumentation question, so the concrete code change is not yet determined."
   },
   "78ed9a73717aa1e59093588fdb18eb3fa1c08168a8b831260d205b2d9b5f2df4": {
     "confidence": 0.7,
@@ -53452,6 +53632,46 @@
       "Whether the repository's AI disclosure policy permits the required public contribution action"
     ],
     "why": "The issue is a concrete, well-evidenced CUTLASS C3x kernel correctness bug (packed strides reconstructed from shape instead of tensor metadata), with a reproducible stride matrix and a proposed fix. However, the supplied evidence shows three open PRs (#55537, #56248, #56480) already covering five of six affected callers, and the issue's own comment states only scaled_mm_blockwise_sm120_fp8_dispatch.cuh remains unclaimed — requiring SM120 hardware that the reporter lacks. The remaining actionable work is therefore gated on unavailable hardware, and the duplicate/coverage status is explicitly 'semantic_overlap_requires_review' rather than resolved."
+  },
+  "8dbe4720183bd3cd5cc216c9e8a0d7d92e3ed1ee1bcf3e03f6a029a3beccb326": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body attributes crash to TileLang QSA prefill MQA kernel bounds; reporter's later comment retracts this and calls it an overlap-scheduler race",
+      "Reporter says #37638 should not be credited with fixing this issue, while open_pr_assessment lists #37638 as root_cause_coverage=true",
+      "pinkgom reports --disable-overlap-schedule resolved the crash, then reports it recurring 7 times with disable_overlap_schedule=True",
+      "pinkgom attributes the low-concurrency crashes to merged #38346 while the issue remains open"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/layers/attention/qsa/metadata.py get_prefill_mqa_inputs host/device sequence-length snapshot consistency",
+      "python/sglang/srt/layers/attention/qsa/qsa_indexer.py prefill path",
+      "overlap-scheduler stream synchronization between forward_stream and schedule_stream"
+    ],
+    "risks": [
+      "Fixing the wrong layer (QSA kernel bounds vs scheduler race) yields no crash reduction",
+      "Merged #38346 may already cover the low-concurrency variant, making a new fix redundant",
+      "Crash is probabilistic and hardware/traffic dependent, so validation may be inconclusive without a deterministic repro"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with bench_serving --max-concurrency 8 on Qwen3.8-Flash-Next-FP8 TP8 and confirm crash vs CUDA_LAUNCH_BLOCKING=1 suppression",
+      "Add a regression test asserting row_ends stays within the packed compressed_keys/logits buffer when host sequence_lengths and device-derived row ranges disagree",
+      "Re-run the 4096*k+{1,2,3} cold-prefill case against a build including #38346 to confirm whether the merged clamp already covers the fault"
+    ],
+    "unknowns": [
+      "Whether merged #38346 already fixes the reported crash",
+      "Whether the true root cause is the overlap-scheduler race or the QSA prefill kernel",
+      "Whether a deterministic reproduction exists without CUDA_LAUNCH_BLOCKING or overlap-schedule toggles"
+    ],
+    "why": "The issue's own reporter retracted the QSA kernel bounds root cause and reclassified the crash as an overlap-scheduler race; the merged PR #38346 (clamp compress gather) is claimed by a second reporter to cover the low-concurrency variant, while the same reporter later reports the crash recurring with --disable-overlap-schedule. Root cause and duplicate/merged-fix coverage are unresolved, so no concrete code change is actionable."
   },
   "8de24e9cd4380f38ab3035a84d8d3a14faa714b0c6be8d60048aec77da22cfdf": {
     "confidence": 0.85,
@@ -61339,6 +61559,37 @@
       "Exact implementation details for wrapper to handle both exception and SSE event cases"
     ],
     "why": "Issue clearly identifies missing fallback wrapper for anthropic_messages streaming, with root cause and reproduction. However, recent comment indicates maintainer direction is needed and existing PRs are stale or incomplete. The comment proposes a rebased PR following a new precedent, but requires maintainer confirmation."
+  },
+  "a26789b95a1e061c47b1990f40d4a09fca182149f47c316a835cd7fdc366f165": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth: remove or condition the WebSocket pre-check so keyless policy is delegated to shared user_api_key_auth()",
+      "WebSocket rejection path: use a single valid ASGI/WebSocket rejection mechanism instead of close-then-raise HTTPException"
+    ],
+    "risks": [
+      "Changing WebSocket auth could unintentionally relax auth when custom auth or master_key is configured",
+      "ASGI rejection mechanism change may affect Starlette/Uvicorn version compatibility",
+      "Overlap with open PR #41139 may cause duplicate implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test starting the proxy without general_settings.master_key and connecting to /v1/responses WebSocket without Authorization/api-key; assert connection is accepted",
+      "Add a test with master_key configured asserting the WebSocket still requires and validates a key",
+      "Assert no 'Unexpected ASGI message websocket.http.response.start after websocket.close' RuntimeError on rejection"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the exact fix shape in PR #41139 or a different delegation approach"
+    ],
+    "why": "Issue provides a concrete minimal reproduction, expected/actual pair, and a specific root cause: user_api_key_auth_websocket() unconditionally rejects a missing key before delegating to shared user_api_key_auth(), which already implements keyless behavior when master_key is None. This is a proxy auth-path bug with a clear reference-vs-implementation validation path. Open PR #41139 is directly related but lacks root-cause coverage evidence, so competition remains possible."
   },
   "a2a0a797b0c66403c697818514176d1f490fa980a895cc2a523295fd626eb5d0": {
     "confidence": 0.7,
@@ -87390,6 +87641,33 @@
       "whether PR #6582 will be updated or superseded"
     ],
     "why": "Issue reports a real bug with strong evidence, but maintainer has explicitly linked PR #6582 as the candidate implementation and requested specific validation (long tool-loop case, non-empty preservation). Recent counter-evidence shows the sanitizer fix is incomplete, and the maintainer has redirected investigation to identify the mutation boundary, not to revive a persistence-only patch. The issue is now an upstream diagnostic/self-build candidate requiring maintainer-guided investigation."
+  },
+  "e608e4efb7833c494e6682756e85f029094fb8045de306b01682fde209a70f83": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docker/Dockerfile.database: bump LITELLM_BUILD_IMAGE and LITELLM_RUNTIME_IMAGE to a current wolfi-base digest",
+      "docker/Dockerfile.database: optionally add UV_PYTHON_DOWNLOADS=never to make interpreter selection fail loudly"
+    ],
+    "risks": [
+      "Bumping the base image digest may introduce other package drift or break unrelated build steps",
+      "The exact current wolfi-base digest must be verified against the Wolfi registry before pinning"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run `docker build -f docker/Dockerfile.database -t litellm-test .` on linux/amd64 and confirm the apk and uv sync layers succeed",
+      "Run the built image with `docker run --rm --entrypoint sh <image> -c 'ls -l /app/.venv/bin/python'` and confirm the symlink resolves to a system interpreter present in the runtime stage",
+      "Run `docker run --rm <image> python -c 'import litellm'` to confirm the runtime image starts"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a concrete, reproducible root cause: the pinned wolfi-base digest has drifted from the current apk python3 package, causing both the apk trigger failure and the uvloop source-build failure; the suggested fix (bump LITELLM_BUILD_IMAGE/LITELLM_RUNTIME_IMAGE digests, optionally set UV_PYTHON_DOWNLOADS=never) is specific and actionable."
   },
   "e61a836fc895e94c7dd04ff87ea5b9e2f9de71a50eb3862fe421a782ef74ee5a": {
     "confidence": 0.85,
