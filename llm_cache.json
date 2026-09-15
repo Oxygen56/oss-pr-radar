@@ -1292,6 +1292,43 @@
     ],
     "why": "Issue provides a clear root cause and a verified fix for a user-visible UTF-8 corruption bug in the SGLang streaming detokenizer. However, multiple open PRs (e.g., #10344, #12562, #12820) overlap semantically with the same code path, and the deterministic gate requires HUMAN_REVIEW. The issue itself is a bug report with a proposed fix, not a PR, and the maintainer has not confirmed assignment or design preference. Given the overlapping PRs and the need to compare implementation boundaries, a new clean candidate cannot be confidently started without maintainer input."
   },
+  "03e6b398ffaf18ec0c8c58a07397a3af2d829f329758c3a15834aaa5630d52a7": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims 'no further Flux event of any kind', but the reporter's later comment retracts this and shows Updates continued during the withheld EndOfTurn",
+      "Issue body attributes failure to a quiet Flux stream; replay evidence points to eot_threshold/eot_timeout_ms withholding EndOfTurn instead"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/deepgram/flux/stt_base.py (inbound-message staleness detection, if stall is confirmed)",
+      "src/pipecat/services/deepgram/flux/stt.py (reconnect_on_error / _request_reconnect path)",
+      "src/pipecat/turns/user_turn_controller.py (releasing a stranded open turn)"
+    ],
+    "risks": [
+      "Implementing a watchdog for a stall that the reporter's own evidence no longer supports",
+      "Duplicating or conflicting with draft PR #5584's manual turn finalization",
+      "Changing default turn-finalization behavior for all Flux users"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with unmodified voice-deepgram-flux.py on FastAPIWebsocketTransport + TelnyxFrameSerializer at 8 kHz mulaw with a received-message counter to distinguish 'no final transcript' from 'no inbound messages'",
+      "Direct-service replay of the caller channel at eot_threshold=0.85/eot_timeout_ms=7000 vs 0.7/5000 to confirm whether EndOfTurn is withheld while Updates continue",
+      "Compare against draft PR #5584 to determine whether force_end_turn already resolves the observed behavior"
+    ],
+    "unknowns": [
+      "Whether the production session actually had a stalled inbound stream or merely a withheld EndOfTurn",
+      "Whether draft PR #5584's force_end_turn is intended to cover this scenario and whether it is in scope for maintainers",
+      "Whether a service-level watchdog is in scope per maintainer design preference"
+    ],
+    "why": "The issue's core premise (Flux stream stays open but stops sending events) was retracted by the reporter: direct-service replays show Updates continued while EndOfTurn was withheld, and the original session's event sequence is unverified. The remaining behavior (EndOfTurn withheld at high eot_threshold) is a threshold/turn-finalization question, not a stream-stall watchdog, and draft PR #5584 (force_end_turn) may already cover it. Root cause and reproduction are unresolved, so code work is not yet actionable."
+  },
   "04045f296d2e2719b737799988b89a05a0c84d2d8e82ea883cf82e8cccbd96f8": {
     "confidence": 0.85,
     "contradictions": [],
@@ -3331,6 +3368,44 @@
     ],
     "why": "The issue describes a real bug in PD disaggregation where the router reports healthy before the prefill worker is ready, causing benchmark failures. However, the root cause is not precisely identified, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The deterministic gate requires HUMAN_REVIEW."
   },
+  "08cc0a428a49c75db0d97c7cf54ab501a19d06ea625c7448259a806682c93ec3": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment reports semantic overlap requiring review while issue body claims no existing issue, open PR, or landed commit covers this interaction"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/attention/backends/mla/index_group.py: avoid waiting on a captured logical_topk_ready event on the eager-break path",
+      "vllm/compilation/breakable_cudagraph.py: handle or invalidate cross-stream events stranded when a segment ends",
+      "vllm/model_executor/layers/mla.py: record logical_topk_ready outside the captured segment"
+    ],
+    "risks": [
+      "Open PR #56752 (maintainer-owned) touches the same breakable_cudagraph.py path and may already cover or conflict with the fix",
+      "AI disclosure conflict in repository policy may block automated public contribution",
+      "Fix may require hardware (GB200 NVL) not generally available for validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the exact serve command and GLM-5.3-Flash revision on 4x GB200 NVL, confirming crash at index_group.py:133",
+      "Verify the last-known-good wheel 120ec4ebd reaches 'Application startup complete.' and the first-bad d43bb2f37 fails",
+      "Add a regression test that exercises piecewise cudagraph capture with the HiSparse MLA indexer path and asserts no CUDA invalid argument"
+    ],
+    "unknowns": [
+      "Whether PR #56752 or #46370 already fixes the logical_topk_ready capture/eager-break interaction",
+      "Whether the repository's AI disclosure policy permits this contribution path",
+      "Whether the base SHA change invalidates the reported reproduction"
+    ],
+    "why": "The issue presents a detailed, plausible root cause (logical_topk_ready recorded inside a piecewise cudagraph capture segment, then waited on after eager_break_during_capture ends capture) with a bisected regression bracket and code anchors. However, the supplied evidence contains a materially blocking unknown: the duplicate assessment reports semantic overlap with open PRs (#46370, #56686, #56752) that is unresolved ('semantic_overlap_requires_review'), and the pre-task evidence flags a policy/disclosure conflict (ai_disclosure_conflict) plus base_sha_changed/issue_changed/duplicate_changed. The overlap with #56752 (maintainer-owned, touches vllm/compilation/breakable_cudagraph.py, the exact file in the crash chain) is not resolved, so it is unclear whether the root cause is already covered. Additionally, the issue itself is AI-drafted and the repository policy status is a disclosure conflict, which affects whether code work is actionable under repo rules."
+  },
   "08d50acf011ea0dc42e3a23e397512b61f1ac146ae7beb06fcdcd0fe04cb89c1": {
     "confidence": 0.85,
     "contradictions": [
@@ -4192,6 +4267,36 @@
       "Whether the proposed fix has been merged or is still pending; the comment references PR #36507 but no open PR status is confirmed."
     ],
     "why": "The issue provides a clear root cause: a KeyError 'residual' in glm5_next forward under pipeline parallelism, caused by a mismatch in whether mHC models fold residual into hidden_states. The reproduction steps and traceback are concrete, and the commenter proposes a specific fix (conforming the model to fold residual, matching deepseek_v4.py). This is a valid LLM algorithm mechanism (distributed training, model architecture) with a clear validation path."
+  },
+  "0b4731f7d5b159f82f1b0e40199516c6d520a0e6910b215d1d98888488eb9a00": {
+    "confidence": 0.7,
+    "contradictions": [
+      "open_pr_assessment lists PR #39399 as direct code overlap and COVERAGE while also marking root_cause_coverage=false and technical_complete=false."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/moe/ep_moe_kernels.py: pass expert_start and num_experts to _fwd_kernel_ep_scatter_2 in ep_scatter_from_psum"
+    ],
+    "risks": [
+      "Fix may already be covered by open PR #39399 or #37211, making a new contribution redundant.",
+      "Kernel signature/argument order could differ across Triton versions, so a naive positional fix may be fragile."
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run deepep_v2 prefill/extend path with FP8 blockwise MoE (e.g. DeepSeek-R1, --moe-a2a-backend deepep_v2) and confirm no TypeError; add a regression test asserting the kernel launch binds all positional args."
+    ],
+    "unknowns": [
+      "Whether PR #39399 or #37211 already resolves the issue or is expected to merge, i.e. whether independent implementation space remains."
+    ],
+    "why": "Issue reports a concrete TypeError: ep_scatter_from_psum calls _fwd_kernel_ep_scatter_2 without expert_start/num_experts, with code anchors and a reproduction path. However, supplied evidence shows an open PR #39399 that directly covers the same code path and root cause (COVERAGE, direct_code_overlap), plus PR #37211 with the same fix and a test. Duplicate/merged-fix coverage is unresolved (duplicateStatus=human_review_required), which materially determines whether independent code work is actionable."
   },
   "0b4d15786bd0d8e5c6b00adb4ebb64d8dfda3e514414e2edd9150ee4d5a8293d": {
     "confidence": 0.6,
@@ -6422,6 +6527,37 @@
       "Whether the AI disclosure conflict can be resolved for a public contribution"
     ],
     "why": "The issue describes a plausible serialization bug in openhands/sdk/llm/message.py, but a maintainer comment directs the fix to the upstream OpenHands/software-agent-sdk repository, not this repo. The candidate repo is OpenHands/OpenHands, so the actionable code surface is unresolved. Additionally, the issue-readiness bot flags missing supported reproduction method and screenshot, and the repository has an AI disclosure conflict policy."
+  },
+  "1179410c94c464f68321b2e34eee9c65a2d59df2cc20889df067ee5a2222310c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims there is no way to control recap language, but triage shows general.outputLanguage already reaches the side query; the remaining gap is only the default 'auto' case"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/services/sessionRecap.ts: restore a bullet in RECAP_SYSTEM_PROMPT instructing the recap to match the language of the recent user messages in the side-query window"
+    ],
+    "risks": [
+      "Prompt-only change may be unreliable for short or mixed-language windows",
+      "Maintainer may prefer a dedicated general.sessionRecapLanguage setting despite triage calling it unnecessary",
+      "Behavior change could affect existing English-only users if the instruction is too aggressive"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add/extend a test in sideQuery.test.ts or sessionRecap tests asserting the recap system prompt contains the language-matching instruction",
+      "Reproduce per issue steps: enable general.showSessionRecap, hold a Russian conversation, wait past the away threshold, confirm the recap is in Russian"
+    ],
+    "unknowns": [
+      "Whether maintainers accept the prompt-only fix versus adding a dedicated setting"
+    ],
+    "why": "Triage evidence confirms the shipped RECAP_SYSTEM_PROMPT lacks the language-matching bullet that the design doc says should be there, and the default 'auto' path leaves the recap in English. The fix is a concrete one-line prompt change in packages/core/src/services/sessionRecap.ts, with a clear validation path via the existing sideQuery tests and a Russian-conversation reproduction."
   },
   "119bf7534e5c355339b9092314897a492800df9955a909d1a304878b167d28bd": {
     "confidence": 0.8,
@@ -23080,6 +23216,41 @@
     ],
     "why": "The issue describes a plausible bug in categorize.py where LLM reasoning output may cause misclassification, but the proposed fix is a simple string truncation that may not be robust across different LLM formats. The deterministic gate requires HUMAN_REVIEW, and there is no maintainer confirmation or active investigation. The related issue audit timed out, leaving unknowns about existing duplicates or ongoing work."
   },
+  "3d28c7ca11419380e32588ce3c98104ccf39eaa12942c0deb54e8e1a1cc44448": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/application/service/file/obs.go: switch UsePathStyle to false in NewObsFileService and CheckObsConnectivity",
+      "internal/application/service/file/obs.go: align RequestChecksumCalculation with s3.go",
+      "internal/application/service/file/obs.go: update GetFileURL to emit virtual-hosted style URL when proxyDomain is unset",
+      "internal/application/service/file/obs_test.go: add client-construction and URL-generation tests"
+    ],
+    "risks": [
+      "Changing UsePathStyle may affect users relying on path-style for non-Huawei S3-compatible endpoints configured through the OBS driver",
+      "GetFileURL change could alter existing public URL formats for deployments with custom proxyDomain",
+      "RequestChecksumCalculation change should be verified against OBS compatibility"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test asserting the OBS client is constructed with UsePathStyle=false and virtual-hosted endpoint",
+      "Add a regression test for GetFileURL producing https://{bucket}.obs.{region}.myhuaweicloud.com/{key} when proxyDomain is empty",
+      "Run targeted package tests and static checks for internal/application/service/file"
+    ],
+    "unknowns": [
+      "Whether maintainers want a configurable addressing-style option instead of a hardcoded false",
+      "Whether any existing deployments depend on path-style OBS URLs"
+    ],
+    "why": "Issue provides a concrete root cause (hardcoded UsePathStyle: true in obs.go NewObsFileService and CheckObsConnectivity), a documented provider policy change, expected vs actual behavior, and a minimal fix path with code anchors. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific rejection rule does not apply. No duplicate or open PR coverage found."
+  },
   "3d31a38ee6e53cbcbef43f5e4cff171e8e6d0e9f15e68e58cc7e4c538194ae88": {
     "confidence": 0.85,
     "contradictions": [
@@ -33915,6 +34086,43 @@
     ],
     "why": "Issue provides a clear, reproducible bug with exact commands and byte-identical results, identifies the root cause in the replay entrypoint wiring, and contrasts with the working mocker path. The fix is a targeted code change in the replay argument handling, with a concrete test gap identified."
   },
+  "57389ab50f2afbba83b82d1b49afb1ae151f6ef982ca77cb37a23ee3d4e08ea6": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims finish_tool_response_schema exists in openhands-tools 1.46.0 yet the 500 persists, leaving the mechanism unexplained"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "presets/prompt/sdk_main.py finish-tool wiring vs agent-server 1.46.0 compatibility",
+      "presets/*/setup.sh pinning openhands-agent-server alongside sdk/tools/workspace",
+      "config/defaults.json agentServer pin alignment"
+    ],
+    "risks": [
+      "Exact root cause unconfirmed without the traceback; fix could target the wrong layer",
+      "AI disclosure conflict may block automated contribution to this repository",
+      "Two separate defects (template wiring vs setup.sh unpinned agent-server) could be conflated"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's curl-based prompt-preset automation on agent-canvas 1.17.0 and confirm the 500 on POST /api/conversations/{id}/events",
+      "A/B swap the preset template (24,102 B vs 18,771 B) with an agent-canvas restart and confirm pass/fail difference",
+      "Resolve a preserved error_id to the stored traceback to identify the exact failing frame before writing a fix"
+    ],
+    "unknowns": [
+      "The actual server-side traceback behind the 500",
+      "Whether the AI disclosure conflict permits an automated contribution",
+      "Whether the finish-tool wiring or the unpinned agent-server is the true cause of the 500"
+    ],
+    "why": "Issue reports a concrete, reproducible 500 on /api/conversations/{id}/events tied to the 1.17.0 preset template's finish-tool wiring against pinned agent-server 1.46.0, with A/B template rollback evidence. However the underlying traceback was never recovered, so the exact failing code path is unconfirmed; the issue itself asks whether error_id can be resolved to a stored traceback. Additionally, the repo policy status is ai_disclosure_conflict and the issue was AI-generated, which is a materially blocking disclosure/authorization unknown. Open PRs #16136/#17405 show only semantic (not direct code) overlap and do not cover the root cause, so duplicate coverage is not the blocker."
+  },
   "573d404a77c69fbb72e57da433e4422e160fb11ac2adf26ea6cdd4f0b62b3769": {
     "confidence": 0.9,
     "contradictions": [],
@@ -38234,6 +38442,41 @@
     ],
     "wait_reason": null,
     "why": "Issue clearly identifies a missing event emission for scheduled turns in ACP, with a concrete reproduction timeline and two actionable fix options. No competing PR or issue found; PR #2906 is keyword-only and not a material competitor. The fix is a targeted runtime behavior change with a clear test path."
+  },
+  "61ab5c71fb1c93ac85e497dc8dbaf8842ec2b3aad484cb59c5b6da4182437086": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue reports reasoning_tokens=0 in streaming while gemini/gemini-3.8-flash shows 0 reasoning chunks but 275 reasoning tokens, suggesting the usage path may be independent of the delta path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/llms/alibabacloud (or dashscope-compatible) streaming adapter: map upstream reasoning field to delta.reasoning_content",
+      "streaming usage normalization: propagate reasoning_tokens from upstream usage chunk",
+      "regression test covering streaming reasoning_content and reasoning_tokens for this provider"
+    ],
+    "risks": [
+      "Fixing the wrong layer if the provider genuinely does not stream reasoning",
+      "Broadening API behavior for other reasoning providers",
+      "Overlapping open PRs (#41050, #41207) touch reasoning_content handling and may conflict"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture the raw upstream SSE from the alibabacloud endpoint to confirm whether reasoning is emitted and under which field",
+      "Add a mocked-SSE unit test asserting delta.reasoning_content and completion_tokens_details.reasoning_tokens are populated",
+      "Run the targeted provider streaming tests plus lint/type checks"
+    ],
+    "unknowns": [
+      "Whether the upstream alibabacloud SSE actually contains a reasoning field",
+      "Which LiteLLM module drops the field (adapter vs stream normalizer)",
+      "Whether open PRs #41050/#41207 already address this exact provider path"
+    ],
+    "why": "Issue documents a clear streaming vs non-streaming discrepancy for reasoning_content on alibabacloud/deepseek-v4.1-flash, but the root cause is explicitly unresolved: the reporter states the direct upstream provider response was never tested, so it is unknown whether the loss occurs in the upstream adapter, the SSE normalizer, or the provider itself. No code anchor or failing test is established, and the candidate's own actionability evidence marks root_cause_signal=false."
   },
   "61b1f46e018ac0cfe9572a453b5b5eb0e07f1ac72f39f29b83b2549644a42d71": {
     "confidence": 0.8,
@@ -50779,6 +51022,29 @@
     ],
     "why": "Issue reports a provider-side invalid_request_error for reasoning `encrypted_content` on Muse Spark 1.3, but supplies no root-cause evidence, no code anchors beyond the error string, and no reproduction beyond a UI screenshot. The bot comment lists four closely related open issues (#48805, #48915, #48947, #48319) covering the same encrypted_content error across model-switch, idle-resume, image/tool-call, and stale-reasoning-replay scenarios, so duplicate/coverage status is unresolved. Two open PRs (#48908, #48918) already target stale encrypted reasoning recovery, but the assessment marks them keyword-overlap-only with no direct code overlap, leaving whether the fix is already covered materially unknown."
   },
+  "7f163c2102eb7389107e181cd77696c15407a7adf8d83fd7f9867ee4261768d5": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue body says 'Assign this issue to an agent to debug and fix', but the bot status comment concludes 'not actionable' with the failure matching checked-in configuration"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Speculative hardening of internal CI would override a documented maintainer trade-off",
+      "Consuming p:1/p:2 triage budget on an auto-expiring bot record"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [],
+    "unknowns": [],
+    "why": "Bot-generated per-run failure record for the repo's own gh-aw sweep workflow. The httpx2.ReadTimeout is the documented, checked-in design: shim _LLM_TIMEOUT (120s read timeout) plus GH_AW_HARNESS_MAX_RETRIES=0, with the failure issue auto-expiring. No code defect exists to fix; acting would revise a deliberate bounded-timeout/no-retry trade-off, which is a maintainer-intent question, not a bug fix."
+  },
   "7f30220f40e9b114741477edd63a3b1ff0dd062173703670e00220da32b7a2d5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -56690,6 +56956,47 @@
     ],
     "why": "The issue provides a detailed, reproducible bug with clear root-cause evidence: MTP speculative decoding combined with turboquant KV cache on sm120 causes repetition collapse and a separate engine crash. The report includes exact reproduction commands, a controlled comparison table, and rules out alternative causes. The track is llm_algorithm with concrete mechanisms (quantization numerics, kernel algorithm) and a clear validation path via reference-vs-implementation testing."
   },
+  "8e564cf16413daaa46c3b0945b1f6a90a93cb0e014e922e5b70fc6835cf33220": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue title and body name #56512 as prime suspect, but maintainer comment and reporter's own follow-up retract that attribution",
+      "algorithm_evidence claims distributed_training/numerics_quantization mechanisms, but the issue is a single-GPU TP=1 decode-throughput flake with no distributed or numerical invariant identified"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Bisect eed1f3d0..dc36fcce to isolate the offending commit before any code change",
+      "If #56682 (dummy_loader/weight_utils random CPU Engram fills) is implicated, fix the dummy-init path for the pinned PLE table",
+      "Add a regression test or benchmark guard for ctx-load decode at depth 32768, concurrency 1"
+    ],
+    "risks": [
+      "Performance flake may be host/driver/thermal noise rather than a code regression; sd 46-62 on a single-GPU box is large",
+      "The local kv_cache_utils.py overlay in both builds complicates clean attribution",
+      "Duplicate/overlap signals (#56605, #56785, PR #54524) are stack-signature matches only and do not establish coverage",
+      "ai_disclosure_conflict policy status blocks automated public action"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the exact llama-benchy full-sweep command on nightly-dc36fcce and confirm ctx_tg @ d32768 (c1) collapse in 2/3 runs",
+      "Run the same sweep on intermediate nightly overlays bracketing #56682 to bisect the regression",
+      "Confirm isolation runs (--depth 32768 --concurrency 1 --runs 7) stay clean to distinguish state-dependent flake from steady-state regression"
+    ],
+    "unknowns": [
+      "Which commit in eed1f3d0..dc36fcce actually causes the regression (bisect not yet performed)",
+      "Whether the flake is a genuine code regression or environment/measurement noise",
+      "Whether any existing PR already fixes the root cause (PR #54524 overlap is semantic only, not direct code overlap)"
+    ],
+    "why": "The issue reports a real, reproducible performance flake (ctx_tg @ d32768 c1 collapses 2/3 runs in full sweeps, clean in isolation), but the root cause is explicitly unresolved: the original prime suspect (#56512) was retracted by the reporter after maintainer pushback, and the re-scoped suspects (#56682, #56688, #56452) are unverified hypotheses. No concrete algorithm mechanism, numerical invariant, or code-level defect is identified, so no reference-vs-implementation or numerical regression test can be constructed yet."
+  },
   "8e605c8169203772d041a168089e371c083c04423219f9c6ade8f2822a69a59a": {
     "confidence": 0.8,
     "contradictions": [
@@ -58660,6 +58967,36 @@
       "Whether a maintainer has a preferred fix approach is unknown."
     ],
     "why": "Issue provides a clear, reproducible bug with multiple configurations isolating the failure to the shared audio routing infrastructure. Maintainer has confirmed the symptom (RoomIO stops receiving audio) and requested a minimal reproducer, which the reporter has provided. Root cause is localized to audio frame delivery in the session, with concrete code paths identified."
+  },
+  "9341ce9dac9bf3ea82028a51f24e42304797c332f0a257e79d2f107efda441ed": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crewai/a2a/task_helpers.py process_task_state() reassembly",
+      "crewai/a2a/updates/streaming/handler.py execute() fallback",
+      "crewai/a2a/wrapper.py _handle_max_turns_exceeded reassembly"
+    ],
+    "risks": [
+      "Changing join semantics may affect non-append artifact handling if parts are not append-flagged",
+      "Maintainer may prefer a different reassembly abstraction"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test using the issue's FakeClient streaming repro asserting 'Hello, world!'",
+      "Run targeted unit tests for a2a streaming/polling/push_notification handlers",
+      "Verify append=True chunks concatenate without separator across all three update mechanisms"
+    ],
+    "unknowns": [
+      "Whether non-append artifact parts require separator handling distinct from append parts"
+    ],
+    "why": "Issue provides a concrete, framework-agnostic reproduction and pinpoints the root cause: ' '.join(result_parts) in process_task_state() and identical fallbacks in StreamingHandler.execute() and wrapper.py::_handle_max_turns_exceeded, violating A2A append semantics. Fix is a minimal, well-scoped change to concatenation."
   },
   "9373b2b595b19570c31f86d389a812cac46c9f858e6905f074cc7292fe86509b": {
     "confidence": 0.8,
@@ -60689,6 +61026,47 @@
     ],
     "why": "Issue identifies two concrete, independently reproduced defects in src/soup_cli/utils/relora.py: (A) _prune_and_reset never merges B@A into the frozen base before pruning, so the effective linear map changes (MSE 142.12 vs 8.77e-13 for a merge-then-reset control), contradicting the module docstring's ReLoRA/Axolotl conformance claim; (B) the strict `abs(t) > threshold` mask wipes all entries on ties, zeroing both lora_A and lora_B and leaving a permanently dead zero-gradient branch. Maintainer confirmed both halves with real peft LoRA runs and supplied a deterministic kernel-level reproduction (ones(10), prune_ratio=0.9 -> 0 kept where 1 expected)."
   },
+  "9869d50289547d46d1cf00cc8de6fc124d1561717c5f8889b4f137e60861938c": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Reporter attributes regression to vLLM/FlashInfer/transformers delta, while contributor JaredforReal could not reproduce the garbage output and says PR #56635 targets a separate issue",
+      "Commenter gaby splits the symptom into a parser/tool-call mixing bug and a suspected weights/training issue, which are different root causes",
+      "candidate.algorithm_evidence marks distributed_training/numerics_quantization mechanisms as qualified, but the issue body contains no training or numerical-method evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/parser/engine/parser_engine.py (reasoning-end/tool-call boundary handling)",
+      "vllm/entrypoints/openai/serving_chat.py (glm45/glm47 parser selection and tool_choice handling)",
+      "parser state isolation across multi-turn requests"
+    ],
+    "risks": [
+      "Symptom may be a model weights/training artifact rather than a vLLM code defect, making any code fix ineffective",
+      "Fixing parser bleed may not address the DP+EP off-rails path reported separately",
+      "Overlapping open PR #56635 may already cover the parser portion, risking duplicate work"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a deterministic multi-turn agentic harness replay (fixed seed, fixed tool-call history, prefix-cache warm) that reproduces degeneration on the bad build and is clean on the good build",
+      "Bisect the three changed components independently (vLLM commit range, FlashInfer 0.6.17 vs 0.6.18, transformers 5.15.1 vs 5.16.1) to attribute the regression",
+      "Add a parser regression test asserting reasoning-end/tool-call boundary tokens do not leak into subsequent turns, plus a DP+EP vs TP+EP comparison run"
+    ],
+    "unknowns": [
+      "Which of the three changed components actually causes the degeneration",
+      "Whether the parser/tool-call bleed and the DP+EP off-rails report share a root cause",
+      "Whether open PR #56635 already resolves the parser portion of this issue",
+      "Whether the reported degeneration is reproducible at all outside a real agentic client session"
+    ],
+    "why": "Issue reports intermittent word-salad degeneration in long agentic GLM-5.3-Flash sessions, but the reporter explicitly could not build a synthetic reproduction; the only evidence is a build A/B across three simultaneously changed components (vLLM commit range, FlashInfer 0.6.17→0.6.18, transformers 5.15.1→5.16.1). Comment thread splits the symptom into at least two distinct causes (parser/tool-call reasoning bleed vs. suspected weights/training issue) and adds a separate DP+EP off-rails report, so no single root cause is established. The candidate's own algorithm_evidence claims distributed_training/numerics mechanisms but the issue body contains no training objective, kernel algorithm, quantization method, or evaluation methodology — matched terms are environment/plumbing noise. A directly related open PR #56635 claims a parser fix but its root_cause_coverage is false and a contributor states it targets a separate issue, leaving duplicate/coverage status unresolved."
+  },
   "986ceb96c5620291424d09fe66153de1a423ab850095ac13db6be05f89158019": {
     "confidence": 0.7,
     "contradictions": [],
@@ -62174,6 +62552,38 @@
       "Maintainer has not confirmed root cause or design direction"
     ],
     "why": "Issue reports a severe production hang with strong evidence (all-GPU spin, watchdog timeout) but lacks a deterministic reproducer and root cause. The maintainer has requested additional diagnostic logs, indicating active investigation. Open PR and related issue lookups timed out, so duplicate work cannot be excluded. Actionability is blocked by missing stack traces and maintainer guidance."
+  },
+  "9c22ee0ae491c2d3ccbd789ba638f1661a0b24e3aaa46f94a219a98bc6b18e90": {
+    "confidence": 0.82,
+    "contradictions": [
+      "algorithm_evidence qualifies the issue as an LLM algorithm mechanism (model_architecture, numerics_quantization) while the issue body and code anchors describe model-card/runtime-config plumbing"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ThunderAgent proxy registration should inherit backend runtime_config/token_budget instead of constructing a synthetic ModelRuntimeConfig",
+      "Frontend admission should use backend-authoritative token budget rather than the proxy card's static model-file limits"
+    ],
+    "risks": [
+      "Issue proposes a larger architectural change (remove public proxy registration entirely) while PR #14845 only does the minimal field-copy fix; scope mismatch could cause duplicate/conflicting work",
+      "Config-inheritance fix may still drift as new backend runtime fields are added, which the issue itself flags"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Start SGLang worker with 131072-token context, register ThunderAgent proxy with same model path, send 135010-token prompt, and assert frontend rejects before routing",
+      "Regression test that the proxy ModelDeploymentCard's runtime_config.token_budget equals the backend's published value"
+    ],
+    "unknowns": [
+      "Whether maintainers intend the minimal runtime_config inheritance fix or the full removal of public proxy registration described in the issue's Proposed Direction"
+    ],
+    "why": "Issue #14762 is a model-card/runtime-config propagation defect in the ThunderAgent proxy registration path, not an LLM algorithm mechanism. The supplied algorithm_evidence claims model_architecture/numerics_quantization via generic terms (normalization, overflow), but the actual code anchors are ModelDeploymentCard, ModelRuntimeConfig, token_budget, parser settings, and register_model — i.e., configuration/plumbing, not a training objective, kernel, quantization method, or evaluation methodology. Track=llm_algorithm requires a concrete algorithmic mechanism and reference-vs-implementation or numerical regression path; this issue supports only a config-inheritance regression test. Additionally, open PR #14845 already directly references the issue and implements the smallest fix (inherit backend runtime_config onto the proxy card), with 3 test files and passing checks, so the actionable code work is already covered."
   },
   "9c23bf8ad31619ddfd2b3979cc34cc91b64cbf6a9ba691438c4aa484c7ef3d42": {
     "confidence": 0.7,
@@ -71845,6 +72255,43 @@
       "Exact memory overhead of the additional gradient buffer in the sequence-parallel path"
     ],
     "why": "Issue provides a concrete minimal reproduction and a clear root cause: ChunkedCrossEntropyLoss.backward writes gradient chunks into the saved input logits and returns that mutated input as the gradient, breaking autograd for leaf and nonleaf inputs. This is a genuine numerical/autograd correctness bug in an LLM training path (sequence-parallel chunked cross entropy), with a reference-vs-implementation validation path (compare against torch.nn.functional.cross_entropy and check logits preservation). The open PR #10130 is directly related but lacks root-cause coverage evidence, so competition is possible rather than blocking."
+  },
+  "b59bf9d66fb3ce1ee0bf13e7faf09b7f6509468cd32549b4273af6c44d9ce62c": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Open PR #983 has the same title and overlapping paths but does not reference this issue",
+      "Contributor comment claims to be taking the fix while the issue remains open and unassigned"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Scope use_flash_attn/use_liger validation in commands/train.py to tasks that read them",
+      "Make decide_performance_flags task-aware in autopilot/decisions.py",
+      "Optionally wire attn_implementation/Liger into DPO/GRPO/pretrain model loading"
+    ],
+    "risks": [
+      "PR #983 may already cover the same root cause, making a new contribution duplicative",
+      "Distinguishing intended task-scoping from a broader wiring fix could change the correct implementation",
+      "Numerical/behavioral regressions if flags are silently dropped rather than wired"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build DPO/GRPO model on tiny CPU model with use_flash_attn:true and stubbed get_attn_implementation returning 'sdpa'; assert kwarg reaches from_pretrained, or config load rejects the flag",
+      "Assert build_soup_config(goal='alignment') on compute capability 8.0+ never emits a flag the resulting task ignores",
+      "Assert soup train does not exit 1 over a missing package for a flag the task does not use"
+    ],
+    "unknowns": [
+      "Whether PR #983 fully resolves the root cause or only partially overlaps",
+      "Whether the maintainers intend to wire the flags or reject them at config load",
+      "Whether the contributor's claim to take the issue is authoritative"
+    ],
+    "why": "The issue describes a concrete, code-anchored defect: use_flash_attn/use_liger are validated and auto-enabled for every task but only consumed by SFT's _setup_transformers. However, the supplied evidence shows an open PR #983 with the same title and overlapping paths, and a contributor comment claiming to be actively taking the fix. This unresolved duplicate/coverage conflict is a materially blocking unknown for whether new code work is actionable."
   },
   "b5bb0e3609affd0db5fb17b8723a97e8c430b0fe8ace3ff51991d4b1f62c5734": {
     "confidence": 0.9,
@@ -96516,6 +96963,43 @@
     ],
     "why": "Issue provides a clear root cause: after resuming a chunked request, the scheduler fails to check the updated chunk budget before scanning the waiting queue, leading to unnecessary cache matching and host-cache load-back. Reproduction steps are concrete and deterministic at the scheduler level, and the expected behavior is well-defined. Although an open PR exists, it lacks tests and root-cause coverage, leaving room for a more complete contribution."
   },
+  "ef24db2fc23125c4b56214ef19ccede42478a773629008fb32a4b240b283aaa5": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue scope note claims it is filed separately from the Windows directory-lock fix, yet open PR #11889 titled 'swap extension artifacts by copy when Windows locks the directory' overlaps extension-store.ts and is flagged semantic_overlap_requires_review"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/extension/extensionManager.ts: uninstallExtension name resolution fallback to store snapshot",
+      "packages/core/src/extension/extension-store.ts: install name-conflict guard should not fire for artifact-less stale entries",
+      "packages/cli/src/commands/extensions/uninstall.ts and dialog-data.ts: name-based entry points"
+    ],
+    "risks": [
+      "Open PR #11889 may already cover the root cause; independent work could duplicate it",
+      "Credential cleanup semantics (credentialPersistence==='stored') unresolved and may require maintainer design decision",
+      "declarationOnly vs stale-artifact discrimination could regress existing error behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce: install extension, delete ~/.qwen/extensions/<name>, then run 'qwen extensions uninstall <name>' and 'qwen extensions install <same source>'",
+      "Add regression test asserting uninstall-by-name clears a store entry whose artifact directory is gone",
+      "Add regression test asserting install adopts/replaces a stale artifact-less entry rather than raising name conflict",
+      "Verify declarationOnly entries still surface the explicit not-installed error and are not silently no-op'd"
+    ],
+    "unknowns": [
+      "Whether PR #11889 already fixes or subsumes this issue's root cause",
+      "Maintainer decision on credentialPersistence==='stored' cleanup behavior",
+      "Whether the stale-entry vs declarationOnly discrimination has an agreed design"
+    ],
+    "why": "Issue is a well-documented, reproducible bug with confirmed code anchors and a clear root cause (name-based uninstall resolves via getLoadedExtensions() while install checks the store snapshot). However, the supplied evidence contains a materially blocking unknown: open PR #11889 overlaps the same code path (packages/core/src/extension/extension-store.ts) with semantic overlap flagged as 'semantic_overlap_requires_review', and the duplicate status is unresolved. Additionally, the issue itself states a maintainer decision is required on the credentialPersistence==='stored' cleanup semantics before a fix can land, and the triage comment confirms 'the credential-cleanup question needs a maintainer decision before a fix lands'. These unresolved coverage/design questions determine whether independent code work is actionable."
+  },
   "ef2a3aac9a0da78de7a841ebfdf4a9e060db943d6af01c8d2e8ab2bf83b9c506": {
     "confidence": 0.6,
     "contradictions": [],
@@ -97899,6 +98383,41 @@
       "Whether the missing-args fix is the complete root cause or only one symptom of a broader deepep_v2 prefill bug"
     ],
     "why": "Issue describes a concrete TypeError from missing positional args in ep_scatter_from_psum, but the supplied evidence shows an open PR #39399 with direct code overlap on the same file and same fix, plus PR #37211 with a test file. Duplicate/coverage status is 'human_review_required', which is a materially blocking unknown for whether independent code work is actionable."
+  },
+  "f2540604052307b175b5e1cadffc34332ec93644b3cb457a2074e9ace05b70c6": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims root cause A is missing assignment, while open PR #14844 appears to add response_format propagation on the same file"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/omni/omni_handler.py: propagate req.response_format into EngineInputs",
+      "components/src/dynamo/vllm/omni/output_formatter.py: honor explicit b64_json vs url delivery",
+      "regression test for RGB->video->RGB color round-trip"
+    ],
+    "risks": [
+      "PR #14844 may already cover the field-propagation fix, making a new PR duplicative",
+      "FFmpeg color defect is upstream build configuration, not fixable in Dynamo source",
+      "Acceptance criteria span two unrelated root causes, complicating a single actionable change"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Model-free RGB quadrant encode via encode_to_video_bytes and independent decode asserting pixel correctness",
+      "Request-level test asserting data[0].b64_json is nonempty when response_format=b64_json",
+      "URL delivery regression when external media storage is configured"
+    ],
+    "unknowns": [
+      "Whether PR #14844 fully resolves the b64_json propagation defect or only partially",
+      "Whether maintainers intend the FFmpeg color defect to be fixed in Dynamo or deferred upstream"
+    ],
+    "why": "Issue reports two independent defects: (A) response_format=b64_json dropped in _engine_inputs_from_video(), and (B) bundled FFmpeg MMXEXT color corruption. Root cause A is concrete and code-anchored, but open PR #14844 ('pass response_format into video EngineInputs') semantically overlaps the same path and distinctive keyword 'base64' without referencing this issue, so duplicate/coverage status is unresolved. Root cause B is an upstream FFmpeg build-configuration issue, not a Dynamo code fix, and the issue itself calls MMXEXT disabling only a diagnostic workaround."
   },
   "f275a7d5a039c5d2a19b7a068fa8184f08a6509d08dc6cb22bbc34172b97c70f": {
     "confidence": 0.6,
@@ -100602,6 +101121,42 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The issue provides a clear reproduction and expected behavior, but the fix requires design confirmation on the error semantics (throw vs stream error) and atomic storage enforcement. The maintainer has not approved or triaged, and the bot explicitly requests waiting for triage before opening a PR."
+  },
+  "f9093cb98b355b6dcb41d07c7d602d9be51d6e6b49bd7420783262760f03e6df": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: replace strict '>' kthvalue mask with deterministic exact-count selection (stable topk) so prune_ratio<1 always retains the requested entries and at least one survivor per non-trivial factor",
+      "src/soup_cli/utils/relora.py: either implement canonical ReLoRA restart (merge B@A into base, reinit A Kaiming / B zeros, reset optimizer moments, re-warm LR) or rename the feature and correct the module docstring at relora.py:3-5 to stop claiming paper/Axolotl conformance",
+      "src/soup_cli/utils/relora.py: explicit support or loud rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A is a maintainer contract decision (implement real restarts vs rename feature); a partial fix doing half of the first option would be worse than either",
+      "Tie scenario is constructed, but freshly-initialized lora_B is all zeros by PEFT convention, so the first relora_steps interval after init may hit the natural tie in practice",
+      "Fixing only Claim B leaves the silent, every-run function-discarding behavior of Claim A in place",
+      "Numerical tolerance and seed must be fixed to distinguish math errors from float/random variation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: constant-magnitude lora_A/lora_B with prune_ratio=0.9 must retain exactly the requested keep count and leave both factors non-zero with non-zero gradient norm",
+      "Kernel-level test: ones(10) with prune_ratio=0.9 keeps 1 survivor (currently 0); arange(1..10) keeps 1 (currently correct)",
+      "Reference-vs-implementation test: merge-then-reset control must preserve the effective linear map to numerical tolerance (MSE ~1e-13), while the current callback changes it (MSE ~142)",
+      "Accumulation test: successive restarts must accumulate low-rank updates in the base weight",
+      "Compatibility test: unsupported quantized/distributed/streamed configurations must fail clearly rather than partially applying a restart"
+    ],
+    "unknowns": [
+      "Whether the maintainer will choose the full ReLoRA restart implementation or the smaller rename/docstring correction, which determines the scope of the patch"
+    ],
+    "why": "Issue identifies two concrete, independently verified defects in ReLoRACallback._prune_and_reset: (A) adapter weights are magnitude-pruned without merging B@A into the frozen base, so the learned function is discarded rather than restarted (base weight delta = 0, effective-map MSE 142.12 vs 8.77e-13 for a merge-then-reset control); (B) strict '>' thresholding against kthvalue wipes all entries on ties, zeroing both factors and producing zero gradients (measured 0.0 for both), violating the requested keep count. Maintainer confirmed both halves with real peft LoRA runs on a pinned SHA, and the code path src/soup_cli/utils/relora.py is named. This is a genuine algorithm-conformance and numerical-correctness defect with a clear reference-vs-implementation validation path."
   },
   "f919d62193ad7f61a52ee9d5a7aa76fe4e73a039e58dac2c0672b79ba444b98c": {
     "confidence": 0.9,
