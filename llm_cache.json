@@ -4051,6 +4051,47 @@
     ],
     "why": "Issue documents a concrete, code-anchored defect: autopilot enables forgetting_detection, checkpoint_intelligence, and early_stop_on_regression, but train.py only warns they are unenforced; implementations exist (ForgettingDetector, CheckpointTracker) but are not wired as TrainerCallbacks. Acceptance criteria give a clear reference-vs-implementation test path."
   },
+  "09ff35c789e71a05b483770a455ef0bd39641f6837f88df448c94fdd1c594814": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Commenters attribute divergence to BF16 numerical path differences while others attribute it to GDN gate row misalignment (#51812) or unrelated kernel defects",
+      "Open PR #56431 semantically overlaps on dflash2/enforce_eager/qwen3 but is not linked to the issue and lacks regression tests",
+      "Pre-task policy status 'ai_disclosure_conflict' conflicts with automated contribution actionability"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Speculative decode verification path for DFlash2/Qwen3.8 hybrid GDN state handling",
+      "Greedy-equivalence regression test comparing target-only vs DFlash2 K=1 output"
+    ],
+    "risks": [
+      "Root cause may be BF16 numerical path difference rather than DFlash2 logic, making a code fix non-trivial or out of scope",
+      "Existing PR #56431 may already cover the same code path, risking duplicate work",
+      "Repository AI disclosure policy conflict blocks automated public action",
+      "Hybrid GDN/DeltaNet/Mamba state rollback bugs may require hardware-specific validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's exact request (temperature=0, seed=20260902, max_tokens=64, logprobs=true) on target-only vs DFlash2 K=1 and confirm first divergence at token 30",
+      "Instrument target argmax/logits, draft token IDs, acceptance counts, and KV/SSM write-rollback boundaries around tokens 29-30",
+      "Re-run with FP32 target verification to separate numerical-path differences from state-update bugs"
+    ],
+    "unknowns": [
+      "Whether PR #56431 or #51812 already fixes the reported divergence",
+      "Whether the root cause is numerical (BF16) or a state-update bug in the speculative decode path",
+      "Whether the repository's AI disclosure policy permits the intended contribution workflow"
+    ],
+    "why": "Issue reports a concrete greedy-equivalence divergence at token 30 for DFlash2 speculative decoding with Qwen3.8-27B, with reproduction command, expected/actual pair, and multiple variants (K=1, no prefix cache, --enforce-eager). However, supplied evidence contains materially conflicting root-cause attributions: commenters point to BF16 numerical path differences, GDN gate row misalignment (#51812), and multiple unrelated kernel defects (#54945/#54948, #54076/#53798, #55122), while open PR #56431 semantically overlaps (dflash2, enforce_eager, qwen3) but is not linked to the issue and lacks regression tests. The duplicate/overlap status is 'semantic_overlap_requires_review' and the pre-task policy status is 'ai_disclosure_conflict', which is a repository disclosure requirement that blocks automated actionability. These unresolved coverage and policy facts determine whether code work is actionable."
+  },
   "0a08cb2cfda9252017e89a25949beb50a233bd20edafbc320a73158d983f7caa": {
     "confidence": 0.85,
     "contradictions": [
@@ -6877,6 +6918,40 @@
       "Whether a concrete algorithm-level change is required versus an operational/config fix"
     ],
     "why": "The issue is a hang during engine startup with multiple conflicting root-cause hypotheses in the comments (PCIe ACS/P2P, custom allreduce, flashinfer sampler, model download). The supplied evidence does not establish a single root cause, and the candidate's algorithm_evidence is keyword-matched (awq, fp8, tensor parallel, logits) rather than a concrete training objective, numerical method, or evaluation methodology. The track=llm_algorithm requirement is not met: this is an operational startup/hang bug, not an algorithm contribution."
+  },
+  "112b161c326d6264dd40a391b88458af75734991f1a7584d904586bb3d15c971": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Embedding runtime initialization: set env.backends.onnx.wasm.numThreads = 1 for the local ONNX session",
+      "Embedding pipeline lifecycle: ensure the ONNX session does not busy-wait between runs or is isolated in a dedicated Worker/child process",
+      "Regression test asserting Worker CPU returns to idle after embedding model load"
+    ],
+    "risks": [
+      "Single-threaded ONNX may reduce embedding throughput; acceptable tradeoff vs event-loop starvation",
+      "Worker isolation is a larger architectural change and may need maintainer design input",
+      "Large session (~250K tokens) may be incidental but should be controlled in the regression test"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with default local embedding provider and confirm Worker CPU pins at ~100% after 'embedding model loaded' log line",
+      "Apply numThreads=1 fix and verify CPU drops to idle while embeddings still compute correctly",
+      "Run targeted unit tests for the embedding provider module and static checks"
+    ],
+    "unknowns": [
+      "Exact code location where the ONNX session is instantiated is not supplied (codePathsPlan is empty)",
+      "Whether maintainers prefer numThreads=1 vs worker isolation is not stated"
+    ],
+    "why": "Issue provides a concrete, reproducible performance bug: local ONNX embeddings (Xenova/all-MiniLM-L6-v2) pin the opencode Worker at ~100% CPU from model load, starving the event loop. Reproduction steps, expected/actual behavior, measured CPU evidence, version range (0.38.0-0.42.5), and a confirmed workaround (embedding.provider=off) are all supplied. Root cause is well-supported by upstream references (onnxruntime#26026, transformers.js#488) and a concrete fix direction (numThreads=1 or worker isolation). No open PR or duplicate issue covers it."
   },
   "1139c9b3d001ed1b4866d0212ea8d94d9a44359eb91b4a114db3150f5979c068": {
     "confidence": 0.85,
@@ -24976,6 +25051,41 @@
       "Whether LD_LIBRARY_PATH should be included in the same change or handled separately"
     ],
     "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP child processes, breaking external Python interpreters. Reporter supplied a minimal repro, /proc environ evidence, and a working workaround; code anchors point to mcp-client.ts and sanitize-child-env.ts. Triage bot disputed the AppImage attribution, but the reporter's follow-up provides binary-level and live /proc evidence that the mount prefix matches the Qwen AppImage, partially resolving the contradiction. The remaining uncertainty is which env vars to scrub and whether maintainers accept the deferred-tradeoff change, which is normal implementation/review uncertainty rather than a blocker."
+  },
+  "3d75060572ddeae764014ece110a48c620e3c08ec196a0521c373a5fecade87e": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body says vLLM #56545 already updates the MSA pin to the fixed revision, while the candidate is still presented as an actionable bug task",
+      "Duplicate assessment reports semantic overlap with open PRs #55838 and #56932 but no direct code overlap or issue linkage"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "cmake/external_projects/fmha_sm100.cmake MSA pin update to f355c37eb4e1413f21ee2ad8bbad25079e6bef9d",
+      "vendored MSA ex2_emulation_2 compatibility with Quack 0.6.5 / CUTLASS DSL 4.7.1"
+    ],
+    "risks": [
+      "Fix may already be fully covered by open PR #56545, making new code work duplicative",
+      "Semantic overlap with open PRs #55838 and #56932 could indicate competing or partially overlapping changes",
+      "Repository policy reports an AI disclosure conflict, which may block automated public contribution"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "On SM100 with quack-kernels==0.6.5 and nvidia-cutlass-dsl==4.7.1, run the documented vllm serve MiniMax-M3-NVFP4 command and confirm engine initialization reaches readiness without the AttributeError",
+      "Regression: run the same command with quack-kernels==0.6.4 / nvidia-cutlass-dsl==4.6.2 to confirm the fallback path still compiles"
+    ],
+    "unknowns": [
+      "Whether PR #56545 is still open and whether it fully covers the standard non-Rubin SM100 path",
+      "Whether the AI disclosure conflict permits any public code contribution for this issue",
+      "Whether the overlapping open PRs already resolve the same root cause"
+    ],
+    "why": "The issue itself is technically concrete: a pinned MSA revision calls the removed private Quack helper quack.activation.sub_packed_f32x2, and the fix is to bump the fmha_sm100.cmake MSA pin to the revision containing MSA #12. However, the supplied evidence states that vLLM PR #56545 already updates that pin to the fixed revision, and the duplicate assessment flags open PRs #55838 and #56932 with semantic overlap. Whether any code work remains actionable depends on whether #56545 is still open and whether it fully covers the standard SM100 path, which the supplied evidence does not resolve."
   },
   "3d8d56f2a1163257e8c3b98b83a3d76268af7143c63433fde8a248ec68177279": {
     "confidence": 0.85,
@@ -43960,6 +44070,43 @@
     ],
     "why": "Issue provides a clear root cause (DeepSeek provider forces temperature 0) and a concrete validation path (compare with opencode default behavior, user workaround). The fix is a small, well-scoped change in the provider's default generation config."
   },
+  "68a9c38d6e4167dee834456419bb4660909064a9a1ff0c37a145d94844637fb9": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports PR #56950 references this issue with technical_complete=true and review approval, but root_cause_coverage=false and semantic_overlap=false",
+      "related_issue_assessment flags potential duplicate #55238 based only on shared stack signatures (collect_env.py, clang/gcc), which is weak and likely spurious"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/distributed/weight_transfer payload selection using data_parallel_index instead of data_parallel_rank",
+      "regression test for DP=2/TP=2 IPC weight update"
+    ],
+    "risks": [
+      "PR #56950 may already implement the same fix, making a competing change redundant",
+      "IPC/CUDA UUID behavior may vary across driver versions, complicating regression stability",
+      "Repository AI disclosure policy conflict flagged in preTaskEvidence"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied /tmp/repro_dense_dp_tp2_ipc.py against a 4-GPU DP=2 TP=2 IPC server and confirm HTTP 200 with matching UUIDs",
+      "Add a unit test asserting worker index = data_parallel_index * world_size + rank after reconfigure_for_independent_dp_rank"
+    ],
+    "unknowns": [
+      "Whether PR #56950 already fixes the exact data_parallel_index payload-selection bug",
+      "Whether the issue is assigned or maintainers have indicated a preferred fix path",
+      "Whether the AI disclosure policy conflict blocks contribution"
+    ],
+    "why": "Issue describes a concrete dense-DP IPC payload selection bug with a plausible root cause (data_parallel_rank reset to 0 vs preserved data_parallel_index) and a reproduction script, but the supplied evidence contains a materially blocking conflict: an open PR #56950 already directly references this issue with a matching title ('Use DP index for dense DP weight updates'), 2 test files, and review approval, yet the assessment marks root_cause_coverage=false and semantic_overlap=false. Whether the fix is already covered by that PR determines whether independent code work is actionable."
+  },
   "68ad2f1f891552ce66b390fec41b7a1c389d1652badf0ba8dbd8d0f29256b417": {
     "confidence": 0.7,
     "contradictions": [
@@ -57944,6 +58091,43 @@
     ],
     "why": "Issue identifies a real intermittent CI failure with a clear root cause (uv resolution due to missing git tags) and a proposed fix (fetch tags or promote pre-warm warning to error). However, the deterministic gate requires HUMAN_REVIEW, and the issue is a bug report without maintainer confirmation or assignment. Existing PRs are merged but do not address the root cause, so a new PR could be valuable, but maintainer direction is needed."
   },
+  "871666ae3269278deb67ca7a76919ef052697a4d486f96d7d08148dafd2ee96f": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body presents the bug as open and actionable, while the supplied comment says it is already fixed on main by #40869"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/common_request_processing.py: unify deferred stream-complete callback arming with its args producer",
+      "litellm/llms/anthropic/experimental_pass_through/messages/streaming_iterator.py: align _deferred_stream_complete_args shape",
+      "litellm/litellm_core_utils/streaming_handler.py: align _deferred_stream_complete_args shape",
+      "litellm/proxy/utils.py: _fire_deferred_stream_logging dispatch"
+    ],
+    "risks": [
+      "Fix may already be merged on main via #40869, making a new PR redundant",
+      "Overlapping open PRs (#40635, #41220, #41218) touch adjacent guardrail/streaming paths and may conflict",
+      "Broadening callback signature could mask other arity mismatches"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce streaming /v1/messages with a post-call guardrail and a non-native (custom_openai/OpenAI-format) upstream to trigger the 1-arg closure + 2-tuple args mismatch",
+      "Add regression test asserting the armed callback and stored args are always arity-consistent",
+      "Verify fix on main and confirm whether rc/1.101.0 backport is the only remaining gap"
+    ],
+    "unknowns": [
+      "Whether #40869 is actually merged and covers the exact root cause",
+      "Whether the only remaining work is the rc/1.101.0 backport rather than a new fix",
+      "Whether any of the overlapping open PRs already resolve this issue"
+    ],
+    "why": "Issue provides a precise root cause (callback/args arity mismatch between common_request_processing.py and streaming_iterator.py/streaming_handler.py) and a concrete fix, but the only supplied comment states the bug is already fixed on main by PR #40869, with only a backport to rc/1.101.0 outstanding. That unresolved merged-fix coverage directly determines whether new code work is actionable, so this must be resolved before proceeding."
+  },
   "872d8dcf44d298b5fc45743865509c7a6a0affcf876412d9feb54880f09c39c0": {
     "confidence": 0.82,
     "contradictions": [],
@@ -63033,6 +63217,39 @@
     ],
     "why": "Issue provides a concrete, framework-agnostic reproduction and pinpoints the root cause: ' '.join(result_parts) in process_task_state() and identical fallbacks in StreamingHandler.execute() and wrapper.py::_handle_max_turns_exceeded, violating A2A append semantics. Fix is a minimal, well-scoped change to concatenation."
   },
+  "934ade83a761a2a50932467919c7c77dce8e2de91fa409d7311d1d6883c4461f": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate claims root_cause_signal=false and 'weak_pr_competition_possible', but maintainer comment explicitly states root cause, prior reverted fix, and corrected design"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "runtime store adoption predicate in TaskManager::start/open_for_session path",
+      "error message wording for the resume guard"
+    ],
+    "risks": [
+      "Duplicating maintainer-owned PR #6233 and the reverted fix",
+      "Adopting a live-but-unflushed store would drop in-flight work",
+      "Scope-pinned automations outside the runtime store dir are invisible to a naive emptiness check"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Regression test: start session, /quit, start new session, /resume previous session, assert adoption succeeds when store is unheld and empty",
+      "Negative test: store held by live process must still refuse",
+      "Test that scope-pinned automations count toward non-empty and block adoption"
+    ],
+    "unknowns": [
+      "Whether maintainer intends to implement the corrected adoption predicate themselves or accept external PRs for it"
+    ],
+    "why": "Maintainer (OWNER) has already diagnosed the root cause, reverted an incorrect fix, and specified the corrected design (adopt only when store is provably unheld AND provably empty, counting scope-pinned automations). PR #6233 by the OWNER already implements the message fix and is open with passing CI. The remaining underlying fix is maintainer-owned and design-constrained; no independent code contribution is actionable without duplicating the owner's in-flight work."
+  },
   "936c9c6352dd2b1abd76683b676083af135c7828e8696b0332891f5c16f1f753": {
     "confidence": 0.8,
     "contradictions": [
@@ -65681,6 +65898,42 @@
     ],
     "why": "The issue describes a concrete distributed weight-transfer bug with a clear root cause (data_parallel_rank reset to 0 vs data_parallel_index) and a reproducible DP=2/TP=2 IPC test. However, an open PR #56950 already directly references this issue with a matching fix ('Use DP index for dense DP weight updates'), 2 test files, and review approval, so the opportunity may already be covered. Additionally, the repository has an unresolved AI disclosure conflict (policy status ai_disclosure_conflict), which is a materially blocking unknown for whether code work is actionable."
   },
+  "9a19c71fcf74a2b8f31d110acc328d118faaa26b3a6a339cd980903caa151f12": {
+    "confidence": 0.55,
+    "contradictions": [
+      "PR #14845 is marked technical_complete=true with tests and references the issue, but root_cause_coverage=false and the assessment labels it 'evidence incomplete'",
+      "Issue proposes removing public model registration entirely, while the linked PR only copies runtime_config, leaving scope/coverage unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "ThunderAgent proxy model-card registration must inherit backend runtime_config/token_budget, or public proxy registration must be removed in favor of the pluggable router/flow-control path",
+      "Frontend admission must use the backend-authoritative token budget rather than the synthetic proxy card"
+    ],
+    "risks": [
+      "Overlap with open PR #14845 may make an independent fix duplicative",
+      "The issue's full architectural direction (removing public registration) is much larger than the minimal runtime_config copy and may not be the maintainer-preferred scope",
+      "Distinguishing the model-card ownership defect from the separate #14761 error-preservation fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with SGLang worker at 131,072-token context and a 135,010-token prompt; assert frontend rejects before routing instead of SGLang rejecting after routing",
+      "Regression test asserting the ThunderAgent proxy card's runtime_config.token_budget equals the backend card's value"
+    ],
+    "unknowns": [
+      "Whether PR #14845 already fully resolves the actionable code work for this issue",
+      "Whether maintainers prefer the minimal runtime_config inheritance or the full removal of public proxy registration"
+    ],
+    "why": "The issue describes a real model-card ownership defect (ThunderAgent proxy registration drops backend runtime_config/token_budget), but the supplied evidence is contradictory about coverage: PR #14845 is marked technical_complete=true with 3 test files and explicitly references this issue, yet root_cause_coverage=false and the open_pr_assessment calls it 'evidence incomplete'. The issue's own proposed direction (remove public model registration entirely) is a large architectural change, while the linked PR only copies runtime_config as a smaller fix. It is unresolved whether the linked PR already covers the actionable code work, which materially determines whether an independent contribution is valuable."
+  },
   "9a1d3922359df42df141f9bd969988ebe3add0e642ef3ddcb5923727ab1ffb21": {
     "confidence": 0.8,
     "contradictions": [],
@@ -67491,6 +67744,45 @@
       "Whether the upstream provider can report finish_reason or must be synthesized"
     ],
     "why": "Issue provides a clear, reproducible streaming protocol violation: missing finish_reason and [DONE] for muse models on the Zen gateway, with multiple user confirmations and a concrete expected/actual pair. This is a high-impact bug in the agent/inference path, actionable for a fix."
+  },
+  "9dbe447040aae6647260ad8fdb6d6364b1e45c241a873f35d931948d8b413e88": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while the issue body articulates two specific root causes",
+      "open_pr_assessment status semantic_overlap_requires_review with PR #50505 sharing batch_invariant/fused_moe semantics but direct_code_overlap=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/fused_moe/experts/fused_humming_moe.py",
+      "vllm/model_executor/layers/quantization/utils/humming_utils.py",
+      "Triton fused-MoE expert kernel config selection / batch-invariant override set"
+    ],
+    "risks": [
+      "Confusing genuine batch-content dependence with floating-point nondeterminism if seed/tolerance/baseline are not pinned",
+      "Fixing only the FP8 per-tensor scale path while leaving the bf16 Hopper per-token-count config selection unfixed",
+      "Overlapping open PRs may already cover part of the root cause"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied scripts/repro_moe_batch_content.py co-batch and writer-suffix probes on H100 with granite-3.1-1b-a400m-instruct bf16 and --quantization fp8, comparing A-alone vs A+B vs A+B' and warm-after-S1 vs warm-after-S2",
+      "Add a numerical regression asserting bit-identical greedy tokens and logprobs for online-FP8 MoE under VLLM_BATCH_INVARIANT=1, with Qwen3-8B dense as control"
+    ],
+    "unknowns": [
+      "Full reproducer text is truncated, so the exact writer-suffix validation path is incomplete",
+      "Whether PR #50505 or #57047 already resolves the online-FP8 MoE scale or Triton config-selection root cause",
+      "How the ai_disclosure_conflict policy affects eligibility to submit a fix"
+    ],
+    "why": "The issue presents a concrete, algorithm-level batch-invariance failure in Triton fused-MoE experts (online FP8 per-tensor dynamic scaling and per-token-count Triton config selection) with a reproducer and a dense control, which is a valid llm_algorithm target. However, supplied evidence contains materially blocking unknowns: the issue body is truncated mid-reproducer (writer_suffix cut off), the duplicate/overlap status is 'semantic_overlap_requires_review' with PR #50505 sharing batch_invariant/fused_moe semantics but no direct code overlap, and the policy status is ai_disclosure_conflict with a hard-disabled public action. These unresolved coverage and disclosure facts determine whether code work is actionable."
   },
   "9dd9ccc66e75b6ec5cae8a9ca7bbfe1091cc2ec066304766df8c89b92f0463b4": {
     "confidence": 0.85,
