@@ -54330,6 +54330,42 @@
     ],
     "why": "The issue reports multiple independent bugs (xgrammar FSM desync, outlines thread leak, guidance tokenizer rejection) with detailed reproduction, but the evidence indicates a potential duplicate issue #54775 and an open PR #52298 with semantic overlap. The root cause for the primary xgrammar bug is claimed to be fixed by PR #44993, which is not yet merged into the reported version. This creates uncertainty about whether the issue is already addressed upstream, and the presence of overlapping PRs requires manual comparison to avoid duplicate work. The evidence is incomplete for a clear actionable contribution."
   },
+  "7ea8176f6d3e88507309e1ab411971013b974c39d613e63610dc9b05d29c0603": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body presents the bug as open, while recent_comments states it is fixed on main by #40869"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/common_request_processing.py: unify deferred stream completion callback arity or store callback+args as one unit",
+      "litellm/proxy/utils.py: _fire_deferred_stream_logging dispatch on stored args shape",
+      "litellm/llms/anthropic/experimental_pass_through/messages/streaming_iterator.py and litellm/litellm_core_utils/streaming_handler.py: align _deferred_stream_complete_args shape"
+    ],
+    "risks": [
+      "Fix may already be merged on main via #40869, making a new PR redundant",
+      "Changing callback arity could affect other deferred-stream call sites sharing logging_obj",
+      "Backport-only work may not be an acceptable contribution target"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce streaming /v1/messages with post-call guardrails enabled against a custom_openai/OpenAI-format upstream and assert no TypeError",
+      "Add regression test covering the non-CustomStreamWrapper branch where the 1-arg native closure is armed but a 2-tuple is stored",
+      "Verify fix on main and on rc/1.101.0 to confirm whether only a backport remains"
+    ],
+    "unknowns": [
+      "Whether #40869 is merged and fully covers the reported root cause",
+      "Whether the remaining work is only a backport to rc/1.101.0",
+      "Whether the semantically overlapping open PRs (#40635, #41220, #41218) already address this exact arity mismatch"
+    ],
+    "why": "Issue provides a precise root cause (arity mismatch between _on_deferred_native_stream_complete and _deferred_stream_complete_args producers) and a concrete fix, but a recent comment states the bug is already fixed on main by PR #40869, with only a backport to rc/1.101.0 outstanding. That unresolved merged-fix coverage directly determines whether new code work is actionable, so this is a materially blocking unknown rather than normal implementation uncertainty."
+  },
   "7eb321b6edd98e34d14d6c9efb50253538a171718dfce88f8245c72f745764e6": {
     "confidence": 0.85,
     "contradictions": [
@@ -97602,6 +97638,37 @@
     ],
     "why": "Issue identifies a clear typo in attribute name causing min_tokens to be ignored in DSPARK. Existing PR #33531 addresses the same files but has failed CI/checks and lacks complete evidence. A new PR with a minimal fix and robust tests could be materially better."
   },
+  "e4402f16faae3dedd4abfeee5e3b94b925bf8182c89b7379b95cbf573e27093e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims numerics_quantization/model_architecture mechanisms, but issue body describes runtime_config propagation, not numerical or model-architecture work"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "ThunderAgent proxy registration path",
+      "runtime_config/token_budget inheritance on proxy model card"
+    ],
+    "risks": [
+      "Architectural redesign may conflict with maintainer direction",
+      "Duplicate of open PR #14845"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce with SGLang 131072 context and 135010-token prompt; assert frontend rejects before routing",
+      "Regression test that proxy card inherits backend token_budget"
+    ],
+    "unknowns": [
+      "Whether maintainers intend the full architectural change or accept the minimal runtime_config copy fix"
+    ],
+    "why": "Issue describes a real model-card ownership defect, but the proposed direction is architectural plumbing (remove proxy model registration, route via pluggable router) rather than an LLM algorithm mechanism. The algorithm_evidence mechanisms (model_architecture, numerics_quantization) are keyword matches (normalization/overflow) not grounded in the issue, which is about runtime_config/token_budget propagation. Open PR #14845 already directly covers the issue with tests and CI, so the remaining opportunity is low-value/covered."
+  },
   "e44f09f0f2cf557f14ff3cb1c494c005c47c19d29d589324c17d8582d789b64a": {
     "confidence": 0.6,
     "contradictions": [
@@ -103870,6 +103937,42 @@
       "Exact source of NaN on plain prefill path (not yet isolated)"
     ],
     "why": "Issue provides detailed root-cause analysis (NaN contamination from CUDA-graph padding, #32477) with production evidence, multiple independent reproductions, and concrete validation paths (A/B rollout, short-prompt repro). Track=llm_algorithm is satisfied via numerical/algorithmic mechanisms (NaN handling, sampling kernels, distributed TP)."
+  },
+  "f129257ebb265a6e5057d8d7a5b4f1c31389b66c98345339e3f138835fa4bf64": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue states PR #56545 'appears to contain the correct integration fix', while open_pr_assessment marks root_cause_coverage=false and technical_complete=false for that PR"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "cmake/external_projects/fmha_sm100.cmake MSA pin update from 087c161 to f355c37 (likely already in PR #56545)",
+      "regression test covering MiniMax-M3 MSA SM100 initialization with quack-kernels 0.6.5 / cutlass-dsl 4.7.1"
+    ],
+    "risks": [
+      "PR #56545 may already fully cover the fix, making a new contribution duplicative",
+      "Repository AI disclosure policy conflict may block automated public action",
+      "Dependency downgrade workaround masks the incompatible caller and may conflict with the reason for the upgrade"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "On an SM100 system with quack-kernels==0.6.5 and nvidia-cutlass-dsl==4.7.1, run the issue's vllm serve command for nvidia/MiniMax-M3-NVFP4 with minimax_m3_msa_decode_backend=cutlass and confirm engine initialization reaches readiness without the AttributeError",
+      "Add a CI or unit-level check that the vendored MSA revision contains the cute.arch.sub_packed_f32x2 fallback, or a numerical regression comparing MSA sparse-attention output before/after the pin bump"
+    ],
+    "unknowns": [
+      "Whether PR #56545 already resolves this issue or leaves residual work",
+      "Whether the repository's AI disclosure requirement permits the intended contribution",
+      "Whether the potential duplicate issue #55238 shares the same root cause"
+    ],
+    "why": "The issue itself is technically strong: it identifies a concrete root cause (quack-kernels 0.6.5 removed quack.activation.sub_packed_f32x2, while the vendored MSA revision 087c161 still calls it), gives a controlled A/B regression boundary, a minimal reproduction command, and a concrete validation path (update fmha_sm100.cmake MSA pin to f355c37). However, the supplied evidence shows the fix is already covered by open PR #56545 (maintainer-owned, references the same MSA pin change), and the pre-task policy status is ai_disclosure_conflict with aiDisclosureConflict=true. These are materially blocking unknowns: whether any code work remains actionable depends on whether #56545 already resolves the issue and on the repository's AI disclosure requirement, neither of which is resolved in the supplied evidence."
   },
   "f12f164783897ab5aa6b1b0640740976189952576b86104c02cf46e17076ab2d": {
     "confidence": 0.85,
