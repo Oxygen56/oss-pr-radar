@@ -5854,6 +5854,43 @@
     ],
     "why": "The issue identifies a concrete memory leak in the VLM data pipeline where raw image bytes are retained after PIL decoding, causing excessive host memory usage. The root cause is clearly pinpointed in RLHFDataset._build_messages() and the data flow through AgentLoop and trainer dispatch. The issue provides detailed reproduction steps, memory measurements, and a controlled comparison, making it actionable. The fix involves modifying data handling and field selection, which is a valid code change in an LLM algorithm repository."
   },
+  "0f73c0161a83953443fd20494c28471c7a3fa1a867cc489d74dbec17af3e5e32": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge B@A into base weight and reinitialize A/B (Kaiming/zeros) for a true ReLoRA restart, or rename the feature and correct the docstring",
+      "src/soup_cli/utils/relora.py: replace strict threshold comparison with exact-count deterministic index selection (topk/stable-order mask) so prune_ratio<1 always retains the requested entries",
+      "src/soup_cli/utils/relora.py: target optimizer moments rather than learned adapter weights when pruning/resetting optimizer state",
+      "src/soup_cli/utils/relora.py: explicit support or loud rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A is a maintainer contract decision (implement real restarts vs rename feature); a partial fix implementing only half of the restart would be worse than either coherent option",
+      "Tie-case production frequency is unverified; freshly-initialized lora_B is all zeros by PEFT convention, so the first relora_steps interval may hit the natural tie, but this is not measured",
+      "Numerical tolerance must be fixed and seed-controlled to distinguish math errors from float noise",
+      "Quantized/FSDP/DeepSpeed/streaming interactions may require broader changes than the core kernel fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: apply _prune_and_reset to a small peft LoRA model with fixed seed; assert max|delta| of base weight is nonzero and MSE between pre/post effective linear maps is within numerical tolerance (merge-then-reset control)",
+      "Unit test: constant-magnitude lora_A/lora_B with prune_ratio=0.9; assert exactly the requested keep count survives and both factors remain nonzero with nonzero gradient norms",
+      "Regression test: successive restarts accumulate low-rank updates in the base model",
+      "Test: unsupported quantized/distributed/streamed configurations fail clearly rather than partially applying a restart"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers full ReLoRA restart implementation or feature rename/docstring correction (owner states preference for the former but accepts either)",
+      "Actual production frequency of the tie case beyond the constructed and freshly-initialized-B scenarios"
+    ],
+    "why": "Issue identifies two concrete, independently reproduced defects in ReLoRACallback._prune_and_reset: (A) adapters are pruned without merging B@A into the base weight, so the effective linear map changes (MSE 142.12 vs 8.77e-13 for a merge-then-reset control), contradicting the module docstring's ReLoRA conformance claim; (B) strict `abs(t) > threshold` masking wipes all entries on ties, zeroing both factors and producing zero gradient norms, permanently killing the branch. Owner confirmed both halves with real peft LoRA runs on a pinned commit, and the tie case is deterministic (0 kept where 4 requested)."
+  },
   "0f7607785cbcbb60242adde65a1c7057d8dda019a890325f99c55e35d3f21d1e": {
     "confidence": 0.8,
     "contradictions": [
@@ -7241,6 +7278,46 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports default residual_diff_threshold inert and quality gap, but existing PR #34841 (draft) overlaps semantically and may address the same code path. Need maintainer comparison before creating new work."
+  },
+  "12d5f656120933f844d973a71ecf7989c9f60e11c0cbb90d77c794ab9d5dc88a": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.open_pr_assessment reports semantic_overlap_requires_review with PR #50505 sharing batch_invariant/fused_moe semantics but no direct code overlap or issue link, while candidate.algorithm_evidence scores the issue as a qualified high-depth algorithm contribution"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/layers/fused_moe/experts/fused_humming_moe.py",
+      "vllm/model_executor/layers/quantization/utils/humming_utils.py",
+      "Triton fused-MoE experts path: enforce per-token activation quantization or an invariant kernel configuration under VLLM_BATCH_INVARIANT=1",
+      "Emit a warning when the selected experts backend has no batch-invariant implementation"
+    ],
+    "risks": [
+      "Distinguishing a genuine batch-invariance defect from floating-point/random nondeterminism requires fixed seed, tolerance, and hardware pinning",
+      "The repository's AI-disclosure policy status is ai_disclosure_conflict, which may block automated public action",
+      "PR #50505 may already cover part of the root cause, risking duplicate work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied scripts/repro_moe_batch_content.py co-batch and writer-suffix probes with fixed seed and greedy decoding on H100 and RTX 4090, comparing A alone vs A+B vs A+B' and warm reads after S1 vs S2",
+      "Add a numerical regression asserting bit-identical logprobs for the same request across batch compositions under VLLM_BATCH_INVARIANT=1 for online-FP8 MoE and bf16 MoE",
+      "Use dense Qwen3-8B as the invariant control and block-scaled Qwen3-30B-A3B-FP8 as the per-token-quant positive control"
+    ],
+    "unknowns": [
+      "The issue body is truncated before the reproducer's writer_suffix output, so the full reproduction evidence is not available",
+      "No recent comments are supplied, so maintainer triage or prior investigation is unknown",
+      "Whether PR #50505 or another open PR already fixes the Triton fused-MoE batch-invariance root cause is unresolved"
+    ],
+    "why": "The issue presents a concrete, algorithm-level batch-invariance failure in Triton fused-MoE experts (online FP8 per-tensor activation scaling and per-token-count Triton kernel config selection), with a reproducer and a dense control. However, the supplied evidence is materially incomplete: the issue body is truncated mid-reproducer, no recent comments are supplied, and the duplicate/overlap assessment is unresolved (PR #50505 shares batch_invariant/fused_moe semantics but is not linked to this issue), so it is not established whether the root cause is already covered by an open PR."
   },
   "12d9a7fef26e5ebb631333f600024de9a3fa9b596657a13f3313e23d906d5007": {
     "confidence": 0.85,
@@ -19202,6 +19279,44 @@
       "Exact frontend code location and whether the sidebar uses streaming stats events or a different data path; however, the issue provides sufficient direction for a minimal fix."
     ],
     "why": "The issue provides a clear frontend-only bug with a concrete root cause: the sidebar reads from the null 'metrics' field instead of the populated 'stats.usage_to_metrics' path. It includes a reproducible command, expected vs actual behavior, and acceptance criteria with a regression test requirement. No competing open PRs or duplicates were found."
+  },
+  "31bfb57af3db8ef18646392c3a5c4ae0c2354ab65b61c186dd16662f42c54a9e": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Triage says root cause confirmed and fix shape is clear, but also states the credential-cleanup question needs a maintainer decision before a fix lands",
+      "Open PR #11889 is flagged as semantic overlap requiring review while direct_code_overlap is false and it does not reference the issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/extension/extensionManager.ts: route name-based uninstall through the store snapshot when no loaded extension matches",
+      "packages/core/src/extension/extension-store.ts: distinguish artifact-entry-with-missing-directory from declarationOnly entries; decide credentialPersistence persistence vs warning",
+      "packages/cli/src/commands/extensions/uninstall.ts and dialog-data.ts: ensure name-based entry points reach the fallback"
+    ],
+    "risks": [
+      "Open PR #11889 touches the same extension-store.ts path and may already cover or conflict with the fix",
+      "The credentialPersistence decision is a maintainer design choice that could change the required implementation",
+      "Naive fallback could turn a stale artifact entry into a silent no-op for declarationOnly entries"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that installs an extension, deletes its directory while the store entry remains, then asserts uninstall by name succeeds and clears the store entry",
+      "Add a regression test asserting install of the same source over a stale artifact-less entry does not raise the name-conflict error",
+      "Add a test covering credentialPersistence='stored' with a missing artifact to pin the chosen warning/persistence behavior"
+    ],
+    "unknowns": [
+      "Whether PR #11889 already resolves this issue's root cause or leaves the name-based uninstall path unfixed",
+      "Maintainer decision on credentialPersistence='stored' handling when the artifact is missing",
+      "Whether the stale entry presents as 'not installed' or 'conflicting' depending on prior mutateMany mutations, which affects the required discriminator"
+    ],
+    "why": "Issue has a clear, statically-confirmed root cause (name-based uninstall resolves only via getLoadedExtensions, so a store entry with a missing artifact is unreachable) and a concrete reproduction. However, the supplied evidence contains a materially blocking unknown: an open PR #11889 overlaps the same code path (extension-store.ts) with semantic_overlap=true and status 'semantic_overlap_requires_review', and the triage comment explicitly states the credential-cleanup question needs a maintainer decision before a fix lands. The duplicate/coverage question and the unresolved design decision determine whether independent code work is actionable."
   },
   "31bfc9c97c8d8e0ba72e1c31e42dd902ab73adcb8a6b43b18dc4e9ab868ff0ef": {
     "confidence": 0.8,
@@ -35594,6 +35709,42 @@
     ],
     "why": "Issue clearly identifies a missing capability in server-side list handlers: they ignore cursor and never set nextCursor, and there is no hook to replace handlers. Root cause is well-documented with code references and a concrete use case. The request is actionable: either implement pagination or provide a handler override hook."
   },
+  "58bc855005d6ce6c40e777c8e1d4ea8245cafe29bc0f12e2403e33b10dafdfaf": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims post_call logging is skipped due to task cancellation, but chrikrah reports handler completes and loss only occurs with general_settings.cancel_on_disconnect",
+      "Issue says non-streaming has no shielded cleanup, while comment says streaming bills partial via shielded cleanup and non-streaming has none"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/common_request_processing.py cancellation/cleanup path",
+      "litellm/utils.py CancelledError handling around logging",
+      "spend logging for non-streaming requests on client disconnect"
+    ],
+    "risks": [
+      "Fix location depends on whether cancel_on_disconnect is the true trigger, contradicting the issue's root cause",
+      "Open PR #41171 may already cover the same spend-tracking gap",
+      "Changing cancellation handling could alter proxy 499 behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with general_settings.cancel_on_disconnect enabled and disabled, disconnect client mid non-streaming Bedrock call, assert success/failure spend events and cost values match AWS billing",
+      "Add regression test covering CancelledError path in litellm/utils.py logging wrapper"
+    ],
+    "unknowns": [
+      "Whether PR #41171 already fixes this exact non-streaming disconnect spend gap",
+      "Whether the maintainers consider cancel_on_disconnect the intended trigger for this bug",
+      "Whether the reported reproduction is valid on the current main without the cancel_on_disconnect flag"
+    ],
+    "why": "The issue describes a plausible spend-tracking gap for non-streaming Bedrock calls on client disconnect, but the most recent comment (chrikrah) reports it is not reproducible on default config and that the loss requires general_settings.cancel_on_disconnect, with a concrete code-path trace. This materially contradicts the issue's stated root cause (post_call skipped due to task cancellation) and changes the fix location. Additionally, open PR #41171 semantically overlaps on non_streaming spend tracking and requires manual comparison before any new work."
+  },
   "58c23f0deb3dc5ec949899d6b9bd5cbc10bff5a9eba175ae38a7b99afc34a12d": {
     "confidence": 0.85,
     "contradictions": [
@@ -46177,6 +46328,41 @@
     ],
     "wait_reason": null,
     "why": "The issue provides a precise root cause: DGDR-generated prefill worker lacks --disaggregation-mode prefill, causing component name mismatch and Planner HOLD. Includes a minimal reproduction and a confirmed fix (adding the flag and kv-transfer-config). No competing PR exists; the only open PRs are unrelated. The fix is actionable and testable."
+  },
+  "70af3a834adc97990ec9125b4bab4fc636e0262600aad2e01f321449b3869148": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Comment thread initially attributes the loss to missing contextvars propagation into graphon workers, then live instrumentation shows propagation succeeds and the actual defect is snapshot replay plus thread-local grants"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "core/app/file_access/scope.py: make granted_retriever_segment_ids visible across worker threads and not clobbered by snapshot replay",
+      "context/flask_app_context.py: stop re-installing the frozen request-time FileAccessScope snapshot at every node entry",
+      "core/workflow/node_runtime.py: DifyRetrieverAttachmentLoader gate 1 behavior for END_USER",
+      "core/rag/retrieval/dataset_retrieval.py: grant_retriever_segment_access write path"
+    ],
+    "risks": [
+      "Fix touches shared FileAccessScope/ContextVar semantics and could weaken tenant isolation if grants are made globally visible",
+      "graphon worker/context replay behavior differs between pinned 0.6.0 and main 0.7.0, so the fix must be validated against the shipped dependency version",
+      "Repository has an AI disclosure conflict policy that may constrain automated public submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that runs a published Advanced Chat app via service API as END_USER with a knowledge retrieval node feeding an LLM node with vision enabled, asserting #context_files# is present with the expected file count",
+      "Add a unit test that grants retriever segment access in one worker thread and asserts the loader in a different worker thread observes the grant",
+      "Assert Studio preview (ACCOUNT) behavior is unchanged and tenant isolation still denies segments not in the selected retrieval context"
+    ],
+    "unknowns": [
+      "Whether the fix belongs in dify (scope/replay) or in graphon worker context handling, and which version (0.6.0 vs 0.7.0) the maintainers will target"
+    ],
+    "why": "Issue provides a concrete, reproducible silent-failure bug with a measured root cause: FileAccessScope ContextVar replay in FlaskExecutionContext resets granted_retriever_segment_ids to the request-time snapshot at every node entry, and grants are thread-local, so DifyRetrieverAttachmentLoader gate 1 denies END_USER runs while ACCOUNT bypasses it. Live instrumentation (bind/replay/grant/gate counts, DB correlation, 19 vs 24 run split) and code anchors in scope.py, flask_app_context.py, node_runtime.py, dataset_retrieval.py establish an actionable fix path."
   },
   "70b2e340af4b4bda2f7c599f1b98e6435e5dd891df30b17b530b80d913ebc5ce": {
     "confidence": 0.7,
@@ -59716,6 +59902,39 @@
       "Exact npm packaging configuration and whether the fix requires changes to the build script or package.json"
     ],
     "why": "The issue reports a clear packaging defect: the published npm package lacks the static/sandbox_proxy.html file, causing the Apps tab to fail for all npx users. A maintainer triaged it as High priority, and a user confirmed a local fix. No competing PR exists, and the fix is straightforward: include the missing static file in the npm package."
+  },
+  "928522bd66b48107c3c19634b0eb3dce8443f5a640ce715efcbbe56a4da51182": {
+    "confidence": 0.6,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal is false while issue body provides a specific code path and root-cause explanation"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py: reasoning_effort handling for gpt-4.1/gpt-4o families",
+      "drop_params behavior in get_optional_params for unsupported reasoning params"
+    ],
+    "risks": [
+      "Changing drop_params semantics could break callers relying on silent dropping of other unsupported params",
+      "Overlap with open PR #41222 may make the fix redundant or conflicting"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add failing unit test calling get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) and assert it raises UnsupportedParamsError or forwards the param",
+      "Repeat for custom_llm_provider='azure'",
+      "Regression test that drop_params still silently drops genuinely harmless unsupported params"
+    ],
+    "unknowns": [
+      "Whether open PR #41222 already fixes the same root cause for the OpenAI/Azure chat path",
+      "Maintainer preference between forwarding the param vs raising UnsupportedParamsError under drop_params"
+    ],
+    "why": "Issue describes a concrete user-visible bug with reproduction steps and code anchors, but the supplied duplicate assessment flags semantic overlap with open PR #41222 (reasoning_effort/gpt_4o) that is unresolved and not directly linked to this issue. Whether that PR already covers the root cause determines whether new code work is actionable, so this is a materially blocking unknown."
   },
   "92a37e8917fb673e44293e8bef16615ad6277fd7ba6c6d946f7bee313f8be1aa": {
     "confidence": 0.6,
@@ -73647,6 +73866,42 @@
     ],
     "why": "Issue clearly identifies missing convolution coverage in batch-invariant mode with a concrete fix, but the deterministic gate is HUMAN_REVIEW and an open PR (#50505) overlaps the same code path, requiring maintainer comparison before new work."
   },
+  "b63a109f7b6e3912bb01696b9930c7d34fde0c6138884f5613351858bffeba88": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims root cause A is a missing assignment, but open PR #14844 targets the same omni_handler.py path and 'base64' semantics without referencing this issue; overlap resolution is unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/omni/omni_handler.py: propagate req.response_format into EngineInputs for video generation",
+      "components/src/dynamo/vllm/omni/output_formatter.py: honor explicit b64_json vs url delivery",
+      "runtime image build: FFmpeg x86 build configuration / swscale MMXEXT guard (upstream dependency, not repo code)"
+    ],
+    "risks": [
+      "PR #14844 may already implement the same response_format fix, making a new PR duplicative",
+      "FFmpeg color defect is an upstream build issue; a Dynamo-side patch may be out of scope or require image rebuild",
+      "Changing response_format handling could alter default delivery behavior for existing URL consumers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting response_format=b64_json yields nonempty data[0].b64_json and no file:// URL",
+      "Add a model-free RGB-quadrant encode->decode round-trip test asserting pixel correctness (red quadrant decodes ~255,0,0)",
+      "Verify URL delivery still works when external media storage is configured"
+    ],
+    "unknowns": [
+      "Whether PR #14844 fully covers the response_format=b64_json root cause or only partially overlaps",
+      "Whether maintainers consider the FFmpeg/swscale color defect in-scope for this repository versus an upstream image dependency",
+      "Whether the issue's suggested one-line patch was validated against current main beyond static inspection"
+    ],
+    "why": "Issue reports two independent defects: (A) missing response_format propagation in _engine_inputs_from_video() with a concrete one-line diff, and (B) a bundled-FFmpeg/swscale MMXEXT color corruption. Defect A is actionable, but open PR #14844 ('pass response_format into video EngineInputs') already overlaps the same code path and distinctive keyword 'base64', and its root-cause coverage is unverified — this unresolved duplicate coverage materially determines whether new code work is actionable. Defect B is an upstream FFmpeg build-configuration issue, not a Dynamo code fix, and the issue itself states no patched end-to-end run was performed."
+  },
   "b6450b8f0f91d4546223ce52ab84b2c5a6ddb6a8915bfa043fa20becf41e1037": {
     "confidence": 0.8,
     "contradictions": [],
@@ -78935,6 +79190,50 @@
       "Maintainer design preferences for binary content stripping in traces"
     ],
     "why": "Issue clearly identifies a real bug with a minimal repro and root cause in messages.py, but an open PR (#7053) has semantic overlap and the deterministic gate requires human review. Need maintainer confirmation on design and PR comparison before starting work."
+  },
+  "c3305437210012b6ca482a903898fdb590aca74b03b288214bed1268aeb7ee11": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Commenters propose conflicting root causes: BF16 numerical-path difference vs GDN gate row misalignment (#51812) vs NVFP4/MoE nondeterminism vs persistent_topk instability",
+      "jschmied reports DFlash2 K=1 reproduces target bit-for-bit once unrelated kernel defects are fixed, contradicting the issue's implication that DFlash2 itself is at fault",
+      "Windless84 reports E==V!=A pattern (verifier argmax differs from single-token argmax), while jschmied reports block and single-token forwards agree exactly in BF16 on their hardware"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Speculative-decode verification path (target argmax/logits at verified positions)",
+      "GDN/DeltaNet/Mamba recurrent-state write/rollback boundaries",
+      "Draft token proposal and acceptance/rejection accounting"
+    ],
+    "risks": [
+      "Root cause may be a numerical BF16 path difference rather than a logic bug, making a code fix non-obvious",
+      "Existing open PRs may already address the same root cause, risking duplicate work",
+      "Hybrid GDN/DeltaNet/Mamba state handling is complex and hardware-specific (SM86 vs sm_120/sm_121)",
+      "AI disclosure policy conflict may block automated public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce target-only vs DFlash2 K=1 greedy equivalence with fixed seed and identical prompt; confirm first divergence at token 30",
+      "Instrument per-position target argmax/logits, proposed draft IDs, and accepted/rejected counts around tokens 29-30",
+      "Run target-only twice with --max-num-seqs 1 vs 2 to test batch-invariance of the target forward",
+      "Re-test on v0.28.0 or with the #51812 GDN gate-alignment fix to see if divergence disappears"
+    ],
+    "unknowns": [
+      "Whether the divergence persists on current main or v0.28.0 with the #51812 fix applied",
+      "Whether any of the open PRs (#52555, #56431, #51684) already resolve this specific issue",
+      "The actual root cause: numerical path difference, state update/rollback bug, or kernel defect",
+      "Whether the issue is reproducible on the reported 4x RTX 3090 BF16 TP=4 configuration vs the various other hardware configurations reported"
+    ],
+    "why": "The issue reports a concrete, reproducible greedy-divergence bug in the DFlash2 speculative-decode path (diverges at token 30, K=1, --enforce-eager, prefix cache off), which is a valid algorithm-level correctness concern. However, supplied evidence is contradictory and unresolved: multiple commenters attribute the divergence to different root causes (BF16 numerical-path differences, GDN gate row misalignment fixed by #51812, NVFP4/MoE nondeterminism, persistent_topk instability), and the duplicate assessment flags semantic overlap with open PRs (#52555, #56431, #51684) that may already cover the root cause. The issue's own suggested trace points are unconfirmed, and no single root cause is established."
   },
   "c331b6df263c97f0c041590b1cd6ce08cf7662a08c6b09543818983793437ebc": {
     "confidence": 0.85,
@@ -85991,6 +86290,39 @@
     ],
     "why": "Issue describes a concrete arithmetic inconsistency (cached_tokens > input_tokens) with code anchors and a no-network reproduction, but the author explicitly states the fix direction depends on an unresolved maintainer convention decision (cache-inclusive vs cache-exclusive input_tokens). The supplied evidence also flags semantic overlap with open PR #39122 (cached_tokens, cache_control handling) that is not directly linked to this issue, so duplicate/coverage status is unresolved. These are materially blocking unknowns for choosing an actionable implementation."
   },
+  "d3ddb2465fd23816a26b42d4f11811f6aafbdd0352392eeb3a2f6c2ebe743127": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/handlers.py: emit prompt_tokens_details.cached_tokens in intermediate usage chunks when continuous_usage_stats is enabled, not only in the finish_reason branch",
+      "lib/llm/src/protocols/openai/chat_completions/delta.rs: verify propagation of prompt_tokens_details across intermediate chunks",
+      "streaming regression test covering cached-token presence in first generated-token chunk and preservation in later chunks"
+    ],
+    "risks": [
+      "Worker-side emission timing depends on when vLLM RequestOutput exposes num_cached_tokens; a frontend-only change may be insufficient",
+      "Changing intermediate usage shape could affect clients relying on current chunk schema",
+      "Open PR #11708 touches continuous_usage_stats in the vLLM chat processor and may overlap semantically"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce per issue steps: warm prefix cache with a long prompt, then repeat identical streaming request with include_usage and continuous_usage_stats; assert cached_tokens appears in the first generated-token chunk and persists",
+      "Negative case: when engine has not yet reported a count, assert the field stays absent rather than being substituted with zero",
+      "Run targeted unit tests for the vLLM handler and chat_completions delta module plus static checks"
+    ],
+    "unknowns": [
+      "Whether vLLM exposes num_cached_tokens early enough for first-chunk emission, or whether a frontend-side change is required",
+      "Whether open PR #11708 already addresses this exact behavior"
+    ],
+    "why": "Issue provides a concrete reproduction (warm prefix cache, repeat identical streaming request with include_usage+continuous_usage_stats), an expected-vs-actual table, and a specific code anchor (vLLM handlers.py completion_usage attached only inside the finish_reason branch). The reporter explicitly flags that intermediate vLLM RequestOutput timing is unverified, which is normal implementation uncertainty rather than a blocker, and a concrete validation path exists (assert cached_tokens present in first generated-token chunk and preserved thereafter)."
+  },
   "d3ebebfb9f01521459b5a3e0b68c4cfcb53dbd12a5658a78f7a79b581870e23b": {
     "confidence": 0.6,
     "contradictions": [
@@ -92897,6 +93229,44 @@
       "Whether the /litellm-asset-prefix sentinel and extra _next mounts must be adjusted for the baked basePath"
     ],
     "why": "Issue provides a concrete, well-argued root cause: Next.js static export built with basePath \"\" but mounted under /ui, so the client router does not own /ui-prefixed hrefs and falls back to MPA navigation, discarding the prefetch cache and firing 404 prefetches. Code anchors (next.config.mjs, uiHref.ts, proxy_server.py StaticFiles mount) and a clear before/after user flow are supplied, and no duplicate or open PR covers it."
+  },
+  "e33b8a8034ae7a549c9f74b2fdceb5ed5482ff67ea568fa2c090173be1b34684": {
+    "confidence": 0.55,
+    "contradictions": [
+      "preTaskEvidence duplicate.status is 'none' while related_issue_assessment reports potential_overlap with issue #57016 sharing failure signatures"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "csrc/libtorch_stable/moe/moe_wna16.cu: replace 16-bit atomicAdd split-K accumulation with a deterministic reduction (e.g., fp32 accumulation buffer or two-stage reduction)",
+      "vllm/model_executor/layers/fused_moe/fused_moe.py: ensure should_moe_wna16_use_cuda / dispatch respects determinism requirements",
+      "tests/kernels/moe/test_moe.py: add run-to-run bit-exactness regression for the CUDA WNA16 path"
+    ],
+    "risks": [
+      "Changing accumulation to fp32 may alter numerics and require tolerance updates in existing tests.",
+      "Deterministic reduction may reduce performance at decode-sized batches.",
+      "Duplicate issue #57016 may already cover the same batch-invariance defect, risking redundant work."
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the probe: 8 experts, top-k 2, hidden 1024, intermediate 512, group size 128, symmetric uint4b8, seed 0, M=16 (CUDA kernel) vs M=64 (Triton control); compare raw output bits across repeated calls and across two processes.",
+      "Add a regression test asserting bit-identical outputs across repeated invocations for M*top_k/E <= 6 on the CUDA WNA16 path.",
+      "Verify the fix does not change results for the Triton path and keeps existing test_fused_moe_wn16 tolerances."
+    ],
+    "unknowns": [
+      "Whether the AI disclosure conflict can be resolved for this repository",
+      "Whether issue #57016 already covers or supersedes this defect",
+      "The full reproduction command, which is truncated in the supplied issue body"
+    ],
+    "why": "The issue presents a concrete, well-anchored root cause: moe_wna16_gemm_kernel combines split-K partial sums via 16-bit atomicAdd after rounding each partial with Dtype::float2num, making output order-dependent for gridDim.z >= 3. This is a genuine numerics/kernel-algorithm defect with a clear reference-vs-implementation validation path. However, two supplied facts materially block actionability: (1) the repository policy status is ai_disclosure_conflict, meaning the required AI-usage disclosure is unresolved and automated public action is hard-disabled; (2) a potential duplicate issue #57016 shares the same failure signature and concerns batch-invariance of fused-MoE experts, so coverage overlap is unresolved. The issue body is also truncated mid-command, so the full reproduction command is not available. These are not normal implementation uncertainties; they determine whether code work can proceed."
   },
   "e340917d1462d511f2c9f32651e642385ff132150e5fed4914523c305645f134": {
     "confidence": 0.85,
@@ -103267,6 +103637,41 @@
       "Whether PR #49636 already addresses the issue"
     ],
     "why": "The issue provides a concrete, reproducible bug in MoE backend selection causing incorrect logprobs and output, with clear evidence of root cause (FlashInfer TRTLLM backend vs deep_gemm) and a validation path via perplexity comparison and curl commands. The track is llm_algorithm and the issue involves kernel algorithm and numerical correctness, satisfying the requirement for a concrete validation path."
+  },
+  "f9e56c4c0bd897e585175e7b43e79007427fde26ff940008b4b0a71db73ed862": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category LOCAL_FIX_ONLY and gate ALLOW_PRIVATE_WORK conflict with pre-review flags no_code_surface and reproduction_or_validation_missing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Documentation/migration note for reverse-proxy redirect behavior (if maintainers confirm)",
+      "Possibly an allowlist/config escape hatch for additional origins (only if maintainers confirm intent)"
+    ],
+    "risks": [
+      "Changing redirect/origin enforcement could weaken a deliberate security control",
+      "Repository AI disclosure policy conflicts with automated public contribution",
+      "No confirmed code surface or reproduction path"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a minimal MCP client behind a Caddy/nginx HTTP->HTTPS or port->subpath redirect and observe the MCPError",
+      "Confirm whether same-origin enforcement is intentional before writing any code"
+    ],
+    "unknowns": [
+      "Whether same-origin redirect enforcement is intentional or a bug",
+      "Whether an allowlist/escape hatch is desired by maintainers",
+      "Concrete code path and reproduction steps",
+      "How to satisfy the repository's AI disclosure requirement"
+    ],
+    "why": "The issue is a documentation/behavior question about same-origin redirect enforcement behind reverse proxies, not a concrete code defect. Supplied evidence shows no reproduction, no root-cause signal, no code anchors beyond a generic `MCPError` mention, and no maintainer confirmation of intended behavior. The pre-review explicitly flags no_code_surface and reproduction_or_validation_missing, and the policy status is ai_disclosure_conflict, which is a materially blocking unknown for public contribution."
   },
   "f9ee3899eba0339f9d544ef2cd1285d40f0c780e39169f6bdc4c91ee5da60e8c": {
     "confidence": 0.82,
