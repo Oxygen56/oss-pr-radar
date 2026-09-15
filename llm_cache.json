@@ -617,6 +617,42 @@
     ],
     "why": "The issue reports a deterministic 'Failed to advance FSM' error under DFlash2 spec decode + xgrammar json_object grammar, but the supplied evidence strongly indicates the reported build predates the merged fix #53046 (commit c6e19b3be243), and multiple commenters show the validate_tokens guard is absent in the reporter's build and in v0.28.0. The root cause is therefore likely already covered by an existing merged fix, making the candidate a duplicate/covered opportunity rather than a distinct actionable code contribution."
   },
+  "0213db052b64296205803ad4ff2e8ba3e16e891791a3f395d1743f3ea1f8df77": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate labels the issue as a verifiable LLM algorithm mechanism (numerics_quantization/kernel_algorithm), but the supplied evidence shows a hardware-specific illegal memory access with no numerical or algorithmic root cause established"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/flag_gems/runtime/backend/_metax/ops/mm.py",
+      "src/flag_gems/utils/libentry.py autotune policy/benchmark path"
+    ],
+    "risks": [
+      "Cannot reproduce without MetaX C550 hardware",
+      "Crash may be a backend/runtime or autotuner issue rather than an mm kernel numerical bug",
+      "No shape/dtype inputs means any proposed fix is speculative"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Obtain a minimal mm invocation (shapes, dtypes, strides, transposes) that reproduces the Memory Violation on MetaX C550",
+      "Run the same invocation with autotuning disabled and with a fixed config to isolate kernel vs autotuner",
+      "Compare against a CPU/high-precision reference for numerical correctness once the crash is fixed"
+    ],
+    "unknowns": [
+      "Minimal reproducing input shapes/dtypes/strides for mm",
+      "Whether the failure is in mm_kernel, libentry autotuning, or the Metax runtime",
+      "Whether the issue reproduces on any available non-Metax hardware",
+      "Whether a maintainer has confirmed the failing code path"
+    ],
+    "why": "The issue reports a Metax-specific illegal memory access in mm_kernel during autotuning, but supplies no minimal reproduction, no shape/dtype/stride inputs, and no root-cause evidence. The crash occurs inside triton.testing.do_bench during autotune benchmarking, so it is unclear whether the defect is in the mm kernel, the libentry autotuner policy, or the Metax backend/runtime. The candidate's own actionability evidence marks root_cause_signal=false and maintainer_approved=false, and the issue itself states it may not reproduce on standard CUDA, making the required hardware a materially blocking unknown for an actionable code contribution."
+  },
   "023a70ca5c5b859365d35687116f0f6a4676d6edd92a1f4ca4f7103565ce217e": {
     "confidence": 0.85,
     "contradictions": [
@@ -4302,6 +4338,35 @@
       "Whether the proposed second-chance matching approach is acceptable"
     ],
     "why": "Root cause is well established by the contributor comment (filterProviderConfigs narrows providers before validateTestProviderReferences runs), but the issue's own quoted documentation states the current failing behavior is intended, making this a maintainer behavior decision rather than a plain bug fix. The contributor explicitly asks for maintainer direction before implementing, and no maintainer response or approval is present in the supplied evidence."
+  },
+  "0acb57935795a369a240f2021e273b3f01d320438bc5f4ee496c0240652fab0f": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "RealtimeTUI._send() should defer publishing the typed message until RealtimeAgent.send() succeeds, or roll back the rendered message on failure",
+      "Add a regression test that simulates send() raising and asserts the message is not left in the chat view"
+    ],
+    "risks": [
+      "PR #2646 already targets the same issue; a competing fix must add root-cause coverage or tests to be worthwhile",
+      "Changing publish ordering could affect interrupt handling or optimistic rendering behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Write a failing test that mocks RealtimeAgent.send() to raise, invokes RealtimeTUI._send(), and asserts the message is absent from the chat view and agent.state.context",
+      "Run the targeted TUI test module and static checks after the fix"
+    ],
+    "unknowns": [
+      "Whether PR #2646 will be merged or revised before a competing fix lands"
+    ],
+    "why": "Issue #2645 gives a concrete, user-visible bug with ordered reproduction steps, expected/actual behavior, and a clear root cause: RealtimeTUI._send() publishes input to the chat view before awaiting RealtimeAgent.send(), so a failed send leaves an undelivered message rendered. The fix is a small, testable ordering/rollback change in the TUI send path. Open PR #2646 covers the same issue but is marked as lacking root-cause coverage, so a competing fix that adds a failing regression test and addresses the publish-before-await ordering is actionable."
   },
   "0ae11579e957c12353af71e4c65bc10b9abdd99472dc62782282d546b6bed599": {
     "confidence": 0.8,
@@ -10572,6 +10637,38 @@
       "Exact build system and platform support matrix for close_range() availability."
     ],
     "why": "The issue identifies a clear performance bug in subprocess spawning caused by an O(RLIMIT_NOFILE) close() loop, with a deterministic failing test and a concrete fix using close_range(). The proposed change is minimal, well-scoped, and directly addresses the root cause. No competing PR or related issue exists, and the maintainer has not expressed a conflicting preference."
+  },
+  "1b4a3e9e814a738eaadeddd3642675fbf089a7a652e4c2733f00c6fe5a7cfaf7": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/openai/encoding_dsv4.py: accept dict or JSON string in encode_arguments_to_dsml() and validate the result is a dict, restoring #28035 behavior",
+      "Add a regression test covering already-normalized dict input to encode_arguments_to_dsml()"
+    ],
+    "risks": [
+      "The fix targets the b12x-vision branch; if the regression is branch-specific, the change may need to be applied/backported to that branch rather than main",
+      "Image republish and cookbook digest update requested in the issue are outside the code fix scope and may require maintainer action",
+      "Overlap with #38386 (nested arguments in the tool-call detector) must not be conflated; this fix is in prompt construction, not output parsing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's minimal reproduction: encode_arguments_to_dsml({\"name\": \"read\", \"arguments\": {\"filePath\": \"/tmp/example.txt\"}}) and assert output contains <｜DSML｜parameter name=\"filePath\" string=\"true\">/tmp/example.txt</｜DSML｜parameter> with no extra arguments wrapper",
+      "Add a unit test asserting both a JSON-string arguments input and an already-normalized dict input produce identical DSML output",
+      "Run targeted tests for python/sglang/srt/entrypoints/openai/encoding_dsv4.py and serving_chat.py"
+    ],
+    "unknowns": [
+      "Whether the b12x-vision branch is the correct target for the PR or whether the fix should land on main and be cherry-picked",
+      "Whether maintainers want the image republish/cookbook digest update handled in the same PR or separately"
+    ],
+    "why": "Issue pinpoints a concrete regression in encode_arguments_to_dsml() on the b12x-vision branch: unconditional json.loads() on an already-normalized dict raises TypeError, which is swallowed and re-wrapped as {\"arguments\": dict}, producing an extra DSML parameter layer. The #28035 reference behavior and a minimal reproduction with expected vs actual DSML output are supplied, and code anchors (encoding_dsv4.py, serving_chat.py) are identified. This is a runtime encoding bug on the agent/inference path, not mere plumbing."
   },
   "1b5208b9298175ab6b9bcae33cbd95ed81beafa492accd98e9c37fe2dc5f3bf7": {
     "confidence": 0.85,
@@ -18335,6 +18432,48 @@
     ],
     "why": "Issue reports a severe 100% tool-call failure in Claude Desktop after server-filesystem update, with strong evidence of client-side rejection of outputSchema/structuredContent. However, root cause is not fully confirmed; a maintainer fix in Claude Desktop 1.24012.9 is reported, and the issue is in modelcontextprotocol/servers repo, not the client. The candidate lacks a clear code path in this repo and requires maintainer direction."
   },
+  "2d57064ed9bdbe11c1d2fa64e89830206b36435c7899e45afee14f23ea594fa5": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Comment chenWULUQI attributes divergence to BF16 numerical-path differences, while jschmied reports block-verification reproduces q_len=1 bit-for-bit once kernel defects are fixed, arguing the mismatch is not intrinsic to BF16",
+      "wickist attributes the symptom to GDN gate row misalignment fixed by #51812, while Windless84 reports E==V!=A verifier-argmax divergence on stock v0.28.0"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Speculative-decode verification path for DFlash2 (draft/accept logic)",
+      "Target hybrid GDN/DeltaNet/Mamba state update and rollback boundaries",
+      "Numerical path for block-verification vs single-token forward (BF16 GEMM/SDPA/reduction)"
+    ],
+    "risks": [
+      "Confusing mathematical/semantic error with floating-point or random fluctuation",
+      "Duplicate/overlapping PR #52555 or issue #57019 may already cover the root cause",
+      "Repository AI-disclosure policy conflict blocks automated public action",
+      "Base SHA changed and policy/disclosure status uncertain"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce target-only vs DFlash2 K=1 greedy equivalence with fixed seed and logprobs on the reported BF16 TP=4 SM86 setup",
+      "Instrument per-position target argmax/logits, draft IDs, and accepted/rejected counts around token 29/30",
+      "Re-test on v0.28.0 or with the #51812 GDN gate-alignment fix to discriminate state vs numerical cause",
+      "Run target-only at --max-num-seqs 1 vs 2 to check batch-shape invariance"
+    ],
+    "unknowns": [
+      "Whether PR #52555 or issue #57019 already covers this root cause",
+      "Which of the multiple candidate causes applies to the reported BF16 TP=4 SM86 configuration",
+      "Whether the #51812 fix resolves the reported divergence on this build"
+    ],
+    "why": "The issue reports a concrete, reproducible greedy-divergence at token 30 with K=1 and --enforce-eager, and comments supply multiple candidate root causes (BF16 numerical-path differences, GDN gate row misalignment fixed by #51812, kernel defects #54945/#54948/#54076/#55122, and a BF16 reduced-precision reduction lead). However, the supplied evidence does not establish which cause applies to this BF16 TP=4 SM86 configuration, and the duplicate/coverage status is unresolved: PR #52555 is flagged as semantic overlap requiring review, and the related-issue assessment flags potential overlap with #57019. These unresolved coverage and root-cause questions materially determine whether new code work is actionable."
+  },
   "2d59c1ee8943120fb5eb4fd6a2ae493e79f24270f3babdb48a39e9812d505bcf": {
     "confidence": 0.85,
     "contradictions": [
@@ -19156,6 +19295,43 @@
       "Whether the repository's AI-disclosure policy permits an automated contribution on this issue"
     ],
     "why": "The issue presents a concrete, well-anchored root cause: moe_wna16_gemm_kernel combines split-K partial sums via 16-bit atomicAdd on a zeroed output, making results order-dependent for gridDim.z >= 3, with a clear reference-vs-implementation validation path (bit-exact run-to-run comparison against the Triton kernel control). However, the supplied evidence contains materially blocking unknowns: the issue body is truncated mid-reproduction command, so the exact probe invocation and observed result are not available; the duplicate assessment flags PR #54706 ('[ROCm][RDNA3] Fix W4A16 split-K accuracy and determinism') with distinctive overlap on 'split_k' and status 'semantic_overlap_requires_review', which may already cover the same root cause; and the policy status is 'ai_disclosure_conflict' with submission_policy 'ai_disclosure_conflict', an unresolved repository disclosure requirement. These facts determine whether independent code work is actionable."
+  },
+  "310a83e4c211ec8c0600d6fb851437b458f7e4da9ece1addf4628dc26715c9cf": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue's root-cause guess says Claude Code does not act on tools/list_changed, while maintainer states the server already sends the notification and deliberately treats Claude Code as a client that should honor it"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/konnect/src/config.rs",
+      "crates/konnect-core/src/tools/config.rs",
+      "crates/konnect-core/src/tools/project.rs"
+    ],
+    "risks": [
+      "Broadly eager-loading every unknown client would discard the starter-kit/context-size design",
+      "Fixing the wrong layer (client detection vs. notification handling) could mask the real refresh gap",
+      "Overlaps with the broader MCP tool-catalog lifecycle tracker #576"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture redacted MCP trace: initialize clientInfo, first tools/list, load_toolset request/response, any notifications/tools/list_changed, and whether a second tools/list follows",
+      "Set explicit eager_toolsets in konnect.toml for one failing toolset, restart Claude Code, and verify the tool becomes callable",
+      "Add a regression test asserting the chosen client-detection/eager-load behavior for the observed clientInfo.name"
+    ],
+    "unknowns": [
+      "Actual Claude Code clientInfo.name/user-agent at handshake",
+      "Raw MCP trace showing whether a second tools/list is sent after load_toolset",
+      "Whether explicit eager_toolsets workaround makes the tool callable",
+      "Exact Claude Code version and Konnect launch configuration"
+    ],
+    "why": "Issue reports a concrete client-side tool-registry miss on Claude Code after load_toolset, but the maintainer explicitly states the server already sends notifications/tools/list_changed and treats Claude Code as a client expected to honor it; the actual handshake clientInfo identity and raw MCP trace are missing, so the correct fix (recognize Claude Code in the eager-load path vs. correct the assumption/docs) is not yet determined."
   },
   "311cb65cbedfcf0eae16f1edc34a66184b89cd9da96df8cf72e3c2e021714bac": {
     "confidence": 0.7,
@@ -33234,6 +33410,41 @@
     ],
     "why": "Issue provides concrete algorithm-conformance bug with root cause: ReLoRA callback prunes adapters without merging, and tie-handling can zero both factors. Maintainer confirmed both claims with reproducible evidence and clear acceptance criteria."
   },
+  "53d8f3910c2444e5b49fd1668053f26c9693598ff2b9a7d9e86acb702cf87391": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body frames the bug as non-streaming Bedrock post_call logging skipped on disconnect, while candidate.expected_changes describes streaming chunk/finish/tool-call state propagation",
+      "Issue body implies default reproduction, but recent comment says it is not reproducible without general_settings.cancel_on_disconnect"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/common_request_processing.py cancellation handling for non-streaming requests",
+      "litellm/utils.py CancelledError/BaseException handling so post-call logging still records spend",
+      "regression test covering cancel_on_disconnect with a non-streaming Bedrock call"
+    ],
+    "risks": [
+      "Open PR #41171 may already cover the same non-streaming spend-tracking root cause",
+      "Changing cancellation semantics could alter documented 499 failure behavior",
+      "The candidate's streaming-oriented expected changes may not address the actual non-streaming cancellation path"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with general_settings.cancel_on_disconnect enabled, issue a non-streaming Bedrock chat completion, disconnect the client, and assert a success/cost event is recorded",
+      "Run the targeted proxy/common_request_processing and litellm/utils tests plus static checks"
+    ],
+    "unknowns": [
+      "Whether PR #41171 already fixes the same non-streaming cancellation spend-tracking path",
+      "Whether maintainers consider the cancel_on_disconnect-gated behavior a bug or intended 499 failure semantics"
+    ],
+    "why": "The issue describes a plausible spend-tracking gap for non-streaming Bedrock calls on client disconnect, but the latest comment materially narrows the reproduction: it is not reproducible on default config and requires general_settings.cancel_on_disconnect, with a specific cancellation path through common_request_processing.py and litellm/utils.py. The candidate's expected_changes and test_path still describe streaming chunk/finish/tool-call state propagation, which does not match the non-streaming cancellation root cause. Additionally, open PR #41171 has semantic overlap on non-streaming spend tracking and requires manual comparison before any code work is actionable."
+  },
   "53d950a5b046494851fa50c7ca77ecc413da27b51ed680746bb5cfc30906150f": {
     "confidence": 0.7,
     "contradictions": [],
@@ -41387,6 +41598,46 @@
     ],
     "why": "The issue reports an SM110 GDN prefill warmup illegal memory access, and a commenter proposes a concrete root cause (SM110 missing from FUSED_GDN_DECODE_ARCHS in CMakeLists.txt, with VLLM_GDN_DECODE_KERNEL=triton as workaround). However, a maintainer-side comment states the SM110 fused GDN build gap is already addressed by merged PR #53835 and that the prefill warmup traceback should be investigated separately, while a follow-up fail-closed dispatch change is being checked. This leaves unresolved duplicate/merged-fix coverage and an open question whether the reported prefill failure is already fixed on main or is a distinct bug, which materially determines whether new code work is actionable."
   },
+  "655e7c97a42502e4246db131c53d348fd9ce94e2c7888d5d4151d66deccbc818": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue root cause blames finish-tool wiring needing agent-server 1.47.0, but comment reports get_default_agent and event_router.py byte-identical between 1.46.0 and 1.47.0",
+      "Issue states pinning a consistent 1.46.0 venv did not fix the 500, which is inconsistent with a version-skew root cause",
+      "Comment's FinishTool-registration hypothesis is conditional on host probe results that are not supplied"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "presets/*/setup.sh pinning openhands-agent-server alongside sdk/tools/workspace (separate packaging defect)",
+      "agent-server launch wiring for FinishTool registration (only if probe confirms missing --import-modules / OH_EXTRA_PYTHON_PATH)",
+      "preset template finish-tool wiring vs. pinned agent-server compatibility (only if traceback implicates it)"
+    ],
+    "risks": [
+      "Fixing the wrong layer (version pin vs. launcher wiring) would not resolve the 500",
+      "The setup.sh agent-server pinning is a real but separate defect and must not be conflated with the 500",
+      "Changing agent-server launch flags could affect interactive conversations or other deployments"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Re-run the issue's curl-based prompt-preset automation probe on a fresh agent-canvas 1.17.0 install and confirm the 500 on POST /api/conversations/{id}/events",
+      "Enable LOG_TO_FILE=1 LOG_DIR=... to capture the untruncated traceback from api.py:614 and identify the failing frame",
+      "On the affected host, inspect /proc/$PID/cmdline for --import-modules and /proc/$PID/environ for OH_EXTRA_PYTHON_PATH to confirm or refute the FinishTool-registration hypothesis",
+      "After a fix, verify a newly created prompt-preset automation completes its first run with error_detail: null"
+    ],
+    "unknowns": [
+      "The actual traceback behind the 500 (error_id is not resolvable; LOG_TO_FILE not yet applied)",
+      "Whether the affected agent-server process was launched with --import-modules canvas_ui_tool and OH_EXTRA_PYTHON_PATH",
+      "Whether PR #17286 or #17405 actually covers this root cause (semantic overlap only, no direct code overlap or issue link)"
+    ],
+    "why": "Issue reports a deterministic 500 on POST /api/conversations/{id}/events for prompt-preset automations on agent-canvas 1.17.0, with a concrete A/B (preset template with finish-tool wiring vs. without) and executable repro. However, supplied comments materially contradict the stated root cause: the finish-tool/1.46.0-vs-1.47.0 skew is refuted by byte-identical wheels, and the leading hypothesis (FinishTool not registered in the agent-server process) is explicitly conditional on two host probes whose results are not supplied. The actual traceback was never recovered. Without either the traceback or the probe output, the actionable code change is undetermined."
+  },
   "657f6f200a23ff62361783649c6b8c31799f8614d27e7dd989d6423fa8dd83ed": {
     "confidence": 0.8,
     "contradictions": [
@@ -42335,6 +42586,41 @@
       "No explicit confirmation of which fix option will be accepted, but issue provides clear alternatives and maintainer preference for full restart."
     ],
     "why": "Issue provides concrete root cause with code-level evidence: ReLoRA callback prunes adapters without merging, causing function discontinuity, and strict thresholding can zero both factors on ties, killing gradients. Maintainer confirmed both claims with reproductions. Clear fix options and acceptance criteria are given."
+  },
+  "689dd2c8f8ce4bdc501ce19ab22c922eaba71228957c71c5c82abbb332d75d57": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mlx/distributed/ring backend socket exchange for large payloads (tens of MB)",
+      "all_sum/average_gradients collective synchronization path",
+      "stream/communication_stream handling for CPU vs GPU collectives"
+    ],
+    "risks": [
+      "Race is probabilistic (~3-4%), so a passing short test does not prove a fix; needs high-iteration or stress harness",
+      "Distinguishing a genuine deadlock from a slow collective requires generous timeouts and stack sampling",
+      "Hardware-specific (Apple Silicon, ring over LAN/Thunderbolt); CI may lack multi-node ring setup"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run cpu_stream_loop_repro.py at >=3 ranks with fixed seed and synthetic gradient tree; loop hundreds of collectives and assert no hang",
+      "Run gpu_stream_repro.py with injected skew and confirm no kIOGPUCommandBufferCallbackErrorTimeout",
+      "Add a regression test that repeats average_gradients in a loop at 3-4 ranks and fails on timeout",
+      "Cross-check 2-rank vs >=3-rank behavior to isolate the race"
+    ],
+    "unknowns": [
+      "Exact socket-level code path in the ring backend responsible for the race is not yet pinpointed",
+      "Whether the GPU-stream watchdog kill and CPU-stream deadlock share one root cause or are two distinct bugs"
+    ],
+    "why": "Issue provides a self-contained, dependency-free reproduction of a probabilistic ring-backend deadlock in mx.distributed.all_sum/average_gradients, with measured ~3-4%/collective failure rate, ruled-out variables (tree shape, chunking, skew, pre-barrier), and py-spy stack traces from an independent reporter showing both ranks parked inside all_sum. This is a concrete distributed-training invariant failure with a clear reference-vs-implementation validation path (CPU/single-rank reference vs multi-rank ring), not ordinary API plumbing."
   },
   "68a1a94f2e7d74537e4e53817c0e559b66f8ee730478b9553a825b6e8421ea28": {
     "confidence": 0.85,
@@ -55826,6 +56112,36 @@
       "Whether the merged PR #8169 base dependency introduces any additional constraints on the fix"
     ],
     "why": "Issue pinpoints two concrete transformations in the OpenAI Responses pipeline (cleanOrphanedFunctionCalls and downgradeRejectedReasoningItems/downgradeEncryptedReasoningItems) that independently drop one half of the reasoning/function_call adjacency pair, with exact file/line anchors verified against main. Root cause is a single shared invariant violation, and the issue supplies a deterministic loopback probe plus a clear regression matrix (orphan cleanup, ID-rejection, encrypted-rejection, and unaffected controls)."
+  },
+  "875b2441b77ec29aee98475c38df53d6faddb11331329d703a59acc2c5f81093": {
+    "confidence": 0.82,
+    "contradictions": [
+      "candidate.actionability_evidence reports root_cause_signal=false while the issue body gives a precise root cause and reproducer"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "deepspeed/module_inject/tp_plan_converter.py (only if pursuing full vocab-parallel tied-embedding support, which is a design decision)"
+    ],
+    "risks": [
+      "Whitelisting embedding_rowwise without tied lm_head handling could shard only one half of a tied pair and produce incorrect gradients",
+      "The remaining option-1 work is a semantic/policy change requiring maintainer design agreement, not a mechanical fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Re-run tests/unit/v1/autotp/test_tp_plan_real_models.py::test_qwen2_tied_lm_head_falls_back_to_replicated against transformers main to confirm the merged fallback holds",
+      "If pursuing option 1, add a multi-GPU numerical regression comparing vocab-parallel tied embedding output against a single-GPU reference"
+    ],
+    "unknowns": [
+      "Whether maintainers want option 1 (vocab-parallel tied embeddings) implemented now or only the fallback retained"
+    ],
+    "why": "The issue's concrete failure (AutoTP rejecting 'embedding_rowwise' from transformers main) is already covered by merged PR #8294, which converts embedding_rowwise tp_plan entries to SKIP specs, and a collaborator comment confirms the issue is partially fixed with the fallback validated on 2x L20 GPUs. Remaining work is a design/policy decision (option 1: true vocab-parallel tied embeddings) rather than an actionable code contribution."
   },
   "87635905c09f900974b97c2f375ea1e4e856bf9f2724a1d78dc0320829d3afad": {
     "confidence": 0.82,
@@ -89812,6 +90128,42 @@
     ],
     "why": "Issue pins a concrete root cause on the Inngest durable engine seam: @mastra/inngest 1.8.5 never calls runDurableFinishSideEffects (grep count 0, direct emitFinishEvent call), while 1.8.6+ wraps it in a nested step.run causing the #22450 hang. The documented contract in @mastra/core 1.63.0 and the built-in engine's direct await establish the expected behavior, and the suggested fix (call the helper directly, not inside another step.run) is a concrete, minimal code change with a clear reference-vs-implementation validation path."
   },
+  "d9c8319b4ba13d80384b646a6609c4152893dc6e96d3ad2b1914f10ad33446a7": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims no Flux events of any kind arrived; reporter's later replay shows Updates continued while EndOfTurn was withheld",
+      "Contributor's watchdog proposal was retracted by the reporter's own replay evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/deepgram/flux/stt_base.py",
+      "src/pipecat/services/deepgram/flux/stt.py",
+      "src/pipecat/turns/user_turn_controller.py"
+    ],
+    "risks": [
+      "Implementing a stale-inbound watchdog would be dead code given the retraction",
+      "Duplicating draft PR #5584's force_end_turn work",
+      "Changing default eot thresholds alters turn-detection behavior"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Direct-service replay of the caller channel at eot_threshold=0.85/eot_timeout_ms=7000 confirming Updates continue while EndOfTurn is withheld",
+      "End-to-end pipecat test with a received-message counter distinguishing 'no final transcript' from 'no inbound messages'"
+    ],
+    "unknowns": [
+      "Whether PR #5584's force_end_turn is the maintainer-intended fix for this issue",
+      "Whether a hard turn-duration cap is in scope versus relying on Flux thresholds",
+      "Whether the production session's event sequence can ever be verified"
+    ],
+    "why": "The issue's original root cause (Flux stream silently stops sending events) was retracted by the reporter's own direct-service replays: Updates continued while EndOfTurn was withheld, so a stale-inbound watchdog would never fire. The remaining candidate work (force_end_turn / hard turn-duration cap) is already covered by open draft PR #5584, and the reporter is still asking whether that PR's API is the intended route. Root cause and duplicate coverage are unresolved."
+  },
   "d9dc998b613378f439de37102478f2e68c50bf59490229e345d9f88d106654bd": {
     "confidence": 0.85,
     "contradictions": [],
@@ -92307,6 +92659,43 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue provides a clear root cause and reproducible bug, but an existing PR (#51397) directly addresses the same problem with a fail-safe approach and is already closed. The issue itself suggests a minimal fix that overlaps with that PR, so a new PR would be redundant unless the existing PR is inadequate. Maintainer review of the existing PR is needed before starting new work."
+  },
+  "dff0953a9dccb991df6f5e49d77cfe1d08cb4310b21833f16ecc18eb53d833c3": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports PR #56950 with technical_complete=true and review approval but root_cause_coverage=false, while duplicate summary says only worth competing if it adds root cause/test coverage",
+      "related_issue_assessment flags potential duplicate #57019 sharing only generic stack signatures (clang/gcc/nvcc, collect_env.py), which is weak overlap evidence"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/distributed/weight_transfer payload selection using data_parallel_index instead of data_parallel_rank",
+      "regression test for DP=2/TP=2 IPC weight update"
+    ],
+    "risks": [
+      "Open PR #56950 may already cover the fix, making a competing change redundant",
+      "AI disclosure policy conflict flagged by preTaskEvidence",
+      "Reproduction requires 4 GPUs and IPC backend, limiting CI coverage"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied /tmp/repro_dense_dp_tp2_ipc.py against a 4-GPU DP=2/TP=2 IPC server and confirm HTTP 200 with matching UUIDs",
+      "Add a unit test asserting worker index = data_parallel_index * world_size + rank after reconfigure_for_independent_dp_rank"
+    ],
+    "unknowns": [
+      "Whether PR #56950 already fully fixes the data_parallel_index payload selection",
+      "Whether the issue is considered covered/duplicate by maintainers",
+      "Whether the AI disclosure conflict blocks contribution in this repository"
+    ],
+    "why": "Issue describes a concrete dense-DP IPC payload selection bug with a plausible root cause (data_parallel_rank reset to 0 vs data_parallel_index) and a reproduction script, but supplied evidence contains a materially blocking contradiction: an open PR #56950 already directly references this issue with a matching fix title ('Use DP index for dense DP weight updates'), 2 test files, and review approval, while the duplicate assessment simultaneously claims root_cause_coverage=false and no material competition gaps. This unresolved coverage/duplicate status determines whether independent code work is actionable."
   },
   "e00433ffa87a5d108842ac720c7da8fec52475bb746c6dc351ace8338927e27c": {
     "confidence": 0.85,
