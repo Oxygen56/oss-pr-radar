@@ -7501,6 +7501,38 @@
     ],
     "why": "Issue clearly identifies a protocol-conformance bug in McpServerSession and McpStatelessAsyncServer where empty Mono completions cause no response, violating JSON-RPC 2.0. Root cause is well-documented with code references and a suggested fix. However, the repository requires assignment and AI disclosure, and the deterministic gate is HUMAN_REVIEW, so work should not start without maintainer confirmation."
   },
+  "13562b9f943b6b61a738ebff7c89ecb8ec964ccf66167b12fd1437ce140b7c5c": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/responses/streaming_iterator.py: unwrap litellm_enc:/encitem_ IDs in _mask_response_create before backend_ws.send",
+      "litellm/proxy/response_api_endpoints/endpoints.py: apply encrypted_content_affinity pre-call check to WS deployment selection",
+      "litellm/responses/streaming_iterator.py: route backend error/response.failed frames to failure handlers instead of logging success"
+    ],
+    "risks": [
+      "Behavior change to WS frame forwarding could affect PII masking or authorized-model enforcement ordering",
+      "Affinity pinning on WS may interact with reconnect semantics and deployment health checks",
+      "Overlap with open PRs #40377 and #33463 must be re-checked before implementation to avoid duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that sends a response.create frame carrying a litellm_enc:-wrapped encrypted_content and asserts the forwarded frame contains the unwrapped provider value",
+      "Add a WS test with two deployments and encrypted_content_affinity enabled asserting the continuation pins to the originating deployment",
+      "Add a test asserting a backend 400 error frame triggers the failure handler and is recorded as a failure"
+    ],
+    "unknowns": [
+      "Whether PR #40377 or #33463 already partially addresses the native WS unwrap path despite the issue's ruling-out claim"
+    ],
+    "why": "Issue pinpoints two concrete gaps in the native WS Responses path: _mask_response_create never calls _restore_encrypted_content_item_ids_in_input, and WS deployment selection bypasses the encrypted_content_affinity pre-call check, plus a logging gap. Code anchors and a step-by-step reproduction are supplied, and the issue explicitly rules out the two overlapping PRs (#40377 bridge, #33463 WS defaults) as not covering native WS forwarding."
+  },
   "13573f714d445808b5d2283b15273029bb611178e390f9a8aab34f5b38cdc245": {
     "confidence": 0.85,
     "contradictions": [
@@ -13849,6 +13881,45 @@
       "Whether the combined patches across all six callers have been validated together on the required hardware."
     ],
     "why": "The issue itself is a strong, concrete kernel-numerics bug: C3x callers rebuild packed strides via make_cute_packed_stride and discard real leading strides, with a reproducible 8.1% mismatch matrix and a proposed stride fix. However, the supplied evidence shows the issue is already fully covered by open PRs: #55537 (common caller + SM90 tensorwise), #56248 (SM90 blockwise), #56480 (SM100), and #56659 (SM120 blockwise, validated on RTX 5090). The issue's own coverage checklist now has every caller claimed, and the last unclaimed caller is covered by #56659. This is unresolved duplicate/merged-fix coverage, which is a materially blocking unknown for whether new code work is actionable."
+  },
+  "232183e7cf0303e8d278582cb512bc23985b05d71f12ff4a49790a397de39ba3": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims root cause in main code paths but reporter states 'We have not reproduced it on a main build ourselves'",
+      "open_pr_assessment marks semantic_overlap_requires_review with PR #56812 while direct_code_overlap is false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/model_runner.py: propagate auto-fitted max_model_len into model_state (or make ModelState read model_config.max_model_len)",
+      "vllm/v1/worker/gpu/model_states/interface.py: avoid caching stale max_model_len",
+      "vllm/models/deepseek_v4/sparse_mla.py: verify c128a_max_compressed sizing consistency with reduced max_model_len"
+    ],
+    "risks": [
+      "Failure is non-deterministic and memory-dependent, so reproduction may be flaky",
+      "PR #56812 has semantic overlap (cuda, deepseek_v4) and may already cover part of the root cause",
+      "Repository policy status ai_disclosure_conflict may block automated public actions",
+      "Requires specific hardware (GB10 / SM121) and DeepSeek-V4 weights to validate"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on vllm-project/vllm main with DeepSeek-V4 sparse MLA, TP=2, --max-model-len auto and reduced --gpu-memory-utilization until the startup log shows 'max_model_len: reduced from ...'",
+      "Add a regression test asserting model_state.max_model_len equals model_config.max_model_len after GPUModelRunner.update_max_model_len",
+      "Run CUDA-graph capture path (compile_or_warm_up_model) and confirm _build_c128a_metadata assertion no longer fires"
+    ],
+    "unknowns": [
+      "Whether the bug actually reproduces on vllm-project/vllm main (no confirmed reproduction)",
+      "Whether PR #56812 or another open PR already fixes the stale max_model_len propagation",
+      "Whether the ai_disclosure_conflict policy permits the intended contribution workflow"
+    ],
+    "why": "Issue describes a plausible stale-ModelState.max_model_len root cause with concrete code anchors and a suggested fix, but the reporter explicitly states they have not reproduced it on vllm-project/vllm main, and the failure is non-deterministic (depends on free memory at startup). No public reproduction evidence is supplied (public_repro_signals=0, reproduction_evidence=[]), and the open-PR assessment flags semantic overlap with PR #56812 that requires manual comparison before any code work is actionable."
   },
   "2336e886ce36911357332bfb9867b0de76d547916ff20db8c15b38a0c13a0e3d": {
     "confidence": 0.8,
@@ -25584,6 +25655,42 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The issue is a report-only meta-report with 8 confirmed latent bugs, each requiring maintainer design decisions (e.g., shared containment helper, dead code removal vs. implementation, migration precedence rule, thin-client remote config semantics). The maintainer has already acknowledged and confirmed the findings, but no implementation direction has been approved. The candidate is actionable but blocked on design confirmation for several items."
+  },
+  "413b7890b97fc836017a2d476cd1836d4969e9f6790ed007cb6d677c0b6200aa": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body says do not begin implementation until Ready on the board, while candidate is scored as actionable"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "ui/desktop message list rendering",
+      "turn boundary detection in message grouping",
+      "bottom progress indicator for currently running tool"
+    ],
+    "risks": [
+      "Collapsing by default changes behavior for all users",
+      "Turn boundary logic cannot rely on identifyConsecutiveToolCalls",
+      "Thinking block handling is unresolved and could regress reachability"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Establish a failing UI test that renders a turn with multiple tool calls and asserts compact grouping",
+      "Verify pending-approval calls remain visible and actionable",
+      "Verify viewport stability as new replies arrive"
+    ],
+    "unknowns": [
+      "Whether maintainers have approved a specific design direction",
+      "Whether assignment will be granted",
+      "Whether the sketch commit is acceptable as a basis"
+    ],
+    "why": "The issue is a UX/rendering design proposal with explicitly open design questions (collapse-by-default vs setting, compact form contents, thinking blocks, density of intermediate replies). The repository policy requires assignment before implementation, and the issue itself says not to begin implementation until it reaches Ready on the project board. No reproduction or validation path is established, and the only implementation sketch is an unmerged third-party commit, not a maintainer-approved design."
   },
   "4151e2ff7fcb22c4d9ecf2e37cc6f8cf901907eefa6e66d76c6ee9df9d9382db": {
     "confidence": 0.85,
@@ -41526,6 +41633,41 @@
     ],
     "why": "Issue reports a concrete local-dev nginx startup failure with clear error log (permission denied on /var/log/nginx/error.log). Recent comments describe a fix already implemented in the worktree with regression tests and validation, indicating the root cause is understood and a concrete fix exists. The candidate is actionable for verification or further refinement."
   },
+  "6539c5843139d68f72b7e22dda5fc1f45f7c3ff14bad61fb5b19ea3c2a9dd15c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Open PR #2648 is marked technical_complete=true but root_cause_coverage=false, so its actual coverage of the reordering root cause is uncertain"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "SOPEngine constructor/state-restore path: validate stored step identities against the current ordered step sequence instead of relying on step count",
+      "SOPStepRunState/SOPRunState persistence: record a stable step identity so reordered steps are detectable",
+      "Backward-compatibility path: allow loading legacy states that lack step identities"
+    ],
+    "risks": [
+      "Choosing a step-identity scheme (subject hash vs explicit id) may conflict with maintainer design preference",
+      "Overly strict validation could break legitimate state reloads for unchanged SOPs",
+      "Duplicating or conflicting with open PR #2648 if it is revised to cover the same root cause"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: build SOP with ordered steps A,B, persist SOPRunState with progress on A, rebuild SOP as B,A, construct SOPEngine(reordered_sop, stored_state) and assert it is rejected rather than silently remapping A's record to B",
+      "Backward-compat test: load a legacy persisted state without step identities and assert it still loads",
+      "Run the targeted SOP package unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #2648 already implements identity-based validation or only a partial guard",
+      "Whether maintainers have a preferred step-identity representation for persisted state"
+    ],
+    "why": "Issue #2647 gives a concrete, reproducible root cause: SOPEngine restores SOPStepRunState by list index and only rejects stored runs when step counts differ, so same-length reorderings (A,B -> B,A) silently misassign persisted progress. Expected behavior (reject state for a different ordered step sequence while keeping legacy states without step identities loadable) is well-defined and testable. Open PR #2648 is directly related but its root-cause coverage is flagged false and it lacks complete validation, so a competing fix that adds a failing regression test and a minimal identity-based guard is actionable."
+  },
   "653bbfe1205e227c06b5280be09c82c1e1e3d03e25f33e8348a7e35552e6c828": {
     "confidence": 0.85,
     "contradictions": [
@@ -44941,6 +45083,42 @@
       "Maintainer preference on warning vs. caching support"
     ],
     "why": "Issue reports a silent no-op for prefix caching on Mamba-2/GDN hybrids, but root cause is not fully confirmed (no code path analysis). A collaborator referenced PR #50991 which may address this, but open PR lookup failed due to timeout, so competition status is unknown. Maintainer input is needed to confirm design direction (warn vs. support recurrent state caching)."
+  },
+  "6c99b597309a644f2e56fca4f2957347c3f046af1fe45ee734d5b408e2b2e4c9": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims a clear root cause in get_supported_openai_params/drop_params, but actionability_evidence reports root_cause_signal=false",
+      "Open PR #41222 shows semantic overlap on reasoning_effort/gpt_4o yet is not linked to this issue and has no direct code overlap"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py",
+      "drop_params handling for reasoning_effort on openai/azure chat path"
+    ],
+    "risks": [
+      "Changing drop_params semantics for reasoning_effort could alter behavior for other unsupported params or providers",
+      "Open PR #41222 may already cover the same code path, making a new fix duplicative",
+      "Maintainer preference between forwarding the param vs raising UnsupportedParamsError is unresolved"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test asserting get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) does not silently drop the param",
+      "Add the same regression test for custom_llm_provider='azure'",
+      "Confirm the direct OpenAI 400 Unsupported value: 'reasoning_effort' behavior is reflected rather than masked"
+    ],
+    "unknowns": [
+      "Exact code location where drop_params discards reasoning_effort",
+      "Whether PR #41222 already fixes this issue's code path",
+      "Maintainer-preferred behavior: forward param and let provider reject, or raise UnsupportedParamsError under drop_params"
+    ],
+    "why": "The issue describes a concrete user-visible defect with a reproducible path, but the supplied evidence does not establish the root cause: root_cause_signal is false and no code anchor confirms where drop_params silently discards reasoning_effort. The duplicate assessment also flags semantic overlap with open PR #41222 (reasoning_effort, gpt_4o) that is not directly linked to this issue, so coverage is unresolved. Under the rules, missing root-cause evidence and unresolved duplicate/merged-fix coverage are materially blocking unknowns."
   },
   "6c9c74ac56b4d45dad46eed367a88dfceac2e17408750f4fa20979bb15f9a654": {
     "confidence": 0.6,
@@ -49139,6 +49317,42 @@
       "Whether assignment is required before contributing"
     ],
     "why": "Issue provides a detailed root cause and reproduction for a misleading error and unrecoverable session state in the ACP provider path. However, the deterministic gate is HUMAN_REVIEW and the submission policy requires assignment, so work should not start without maintainer confirmation."
+  },
+  "760d3e7179ebd71939d9afc967588deb32a218c053f0ab27d4c6690fdd60df5b": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #11889 overlapping extension-store.ts, while related_issue_assessment reports no related open issues and the PR does not reference this issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/extension/extensionManager.ts: make uninstallExtension(name) fall back to the store snapshot when no loaded extension matches",
+      "packages/core/src/extension/extension-store.ts: distinguish artifact-entry-with-missing-directory from declarationOnly in the name-conflict/adoptability predicate",
+      "packages/cli/src/commands/extensions/uninstall.ts and packages/cli/src/ui/opentui/dialog-data.ts: route name-based uninstall through the snapshot-aware path"
+    ],
+    "risks": [
+      "Open PR #11889 may already implement or partially cover this fix, making a new contribution duplicative",
+      "The credentialPersistence==='stored' cleanup gap needs a maintainer decision (persist on policy vs. surface a warning), which affects the fix shape",
+      "mutateMany flipping a policy to declarationOnly and dropping artifactGeneration can make the same stale entry present as either 'not installed' or 'conflicting', so a naive fallback could silently no-op"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test: install an extension, delete its directory while the store entry remains, then assert uninstall by name succeeds and clears the store entry",
+      "Add a regression test asserting install of the same source is not refused by the name guard when the colliding entry has no artifact",
+      "Add a test that a declarationOnly entry still surfaces the existing not-installed error rather than a silent no-op",
+      "Run targeted unit tests for packages/core extension manager/store and the CLI uninstall command"
+    ],
+    "unknowns": [
+      "Whether PR #11889 already fixes this exact root cause or only the adjacent Windows directory-lock problem",
+      "Maintainer preference on the credentialPersistence handling (persist on policy vs. warning channel)"
+    ],
+    "why": "Issue provides a clear root cause (name-based uninstall resolves only via getLoadedExtensions, so a missing artifact makes the entry unreachable while install's store-based name guard still refuses), and the triage comment confirms the code paths statically. However, the supplied evidence itself flags an unresolved duplicate/coverage question: open PR #11889 overlaps the same extension-store path and semantics, is unlinked to this issue, and is marked 'semantic_overlap_requires_review' with root_cause_coverage=false and changes requested. Whether that PR already covers this root cause is a materially blocking unknown that determines whether new code work is actionable."
   },
   "7610f117446e68fd1dfda5319e31633b5ef0c697115ce30de2020093333f8b8c": {
     "confidence": 0.7,
@@ -75461,6 +75675,36 @@
     ],
     "why": "Issue clearly identifies a hardcoded :predict endpoint causing 400 errors for gemini-embedding-2 models, with a public repro. Existing PR #14266 addresses the same root cause but lacks tests, leaving room for a stronger PR with regression tests and broader coverage."
   },
+  "b81641301c97d5a437bc000bd2f97f7ead106992b1b7af520062f19505168be2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "memory admission calculation should account for reclaimable file-backed pages",
+      "or WeightHasher should avoid polluting the cache used by the subsequent admission check"
+    ],
+    "risks": [
+      "macOS memory accounting APIs may differ across versions",
+      "Changing admission semantics could over-admit and cause OOM under real pressure"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce on Apple Silicon: run `darkbloom doctor`, restart provider, observe WeightHasher reads, run `darkbloom doctor` again and confirm usable memory drop",
+      "Run `sudo purge` during blocked preload and confirm usable memory recovers and model loads",
+      "Add regression test asserting admission check treats reclaimable file cache as available"
+    ],
+    "unknowns": [
+      "Exact code path for the admission check and WeightHasher cache behavior is not shown in supplied evidence"
+    ],
+    "why": "Issue provides a concrete, reproducible macOS memory-admission bug: WeightHasher file reads populate reclaimable file cache, and the admission check counts it as unavailable, causing false insufficient-memory rejection. Two independent reproductions (48 GB M4 Pro and 64 GB M1 Max) plus `sudo purge` recovery establish the root cause and a validation path."
+  },
   "b8295fe258e4854e248cb4c77b704e3cf1008d753bb04fdb1b88bb934995d8b9": {
     "confidence": 0.6,
     "contradictions": [
@@ -77438,6 +77682,40 @@
     ],
     "why": "The issue provides a detailed root cause analysis with code anchors and measured impact, establishing a clear bug in retract mode's KV release. The suggested fix is concrete and testable, and the existing PRs are incomplete, leaving room for a valuable contribution."
   },
+  "bcf0d4ef02f9eb67158084dfbcd41b9e34ae48e141ae70372fa131095001a026": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body asserts backend intent is that invite links bypass invite_only, while commenters argue current behavior (no registration under invite_only) is the intended product behavior",
+      "Merged PR #2627 changed invite links to login-then-join-space, which conflicts with the issue's expected behavior"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "frontend/src/views/auth/Login.vue invite-token landing logic",
+      "possibly backend invite_only gate semantics in internal/handler/auth_register_by_invite.go"
+    ],
+    "risks": [
+      "Changing invite_only semantics may conflict with the merged PR #2627 design (login-then-join-space)",
+      "Duplicate/overlapping open PR #3065 may already implement the fix",
+      "Product intent for invite_only is disputed among contributors"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a frontend/unit regression test asserting that a valid invite token under invite_only renders the register form and submits to /auth/register-by-invite",
+      "Verify /auth/register remains blocked under invite_only while /auth/register-by-invite succeeds with a valid token"
+    ],
+    "unknowns": [
+      "Maintainer decision on whether invite_only should permit invite-link registration",
+      "Whether open PR #3065 already resolves the issue and should be preferred over a new implementation"
+    ],
+    "why": "Issue describes a concrete frontend/backend contradiction with code anchors and a reproduction path, but the comment thread shows unresolved product-intent disagreement about what invite_only should mean, and an open PR #3065 already directly covers the same code path. Whether code work is actionable depends on maintainer resolution of the intended semantics, which is a materially blocking unknown."
+  },
   "bd16fa6543025bd6e070c62faf33f5c43b5d15c9729c875c43b6b745771465d4": {
     "confidence": 0.7,
     "contradictions": [
@@ -77905,6 +78183,42 @@
       "Maintainer decision on credentialPersistence handling when the artifact is missing"
     ],
     "why": "Issue provides a clear, statically-confirmed root cause (name-based uninstall resolves via getLoadedExtensions() which requires a loadable manifest, while install checks the store snapshot) and a concrete reproduction. However, the supplied evidence contains a materially blocking unknown: an open PR #11889 overlaps the same code path (extension-store.ts) with semantic overlap, and the duplicate status is 'semantic_overlap_requires_review' with no resolution. The issue itself also flags an unresolved design decision (credentialPersistence handling when the artifact is gone) that the triage bot says needs a maintainer decision before a fix lands. These unresolved coverage/design questions determine whether independent code work is actionable."
+  },
+  "be1b43c8f89ad87b26ddf654ef99a7cda6d89edf3a890969bda230c37fdcc6a7": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims no further Flux event of any kind, but the reporter's later replay shows Updates continued while EndOfTurn was withheld",
+      "Contributor's watchdog proposal is retracted by the same replay evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/pipecat/services/deepgram/flux/stt_base.py",
+      "src/pipecat/services/deepgram/flux/stt.py",
+      "src/pipecat/turns/user_turn_controller.py"
+    ],
+    "risks": [
+      "Implementing a stale-inbound watchdog would not fix the reproduced failure since Updates keep flowing",
+      "Draft PR #5584 may already cover the force_end_turn path, risking duplicate work",
+      "Changing default eot thresholds or adding a hard turn cap alters turn-detection semantics"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Direct-service replay of the caller channel against Flux at eot_threshold=0.85/eot_timeout_ms=7000 to confirm EndOfTurn is withheld while Updates continue",
+      "End-to-end pipecat test with a received-message counter distinguishing 'no final transcript' from 'no incoming messages'"
+    ],
+    "unknowns": [
+      "Whether draft PR #5584's force_end_turn is intended to close this issue and whether it will be merged",
+      "Whether maintainers want a hard turn-duration cap in addition to force_end_turn",
+      "Whether the production session's event sequence can ever be verified"
+    ],
+    "why": "The issue's original root cause (Flux stream silently stops sending events) was retracted by the reporter's own direct-service replay: Updates continued while EndOfTurn was withheld, so a stale-inbound watchdog would never fire. The remaining candidate fix (force_end_turn / hard turn-duration cap) is already proposed in draft PR #5584, which overlaps the same code paths, so the actionable work is unresolved duplicate coverage rather than a clear new contribution."
   },
   "be1e67add2ca7e7b66c10b7e4ab922d374d4ce5f44cdf1ca4450fe3721e42503": {
     "confidence": 0.85,
@@ -96764,6 +97078,37 @@
     ],
     "why": "Issue describes a concrete regression in encode_arguments_to_dsml on the b12x-vision branch with a minimal reproduction and expected/actual DSML output, but the target branch is not the default main branch and the supplied duplicate assessment flags PR #28288 as semantic overlap on serving_chat.py requiring human comparison. The issue also requests publishing a refreshed two-DGX/GB10 image and cookbook digest update, which is release/infra work outside a normal code PR. Whether the fix should target main or the b12x-vision branch, and whether #28288 already covers the root cause, are unresolved facts that determine actionability."
   },
+  "e8cf044c34775de99498216dcc832612deb6f334357b91ef6f6e2d33006cb651": {
+    "confidence": 0.82,
+    "contradictions": [
+      "open_pr_assessment summary says 'no related open PR' while listing merged PR #8294 that directly addresses the embedding_rowwise conversion"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "No new code change is actionable; the fallback fix already landed in deepspeed/module_inject/tp_plan_converter.py",
+      "Any further work would be a maintainer-directed design decision on vocab-parallel tied embeddings, not a bug fix"
+    ],
+    "risks": [
+      "Implementing option 1 (vocab-parallel tied embeddings) without maintainer design agreement could conflict with the merged fallback semantics",
+      "transformers main may change the injection again, but that is a future drift, not current actionable work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Confirm the merged #8294 behavior on transformers main with the issue's Qwen2Config(tie_word_embeddings=True) reproducer under autotp_size=2",
+      "Run tests/unit/v1/autotp/test_tp_plan_real_models.py::test_qwen2_tied_lm_head_falls_back_to_replicated on 2 GPUs"
+    ],
+    "unknowns": [
+      "Whether maintainers intend to pursue option 1 (true vocab-parallel tied embeddings) as a permanent fix"
+    ],
+    "why": "The issue's concrete failure (AutoTP rejecting 'embedding_rowwise' from transformers main) is already covered by merged PR #8294, which converts embedding_rowwise tp_plan entries to SKIP specs, and a contributor comment confirms the fallback was validated on 2x L20 GPUs (18 cases passed, tied Qwen2 test passed). The remaining open question is a design/policy choice (option 1: true vocab-parallel tied embeddings) that maintainers have not committed to, so no actionable code contribution remains."
+  },
   "e8dfd509ec8f96acf9aa799c24b961722871cff12e63485e01d0791225f03cab": {
     "confidence": 0.85,
     "contradictions": [
@@ -106149,6 +106494,38 @@
       "Maintainer preference on whether to retain the explicit array or carry exclusions separately while keeping the non-workspace preset"
     ],
     "why": "Issue provides a complete minimal fixture, exact reproduction command, observed vs expected output, and a specific code anchor (BuildBundler.getUserBundlerOptions) that converts explicit externals arrays into dynamicPackages, causing workspace packages to be inlined. This is a concrete, testable CLI build bug with a clear validation path."
+  },
+  "fd9b6b373bbf788334b484eb54e6786501ff889de4f9c98d648a3bdf5adcb78f": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue frames this as a bug with a concrete fix, while triage reclassified it as type/enhancement and deferred the transport decision to #3803; the reclassification rests on documented out-of-scope statements for proxied deployment"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No isolated attachments-only change is warranted; any chunked-upload protocol would need to span packages/cli/src/serve/routes/session.ts, packages/sdk-typescript/src/daemon/DaemonClient.ts, packages/web-shell/client/daemon/session/actions.ts and the other binary ingress routes (serve/fs/policy.ts, workspace-extensions.ts, workspace-voice.ts)"
+    ],
+    "risks": [
+      "Chunking introduces upload-id lifecycle, assembly atomicity, GC for abandoned uploads, and per-chunk ownership/auth complexity across four binary routes",
+      "A narrow attachments fix leaves /file/upload and other routes equally unreachable behind a 1 MiB proxy, so the same report recurs",
+      "Scope decision belongs to the deferred containerized/reverse-proxy milestone, not an attachments-only patch"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If pursued, reproduce with nginx client_max_body_size 1m plus a >1 MiB <8 MiB PNG paste, then add a regression test asserting the SDK splits blobs above the threshold and the daemon reassembles them atomically, including abandoned-upload GC and per-chunk auth"
+    ],
+    "unknowns": [
+      "Whether a maintainer now considers proxied deployment in scope (which would flip this back to type/bug)",
+      "Whether the maintainer-preferred chunk contract or the cheaper --max-body-size plus documentation route will be chosen"
+    ],
+    "why": "Root cause is well documented (single unchunked POST to /session/:id/attachments, express.raw 8mb, no chunk protocol), but triage reclassified this as an enhancement/design gap and explicitly deferred the transport decision to the v0.16.x containerized/reverse-proxy milestone (#3803). The 413 originates from the operator's proxy, not qwen-code, and the affected deployment shape is documented as out of scope. The gap is also not attachments-specific: /file/upload (50 MiB), extension archive (10 MiB), voice (10 MiB) and JSON routes (10 MiB) are all single unchunked POSTs, so a targeted attachments-only patch would be incoherent and the cheaper tracked option (--max-body-size flag plus documented proxy requirement) already covers the deployment case."
   },
   "fdac5bbb164978edcc21118aa5e1443d1497c868c5363fac65f364af02de6b5e": {
     "confidence": 0.8,
