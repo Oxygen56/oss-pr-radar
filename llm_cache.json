@@ -6291,6 +6291,39 @@
     ],
     "why": "Issue provides a clear root cause (Headroom guardrail sets stream=false but leaves stream_options), a concrete reproduction with curl and config, and a suggested fix. The bug is user-visible and actionable."
   },
+  "10a6a220efc3974028455f0ee7660eeff0d75182d9fc2f416c580db6684de7b7": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ProviderRuntimeIngestion: derive human tool titles at ingest for all providers instead of generic fallbacks",
+      "apps/mobile/src/lib/threadActivity.ts: fall back to toolName/kind/itemType/primary argument when title is missing",
+      "apps/mobile/src/features/threads/thread-work-log.tsx: align live/expanded labels with web and avoid generic `Command`",
+      "Lifecycle collapse by toolCallId even when title is generic"
+    ],
+    "risks": [
+      "Scope creep into agent attribution (#4962/#6971) which is explicitly out of scope",
+      "Changing persisted summaries may affect historical row rendering; client-side fallback needed for old rows",
+      "Android shares the RN work-log path and may need parity verification"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test for extractToolTitle/workEntryRowLabel with a tool event lacking payload.title but carrying toolName/kind",
+      "Regression test that item.updated/item.completed without title no longer persist `Tool updated`/`Tool` summaries",
+      "Test that same-call lifecycle updates with generic titles collapse into one row by toolCallId"
+    ],
+    "unknowns": [
+      "Exact provider payload shapes for non-T3-MCP tools across all providers (whether toolName/kind are consistently present)"
+    ],
+    "why": "Maintainer triage confirms a real mobile work-log presentation bug with concrete root cause: ProviderRuntimeIngestion emits generic fallbacks (`Tool updated`/`Tool`) when payload.title is missing, and mobile threadActivity.ts/thread-work-log.tsx render that summary as row identity while ignoring structured metadata (toolName, kind, command, paths). Concrete code anchors and a shared-helper direction (deriveToolActivityPresentation) are supplied, and the issue is explicitly not a duplicate of the cited related work."
+  },
   "10b537ad76035757c85318d3852b7189d287bcf7bf1dd8eef42d3c26a8251943": {
     "confidence": 0.6,
     "contradictions": [
@@ -18571,6 +18604,44 @@
     ],
     "why": "Issue provides detailed root cause, code anchors, measured impact, and expected behavior. Existing PRs are incomplete or draft, leaving clear competition opportunity."
   },
+  "2e81fd2c2eff7905094b4dc538b214322b968d5e75006380572cf609dc30ab33": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Comment (jschmied) claims block-verification reproduces q_len=1 bit-for-bit once kernel defects are fixed, while Windless84/MaCoredroid report E==V!=A verifier-argmax divergence on stock builds; these attribute the symptom to different causes.",
+      "chenWULUQI attributes divergence to BF16 numerical path differences; wickist attributes it to GDN gate row misalignment fixed by #51812."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/spec_decode verification path (target argmax vs draft acceptance)",
+      "GDN/DeltaNet/Mamba recurrent-state write/rollback in spec-verify",
+      "logprobs plumbing for per-position target vs verifier comparison"
+    ],
+    "risks": [
+      "BF16 GEMM/SDPA reduction-order differences vs genuine state-update bug are not yet separated; FP32 results in comments are consistent with either.",
+      "Open PRs #52555/#56431/#51684 show semantic overlap with this issue's code paths; a fix may already be in flight.",
+      "Repository AI-disclosure policy conflict blocks automated public action and requires human resolution."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce target-only vs DFlash2 K=1 greedy equivalence on the reported BF16 TP=4 setup with fixed seed 20260902 and the tetris prompt; assert identical token IDs through token 64.",
+      "Instrument per-position target argmax/logits, proposed draft IDs, and accepted/rejected counts around tokens 29-30; compare target-only q_len=1 logits against block-verification logits.",
+      "Re-run with enable_thinking:false as a control and with prefix caching disabled to isolate the thinking-path condition."
+    ],
+    "unknowns": [
+      "Whether the reported BF16 TP=4 configuration is already fixed by #51812 / v0.28.0, which the reporter's build predates.",
+      "Whether any of the overlapping open PRs (#52555, #56431, #51684) actually covers this root cause.",
+      "Resolution of the ai_disclosure_conflict policy status before any public contribution."
+    ],
+    "why": "Issue reports a concrete, reproducible greedy-equivalence divergence (token 30, K=1, --enforce-eager, thinking-only) with logs and a repro script, and comments propose several candidate root causes (GDN gate row misalignment #51812, BF16 verification-path numerics, kernel defects). However, the supplied evidence does not establish which root cause applies to this BF16 TP=4 configuration, and the duplicate assessment flags semantic overlap with open PRs (#52555, #56431, #51684) that is unresolved. The pre-task policy status is ai_disclosure_conflict, which is a materially blocking disclosure requirement."
+  },
   "2e94634198ac3033dd2c39af2a655f3fca42f8c734a458280b2cf4d83ca26abf": {
     "confidence": 0.8,
     "contradictions": [
@@ -26579,6 +26650,39 @@
       "Whether maintainers accept the private Ink layout-listener dependency"
     ],
     "why": "The issue describes a real commit-phase layout feedback loop in VirtualizedList, and the reporter supplies a deterministic unique-key regression that still fails with #11743 applied and passes with the proposed fix. However, the supplied evidence leaves the duplicate/coverage question unresolved: triage states this is very likely the same defect as #11500 whose confirmed driver is duplicate history-item keys, and the open PR #11761 (draft, same code paths, semantic overlap 7) may already cover the same root cause. The reporter's own scope note concedes the regression does not prove the field crash was initiated independently of the duplicate-ID driver. That unresolved duplicate/merged-fix coverage is a materially blocking unknown for deciding whether new code work is actionable."
+  },
+  "447881da00eca6e4fcf0e3eeffb9938167d89c2a821176298b1a21ce7a7eba48": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate claims agent/inference/RAG critical path and a streaming state-propagation fix, but the issue body shows only a provider error with no streaming or code evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "session reasoning-item replay / encrypted_content handling in provider request construction"
+    ],
+    "risks": [
+      "Fixing may require provider-side changes outside this repo",
+      "Overlapping open issues may already cover the same root cause",
+      "No code anchor means the fix location is speculative"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with Muse Spark 1.3 on OpenCode Zen: send a chat, then a follow-up prompt, and capture the provider request payload to confirm whether a stale encrypted reasoning item is replayed."
+    ],
+    "unknowns": [
+      "Whether any of the five related issues already has a merged or in-progress fix",
+      "Which code path constructs/replays encrypted reasoning items",
+      "Whether the error is reproducible outside the OpenCode Zen provider"
+    ],
+    "why": "Issue is a provider-side error report with no reproduction beyond 'send a chat', no code anchors, and no root-cause evidence. The bot comment lists five closely related open issues (#48805, #48915, #48741, #48947, #48319) covering the same encrypted_content error, so duplicate/coverage status is unresolved. Track is agent_ai_infra, not llm_algorithm, but the candidate still lacks a concrete code surface or validation path."
   },
   "4486cb89764df8f1e9f416de826f94178cf9e17d3c915a117e8fede287c6cb4c": {
     "confidence": 0.85,
@@ -39730,6 +39834,47 @@
     ],
     "why": "The issue reports a reproducible nondeterminism in vLLM's batch-invariance feature, with detailed controls and a confirmed reproduction by a second user. However, the root cause is not identified, and the deterministic gate requires HUMAN_REVIEW. The open PR and related issue lookups timed out, so duplicate work cannot be excluded. The candidate is algorithmically relevant but needs maintainer investigation and design confirmation."
   },
+  "6244312b7fa0d91c659afb91d7cb2f1b9387fd1bb0cae42478d203c8b2583d53": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Open PR #11889 is described as semantically overlapping on extension-store.ts but not directly linked to the issue, leaving coverage unresolved",
+      "Triage says root cause is confirmed by static reading but also that the credential-cleanup question needs a maintainer decision before a fix lands"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/extension/extensionManager.ts: route name-based uninstallExtension() to the store snapshot when no loaded extension matches",
+      "packages/core/src/extension/extension-store.ts: distinguish artifact-entry-with-missing-directory from declarationOnly in the fallback",
+      "packages/core/src/extension/extension-store.ts: decide credentialPersistence handling when artifact is gone (persist on policy or surface via warnings)",
+      "packages/cli/src/commands/extensions/uninstall.ts and dialog-data.ts: ensure name-based entry points reach the fixed path"
+    ],
+    "risks": [
+      "Open PR #11889 may already implement or partially cover the same root cause, making a new fix duplicative",
+      "Credential cleanup semantics (credentialPersistence === 'stored') require a maintainer decision and could silently leave managed Git credentials behind",
+      "A naive snapshot fallback could turn a stale artifact entry into a silent no-op for declarationOnly entries",
+      "mutateMany can flip a policy to declarationOnly and drop artifactGeneration, so the same stale entry may present inconsistently"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test: install an extension, delete its directory while the store entry remains, then assert `uninstall <name>` succeeds and clears the store entry",
+      "Add a regression test asserting `install <same source>` no longer raises a name conflict when the colliding entry has no artifact",
+      "Add a test for the declarationOnly vs stale-artifact distinction to confirm the fallback does not become a silent no-op",
+      "Run targeted unit tests for packages/core extension modules and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #11889 already fixes this exact root cause or only the Windows directory-lock scenario",
+      "Maintainer decision on credentialPersistence handling when the artifact is missing",
+      "Whether the install-side conflict relaxation is in scope for the same fix"
+    ],
+    "why": "Issue is a well-documented, reproducible bug with confirmed code anchors and a clear root cause (name-based uninstall resolves via getLoadedExtensions() which requires a loadable artifact, while install checks the store snapshot). However, the supplied evidence contains a materially blocking unknown: open PR #11889 overlaps semantically on packages/core/src/extension/extension-store.ts and is flagged as 'semantic_overlap_requires_review' with no direct issue link, so it is unresolved whether that PR already covers this root cause. Additionally, the triage comment explicitly states the credential-cleanup question needs a maintainer decision before a fix lands, and the issue itself lists three design variants that need an answer. These unresolved coverage/design facts determine whether independent code work is actionable."
+  },
   "62560311075906199a217cadcc0ec46dd32fcd85088aa0972daaae9bf797a4b6": {
     "confidence": 0.85,
     "contradictions": [
@@ -49584,6 +49729,39 @@
       "No minimal model or environment artifact to reproduce outside the reporter's container"
     ],
     "why": "The issue reports a GPU plugin segfault at compile_model() on Gen12 iGPU, but the supplied evidence contains no root-cause signal, no code anchors tied to the crash, and no reproduction beyond a user script. The crash signature is non-deterministic (SIGSEGV vs SIGABRT heap corruption), and the only related PR is an unrelated merged load-time subnormal-flush change. Without a stack trace, failing test, or identified code path, the fix is not actionable."
+  },
+  "783857e623476bb314de700d5bc7c1df45e4089da09467b927620b9b81fab5d1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "csrc/libtorch_stable/moe/moe_wna16.cu: replace 16-bit atomicAdd split-K accumulation with a deterministic reduction (fp32 accumulation buffer or two-stage reduction)",
+      "vllm/model_executor/layers/fused_moe/fused_moe.py: dispatch/flag handling so the deterministic path is selected",
+      "tests/kernels/moe/test_moe.py: add run-to-run bit-exactness regression for small-batch W4A16 MoE"
+    ],
+    "risks": [
+      "Deterministic reduction may change performance characteristics of the decode-sized path",
+      "Must distinguish genuine non-determinism from ordinary floating-point tolerance drift in the reference comparison",
+      "Fix must not regress the Triton path or other WNA16 dispatch callers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's probe (8 experts, top-k 2, hidden 1024, intermediate 512, group size 128, uint4b8, seed 0) twice in separate processes and compare output bit hashes for M=16 (CUDA kernel) vs M=64 (Triton control)",
+      "Add a regression test asserting identical output bits across repeated launches of fused_experts with int4_w4a16_moe_quant_config at decode-sized batch",
+      "Verify numerical parity against the existing torch reference within atol=2e-2 after the fix"
+    ],
+    "unknowns": [
+      "Whether the open PR #54706 (ROCm/RDNA3 W4A16 split-K determinism) already covers the same CUDA kernel fix on main, since it is keyword-overlap only and does not reference this issue"
+    ],
+    "why": "Issue pinpoints a concrete numerical-determinism defect in the W4A16 MoE CUDA kernel: split-K partial sums are rounded to fp16/bf16 and combined via atomicAdd, making output bit-order dependent on block scheduling. It supplies exact code anchors (moe_wna16.cu lines 205-221, 245, 288), the dispatch condition (should_moe_wna16_use_cuda), a kernel-level reproduction with a Triton control, and a reference-vs-implementation validation path, satisfying the llm_algorithm requirement for a kernel/numerical mechanism with a concrete regression test."
   },
   "7838f965db87052c132335cd14859518c503411c6223408bd28a391dc1f52053": {
     "confidence": 0.85,
@@ -68018,6 +68196,42 @@
     ],
     "why": "The issue is a startup hang with multiple mutually inconsistent explanations in the comments: one thread attributes it to PCIe ACS/P2P with custom all-reduce (workaround NCCL_P2P_DISABLE=1 + --disable-custom-all-reduce), another reports that workaround does not help, a third attributes it to model download time, and a py-spy dump points at the FlashInfer top-k/top-p sampler during warmup (workaround VLLM_USE_FLASHINFER_SAMPLER=0). No single root cause is established, and the candidate's algorithm_evidence is keyword-matched (awq, fp8, tensor parallel, all reduce) rather than a concrete training objective, numerical method, or kernel algorithm. The supplied duplicate/overlap evidence is also contradictory: related issue #55238 is a different sm100 CUDA-graph greedy-output bug, and the 'best' competing PR #46296 is described as weakly matched with no test files, while PR #45004 (NCCL_P2P_DISABLE in custom allreduce) is the only plausibly relevant open PR and is not confirmed to cover this issue."
   },
+  "a62b56ab33470692450ef3a3cf85a1076b4a16dd4a8c4fdccd6e4bfad6f2f17c": {
+    "confidence": 0.55,
+    "contradictions": [
+      "actionability_evidence reports root_cause_signal=true and probe_ready=true, but the issue body is truncated before the root-cause section completes, so the root cause is not actually established in the supplied text."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/hisparse/layout.py",
+      "vllm/v1/hisparse/runtime.py",
+      "decode-path KV gather/eviction logic for host-resident sparse MLA"
+    ],
+    "risks": [
+      "Root cause may be in the host-mirror/eviction path rather than layout.py, so the fix location is uncertain.",
+      "Numerical/quantization interaction (NVFP4-FP8 checkpoint) could confound the reference-vs-implementation comparison.",
+      "ai_disclosure_conflict policy may block public submission regardless of technical merit."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the two-flag vllm serve command vs control at TP2 on GLM-5.2, temperature 0, max_tokens 32; assert first token matches control and subsequent tokens diverge.",
+      "Run the 8x max_tokens:1 prefill-only chain against the broken server and confirm it matches the control, isolating the failure to decode.",
+      "Add a regression test under tests/v1/e2e/general/test_hisparse.py comparing HiSparse vs non-HiSparse greedy output for a fixed prompt/seed."
+    ],
+    "unknowns": [
+      "The truncated remainder of the issue body containing the root-cause hypothesis and any proposed fix.",
+      "Whether the ai_disclosure_conflict policy permits any code contribution for this issue.",
+      "Whether the overlapping maintainer-owned PR #55879 (sparse-MLA DCP stabilization) already covers this decode corruption."
+    ],
+    "why": "The issue is a concrete, deterministic, algorithm-level bug in HiSparse host-resident KV for sparse MLA (prefill correct, decode corrupt), with a minimal reproduction and a control arm. However, the supplied issue body is truncated mid-sentence in the 'Where the evidence points' section, so the root-cause hypothesis and the proposed code anchors are not fully established. Additionally, the submission policy is flagged as ai_disclosure_conflict, which is a repository-level disclosure requirement that materially affects whether code work can be submitted."
+  },
   "a62ce468b89e46510e0260f69c9eeb85f8143b1a5cf90325fb73fd625d73386e": {
     "confidence": 0.8,
     "contradictions": [],
@@ -76157,6 +76371,46 @@
       "Whether PR #7933 already covers this root cause"
     ],
     "why": "The issue presents a concrete, reproduced ValidationError and a plausible one-line union fix, but the supplied evidence contains a materially blocking contradiction: the bot status comment asserts the failing shape is unreachable on any supported path (both construction sites are response-side; durable execution never invokes ModelMessagesTypeAdapter; AG-UI reachability refuted by MessagesBuilder dispatch), while the issue's Impact section claims durable-execution/persisted-history/message_history reachability. This reachability question determines whether the code change is actionable at all, and it is unresolved in the supplied evidence."
+  },
+  "babe1e631dce057a894bceb5a7be007e083b7fe0688940992af3914236d0acbf": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge B@A into base weight and reinitialize A/B for canonical ReLoRA restart, or rename feature and correct docstring",
+      "src/soup_cli/utils/relora.py: replace strict threshold mask with deterministic exact-count selection (topk/stable-order) honoring prune_ratio under ties",
+      "Optimizer-state reset should target optimizer moments rather than learned adapter weights",
+      "Explicit support or loud rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A fix is a maintainer contract decision (implement real restarts vs rename feature); doing half of the first would be worse than either",
+      "Tie scenario is constructed; production frequency depends on whether freshly-initialized all-zero lora_B hits the first relora_steps interval",
+      "Numerical tolerance must be fixed with seed and hardware to distinguish math error from float noise",
+      "Quantized/FSDP/DeepSpeed/streaming paths need explicit handling or rejection to avoid partial restarts"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reference test: build small peft LoRA model with fixed seed, capture effective linear map, run _prune_and_reset, assert MSE(before, after) within numerical tolerance (merge-then-reset control ~1e-13)",
+      "Regression test: constant-magnitude lora_A/lora_B with prune_ratio=0.9, assert nonzero count equals requested keep count and both factors retain at least one entry",
+      "Gradient test: after callback, assert grad-norm of lora_A and lora_B is nonzero so the branch can restart",
+      "Accumulation test: successive restarts accumulate low-rank updates in the base model",
+      "Compatibility test: unsupported quantized/distributed/streamed configurations fail clearly rather than partially applying a restart"
+    ],
+    "unknowns": [
+      "Whether maintainer will choose canonical ReLoRA restart implementation or feature rename/docstring correction",
+      "Actual production frequency of the tie-induced total-pruning case"
+    ],
+    "why": "Issue identifies a concrete algorithm-conformance defect in ReLoRACallback._prune_and_reset: adapter weights are magnitude-pruned without merging B@A into the frozen base, and strict thresholding (abs(t) > threshold) can zero both factors under ties, producing a dead zero-gradient branch. Maintainer independently reproduced both claims with measured MSE (142.12 vs 8.77e-13 control), max|delta|=0 on base weight, and zero nonzero entries/grad norms, and confirmed the module docstring conformance gap at relora.py:3-5. This is a parameter-efficient-finetuning mechanism with a clear reference-vs-implementation validation path."
   },
   "bad7c41131eeab631317d27b52bf5312bdd8f57d79444c073ab1716d49788a9e": {
     "confidence": 0.8,
@@ -85822,6 +86076,41 @@
       "Exact code path causing the stale session error; maintainer's preferred fix approach."
     ],
     "why": "Issue reports a reproducible crash when context compaction occurs mid-workflow with DatabaseSessionService, but root cause is not identified and no maintainer confirmation exists. The supplied gate decision is HUMAN_REVIEW, so a new candidate cannot be started without maintainer input."
+  },
+  "d268a3e7062a0a668856bf1f442ee736a32e60366e8619395d06243e36e3135f": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims post_call logging is skipped on disconnect in Bedrock invoke_handler, but chrikrah reports non-reproducibility on default config and attributes loss to cancel_on_disconnect path in common_request_processing.py/utils.py"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/common_request_processing.py cancellation handling",
+      "litellm/utils.py CancelledError/BaseException handling",
+      "spend logging on cancelled non-streaming requests"
+    ],
+    "risks": [
+      "Fixing the wrong code path if the issue's pre_call/post_call framing is incorrect",
+      "Behavior change to cancellation semantics affecting streaming paths",
+      "Overlap with open PR #41171 which touches litellm/utils.py spend tracking for non-streaming conversion"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with general_settings.cancel_on_disconnect enabled and disabled, disconnect client mid non-streaming Bedrock call, assert cost event is emitted",
+      "Regression test that a cancelled non-streaming request still records full input+output cost"
+    ],
+    "unknowns": [
+      "Whether the bug reproduces without cancel_on_disconnect",
+      "Whether open PR #41171 already covers the same root cause",
+      "Exact expected cost semantics for cancelled non-streaming requests"
+    ],
+    "why": "The issue describes a plausible spend-tracking gap for non-streaming Bedrock calls on client disconnect, but the most recent comment (chrikrah) materially contradicts the issue's framing: the loss is not reproducible on default config and only occurs when general_settings.cancel_on_disconnect is enabled, with a different code path (common_request_processing.py:2398/1468, utils.py:1881/2003/2087) than the issue's cited pre_call/post_call logging locations. This unresolved contradiction about the actual root cause and reproduction conditions makes the code work not yet actionable."
   },
   "d2698b2fbab4f58a40c25d66be8170f67553d81eb4a6af356687e3b75fd04f22": {
     "confidence": 0.85,
@@ -96818,6 +97107,37 @@
       "Exact root cause commit or code change in 0.5.17 that introduced the regression; maintainer's preferred fix direction."
     ],
     "why": "Issue provides a clear user-visible regression with a concrete reproduction command, isolated variables, and a known working version. Root cause is narrowed to generation-level logic for Qwen3.5-arch models in 0.5.17, with code anchors in qwen3 model files. Actionable fix path is to add a regression test and investigate sampling/logits/pipe changes."
+  },
+  "ea4f39ebc7f9122cab50f93a99cb422d80befc0d7248fc53f36b21d57af8696d": {
+    "confidence": 0.85,
+    "contradictions": [
+      "open_pr_assessment summary says 'no related open PR' while listing merged PR #8294 that directly addresses the issue's root cause"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new code change is actionable now; the immediate breakage is fixed by #8294",
+      "If pursued, a future change would add vocab-parallel tied embedding support in deepspeed/module_inject/tp_plan_converter.py"
+    ],
+    "risks": [
+      "Pursuing option 1 (vocab-parallel tied embeddings) is a larger design change requiring maintainer direction and coordinated lm_head planning",
+      "transformers-side injection is unconditional, so any future change must preserve the replicated fallback"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Re-run tests/unit/v1/autotp/test_tp_plan_real_models.py::test_qwen2_tied_lm_head_falls_back_to_replicated against transformers main on 2 GPUs to confirm the merged fallback holds",
+      "Add a regression test asserting embedding_rowwise is accepted and tied embeddings remain replicated"
+    ],
+    "unknowns": [
+      "Whether maintainers want to pursue option 1 (full vocab-parallel tied embeddings) as a permanent fix"
+    ],
+    "why": "The issue's concrete failure (AutoTP rejecting 'embedding_rowwise' from HF transformers main) is already covered by merged PR #8294, which converts embedding_rowwise tp_plan entries to SKIP specs, and a contributor comment confirms the fallback was validated on 2x L20 GPUs (18 cases passed, tied Qwen2 test passed). The remaining open question is only the policy choice of whether to pursue full vocab-parallel tied embeddings (option 1), which is a design decision, not an actionable code contribution."
   },
   "ea7822f312a66d1d12a613b7e21a48bd4b803957eb52b2be732abeb87c4feba7": {
     "confidence": 0.7,
