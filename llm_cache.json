@@ -5413,6 +5413,45 @@
     ],
     "why": "Issue reports intermittent missing reasoning in multi-turn tool calls for DeepSeek-V4-Flash-0731, but root cause is unclear: could be chat-template handling, reasoning parser, or model behavior. No maintainer confirmation or design direction. The supplied algorithm evidence is inflated by keyword matches (block size, fp8, tensor parallel) that are not central to the reported bug. The issue is a usage/bug report without a concrete algorithm mechanism or validation path."
   },
+  "0e43ee603bf6f2a4019ee8553f3310c2552808ca8da803c15e2e492ed52ea043": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #56685 overlapping wna16 and tests/kernels/moe/test_moe.py, while the issue claims the effect is invisible to CI and no existing fix covers it."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "csrc/libtorch_stable/moe/moe_wna16.cu: replace 16-bit atomicAdd partial-sum reduction with a deterministic reduction (e.g., fp32 accumulation buffer + separate reduction pass, or single-block-K tiling)",
+      "vllm/model_executor/layers/fused_moe/fused_moe.py: gate/route should_moe_wna16_use_cuda consistently with determinism requirements",
+      "tests/kernels/moe/test_moe.py: add run-to-run bitwise determinism regression test for the WNA16 CUDA path"
+    ],
+    "risks": [
+      "Changing the reduction order alters existing numerics; must confirm tolerance against the torch reference.",
+      "Deterministic reduction may regress decode-latency for small-batch MoE.",
+      "PR #56685 touches overlapping wna16/quantization paths and may already cover or conflict with the fix.",
+      "Repository AI-disclosure policy conflict blocks any public submission action."
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the probe at M=16 (CUDA kernel selected) vs M=64 (Triton control), comparing raw output bits across two separate processes and multiple in-process repeats.",
+      "Add a regression test asserting bitwise-identical outputs across repeated launches for M*top_k/E <= 6 with int4_w4a16_moe_quant_config.",
+      "Verify the Triton path remains unchanged and that numerics stay within existing atol=2e-2 reference tolerance."
+    ],
+    "unknowns": [
+      "The reproduction command is truncated ('--which'), so the exact probe invocation and its observed nondeterminism output are not verifiable.",
+      "Whether PR #56685 already fixes the atomicAdd nondeterminism or merely touches adjacent wna16 code.",
+      "Whether the repository's AI-disclosure policy permits the required contribution workflow."
+    ],
+    "why": "The issue presents a concrete, well-anchored root cause: moe_wna16_gemm splits K across blockIdx.z and combines partial sums with 16-bit atomicAdd, making output bit-order dependent. However, the supplied evidence contains materially blocking unknowns: the reproduction command is truncated mid-line ('--which'), the duplicate assessment flags PR #56685 as semantic overlap requiring review (wna16, overlapping test/quantization paths), and the submission policy is ai_disclosure_conflict with a hard-disabled public action. These determine whether code work is actionable and cannot be resolved from the supplied evidence."
+  },
   "0e4666a3b3ea6ed073627130c80d4dcb70fbe50049b817e684fb8dbfa1ae815d": {
     "confidence": 0.85,
     "contradictions": [
@@ -23263,6 +23302,38 @@
     ],
     "why": "Issue reports two concrete user-visible defects on the OpenAI-compatible image generation path: configured avatar size (512x512) is ignored and a 1024x1024 request is sent, and IMAGE_GEN_TIMEOUT_MS=1800000 is not honored, with a HeadersTimeoutError from undici after ~300s. Reproduction steps and an expected/actual pair are supplied, and the request body confirms the wrong size. The comment adds a separate prompt-handling observation (LoRA tags stripping the character prompt) that is not clearly the same root cause, so the timeout/size fix is actionable but the prompt issue should be treated as a distinct sub-problem."
   },
+  "3bfd54cd7f9477b292ffd1e5845546c4f3ee85a44e95e9ca9c477010b7452c22": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports PR #39399 as COVERAGE of this issue while duplicateStatus is human_review_required"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/moe/ep_moe_kernels.py: pass expert_start and num_experts to _fwd_kernel_ep_scatter_2 in ep_scatter_from_psum"
+    ],
+    "risks": [
+      "Existing PR #39399 may already cover the fix, making a new contribution duplicative",
+      "No regression test in the primary covering PR",
+      "CI failures on related PRs are not attributed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with deepep_v2 + FP8 MoE prefill path and confirm TypeError; after fix, run a small EP prefill forward and verify no argument-binding error and correct scatter output."
+    ],
+    "unknowns": [
+      "Whether PR #39399 is the accepted fix or will be superseded",
+      "Whether the issue is already resolved on main by another commit"
+    ],
+    "why": "Issue describes a concrete TypeError from missing positional args in ep_scatter_from_psum, but the supplied evidence shows an open PR #39399 that directly references this issue with COVERAGE relation and overlapping code path, plus PR #37211 with a test file. Duplicate/merged-fix coverage is unresolved (duplicateStatus=human_review_required), which materially determines whether independent code work is actionable."
+  },
   "3c16064f1a321d98c08fac36bc38b14f3c86b52412e72e438a68670d932e9b3f": {
     "confidence": 0.7,
     "contradictions": [
@@ -24584,6 +24655,41 @@
       "Whether an existing PR already addresses this issue; maintainer preference on the proposed fix approach."
     ],
     "why": "Issue provides a precise root cause and a concrete fix for a user-visible bug in vLLM's Inkling parser, with a no-GPU repro. However, the deterministic gate requires HUMAN_REVIEW, and the open PR/related issue lookup failed, so we cannot rule out duplicate work. Maintainer design confirmation is also absent."
+  },
+  "40ae6ab116f237b598a4e8666aa9947b6a5e1dc45aa59ffc66d00098ba0ca9a9": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue proposes a one-line omni_handler.py fix, but open PR #14844 already modifies the same file for the same response_format/base64 semantics without referencing this issue"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/omni/omni_handler.py: pass response_format=req.response_format into EngineInputs for video requests",
+      "components/src/dynamo/vllm/omni/output_formatter.py: honor b64_json vs url delivery",
+      "runtime image build: FFmpeg/swscale MMXEXT guard or build-config fix (upstream-dependent)"
+    ],
+    "risks": [
+      "PR #14844 may already implement the response_format propagation, making a new PR duplicative",
+      "FFmpeg color defect is upstream and may not be fixable within this repository",
+      "Acceptance criteria span transport, codec, and DGD validation, exceeding a single minimal code change"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Model-free RGB quadrant round-trip through encode_to_video_bytes() and independent decode, asserting red quadrant decodes ~(255,0,0) not magenta",
+      "Request-level test asserting data[0].b64_json is nonempty and decodable when response_format=b64_json",
+      "Regression test asserting url delivery still works when external media storage is configured"
+    ],
+    "unknowns": [
+      "Whether PR #14844 fully resolves the response_format propagation defect A",
+      "Whether the FFmpeg MMXEXT corruption is in scope for this repository or must be fixed upstream",
+      "Whether maintainers consider this issue a qualification tracker rather than a code-fix task"
+    ],
+    "why": "Issue describes two independent defects: (A) missing response_format propagation in _engine_inputs_from_video() with a concrete one-line diff, and (B) a bundled-FFmpeg/swscale MMXEXT color corruption. However, open PR #14844 ('fix(vllm/omni): pass response_format into video EngineInputs (#14667)') already targets the same omni_handler.py path with the same base64/response_format semantics, and its root_cause_coverage is false and it does not reference this issue. Whether #14844 already covers defect A is unresolved, which materially determines whether new code work is actionable. Defect B is an upstream FFmpeg build issue, not a Dynamo code fix, and the issue itself only proposes a diagnostic workaround."
   },
   "40b6fe743a0848704c05775b365e7a51e23988a5414edde025ae72e06da31f4a": {
     "confidence": 0.7,
@@ -30459,6 +30565,41 @@
     ],
     "why": "Issue #806 identifies a concrete, code-anchored defect: training.use_flash_attn and training.use_liger are consumed only by SFTTrainerWrapper._setup_transformers (trainer/sft.py:1293, 882, 1351-1356), yet commands/train.py:1192-1214 validates them for every task and autopilot/decisions.py:344-346 enables them regardless of task. The issue supplies a reproducible probe (build_soup_config on a preference JSONL yielding dpo/grpo/pretrain with both flags true, then soup train exiting 1 on missing packages) and explicit acceptance criteria, including a CPU tiny-model test with a stubbed get_attn_implementation asserting the kwarg reaches from_pretrained. This is a real behavioral bug with a clear root cause and a concrete validation path, not installation/CLI plumbing alone."
   },
+  "4e01eb1567abace3970b30df90be15d4a9cff0499d42fddf29b5b9a6602edc99": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims no further Flux event of any kind; reporter's later replay shows Updates continued while EndOfTurn was withheld",
+      "Watchdog recovery proposed in comments is retracted by the same commenter after the replay evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Deepgram Flux STT turn finalization behavior",
+      "user turn controller stop-timeout semantics for non-VAD speaking sources"
+    ],
+    "risks": [
+      "Implementing a watchdog against a retracted premise would add dead code",
+      "Duplicating or conflicting with draft PR #5584's force_end_turn API",
+      "Changing turn-timeout semantics could alter behavior for VAD-based pipelines"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Direct-service replay of the caller channel at eot_threshold=0.85/eot_timeout_ms=7000 confirming Updates continue while EndOfTurn is withheld",
+      "End-to-end pipecat repro with a received-message counter distinguishing 'no final transcript' from 'no inbound messages'"
+    ],
+    "unknowns": [
+      "Whether PR #5584's force_end_turn is intended to cover this scenario and whether it will merge",
+      "Whether a hard cap on turn duration is acceptable to maintainers given the VAD-gated stop timeout design",
+      "Whether the production session's event sequence can ever be verified"
+    ],
+    "why": "The issue's original premise (Flux stream going silent) was retracted by the reporter's own direct-service replays: Updates continued while EndOfTurn was withheld, so the watchdog proposal would not have fired. The remaining actionable direction (force_end_turn / hard turn-duration cap) overlaps with open draft PR #5584, whose scope and intent are unconfirmed. Root cause and the correct fix are therefore unresolved."
+  },
   "4e3b53fa7fffc4f46600a47995d50f19f01f306c6596ffa0725a475771361e13": {
     "confidence": 0.85,
     "contradictions": [],
@@ -33928,6 +34069,37 @@
       "Whether the failure is in OpenVINO code or in the mixed legacy/non-legacy compute-runtime packages"
     ],
     "why": "The issue reports a GPU-plugin segfault at compile_model() on Gen12 iGPU, but the supplied evidence contains no stack trace, no crash dump, no minimal model artifact, and no root-cause localization. The only code anchors are Python package paths (openvino/runtime/__init__.py), not the C++ GPU plugin sources where the crash occurs. The reporter's own follow-up shows two different crash signatures (SIGSEGV and SIGABRT/heap corruption), which is consistent with memory corruption but does not identify a specific defect. Without a stack trace or a reproducible failing test that isolates the GPU plugin path, the code work is not actionable."
+  },
+  "562a048329f2d4b37391b60b86e5bb242d49a4cf400412f4956794385f1ecf77": {
+    "confidence": 0.6,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while issue body provides a specific code path and reproduction",
+      "open PR #41222 has semantic overlap on reasoning_effort/gpt-4o but no direct code overlap or issue reference"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py: reasoning_effort support/drop_params handling for gpt-4.1/gpt-4o on openai and azure"
+    ],
+    "risks": [
+      "Changing drop_params semantics for reasoning_effort could break callers relying on silent dropping",
+      "Overlap with open PR #41222 may duplicate or conflict with existing work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test calling get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) and assert it raises UnsupportedParamsError or forwards the param instead of silently dropping it; repeat for azure and gpt-4o/gpt-4o-mini."
+    ],
+    "unknowns": [
+      "Whether PR #41222 already fixes the same root cause for openai/azure chat path",
+      "Whether maintainers intend drop_params to raise for reasoning_effort on non-reasoning models"
+    ],
+    "why": "Issue describes a concrete user-visible bug with reproduction steps and code anchors, but the supplied evidence does not establish a definitive root cause (root_cause_signal=false) and an open PR (#41222) has semantic overlap on reasoning_effort/gpt-4o without direct code overlap or issue linkage, leaving unresolved duplicate/coverage uncertainty that determines whether new code work is actionable."
   },
   "563481538f6f2e96fa4dbc31b5ec4926b61ae72c6c25c6fa858ed7273928b4cf": {
     "confidence": 0.85,
@@ -56827,6 +56999,43 @@
     ],
     "why": "The issue reports a real GLM-5.3-Flash FP8 degeneration regression with a build A/B delta, but the reporter explicitly could not construct a synthetic reproduction; only long real agentic sessions trigger it. A maintainer comment states it is a known issue caused by tool call / vLLM frontend, which points away from the algorithm mechanisms (attention kernels, numerics, distributed training) that the candidate claims. The related-issue overlap (#56556, xgrammar structured output) shares only generic stack signatures (clang/gcc/collect_env.py) and is not a true duplicate. The candidate also carries an unresolved AI-disclosure policy conflict. These are materially blocking unknowns for an llm_algorithm contribution."
   },
+  "8cdd749ac7f701bbaccdd50c692f06abb225ddf9f008fa1e1fc483205b6f8133": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue root cause points to KimiK3Detector._clean_content()/streaming passthrough in the serving layer, while contributor comment says the no-tools short-circuit is intentional and the fix belongs in the chat template or model side"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/function_call/function_call_parser.py",
+      "KimiK3Detector content cleaning / streaming tool passthrough path",
+      "chat template behavior when tools are absent"
+    ],
+    "risks": [
+      "Stripping XTML-looking text in the serving layer could corrupt legitimate user content",
+      "Fix may belong in chat template rather than serving code, making a serving-layer patch wrong",
+      "Overlapping open PR #39594 may already cover the intended change"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Non-streaming: no declared tools + K3 tool channel must not expose raw <|open|>tools XTML in content",
+      "Streaming: same request must not emit raw XTML in deltas",
+      "Declared tools + K3 tool channel still returns structured tool_calls",
+      "No declared tools + ordinary prose still returns normal stop response"
+    ],
+    "unknowns": [
+      "Whether the chat template still injects tool instructions when tools are absent",
+      "Whether PR #39594 actually addresses the same root cause or only the symptom",
+      "Which layer maintainers consider the correct fix location"
+    ],
+    "why": "Issue describes a plausible user-visible bug with a minimal repro and a concrete root-cause hypothesis in KimiK3Detector._clean_content()/streaming tool passthrough, but a CONTRIBUTOR comment on the same issue directly contradicts the serving-layer fix location, arguing the no-tools short-circuit in function_call_parser.py is intentional and the real fix belongs in the chat template/model side. This unresolved contradiction determines whether any code change in the serving layer is actionable, and the open PR #39594 is marked root_cause_coverage=false with failing pr-gate checks, so duplicate/coverage status is not settled."
+  },
   "8d0b13f6c7d4e40c1f215fc6214dc7fdbb2ffa6cbbc7681331156fdd2e4e9ba5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -60985,6 +61194,42 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a gateway OOM/SIGABRT crash on a non-documented configuration path. Maintainer comment indicates a likely fix in 2.2.4 due to ABI mismatch, but no verification from reporter. The issue is not a code contribution; it's a bug report requiring maintainer confirmation and reproduction on the documented path."
+  },
+  "97659db7b651238f6030337e9cb1a52f88171b5e71ac2ae05b050aa9fc89d6f7": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims the bug is independent of the Windows directory-lock fix, while PR #11889 (the Windows lock fix) touches the same extension-store.ts path and is flagged as semantic overlap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/extension/extensionManager.ts: route name-based uninstall through snapshot resolution when no loaded extension matches",
+      "packages/core/src/extension/extension-store.ts: distinguish stale artifact entry from declarationOnly entry in conflict/adoptability logic",
+      "packages/cli/src/commands/extensions/uninstall.ts and dialog-data.ts: consume the fixed name-based path"
+    ],
+    "risks": [
+      "PR #11889 may already implement the same fix, making this duplicate work",
+      "Naive snapshot fallback could turn a stale artifact entry into a silent no-op for declarationOnly entries",
+      "Credential cleanup semantics for missing artifacts are undecided and could leak stored Git credentials"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test: install extension, delete its directory, assert uninstall <name> succeeds and clears the store entry",
+      "Add a regression test: install, delete directory, reinstall from a different source path, assert no spurious name-conflict",
+      "Add a test asserting stored Git credentials are either cleaned up or surfaced via warnings when the artifact is missing"
+    ],
+    "unknowns": [
+      "Whether PR #11889 already fixes this root cause or only the Windows rename path",
+      "Maintainer decision on credentialPersistence==='stored' cleanup when the artifact is missing",
+      "Whether the stale entry presents as not-installed or conflicting depending on prior store mutations"
+    ],
+    "why": "Issue is a well-documented, reproducible bug with confirmed code paths (uninstallExtension resolves only via getLoadedExtensions; uninstallExtensionById already tolerates missing artifacts). However, the supplied evidence contains a materially blocking unknown: open PR #11889 overlaps the same extension-store.ts path and is flagged semantic_overlap_requires_review with no direct issue link, so it is unresolved whether that PR already covers this root cause. Additionally, the issue itself states the credentialPersistence==='stored' cleanup behavior needs a maintainer decision before a fix lands, and the triage comment confirms this. These unresolved coverage/design questions determine whether independent code work is actionable."
   },
   "976688a9d2c27073cb10b153949b73bb4fe8a9cba1d5af38e05f3826dfee61b6": {
     "confidence": 0.85,
@@ -89233,6 +89478,43 @@
     ],
     "why": "Issue provides a concrete, code-anchored amplifier: decode-side KVPoll.Bootstrapping has no deadline (decode.py:926 bare pass; mooncake/conn.py:2742 only checks WaitingForInput timeout; _check_bootstrap_timeout exists only on sender side in common/conn.py:1548), causing an unbounded decode hang even when prefill times out at 300s. This is a well-scoped, independently actionable fix with a clear validation path (reproduce stall, assert bounded failure). The primary root cause of the handshake stall remains unknown, but the deadline fix is separable and does not depend on it."
   },
+  "dca92afcd10f65f457760e08be844c2746a9346437c1deb50b81e4496f114e3c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports deterministic failure on bundled CPython, but pepmach could not reproduce on current main in an isolated Linux pod under relocatable CPython 3.12 with relative RPATH",
+      "Issue proposes LD_LIBRARY_PATH injection as verified fix, while maintainer triage says that variable is deliberately denied in multiple modules and needs a security ruling"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/apps/builtins/pptx_maker/backend/provision.py::_run env handling",
+      "src/kiro_crew/apps/builtins/pptx_maker/backend/engine.py::_spawn env handling",
+      "possibly avoid build isolation / pin prebuilt wheel instead of widening sandbox env"
+    ],
+    "risks": [
+      "Re-admitting LD_LIBRARY_PATH into the strictest sandbox spawn narrows a trust boundary encoded in name_grant.py, update_provider.py, cron_script.py, mcp_discovery.py",
+      "Appending to inherited LD_LIBRARY_PATH would re-import the injection vector the scrub removes",
+      "Fix may be unnecessary if the real trigger is packaging-specific and not reproducible"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on the affected packaged install: capture readelf -d and ldd plus physical path of the isolated PEP 517 build interpreter and diff against a source-worktree venv",
+      "Run POST /api/apps/pptx-maker/engine/provision with cold UV_CACHE_DIR and verify engine ready at v0.3.8",
+      "Regression: verify no-op on statically linked libpython / macOS framework builds"
+    ],
+    "unknowns": [
+      "Host-specific relocation shape / dynamic-loader metadata of the failing packaged install",
+      "Whether maintainers will accept widening the strict sandbox env or prefer avoiding build isolation",
+      "Whether the failure is reproducible at all on current main outside the reporter's packaged install"
+    ],
+    "why": "The issue gives a plausible root cause (scrubbed env lacks LD_LIBRARY_PATH for the relocated PEP 517 build interpreter), but a contributor could not reproduce it on current main in an isolated Linux pod under a relocatable CPython with relative RPATH, and the maintainer triage explicitly says the trigger is narrower than reported and that the proposed remedy crosses a security boundary (LD_LIBRARY_PATH is on multiple deny lists). The fix shape is therefore not mechanically actionable without a maintainer security ruling and host-specific loader metadata."
+  },
   "dce7cfc8bee1655008e21d4ead2902ed8c265397eafd36072f0658b1ed203d09": {
     "confidence": 0.9,
     "contradictions": [],
@@ -91996,6 +92278,40 @@
       "No explicit maintainer approval for a specific fix approach; owner noted preference but left choice open"
     ],
     "why": "Issue provides concrete root cause: ReLoRA callback prunes adapters without merging, causing function discontinuity, and strict thresholding can zero both factors on ties. Owner confirmed both claims with reproducible evidence and clear acceptance criteria."
+  },
+  "e2d4c3b39df9a58eacd8eae3c0eeb111f0a7f7d7a292b6fcda2e0a8e1d8db62c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims recap language is uncontrollable, but triage shows general.outputLanguage already reaches the side query; the remaining gap is only the default auto case"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/services/sessionRecap.ts — RECAP_SYSTEM_PROMPT gains a bullet instructing the recap to match the language of the recent user messages in the side-query window",
+      "Optionally align docs/design/session-recap/session-recap-design.md if the prompt wording diverges"
+    ],
+    "risks": [
+      "Prompt-only change is hard to assert deterministically; test should target the assembled instruction text rather than model output",
+      "Overriding general.outputLanguage semantics could regress the existing explicit-language path covered by sideQuery.test.ts",
+      "Maintainer may prefer a dedicated setting despite triage calling it unnecessary"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test around generateSessionRecap/runSideQuery asserting the recap system instruction contains the language-matching directive",
+      "Regression: with default outputLanguage=auto and a non-English conversation window, verify the assembled side-query system instruction no longer relies solely on the English example",
+      "Run packages/core targeted unit tests (sideQuery.test.ts, sessionRecap tests) and static checks"
+    ],
+    "unknowns": [
+      "Exact wording the maintainers want in the restored prompt bullet",
+      "Whether the design doc or the shipped prompt is considered authoritative"
+    ],
+    "why": "Triage evidence confirms the shipped RECAP_SYSTEM_PROMPT lacks the language-matching bullet that the design doc claims corresponds 1:1, and the default `auto` output-language rule is defeated by the synthetic English RECAP_USER_PROMPT being the last user message. This is a concrete, localized prompt/behavior gap with a clear minimal fix (restore the language bullet), distinct from the already-working general.outputLanguage path."
   },
   "e2d7ebb8359fc65e48a932636e5956add14c0813d4e2820c4835bf41e599c3c6": {
     "confidence": 0.8,
