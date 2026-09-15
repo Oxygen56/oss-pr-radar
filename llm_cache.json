@@ -7577,6 +7577,49 @@
     ],
     "why": "The issue identifies a concrete, reproducible bug in TTS context handling and failover, with a clear root cause and a minimal repro. It is actionable and not covered by existing PRs."
   },
+  "1301c22f986d425663cd9a88f46f039ed17905462abf1c8f498746833c3d056b": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Commenters attribute divergence to BF16 numerical path differences while jschmied reports bit-for-bit agreement once kernel defects are fixed, arguing it is not intrinsic to BF16 verification",
+      "wickist attributes the symptom to GDN gate row misalignment fixed by #51812, but the issue's build predates it and this is unverified against the reported repro",
+      "Open PR #56431 has semantic overlap (dflash2, enforce_eager, qwen3) but no direct code overlap and does not reference the issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Speculative decode verification path (target argmax/logits at verified positions)",
+      "Hybrid GDN/DeltaNet/Mamba recurrent-state write/rollback boundaries",
+      "DFlash2 draft acceptance logic"
+    ],
+    "risks": [
+      "Root cause may already be fixed by #51812 or covered by open PR #56431, making a new contribution redundant",
+      "Divergence may be numerical (BF16 GEMM/SDPA) rather than a code defect, making a code fix inappropriate",
+      "Repository requires AI disclosure; automated public action is hard-disabled",
+      "Multiple independent reproductions on different hardware/stacks may reflect distinct causes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce greedy target-only vs DFlash2 K=1 equivalence with fixed seed and logprobs on the reported Qwen3.8-27B BF16 TP=4 setup",
+      "Compare target-only logits vs block-verification logits at token 30 and inspect top-1/top-2 margin",
+      "Re-test on v0.28.0 or cherry-pick #51812 to check whether GDN gate alignment resolves divergence",
+      "Run target-only with --max-num-seqs 1 vs 2 to test batch-shape invariance"
+    ],
+    "unknowns": [
+      "Whether the reported divergence persists on current main or v0.28.0 after #51812",
+      "Whether PR #56431 actually addresses the same root cause",
+      "Whether the root cause is a fixable kernel defect or inherent BF16 numerical path difference",
+      "Whether the reported BF16 TP=4 configuration is required to reproduce or a smaller setup suffices"
+    ],
+    "why": "Issue reports a concrete, reproducible greedy-divergence bug in DFlash2 speculative decoding (diverges at token 30, K=1, --enforce-eager, prefix cache off), with expected/actual pairs and a repro script. However, supplied evidence contains multiple competing root-cause hypotheses (BF16 numerical path differences, GDN gate row misalignment fixed by #51812, kernel defects #54945/#54948/#54076/#55122, batch-shape non-invariance) and an open PR #56431 with semantic overlap but no direct code overlap or issue linkage. The duplicate/merged-fix coverage is unresolved and the actual root cause is not established, which materially determines whether code work is actionable."
+  },
   "1328a93f39a6838ef9271da0a0cc3979f3d9d710293a481a77abca82238d8c4c": {
     "confidence": 0.8,
     "contradictions": [],
@@ -14900,6 +14943,39 @@
       "Whether the fix has been tested against a live multi-round session"
     ],
     "why": "The issue provides a detailed root cause in middleware.py, a concrete reproduction, and a proposed 13-line fix. However, the fix has not been tested against a live multi-round session, and the maintainer has not confirmed the design direction. The related issue #24758 is closed but may indicate prior maintainer preferences. The candidate is actionable but requires maintainer confirmation before implementation."
+  },
+  "251e3eed1aeadeb6a0b6f460e13f77600f44a015a32e5d74835883d21f55bce0": {
+    "confidence": 0.55,
+    "contradictions": [
+      "PR #14845 marked COVERAGE/technical_complete=true but root_cause_coverage=false and semantic_overlap=false",
+      "Issue proposes removing public registration; linked PR only copies runtime_config, leaving the stated root cause unaddressed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ThunderAgent proxy model-card registration path (inherit backend runtime_config or remove public registration)",
+      "frontend admission/preprocessing ordering relative to pluggable routing"
+    ],
+    "risks": [
+      "Copying selected fields is an incomplete fix per issue author; future backend fields re-introduce drift",
+      "Removing public registration may break existing ThunderAgent endpoint consumers"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with SGLang worker at 131,072-token context and 135,010-token prompt; assert frontend rejects before routing",
+      "Regression test asserting proxy card carries backend token_budget/truncation policy"
+    ],
+    "unknowns": [
+      "Whether PR #14845 is intended to fully close #14762 or is explicitly a partial fix",
+      "Whether maintainers accept the copy-fields approach vs the issue's remove-registration direction"
+    ],
+    "why": "Issue describes a real model-card ownership defect (ThunderAgent proxy card drops backend runtime_config.token_budget), but the supplied evidence is contradictory about coverage: PR #14845 is marked reference_relation=COVERAGE with technical_complete=true and 3 test files, yet root_cause_coverage=false and semantic_overlap=false. The issue's own proposed direction (remove public model registration, route via pluggable policy) is a design change, while the linked PR only copies runtime_config — an unresolved scope/coverage question that determines whether independent code work is actionable."
   },
   "252507edf5646f1910df14222ce8884a482bbc8e1540d4340b680fdf22f29a38": {
     "confidence": 0.85,
@@ -30282,6 +30358,42 @@
     ],
     "why": "Issue identifies a concrete bug: streamed OpenAI Responses retains the requested router alias instead of the served model from the terminal event. Root cause is clear (model_name not refreshed from response.completed), with a runnable repro and public trace. A contributor has proposed a fix and tests, and a maintainer bot has confirmed the behavior and requested only a test file path. The fix is localized but touches shared merge logic; however, the issue is actionable with a clear validation path."
   },
+  "4ade1a69a541801032be4a1ba6b043b9f6b20b04177e5e893e145d8258421b0b": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue states it is filed separately from and not caused by the Windows directory-lock fix, yet open PR #11889 targets the same extension-store.ts path with semantic overlap"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/core/src/extension/extensionManager.ts: route name-based uninstallExtension() through the store snapshot when no loaded extension matches",
+      "packages/core/src/extension/extension-store.ts: distinguish artifact-entry-with-missing-directory from declarationOnly in the conflict/adoptability predicate",
+      "packages/cli/src/commands/extensions/uninstall.ts and packages/cli/src/ui/opentui/dialog-data.ts: consume the corrected name-resolution path"
+    ],
+    "risks": [
+      "Open PR #11889 may already implement overlapping changes in extension-store.ts, risking duplicate or conflicting work",
+      "The credentialPersistence === 'stored' cleanup gap has no agreed resolution and could silently leave managed Git credentials behind",
+      "A naive fallback could turn a stale artifact entry into a silent no-op for declarationOnly entries"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing unit test that installs an extension, deletes its directory while leaving the store entry, then asserts uninstallExtension(name) succeeds and clears the entry",
+      "Add a regression test asserting install of the same source after artifact loss does not raise the name-conflict error when the stale entry has no artifact",
+      "Run targeted unit tests for packages/core extension manager/store and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #11889 already fixes or conflicts with the name-resolution root cause",
+      "Maintainer decision on how to handle credentialPersistence === 'stored' when the artifact is gone"
+    ],
+    "why": "The issue provides a clear, statically-confirmed root cause (name-based uninstall resolves only through getLoadedExtensions(), which requires an on-disk manifest, while install checks the store snapshot) and a concrete reproduction path. However, the supplied evidence contains a materially blocking unknown: an open PR (#11889) with semantic overlap on packages/core/src/extension/extension-store.ts is flagged as 'semantic_overlap_requires_review' and 'technical_complete: false', and the issue itself explicitly states it was filed separately from that Windows directory-lock fix. Whether that PR already covers or conflicts with the proposed fix is unresolved, and the triage comment notes a maintainer decision is needed on the credentialPersistence gap before a fix can land."
+  },
   "4af04935374bd7696d10a403ad5c8801e3974ed736ab0aa2b301ba22690bc3d2": {
     "confidence": 0.85,
     "contradictions": [],
@@ -39932,6 +40044,40 @@
     ],
     "why": "Issue provides a concrete, well-traced root cause: MoE expert cache banks exceed the Vulkan buffer type's 1 GiB suballocation block size, causing views with NULL buffers and the scheduler assert. Reproduction is explicit (llama-completion with --fit or --moe-cache-mib 3072 on Vulkan), with a threshold table and a workaround (GGML_VK_SUBALLOCATION_BLOCK_SIZE) that confirms the mechanism. Code anchors (llama-moe-cache.cpp, ggml-backend.cpp, ggml-vulkan.cpp, common_fit_auto_moe_cache) are named. No duplicate or merged fix covers this; open PRs are unrelated drafts. Track is agent_ai_infra, not llm_algorithm, so the algorithm-evidence requirement does not apply."
   },
+  "605d29e70355c6d48f99c313c6e16cbc1df9a116747928e4724367e3764cb45f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue body presents the bug as open, but recent comment says it is fixed on main by #40869"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/common_request_processing.py: unify deferred stream-complete callback arity or store callback+args as one unit",
+      "litellm/proxy/utils.py: _fire_deferred_stream_logging dispatch on stored args shape"
+    ],
+    "risks": [
+      "Fix may already be merged on main via #40869, making new work redundant",
+      "Overlapping open PRs #40986/#41220/#41218 may already cover the root cause",
+      "Broadening callback signature could mask other arity mismatches"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce streaming /v1/messages with post-call guardrails on a non-native Anthropic (custom_openai) upstream and assert no TypeError",
+      "Add regression test covering both CustomStreamWrapper and native anthropic_messages streaming paths with guardrails active"
+    ],
+    "unknowns": [
+      "Whether #40869 is merged on main and covers this exact arity mismatch",
+      "Whether any of #40986/#41220/#41218 already fixes this root cause",
+      "Whether the fix needs backporting to a release branch rather than new code"
+    ],
+    "why": "Issue provides a precise root cause (arity mismatch between _on_deferred_native_stream_complete and _deferred_stream_complete_args producers) and a concrete fix, but a recent comment states the bug is already fixed on main by PR #40869, and the open-PR assessment flags three semantically overlapping open PRs (#40986, #41220, #41218) with no direct issue linkage. Whether the fix is already merged on main is a materially blocking unknown that determines whether new code work is actionable."
+  },
   "60633d9390e80b4d20226fc480b36d0a03c84907f1ddf07d502418bdc2fa1a43": {
     "confidence": 0.85,
     "contradictions": [],
@@ -43866,6 +44012,40 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "Issue clearly identifies error suppression in hgctl upgrade/uninstall and has maintainer approval, but a design conflict remains: strict fail-closed semantics would break local-docker installs without kubeconfig. The maintainer requires Design #4403 revision and approval before implementation."
   },
+  "6936b36b6d296e20e870f46e46b6887ac9954b1f4db2d26a2d24d398c199840c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims finish-tool/1.46.0-vs-1.47.0 skew is root cause; commenter L4XB shows get_default_agent and event_router.py are byte-identical between 1.46.0 and 1.47.0",
+      "Issue body presents 24,102 B and 18,771 B templates as shipped; reporter concedes both were locally patched (+538 B)",
+      "FinishTool registration hypothesis proposed by L4XB then disproven by reporter's /proc and journalctl evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unknown until the file-logged traceback identifies the failing code path in POST /api/conversations/{id}/events"
+    ],
+    "risks": [
+      "Fixing the wrong root cause (version pin bump) would not resolve the 500",
+      "ai_disclosure_conflict policy may block automated contribution",
+      "Open PRs #17286/#16136 have semantic overlap but no direct code overlap, requiring manual comparison"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reporter to capture traceback via LOG_TO_FILE=1 LOG_DIR=/var/log/openhands on next maintenance window, then build a failing test from the identified exception"
+    ],
+    "unknowns": [
+      "The actual exception/traceback behind the 500 on POST /api/conversations/{id}/events",
+      "Whether any open PR addresses the true root cause once identified",
+      "Whether the ai_disclosure_conflict policy permits contribution to this issue"
+    ],
+    "why": "The issue's stated root cause (finish-tool wiring vs pinned agent-server 1.46.0) was explicitly disproven by byte-level comparison in the comments, and the alternative FinishTool-registration hypothesis was also disproven by measurement on the reporter's host. The actual cause remains unknown pending a traceback that the reporter has not yet captured. Additionally, the A/B evidence was retracted as based on locally patched templates, and the repo has an ai_disclosure_conflict policy that blocks automated public action."
+  },
   "6938627053caec0c835d588a64b5a22c7acef03c2d8d43851a7ca047c54567bd": {
     "confidence": 0.85,
     "contradictions": [],
@@ -44049,6 +44229,43 @@
       "Whether the existing PR #40000 or other work already addresses this issue partially."
     ],
     "why": "The issue describes a probabilistic agent behavior where the model fabricates success without tool calls, correlated with semantic proximity. The root cause is identified as missing validation in the FC agent runner, but the proposed fix (detect zero tool calls and retry/error) is a feature request rather than a concrete bug fix. Existing PR #40000 overlaps in code path but does not address this specific issue. The issue lacks a deterministic reproduction and the fix requires design confirmation from maintainers."
+  },
+  "6987eac39b136fb78283ad5172154d02a819f73e0871878e497dec04c4aca109": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter claims no tools/list_changed notification is acted on, while maintainer states the released server already sends notifications/tools/list_changed over stdio and HTTP and deliberately treats Claude Code as a client that should honor it"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/konnect/src/config.rs",
+      "crates/konnect-core/src/tools/config.rs",
+      "crates/konnect-core/src/tools/project.rs"
+    ],
+    "risks": [
+      "Broadly eager-loading every unknown client would discard the starter-kit/context-size design and should not be the default without evidence",
+      "Fixing the wrong layer (client detection vs. notification emission vs. launch config) could mask the real cause",
+      "Issue is linked to tracker #576 and must proceed under the shared contract"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Obtain redacted MCP trace showing initialize clientInfo, first tools/list, load_toolset request/response, any notifications/tools/list_changed, and whether a second tools/list follows",
+      "Reproduce with explicit eager_toolsets in konnect.toml for one failing toolset and confirm whether the tool becomes callable after restart",
+      "Add a regression test asserting the server emits tools/list_changed on load_toolset/unload_toolset and that the eager-load path triggers for the observed Claude Code clientInfo.name"
+    ],
+    "unknowns": [
+      "Actual Claude Code clientInfo.name at handshake",
+      "Whether Claude Code sends a second tools/list after load_toolset",
+      "Whether the failure is a client refresh failure or a launch/configuration mismatch",
+      "Exact Claude Code version and how Konnect is launched/configured"
+    ],
+    "why": "The issue reports a concrete client-side tool-registry refresh failure on Claude Code, but the maintainer explicitly states the server already sends notifications/tools/list_changed and treats Claude Code as a client expected to honor it. The reporter's root-cause hypothesis (Claude Code not detected as claude-ai) is unverified, and the maintainer requested a raw MCP trace (initialize clientInfo, first tools/list, load_toolset, list_changed notification, second tools/list) plus Claude Code version and launch config before choosing a safe fix. Without that trace, it is unknown whether the correct fix is recognizing Claude Code's clientInfo.name in the eager-load path, correcting the dynamic-refresh assumption, or a launch/config mismatch. This is a materially blocking unknown that determines whether code work is actionable."
   },
   "698a6001bdf6e78512f1db61325c79ea6f8f86f4e84b5d0d18811cd7d5831ab0": {
     "confidence": 0.8,
@@ -62190,6 +62407,42 @@
     ],
     "why": "Issue provides a concrete, framework-agnostic reproduction and pinpoints the root cause: ' '.join(result_parts) in process_task_state() and identical fallbacks in StreamingHandler.execute() and wrapper.py::_handle_max_turns_exceeded, violating A2A append semantics. Fix is a minimal, well-scoped change to concatenation."
   },
+  "936c9c6352dd2b1abd76683b676083af135c7828e8696b0332891f5c16f1f753": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue title/body claim no Flux events of any kind, but the reporter's later replay shows Updates continued while EndOfTurn was withheld",
+      "Contributor's watchdog proposal was explicitly retracted by the same contributor after the replay evidence"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Deepgram Flux STT turn finalization (force_end_turn exposure)",
+      "turn-duration cap independent of VAD-gated stop timeout",
+      "diagnostics for Update cadence / received-message counter"
+    ],
+    "risks": [
+      "Fixing the retracted stale-stream hypothesis would add a watchdog that never triggers",
+      "Draft PR #5584 overlaps the same code paths and may already cover the real fix",
+      "Threshold changes alter turn-detection behavior for all Flux users"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Direct-service replay of the caller channel at eot_threshold=0.85/eot_timeout_ms=7000 vs 0.7/5000 to confirm EndOfTurn withholding with Updates flowing",
+      "End-to-end pipecat repro on stock voice-deepgram-flux.py with a received-message counter to distinguish 'no final transcript' from 'no inbound messages'"
+    ],
+    "unknowns": [
+      "Whether the production session actually withheld EndOfTurn (no per-event trace captured)",
+      "Whether PR #5584's force_end_turn is the maintainer-intended fix for this behavior",
+      "Whether the intended resolution is a threshold/config change rather than a code change"
+    ],
+    "why": "The issue's original root cause (Flux stream silently stops sending events) was retracted by the reporter's own direct-service replays: Updates continued while EndOfTurn was withheld, so a stale-stream watchdog would never fire. The remaining plausible cause is threshold-dependent EndOfTurn withholding, which is a different mechanism than the issue title claims, and the reporter's own event sequence for the production call remains unverified."
+  },
   "9373b2b595b19570c31f86d389a812cac46c9f858e6905f074cc7292fe86509b": {
     "confidence": 0.8,
     "contradictions": [],
@@ -67316,6 +67569,37 @@
     ],
     "why": "Issue documents a concrete API asymmetry: BaseSessionService.delete_session removes sessions, but BaseMemoryService exposes no removal method, so content copied by add_session_to_memory() survives session deletion and is still returned by search_memory(). A deterministic minimal reproduction with a negative control is supplied, and code anchors (base_memory_service.py, in_memory_memory_service.py, base_session_service.py) are identified. No duplicate or merged fix covers this; the two open PRs only share the 'delete_session' keyword and do not touch the memory removal path."
   },
+  "a032de34890a1b386648d3b72b844d34e2a92ce3b0b6d0046241159e0b73848a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "test/test_mcp_gateway_daemon_lifecycle.py: widen exit budget or add test-only owner-liveness interval knob",
+      "possibly daemon owner-liveness sweeper config surface for test injection"
+    ],
+    "risks": [
+      "Widening the timeout alone masks the mechanism rather than asserting it",
+      "Adding a test-only env/argv knob touches production daemon config surface and needs maintainer design sign-off",
+      "Assignment is required by repo policy, so an unassigned PR may be rejected regardless of technical merit"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce by running test_a_real_daemon_exits_when_its_owner_dies under artificial CPU/IO load or with a shortened liveness interval to force the 60s budget to elapse",
+      "Regression: run the test repeatedly (e.g. 20x) on an unloaded and loaded shard to confirm no TimeoutError and that the daemon-exit assertion is actually reached"
+    ],
+    "unknowns": [
+      "Which of the three remedy options the maintainer prefers",
+      "Whether the repo requires assignment before PR submission (policy status needs_assignment)"
+    ],
+    "why": "Issue documents a concrete flaky test with a specific mechanism: the 60s asyncio.wait_for(daemon.wait()) budget is too tight against the 30s owner-liveness detection floor (_OWNER_LIVENESS_INTERVAL_SECS=15.0 x _OWNER_LIVENESS_MISSES=2) plus graceful drain, producing TimeoutError rather than assertion failure under shard load. Collaborator diagnosis supplies code anchors and three concrete remedy options, giving an actionable fix path."
+  },
   "a051248059478eb307d576670dd9903a1476c45a428bcc08e028ef388953d723": {
     "confidence": 0.6,
     "contradictions": [
@@ -69343,6 +69627,40 @@
       "Whether the issue is reproducible on other Apple7 devices or only M1 Max"
     ],
     "why": "Issue identifies a reproducible, hardware-specific kernel defect in the wgpu-msl backend causing exponentially growing LoRA gradients on M1 Max. Root cause is narrowed to an autotune-selected kernel with a suspected data race, evidenced by nondeterministic behavior and Heisenbug. This is a concrete algorithm/kernel bug with a clear validation path via controlled experiments and numerical regression."
+  },
+  "a4bea200d50a69b2e2002cafc9bcf50adee03ea7625da4ddbda3629ba2b177bf": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue states the fix is contained in PR #56545, while the duplicate assessment classifies overlap as requiring review rather than confirmed coverage"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "cmake/external_projects/fmha_sm100.cmake MSA pin update from 087c161 to f355c37 (likely already covered by PR #56545)",
+      "vllm/third_party/fmha_sm100/cute/src/common/utils.py ex2_emulation_2 compatibility shim if the pin is not updated"
+    ],
+    "risks": [
+      "PR #56545 may already fully cover the root cause, making a new contribution redundant",
+      "The MSA pin is shared between Rubin and standard CUDA builds, so a pin bump could affect other SM100 paths",
+      "Repository AI disclosure policy conflict must be resolved before any public action"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "On SM100 with quack-kernels==0.6.5 and nvidia-cutlass-dsl==4.7.1, run the documented vllm serve command for nvidia/MiniMax-M3-NVFP4 and confirm engine initialization reaches readiness without the AttributeError",
+      "Add a regression test that asserts the vendored MSA revision contains the cute.arch.sub_packed_f32x2 fallback, or a build-time check that the pinned MSA commit matches the Quack version in requirements/cuda.txt"
+    ],
+    "unknowns": [
+      "Whether PR #56545's diff actually updates the MSA pin to f355c37 and covers the standard non-Rubin SM100 path",
+      "Whether the repository's ai_disclosure_conflict policy permits an automated contribution at all"
+    ],
+    "why": "The issue itself is technically strong: it identifies a concrete root cause (Quack 0.6.5 removed quack.activation.sub_packed_f32x2, while the vendored MSA revision 087c161 still calls it), gives a controlled A/B regression boundary, a minimal reproduction, and a known upstream fix (MSA #12, revision f355c37). However, the supplied evidence shows the fix is already proposed by open PR #56545, which updates fmha_sm100.cmake from 087c161 to the fixed MSA revision. The duplicate assessment explicitly says semantic_overlap_requires_review and forbids automatic duplicate task creation. Whether any code work remains actionable depends on comparing #56545's actual diff against the issue's root cause, which is a materially blocking unknown. Additionally, the repository policy status is ai_disclosure_conflict, which is a disclosure requirement that must be resolved before any public contribution."
   },
   "a505962edddb1d425d18f2e725cd4ad18015695a11bb312f62db24baed43c342": {
     "confidence": 0.6,
@@ -86238,6 +86556,43 @@
     ],
     "why": "Issue provides a concrete, reproducible bug with a minimal script, clear expected behavior, and specific failure modes across 8 parsers. The root cause is localized to streaming incremental parsing logic, making it actionable for a focused fix."
   },
+  "cdd47fc3e4b7b20767679b83dd668e21b90c8437110a4cbeeaa5e26bb8a7deb1": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims post_call logging is skipped due to pre/post_call ordering, but chrikrah's reproduction attributes the loss to CancelledError bypassing except Exception in litellm/utils.py and requires cancel_on_disconnect",
+      "Issue implies default-config reproduction; comment states not reproducible on default config"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/utils.py CancelledError handling around logging",
+      "litellm/proxy/common_request_processing.py cancel_on_disconnect branch",
+      "spend log emission for cancelled non-streaming Bedrock calls"
+    ],
+    "risks": [
+      "Root cause may be the CancelledError/BaseException path, not the pre/post_call ordering claimed in the issue",
+      "Existing open PRs (#40894, #41273, #41220) may already cover the fix",
+      "Behavior change around cancellation semantics could affect proxy error handling"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with general_settings.cancel_on_disconnect enabled, disconnect client mid non-streaming Bedrock call, assert a spend log row with input+output cost is emitted",
+      "Regression test that default config (flag off) still completes and bills normally",
+      "Compare against streaming shielded-cleanup path to confirm parity"
+    ],
+    "unknowns": [
+      "Whether any of the overlapping open PRs (#40894, #41273, #41220) already fixes this root cause",
+      "Whether the maintainers consider the cancel_on_disconnect-gated path the intended scope",
+      "Exact expected spend-log behavior for cancelled non-streaming requests"
+    ],
+    "why": "The issue describes a plausible spend-tracking gap, but the most recent substantive comment (chrikrah) materially narrows and partly contradicts the original root-cause narrative: the loss is not reproducible on default config and requires general_settings.cancel_on_disconnect, and the failure path is a CancelledError (BaseException) bypassing the except Exception in litellm/utils.py rather than the pre/post_call ordering described in the issue. The supplied duplicate assessment also flags three open PRs with semantic overlap (best #40894, score 34) that are not linked to this issue, so coverage is unresolved. These are materially blocking unknowns for deciding whether new code work is actionable."
+  },
   "cdf8a27f391af3d9e7c6e494f90b7adb705fc64885f15eefeb15ad7d7a94512a": {
     "confidence": 0.7,
     "contradictions": [],
@@ -90574,6 +90929,41 @@
     ],
     "why": "The issue reports a clear ModuleNotFoundError for 'agentscope.app._service._download_token' when running an example, indicating a missing module or import error in the agent service path. This is a user-visible bug with a concrete reproduction command, and no competing PR or issue exists. The fix is likely a small import or packaging correction, making it actionable."
   },
+  "d7780a24f74e8e60d8b96e9cd9b90047c9ce6ac1458936e86afa12cf6ba4927c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims plugin repository is mem0ai/mem0, but GitHub code search does not return on_file_read_cursor.sh, so the code surface may be absent from this repo"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "Cursor plugin hook invocation on Windows (avoid git-bash.exe/mintty interactive shell)",
+      "scripts/on_file_read_cursor.sh stdin handling and timeout behavior",
+      "hooks/cursor-hooks.json command/matcher configuration"
+    ],
+    "risks": [
+      "The plugin scripts may not live in this repository, making the fix non-actionable here",
+      "Changing hook invocation could break hook JSON stdin/stdout contract",
+      "Repository AI disclosure policy conflicts with automated public contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on Windows with Cursor plugin 0.2.13 enabled and a preToolUse Read hook, watching for mintty.exe/git-bash.exe processes",
+      "Verify hook runs headless with piped stdin and exits within the declared 5s timeout",
+      "Regression test that disabling the plugin or using a non-interactive bash invocation produces no mintty windows"
+    ],
+    "unknowns": [
+      "Whether the Cursor plugin source/scripts are actually in mem0ai/mem0 or a separate distribution",
+      "Confirmed root cause (TTY stdin preventing EOF) rather than inference",
+      "How the repository's AI disclosure requirement should be satisfied for this contribution"
+    ],
+    "why": "The issue describes a real Windows/Cursor plugin bug with a clear reproduction and a plausible mechanism (git-bash.exe/mintty launching an interactive login shell for a hook script), but the root cause is explicitly inferred and not instrumented, and the affected plugin scripts are not present in the repository (GitHub code search does not return on_file_read_cursor.sh). The candidate also carries an ai_disclosure_conflict policy status, which is a materially blocking repository/disclosure requirement for public contribution."
+  },
   "d7782a7af9fa02faaef68dbc3ec04a0b69a7c5255f744b039b3460a3e9b4f9ff": {
     "confidence": 0.85,
     "contradictions": [],
@@ -91775,6 +92165,36 @@
       "Whether #11761 or #11743 will land first and supersede this work"
     ],
     "why": "Issue provides a concrete dev-mode stack (useBoxMetrics -> emitLayoutListeners -> resetAfterCommit) and a deterministic unique-key regression test that still fails with #11743 applied and passes with the proposed fix, establishing a distinct commit/layout feedback path from the duplicate-key driver. Track is agent_ai_infra (UI rendering), not llm_algorithm, so the algorithm gate does not apply."
+  },
+  "d9a9853de96a9ddef7d017ad88fd6ee36fa4d3a6a859d53ef67391473add5459": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/litellm_core_utils/get_supported_openai_params.py: stop silently dropping reasoning_effort for non-reasoning models under drop_params, or raise UnsupportedParamsError",
+      "drop_params handling in the OpenAI/Azure chat translation path"
+    ],
+    "risks": [
+      "Changing drop_params semantics could affect other unsupported-param cases and break existing callers relying on silent dropping",
+      "Maintainers may prefer forwarding the param to the provider over raising UnsupportedParamsError, altering the chosen fix shape"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test asserting get_optional_params(model='gpt-4.1', custom_llm_provider='openai', reasoning_effort='low', drop_params=True) does not silently return without reasoning_effort",
+      "Repeat for azure provider and gpt-4o/gpt-4o-mini variants",
+      "Run targeted litellm unit tests for get_supported_openai_params and drop_params behavior"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer forwarding reasoning_effort to the provider versus raising UnsupportedParamsError under drop_params"
+    ],
+    "why": "Issue provides a concrete, reproducible defect: get_supported_openai_params omits reasoning_effort for gpt-4.1/gpt-4o, and drop_params silently strips it instead of surfacing the provider 400. Reproduction is executable via get_optional_params and a direct OpenAI curl, and the code anchor litellm/litellm_core_utils/get_supported_openai_params.py is identified. No duplicate or merged fix covers this path; the closest open PRs only share the reasoning_effort keyword with no code-path overlap."
   },
   "d9ae12b7e2b1a438c49aa1ac6032bded7dcf04a248260783b0ef9a27471257a4": {
     "confidence": 0.85,
