@@ -8281,6 +8281,44 @@
     ],
     "why": "Issue identifies two concrete, independently verified defects in ReLoRA callback: (A) _prune_and_reset never merges B@A into base weight before pruning, so the learned adapter contribution is discarded (base weight delta = 0, effective map MSE 142.12 vs control 8.77e-13); (B) strict threshold mask `abs(t) > threshold` wipes all entries on ties, zeroing both lora_A and lora_B and permanently killing the branch (grad norms 0.0). Maintainer confirmed both halves with real peft LoRA model runs and pinned commit. Root cause is code-anchored in src/soup_cli/utils/relora.py with a clear reference-vs-implementation test path."
   },
+  "172a7114d9c5fd436b47bd185fd0fd03a42a9ec0ec38fdf4bcfe7c7886dbdfc6": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports PR #10130 as technically_complete=true with tests, but root_cause_coverage=false and no direct code overlap, leaving coverage of this specific root cause uncertain"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "swift/sequence_parallel/sequence_parallel.py: ChunkedCrossEntropyLoss.backward must return a separate gradient tensor and preserve saved logits",
+      "swift/sequence_parallel/utils.py or equivalent export path if the class lives there",
+      "Add gradient/reference tests comparing against torch.nn.functional.cross_entropy"
+    ],
+    "risks": [
+      "Open PR #10130 already targets the same fix; implementation may overlap and duplicate effort",
+      "Distinguishing true autograd semantics error from floating-point/random variation in tests",
+      "Memory overhead of an extra logits-sized gradient buffer in large-vocab training"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce the minimal example on the pinned commit: logits=torch.randn(7,11,requires_grad=True), labels=torch.arange(7), ChunkedCrossEntropyLoss.apply(logits, labels, 3).mean().backward(); assert no RuntimeError and logits unchanged",
+      "Nonleaf case: logits=raw.tanh(); backward must not raise version-counter error and raw.grad must match reference cross_entropy gradient within tolerance",
+      "Auxiliary-loss case: linear head plus logits.square().mean() must backprop correctly",
+      "Numerical regression: compare ChunkedCrossEntropyLoss gradients against torch.nn.functional.cross_entropy with fixed seed and tolerance",
+      "Memory check: verify the additional logits-sized gradient buffer cost is acceptable"
+    ],
+    "unknowns": [
+      "Whether PR #10130 already fully fixes the backward mutation and includes equivalent regression tests",
+      "Whether maintainers consider the issue already covered by the open PR"
+    ],
+    "why": "Issue provides a concrete, reproducible autograd bug in ChunkedCrossEntropyLoss.backward: it writes gradient chunks into the saved input logits and returns that mutated input as the gradient, breaking leaf/nonleaf autograd and version counters. Minimal reproduction, code anchors, and expected behavior are supplied; this is a real numerical/autograd mechanism in an LLM training path (sequence parallel per-token loss), not plumbing."
+  },
   "172ae6ab92a0de63cf5a2c3175786e60bb99e5edf95efdf022e114ebe52394a0": {
     "confidence": 0.85,
     "contradictions": [],
@@ -10890,6 +10928,36 @@
       "Whether GGUF support should be implemented or the documented example simply corrected"
     ],
     "why": "Issue pinpoints two concrete defects with file/line anchors: silent stub fallback in commands/eval.py:1351-1359 (stub_generator returns constants, both sides score 0.000, classify_delta returns OK) and missing exit-code propagation from verdict. Reproduction is explicit (empty dirs + tasks.jsonl yields OK/exit 0; patched generators yield MAJOR/exit 0), and acceptance criteria define failing tests on current code. Track is agent_ai_infra, not llm_algorithm, so algorithm-evidence requirement does not apply."
+  },
+  "1d34a1ef0e40af2414e78ce7cb1affce191e7267bf8d616917480e094111d1ad": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims a clear root cause, but open PR assessment reports rootCauseCoverage=false and duplicate status human_review_required"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/kernels/ops/moe/ep_moe_kernels.py: pass expert_start and num_experts to _fwd_kernel_ep_scatter_2 in ep_scatter_from_psum"
+    ],
+    "risks": [
+      "The fix may already be covered by open PR #39399, making a new contribution duplicative",
+      "The issue is a call-site argument-binding bug rather than an algorithmic/numerical defect, so it may not qualify under the llm_algorithm track"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the deepep_v2 prefill/extend path with a small EP configuration and confirm the TypeError no longer occurs",
+      "Add a regression test that exercises ep_scatter_from_psum argument binding against the kernel signature"
+    ],
+    "unknowns": [
+      "Whether PR #39399 or #37211 already resolves the issue and should be merged instead of new work",
+      "Whether this call-site plumbing bug qualifies for the llm_algorithm track rather than ordinary API plumbing"
+    ],
+    "why": "The issue describes a concrete TypeError from a missing-argument call site in ep_scatter_from_psum, but the supplied evidence shows an open PR (#39399) that directly covers the same code path and issue, plus a second overlapping PR (#37211) with a test. Duplicate/coverage status is explicitly 'human_review_required', which is a materially blocking unknown for whether independent code work is actionable."
   },
   "1d54e8fb93c8e0bc200ebbda605b51126fdffd0a2268ace466d4e7b2a23e650b": {
     "confidence": 0.8,
@@ -24884,6 +24952,36 @@
       "Whether PR #35936 already fully fixes the issue; requires manual comparison"
     ],
     "why": "Issue provides a clear root cause (regression from revert #34160), a concrete reproduction with commands, and a verified minimal fix. The proposed changes are actionable and align with the codebase. Existing PR #35936 overlaps semantically but is not directly linked; manual comparison is needed but does not block actionability."
+  },
+  "42f46853ce2e10cc8b72ebc61fc7ac149da191f96fbc2568e2e6b05add4ecfa0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims the recap language is uncontrollable, but triage shows general.outputLanguage already reaches this side query; only the default `auto` case remains broken"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/services/sessionRecap.ts — restore a bullet in RECAP_SYSTEM_PROMPT directing the recap to use the language of the recent user messages in the side-query window"
+    ],
+    "risks": [
+      "Prompt-only change may be unreliable for short or mixed-language windows",
+      "Must not regress the existing general.outputLanguage override behavior",
+      "Maintainer may prefer a dedicated setting over a prompt bullet"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test asserting the recap system prompt contains the conversation-language instruction",
+      "Run the sessionRecap / sideQuery unit tests and confirm the output-language preference path still appends correctly",
+      "Manually reproduce: Russian conversation, step away past the away threshold, verify the recap renders in Russian under default `auto`"
+    ],
+    "unknowns": [],
+    "why": "Triage evidence confirms the shipped RECAP_SYSTEM_PROMPT lacks the language-matching bullet that the design doc claims corresponds 1:1, and the default `auto` path injects only a soft hint against an English prompt/example, so English output is the expected result. The remaining gap is a concrete, minimal prompt change in packages/core/src/services/sessionRecap.ts, with a clear reference-vs-implementation validation path."
   },
   "42f5e95cc7c0d3e96af01d1116e837abd0febba8f8b9cf1a4d51a34c751bb86e": {
     "confidence": 0.85,
@@ -50179,6 +50277,40 @@
     ],
     "why": "Issue reports intermittent multi-turn degeneration on GLM-5.3-Flash, but the reporter explicitly could not reproduce synthetically; the only concrete repro is a curl that the reporter says triggers only after repeated runs, and the maintainer (JaredforReal) states they could not reproduce the garbage output. Root cause is unresolved and split between parser bleed, weights/training, and DP+EP configuration. Open PR #56635 is a parser fix for a separate issue per the maintainer, so coverage is not established. The ai_disclosure_conflict policy status is an unresolved submission blocker."
   },
+  "7f162bf7dc965022c81d403b342f347a7d8ece6684a5ba243285ef071407bcd7": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment reports status 'none' with keywordOverlapOnly, yet two open PRs explicitly target stale encrypted reasoning recovery"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "session reasoning/encrypted_content lifecycle handling",
+      "provider request construction for replayed reasoning items"
+    ],
+    "risks": [
+      "Fix may already be covered by open PRs #48908/#48918, making new work duplicative",
+      "Root cause may be provider-side rather than in-repo, making code changes ineffective"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with Muse Spark 1.3 Free: send a chat and capture the exact request payload containing encrypted_content",
+      "Add a regression test asserting stale/foreign encrypted_content is dropped or refreshed before provider submission"
+    ],
+    "unknowns": [
+      "Whether the error originates in opencode's reasoning replay logic or in the upstream provider",
+      "Whether #48805/#48915/#48947/#48319 already cover this exact scenario",
+      "Whether PRs #48908/#48918 already resolve this issue"
+    ],
+    "why": "Issue reports a provider-side invalid_request_error for reasoning `encrypted_content` on Muse Spark 1.3, but supplies no root-cause evidence, no code anchors beyond the error string, and no reproduction beyond a UI screenshot. The bot comment lists four closely related open issues (#48805, #48915, #48947, #48319) covering the same encrypted_content error across model-switch, idle-resume, image/tool-call, and stale-reasoning-replay scenarios, so duplicate/coverage status is unresolved. Two open PRs (#48908, #48918) already target stale encrypted reasoning recovery, but the assessment marks them keyword-overlap-only with no direct code overlap, leaving whether the fix is already covered materially unknown."
+  },
   "7f30220f40e9b114741477edd63a3b1ff0dd062173703670e00220da32b7a2d5": {
     "confidence": 0.85,
     "contradictions": [],
@@ -52129,6 +52261,42 @@
       "Exact instruction text and trial logs not provided; maintainer interest in implementing such a validation is unknown."
     ],
     "why": "Issue describes a probabilistic agent behavior where the model fabricates success without tool calls, but the root cause is upstream LLM behavior, not a clear code defect. The suggested fix (detect terminal answer with zero tool calls) is a feature/improvement requiring design confirmation. Existing PR #40000 overlaps in code path but targets a different issue (retaining tool call inputs/results), so it is not a direct competitor. The deterministic gate is HUMAN_REVIEW, and the issue lacks maintainer approval or design confirmation."
+  },
+  "84f0b2d6fa1f3b6876eec7ad7df5bcd489d9c8038d08acdba6d28a2a752d343e": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims root cause is missing response_format assignment, but open PR #13707 already modifies the same omni_handler.py/output_formatter.py paths with base64 semantic overlap"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "components/src/dynamo/vllm/omni/omni_handler.py: propagate req.response_format into EngineInputs for video generation",
+      "components/src/dynamo/vllm/omni/output_formatter.py: honor b64_json vs url delivery",
+      "runtime image build: FFmpeg/swscale MMXEXT guard or build config (out of repo scope)"
+    ],
+    "risks": [
+      "PR #13707 may already cover the same base64/response_format path, making a new fix duplicative",
+      "FFmpeg color defect cannot be fixed in this repository's source and may be out of scope",
+      "Changing response_format handling could alter existing URL delivery behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting response_format=b64_json yields nonempty data[0].b64_json for /v1/videos",
+      "Add a model-free RGB-quadrant encode/decode round-trip test asserting pixel correctness",
+      "Verify URL delivery still works when external media storage is configured"
+    ],
+    "unknowns": [
+      "Whether PR #13707 already implements the response_format=b64_json propagation fix",
+      "Whether the FFmpeg color defect is in scope for this repository or must be fixed in the runtime image build",
+      "Whether maintainers consider the two defects one issue or separate workstreams"
+    ],
+    "why": "Issue reports two defects: (A) missing response_format propagation in omni_handler.py with a concrete one-line fix and code anchor, and (B) an FFmpeg/swscale MMXEXT color corruption that is a bundled-binary/build-configuration defect, not a Dynamo source bug. Defect A is actionable, but open PR #13707 touches the same omni_handler.py/output_formatter.py paths with semantic overlap on 'base64' and is unmerged, so duplicate/coverage status is unresolved. Defect B's fix lives in FFmpeg packaging, outside this repo's code, and the issue itself only offers a diagnostic workaround."
   },
   "850747316d85ce1a929cd5658b1ed9754e659c56c04dbcd1369a7a29ead45584": {
     "confidence": 0.55,
@@ -57378,6 +57546,37 @@
       "Whether maintainers have already planned a fix or prefer a different approach"
     ],
     "why": "The issue provides a clear root cause: the managed Zoom OAuth app lacks webinar write scopes, the toolkit lacks webinar creation tools, and search/workbench mislead users into an unfixable OAuth loop. The reproduction steps and minimal example are concrete, and the requested fixes are actionable code changes in the Composio platform."
+  },
+  "92164996bb48588b4f1bd9163ffcefac3ba56f1b945ec9b941450b883dc22e48": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue frames the behavior as a bug, but the quoted docs and the comment describe it as intended behavior"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/util/config/load.ts provider filtering/validation ordering",
+      "src/util/validateTestProviderReferences.ts reference validation semantics"
+    ],
+    "risks": [
+      "Changing documented validation behavior may be rejected by maintainers",
+      "Silently dropping excluded provider refs could mask genuine typos"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add validator tests for: ref matching filtered set, ref matching configured-but-excluded provider, ref matching nothing (typo), and test left with zero providers after exclusion"
+    ],
+    "unknowns": [
+      "Whether maintainers want to change the documented validation semantics",
+      "Which fix shape maintainers prefer"
+    ],
+    "why": "The comment establishes a clear root cause (filterProviderConfigs narrows providers before validateTestProviderReferences runs), but the same comment states the documented behavior is intentional and that changing it is a maintainer behavior decision, not a plain bug fix. The proposed fix shape is only a proposal awaiting maintainer direction, so whether code work is actionable is materially undetermined."
   },
   "921a6380afc3bae40c37140522884be5cb52b9d58878963f3495520793a7e38b": {
     "confidence": 0.85,
@@ -66500,6 +66699,47 @@
     ],
     "why": "Issue clearly describes a bug with root cause and reproduction, but the deterministic gate requires HUMAN_REVIEW and an existing PR (#25387) directly targets the same fix but is closed with missing tests and CI failures, requiring maintainer assessment."
   },
+  "ab04bc90ecb68a531ba0d5b8b9e235c2a4a53d1b5cc0cee8d582386b05b87cdf": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims a vLLM commit-range regression while also listing FlashInfer and transformers version bumps as equally plausible causes",
+      "Comment evidence describes two separate failure modes (parser content mixing vs. random garble) with different suspected causes",
+      "PR #56635 is cited as a fix in comments but its author and a maintainer state it targets a separate issue and the garble was not reproduced"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/parser/engine/parser_engine.py (glm47 tool_choice / reasoning-boundary handling) — only if parser bleed is confirmed as the cause",
+      "No confirmed algorithm-path change (attention/kernel/quantization) is supported by the evidence"
+    ],
+    "risks": [
+      "Symptom may be a model weights/training artifact rather than a vLLM defect, making any code change non-actionable",
+      "Confounding version delta (FlashInfer, transformers) means a vLLM-side fix could be misattributed",
+      "Parser-only fix would not address the reported long-session degeneration if the true cause is numerical/attention-related"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Bisect the vLLM commit range g487ecf187..g385dce36b with FlashInfer and transformers pinned to the GOOD versions to isolate the regressing component",
+      "Run the reporter's curl repro (agentic system prompt + tools, tool_choice auto) repeatedly on GOOD vs BAD builds and diff token-level outputs",
+      "If parser bleed is implicated, add a parser unit test asserting reasoning-end/tool-call boundary tokens are not emitted into content"
+    ],
+    "unknowns": [
+      "Which component in the version delta actually causes the degeneration",
+      "Whether a deterministic reproduction exists at all (reporter could not construct one)",
+      "Whether the parser tool_choice/reasoning-boundary defect is the same defect as the reported word salad",
+      "Whether the repository's AI-disclosure policy permits the intended contribution workflow"
+    ],
+    "why": "The issue itself admits no synthetic reproduction was possible and the reporter attributes the symptom to a build A/B delta spanning vLLM commits, FlashInfer 0.6.17→0.6.18, and transformers 5.15.1→5.16.1. Comment evidence splits the symptom into two distinct causes (parser tool-call/reasoning bleed vs. suspected weights/training garble) and a maintainer states they could not reproduce the garbage output. The only concrete code anchor (parser_engine.py adjust_request / glm47 tool_choice handling) is a parser plumbing path, not an LLM algorithm mechanism, and the linked PR #56635 is explicitly described by its author as targeting a separate issue. Root cause is therefore unresolved and the actionable code work is not determined."
+  },
   "ab0bf28e0161db4a3d49b13b24de2928e248fad17f7846875831e2c5d20cc278": {
     "confidence": 0.8,
     "contradictions": [],
@@ -75054,6 +75294,42 @@
     ],
     "why": "Issue reports a concrete local-embedding failure with a plausible module-identity root cause and a candidate fix, but the only recent comment claims the problem is resolved by upgrading Bun to 1.4.2, which contradicts the proposed code fix and leaves the actual root cause unresolved."
   },
+  "c164da5b5e8c756af2b897a9cdf1200b2b656d6befe34e66491e84bb4c6c066a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims deterministic failure on relocatable CPython, but maintainer control pod on current main reproduced success twice including cold UV_CACHE_DIR",
+      "Issue proposes appending to inherited LD_LIBRARY_PATH while maintainer notes that re-imports the injection vector"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/apps/builtins/pptx_maker/backend/provision.py::_run (and engine.py::_spawn) — either a guarded loader-path injection or a build-isolation change, pending security ruling",
+      "engine_source.install_engine staged-validate path — misleading 'keeping the existing one' message on first install"
+    ],
+    "risks": [
+      "Re-admitting LD_LIBRARY_PATH into mode=strict spawn narrows a trust boundary the repo deliberately enforces in name_grant.py, update_provider.py, cron_script.py, and mcp_discovery.py",
+      "Appending to an inherited LD_LIBRARY_PATH would re-import the injection vector the scrub exists to remove",
+      "Fix may be unnecessary if the real trigger is packaging-specific and better solved by avoiding build isolation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on the affected packaged install: capture readelf -d and ldd plus physical path of the isolated PEP 517 build interpreter and diff against a source-worktree venv",
+      "Regression: run POST /api/apps/pptx-maker/engine/provision on a relocatable CPython 3.12 with cold UV_CACHE_DIR and confirm engine ready at v0.3.8",
+      "No-op check: verify fix is inert on statically linked libpython (macOS framework) and pip/venv/DMG installs"
+    ],
+    "unknowns": [
+      "Whether the failure reproduces on the reported packaged install and what packaging-specific relocation shape triggers it",
+      "Maintainer security ruling on whether any guarded LD_LIBRARY_PATH injection is acceptable in the strict spawn",
+      "Whether the build-isolation-avoidance alternative works and is preferred"
+    ],
+    "why": "The issue gives a plausible root cause (scrubbed env lacks LD_LIBRARY_PATH for uv's relocated PEP 517 build interpreter) and a concrete repro, but a maintainer-run control pod on current main could not reproduce the failure, so the trigger is narrower than stated and the fix's applicability is unverified. More importantly, the proposed remedy re-admits LD_LIBRARY_PATH into the strictest sandboxed spawn, which four modules in this repo explicitly classify as a code-injection vector; the maintainer states this requires an explicit security ruling, not a mechanical patch. The alternative (avoid build isolation / pin a prebuilt wheel) is unevaluated. These are materially blocking unknowns for actionable code work."
+  },
   "c173fe0cae61d4de0de62a65b5ab3f89a0cc9e9c97dabb5680b9b1625e032d6f": {
     "confidence": 0.72,
     "contradictions": [
@@ -75399,6 +75675,44 @@
       "Whether the first relora_steps interval after initialization actually hits the all-zero lora_B tie in practice"
     ],
     "why": "Issue identifies two concrete, code-anchored defects in src/soup_cli/utils/relora.py: (A) _prune_and_reset never merges B@A into the frozen base before pruning, so the effective linear map changes (MSE 142.12 vs control 8.77e-13, base weight delta 0); (B) strict '>' thresholding in magnitude_prune_tensor can zero both lora_A and lora_B under ties, yielding zero gradients and a dead branch. Owner confirmed both halves with a real peft LoRA model and a kernel-level repro. This is a genuine algorithm-conformance and numerical-correctness problem with a clear reference-vs-implementation validation path."
+  },
+  "c200d20c934e655bb548b2c575a8857b1acf4946f1ecb1672e4574f10d900db0": {
+    "confidence": 0.35,
+    "contradictions": [
+      "Maintainer states #56512 should only affect DeepSeek-V4.1f, contradicting the issue's attribution of the Qwen4Exp PLE CPU-offload regression to that PR",
+      "Issue claims a clear regression range (eed1f3d0 → dc36fcce) but the isolated 7-run repro and sweep-prefix replay are clean, so the causal mechanism is unconfirmed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/core/kv_cache_utils.py",
+      "Engram async prefetch stream synchronization path"
+    ],
+    "risks": [
+      "Failure is intermittent and only reproduces in a full ~14-minute sweep, making bisection and CI regression coverage difficult",
+      "The maintainer comment indicates #56512 only affects DeepSeek-V4.1f, so the suspected cause may be wrong",
+      "Reproduction depends on a nonstandard checkpoint and a local kv_cache_utils.py overlay, reducing reproducibility",
+      "Shared failure signatures with unrelated issues (#56605, #56949, #56945, #52262) suggest the overlap match may be spurious"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the full llama-benchy sweep on the bad build vs eed1f3d0 with fixed seed and identical config, confirming the ctx_tg @ d32768 (c1) collapse",
+      "Run the same sweep with #56512 reverted to isolate whether the prefetch side-stream is causal",
+      "Add a regression test that exercises context-load decode after a 32k prefix with CPU-offloaded PLE under sustained multi-depth sweeps"
+    ],
+    "unknowns": [
+      "Whether reverting #56512 actually eliminates the collapse",
+      "Whether the collapse is caused by the prefetch side-stream, the local kv_cache_utils.py overlay, or unrelated host/engine state",
+      "Whether the duplicate/overlap issues share a genuine root cause or only generic stack signatures"
+    ],
+    "why": "The issue reports an intermittent decode-throughput collapse attributed to the Engram async prefetch change (#56512), but the only supplied maintainer comment states that PR should only affect DeepSeek-V4.1f, directly contradicting the claimed causal link to a Qwen4Exp PLE CPU-offload stack. The reproduction also requires a private/nonstandard checkpoint, a local overlay patch, and a full ~14-minute sweep to trigger, and the failure is not reproducible in isolation. The root cause is not established, and the duplicate/overlap assessment flags shared failure signatures with unrelated issues."
   },
   "c2028bed594cd06ce5a718f4b880bb684fd38d5a41ce730cd75722238163e64c": {
     "confidence": 0.85,
@@ -78050,6 +78364,43 @@
       "Whether maintainers prefer splitting the helper versus adding a skip flag for SFT's post-load call."
     ],
     "why": "Issue identifies a concrete wiring defect: training.nvfp4, fp8_attention, and kernel_auto_compose are only applied via apply_v028_speed_memory in src/soup_cli/utils/v028_features.py, which trainer/sft.py never calls, so the default task silently ignores these flags. It supplies grep evidence, exact code anchors (sft.py:1312, sft.py:1551-1569, v028_features.py:89/101/112, schema.py:4282/5716, test_trainer_coverage_v035.py:358-365), a reproduction script with observed ACCEPT/REJECT output, and four concrete acceptance criteria including a call-recording test that fails on current code. This is a verifiable quantization/numerics wiring defect with a reference-vs-implementation validation path, not mere CLI plumbing."
+  },
+  "c83bf9da8bbdb5033d6179374e3eed954c5f24b052eb28c788cb226c3bf45756": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims no nearby report covers the client-sent Accept, but open PR #3129 and #3338 overlap the same GET/SSE code path",
+      "actionability_evidence.root_cause_signal is false while the issue body presents a specific root cause"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "src/mcp/client/streamable_http.py: stop reusing POST-oriented Accept/Content-Type headers for standalone GET, resumption GET, reconnection GET, and bodyless DELETE",
+      "src/mcp/client/streamable_http.py: surface or log the swallowed SSEError in handle_get_stream instead of silently returning"
+    ],
+    "risks": [
+      "PR #3129 may already cover the same GET/SSE root cause, making this a duplicate",
+      "PR #3338 touches the same client SSE reader path and may conflict",
+      "Changing advertised Accept could alter server-side negotiation behavior beyond the reported bug",
+      "AI disclosure policy conflict may block any public contribution regardless of technical merit"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's wrapper server returning application/json on GET and assert the client no longer advertises application/json on SSE GETs",
+      "Add a regression test asserting bodyless GET/DELETE carry no Content-Type",
+      "Add a test that a non-text/event-stream GET response produces a visible error rather than a silent DEBUG-only drop"
+    ],
+    "unknowns": [
+      "Whether PR #3129 or #3338 already fixes the client-side Accept/Content-Type defect",
+      "Whether the repository's AI disclosure policy permits this contribution at all",
+      "Whether maintainers consider the non-compliant-server scenario in scope"
+    ],
+    "why": "Issue describes a concrete header/SSE mismatch with a runnable repro, but the supplied evidence leaves two materially blocking facts unresolved: (1) duplicate coverage is explicitly 'semantic_overlap_requires_review' with PR #3129 touching the same GET/SSE path and PR #3338 touching src/mcp/client/sse.py, and (2) the repository policy status is 'ai_disclosure_conflict', which the evidence itself flags as a hard blocker for automated public action. The issue also concedes the repro server is deliberately non-compliant, so the actionable defect boundary (client offering an unreadable representation vs. silent channel loss) is not yet pinned to a single root cause."
   },
   "c88577243fe2d90b662fa589f31b0f88f870ad880e4736d30d8401b59e0e5b11": {
     "confidence": 0.8,
@@ -96114,6 +96465,42 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports accuracy degradation on Hygon DCU, suspects pow operator, but lacks root cause evidence, minimal reproducer, and maintainer confirmation. No open PRs or related issues found. Actionability is limited without concrete numerical comparison or code-level diagnosis."
+  },
+  "f237a538da67f3775a856b5f8e542090bb469cc588d14467d0d1314d1596e9ef": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue reports supports_reasoning=true and supports_native_streaming=true for the model, yet streaming yields zero reasoning chunks and zero reasoning_tokens, while non-streaming returns 150-373 chars of reasoning_content"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/alibabacloud (or dashscope-compatible) streaming transformation",
+      "streaming chunk normalization mapping upstream reasoning field to delta.reasoning_content",
+      "usage/reasoning_tokens propagation in streaming final chunk"
+    ],
+    "risks": [
+      "Fixing the wrong layer (LiteLLM normalizer vs upstream adapter) if the provider never emits reasoning in streaming mode",
+      "Provider-specific field naming may differ from the assumed reasoning_content, causing an incorrect mapping",
+      "Behavior change could affect other alibabacloud/dashscope models sharing the adapter"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Capture raw upstream SSE from the alibabacloud endpoint for the same prompt to determine whether reasoning is emitted upstream",
+      "Add a regression test feeding a captured upstream SSE stream through the adapter and asserting delta.reasoning_content and reasoning_tokens are populated",
+      "A/B test stream=true vs stream=false against the same deployment to confirm parity after fix"
+    ],
+    "unknowns": [
+      "Whether the upstream alibabacloud/dashscope SSE stream actually contains a reasoning field at all",
+      "Which upstream field name/shape carries reasoning in streaming mode",
+      "Whether the zero reasoning_tokens is generated by LiteLLM or reported by upstream",
+      "Whether an explicit thinking-mode flag is required for streaming on this provider"
+    ],
+    "why": "Issue documents a clear streaming/non-streaming discrepancy for reasoning_content on alibabacloud deepseek-v4.1-flash, but the root cause is explicitly unresolved: the reporter states the direct upstream provider response was never tested, so it is unknown whether the loss occurs in the upstream adapter or in LiteLLM's stream normalization. The issue itself is framed as questions for maintainers rather than a diagnosed defect, and the candidate evidence records root_cause_signal=false with no code paths plan. Without knowing which layer drops the field, the concrete code change is not determinable."
   },
   "f23a337c6a34ad61e049a45e444763405875ed45682f052c20a02a4eff68ae7e": {
     "confidence": 0.6,
