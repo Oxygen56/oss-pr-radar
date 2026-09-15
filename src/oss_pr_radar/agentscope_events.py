@@ -1396,13 +1396,16 @@ class EventLane:
         with self.writer() as db:
             rows = db.execute(
                 "SELECT * FROM event_lane_events WHERE attempts<? AND "
-                "(status='pending' OR (status='leased' AND lease_until<=?)) "
+                "(status='pending' OR (status='leased' AND lease_until<=?)) AND "
+                "(json_extract(payload_json,'$.retryNotBefore') IS NULL OR "
+                "CAST(json_extract(payload_json,'$.retryNotBefore') AS REAL)<=?) "
                 "ORDER BY CASE "
                 "WHEN json_extract(payload_json,'$.kind')='outcome_reconcile' THEN ? "
                 "WHEN priority<=10 AND ?-created_at>=? THEN ? "
                 "ELSE priority END DESC, created_at ASC LIMIT ?",
                 (
                     self.max_attempts,
+                    current,
                     current,
                     RECOVERY_PRIORITY,
                     current,

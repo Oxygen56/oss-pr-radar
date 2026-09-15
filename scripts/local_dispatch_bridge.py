@@ -5679,10 +5679,13 @@ def _agentscope_event_worker(args: argparse.Namespace) -> dict[str, Any]:
                 outcome_path, allowed_dir=allowed_outcome_dir,
                 event_id=event_id, public_key=event_key,
             )
+            terminal_receipt = current | {"turnStatus": terminal["status"], "outcome": outcome,
+                                         "outcomePath": str(outcome_path)}
+            if terminal.get("error") is not None:
+                terminal_receipt["terminalError"] = terminal["error"]
             _atomic_json(
                 Path(args.receipt),
-                current | {"turnStatus": terminal["status"], "outcome": outcome,
-                           "outcomePath": str(outcome_path)},
+                terminal_receipt,
             )
         return read_json(Path(args.receipt), missing={})
     except Exception as exc:

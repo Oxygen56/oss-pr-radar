@@ -55,6 +55,7 @@ EVENT_RECEIPT_DIR = "agentscope_event_receipts"
 EVENT_OUTCOME_DIR = "agentscope_event_outcomes"
 EXHAUSTED_EVIDENCE_RECHECK_SECONDS = 15 * 60
 EXTERNAL_CLAIM_WATCH_SECONDS = 24 * 60 * 60
+TRANSIENT_MODEL_RETRY_DELAY_SECONDS = 5 * 60
 _CONDITIONAL_EXTERNAL_CLAIM_RE = re.compile(
     r"(?:"
     r"\b(?:if|unless)\b.{0,160}\b(?:i(?:['’]?d|['’]?ll| am| will| would)|we)\b"
@@ -83,6 +84,23 @@ _OPERATIONAL_AUTHORIZATION_GAP_ERRORS = frozenset(
 _WORKER_BINDING_AUTH_ERROR = (
     "operational authorization required: operational authorization worker binding is invalid"
 )
+
+
+def _transient_model_error(value: object) -> bool:
+    """Allow only known, retryable Codex model-capacity/config errors."""
+    if isinstance(value, dict):
+        try:
+            text = json.dumps(value, sort_keys=True)
+        except (TypeError, ValueError):
+            text = str(value)
+    else:
+        text = str(value or "")
+    folded = text.casefold()
+    return (
+        "selected model is at capacity" in folded
+        or "model is at capacity" in folded
+        or "model is not supported when using codex with a chatgpt account" in folded
+    )
 
 
 def _is_operational_authorization_gap(value: object) -> bool:
@@ -961,6 +979,7 @@ def _retry_or_exhaust_outcome_recovery(
     event_id: str,
     root_event_id: str,
     outcome: dict,
+    transient_error: object = None,
 ) -> str:
     """Reuse one recovery row until its existing EventLane budget is spent."""
     now = datetime.now(UTC).timestamp()
@@ -990,6 +1009,47 @@ def _retry_or_exhaust_outcome_recovery(
             payload["rootEventId"] = str(root_event_id)
         event["payload"] = payload
         attempts = int(row["attempts"] or 0)
+        if _transient_model_error(transient_error):
+            retry_at = now + TRANSIENT_MODEL_RETRY_DELAY_SECONDS
+            event["transientModelRetry"] = {
+                "schemaVersion": "oss_pr_radar_transient_model_retry_v1",
+                "retryAt": datetime.fromtimestamp(retry_at, UTC).isoformat().replace("+00:00", "Z"),
+                "error": str(transient_error)[:500],
+            }
+            event.pop("terminalReason", None)
+            event.pop("recoveryExhausted", None)
+            event.pop("recoveryAttempts", None)
+            event["retryNotBefore"] = retry_at
+            db.execute(
+                "UPDATE event_lane_events SET status='pending',attempts=0,payload_json=?,"
+                "delivered_at=NULL,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+                "WHERE event_id=?",
+                (json.dumps(event, sort_keys=True), str(event_id)),
+            )
+            turn = db.execute(
+                "SELECT event_key,turn_id,receipt_json FROM event_lane_turns WHERE event_id=?",
+                (str(event_id),),
+            ).fetchone()
+            if turn is not None:
+                try:
+                    receipt = json.loads(turn["receipt_json"] or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    receipt = {}
+                receipt["terminalError"] = transient_error
+                receipt["transientModelRetry"] = True
+                receipt["retryNotBefore"] = retry_at
+                receipt_json = json.dumps(receipt, sort_keys=True)
+                db.execute(
+                    "UPDATE event_lane_turns SET status='needs_reconcile',receipt_json=? "
+                    "WHERE event_id=?",
+                    (receipt_json, str(event_id)),
+                )
+                db.execute(
+                    "UPDATE event_lane_threads SET status='needs_reconcile',receipt_json=? "
+                    "WHERE event_key=? AND turn_id=?",
+                    (receipt_json, str(turn["event_key"]), str(turn["turn_id"] or "")),
+                )
+            return "transient_retry"
         if attempts < lane.max_attempts:
             event.pop("terminalReason", None)
             event.pop("recoveryExhausted", None)
@@ -1375,6 +1435,8 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
         terminal = str(value.get("turnStatus") or "")
         if terminal not in {"completed", "failed", "interrupted"}:
             continue
+        if value.get("terminalError") is None and value.get("error") is not None:
+            value["terminalError"] = value.get("error")
         lane.bind_handler_turn(
             str(row["event_key"]),
             str(row["event_id"]),
@@ -1408,6 +1470,7 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
                     event_id=str(row["event_id"]),
                     root_event_id=root_event_id,
                     outcome=outcome,
+                    transient_error=value.get("terminalError"),
                 )
             else:
                 recovery = {
@@ -1424,6 +1487,8 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
                         "reason": "invalid_or_missing_outcome",
                     },
                 }
+                if value.get("terminalError") is not None:
+                    recovery["terminalError"] = value["terminalError"]
                 if not lane.append(recovery, priority=250):
                     _revive_superseded_auth_gap_recovery(lane, recovery)
         elif outcome_state == "design_wait":
