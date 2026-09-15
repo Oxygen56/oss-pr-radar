@@ -1322,6 +1322,14 @@ def issue_handler_delivery(
                 lease_token=str(event.get("leaseToken") or ""),
             )
             raise
+        if _transient_model_error(exc):
+            if lane.defer_prestart_retryable(
+                event_id,
+                lease_token=str(event.get("leaseToken") or ""),
+            ):
+                raise RuntimeError(
+                    f"AgentScope event worker deferred transient model failure: {str(exc)[:300]}"
+                ) from exc
         lane.release_handler_reservation(
             event_id,
             {"error": f"{type(exc).__name__}:{str(exc)[:300]}"},
