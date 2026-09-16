@@ -5935,6 +5935,38 @@
     ],
     "why": "Issue provides a clear user-visible bug with detailed reproduction steps, expected vs actual behavior, and a specific root cause: cancellation state is not propagated from the original HTTP context to the remote Prefill context, and the SGLang cancellation monitor cannot abort before the first output. The proposed lifecycle fix is concrete and testable."
   },
+  "0edf564f1c6a4fce4d3a0107c0cffac21cad7ba4e8c722c2fbbe008b82e19536": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/disaggregation/common/staging_handler.py: validate/bound chunk_idx before growing infos (reject or clamp against expected chunk count or configured max)",
+      "python/sglang/srt/disaggregation/common/conn.py: ensure the staging path enforces the same bound at the STAGING_REQ entry point"
+    ],
+    "risks": [
+      "Fix must not break legitimate large-chunk staging requests; bound should derive from the request's expected chunk count rather than an arbitrary constant",
+      "Attacker-controlled chunk_idx may also be consumed elsewhere in the staging path, so validation should be centralized",
+      "Reproduction requires a TP-mismatch PD deployment and ZMQ access, which may be hard to run in standard CI"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test staging handler with chunk_idx far exceeding expected chunk count and assert rejection/no unbounded allocation",
+      "Reproduce the supplied ZMQ STAGING_REQ frame against a TP-mismatch PD deployment and confirm Decode cgroup memory stays flat and no OOMKilled",
+      "Re-run the TP=1/TP=1 negative control to confirm the unregistered-room path is unchanged"
+    ],
+    "unknowns": [
+      "Exact intended upper bound for chunk_idx (expected chunk count vs. deployment-configured maximum) is not specified in the issue"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: staging_handler.py grows an infos array up to an unvalidated, attacker-controlled chunk_idx (lines 847-848, 859-860), reachable via the TP-mismatch PD staging path in conn.py:1636-1640. Reproduction is detailed with three OOMKilled runs, cgroup memory measurements, kernel OOM logs, and a TP=1/TP=1 negative control that logs 'unregistered room, skipping' and does not allocate. This is a bounded-input-validation defect with a clear fix (bound chunk_idx by expected chunk count / deployment max) and a concrete validation path (reproduce with the supplied ZMQ frame, assert no unbounded allocation; regression test on staging handler). No duplicate or merged-fix coverage was found; the only overlapping PRs are keyword-only and do not touch the staging path."
+  },
   "0edf75809f0b428c5b4619787c7b894246e2f4d1fe8f05fd74aec09a8f1c0e90": {
     "confidence": 0.8,
     "contradictions": [],
@@ -9915,6 +9947,42 @@
       "Whether the deferred scrubbing tradeoff (#8653) has a preferred design direction"
     ],
     "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP servers, breaking external Python interpreters. Reporter supplies executable minimal repro, /proc environ evidence, and a live diagnosis rebutting the triage bot's static 'no Python in AppImage' claim by locating the format string in the AppRun.wrapped ELF. Code anchors (mcp-client.ts, sanitize-child-env.ts, shared-env-keys.ts) point to the spawn env construction, and the suggested fix (strip/reset these vars for MCP children) is a bounded, testable change. No open PR or duplicate issue covers it. Remaining uncertainty is normal implementation choice (which vars to scrub, whether to scope to MCP only), not a blocking unknown."
+  },
+  "18146f9ef472bf8569511c6523e88b247b63834c17d1afe53a973654b49d802f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.why claims 'open PR but insufficient evidence/tests/activity' while open_pr_assessment shows PR #14845 with 3 test files, passing CI, and technical_complete=true"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/local_model/runtime_config.rs (inherit backend runtime_config on proxy card)",
+      "components/src/dynamo/common/token_budget.py (admission policy propagation)",
+      "lib/llm/src/http/service/generate.rs (preprocessing/admission ordering)"
+    ],
+    "risks": [
+      "PR #14845 already implements the minimal fix; competing work risks duplication",
+      "Issue's full proposed direction (remove public registration) is a larger design change requiring maintainer buy-in",
+      "Algorithm-track classification is weak; mechanisms are keyword matches, not numerical/algorithmic"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce with SGLang worker at 131,072-token context and 135,010-token prompt; assert frontend rejects before routing",
+      "Regression test that proxy ModelDeploymentCard inherits backend runtime_config.token_budget",
+      "Compare against PR #14845's 3 test files to avoid duplicate coverage"
+    ],
+    "unknowns": [
+      "Whether maintainers intend the minimal inheritance fix (PR #14845) or the full registration-removal redesign",
+      "Whether PR #14845 will be merged, making further work redundant"
+    ],
+    "why": "Issue describes a concrete model-card ownership defect (ThunderAgent proxy registration drops backend runtime_config/token_budget), but the supplied evidence shows an open PR #14845 that directly references this issue, is technically complete, includes 3 test files, and has passing CI. The candidate's own duplicate assessment rates it 'weak_pr_competition_possible' with best_score 73 and notes root-cause coverage is missing only because the PR is a partial fix. The issue's proposed direction (remove public model registration, route after preprocessing) is a design change, not a numerical/algorithmic mechanism; the algorithm_evidence mechanisms (model_architecture, numerics_quantization) are keyword matches on 'normalization'/'overflow' rather than a real training objective, quantization method, or kernel algorithm. This is ordinary runtime/plumbing work in an algorithm repo, and the existing PR already covers the actionable fix."
   },
   "1819e596acdcb588d0aad40aacf96610fa672b690084f9d67ac127e20d908ae4": {
     "confidence": 0.6,
@@ -36911,6 +36979,32 @@
     ],
     "why": "The issue provides a clear, reproducible memory leak in workflow resume handling, with a minimal example and heap measurements. The root cause is identified as terminal runs not being removed from the in-memory runs collection after resume(). This is a concrete bug with a clear validation path."
   },
+  "566e2793c475cda9b9331f19f8412a3ba35b8e3f36972fdfd208a7e7cdb5eb89": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate labels this as agent/inference/RAG critical path, but the issue body describes only UI tooltip additions"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "web frontend workflow header button components: add tooltip wrappers"
+    ],
+    "risks": [
+      "Duplicate/covered by open PR #42307",
+      "Purely cosmetic UI change with no algorithmic or infrastructure substance"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No meaningful algorithmic regression test; at most a frontend snapshot/interaction test for tooltip presence, which is low value."
+    ],
+    "unknowns": [],
+    "why": "Issue #42306 is a pure UI/UX enhancement requesting tooltips for workflow editor header icon buttons (Chat Variables, Environment Variables, Global Variables, Checklist). This is frontend cosmetic plumbing, not an agent/inference/RAG algorithm contribution. Track is agent_ai_infra, but the work is ordinary UI plumbing with no training objective, model mechanism, distributed invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. Additionally, open PR #42307 already covers the same change (COVERAGE relation, 4 files, 117 additions), making this a low-value/covered opportunity."
+  },
   "5680baee3d4dd927ef0452aaf0a919bfd2065c1257af7f58cfc45b20696e6fa5": {
     "confidence": 0.8,
     "contradictions": [],
@@ -61137,6 +61231,42 @@
     ],
     "why": "The issue reports a real GLM-5.3-Flash FP8 degeneration regression with a build A/B delta, but the reporter explicitly could not construct a synthetic reproduction; only long real agentic sessions trigger it. A maintainer comment states it is a known issue caused by tool call / vLLM frontend, which points away from the algorithm mechanisms (attention kernels, numerics, distributed training) that the candidate claims. The related-issue overlap (#56556, xgrammar structured output) shares only generic stack signatures (clang/gcc/collect_env.py) and is not a true duplicate. The candidate also carries an unresolved AI-disclosure policy conflict. These are materially blocking unknowns for an llm_algorithm contribution."
   },
+  "8cc1655cfbfcdebb919852f924ee2bfba5d882e2939d4196c1ad13d05203389a": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body presents the bug as open, but recent comment says it is fixed on main by #40869 and only the rc/1.101.0 backport is missing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/common_request_processing.py: unify deferred stream-complete callback arity or store callback+args as one unit",
+      "litellm/llms/anthropic/experimental_pass_through/messages/streaming_iterator.py: align _deferred_stream_complete_args shape",
+      "litellm/litellm_core_utils/streaming_handler.py: align _deferred_stream_complete_args shape"
+    ],
+    "risks": [
+      "Fix may already exist on main via #40869, making a new PR redundant",
+      "Changing callback arity could alter deferred logging/guardrail behavior for other stream paths",
+      "Broad streaming_handler changes may affect non-guardrail streaming"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce streaming /v1/messages with post-call guardrails on a custom_openai upstream and assert no TypeError",
+      "Add regression test covering the non-native-passthrough streaming path with guardrails active",
+      "Verify behavior on main vs rc/1.101.0 to confirm whether only a backport is needed"
+    ],
+    "unknowns": [
+      "Whether #40869 is merged and fully covers the reported root cause",
+      "Whether the remaining actionable work is only a backport rather than a new fix",
+      "Whether any open PR (#41220, #40030, #41356) actually closes this issue"
+    ],
+    "why": "Issue provides a precise root cause (callback/args arity mismatch between common_request_processing.py and streaming_iterator.py/streaming_handler.py) and a concrete fix, but a recent comment states the bug is already fixed on main by PR #40869, with only a backport to rc/1.101.0 missing. That unresolved merged-fix coverage directly determines whether new code work is actionable, so this must be resolved before proceeding."
+  },
   "8cdd749ac7f701bbaccdd50c692f06abb225ddf9f008fa1e1fc483205b6f8133": {
     "confidence": 0.6,
     "contradictions": [
@@ -70420,6 +70550,40 @@
       "Whether maintainers have a preferred fix approach (cap vs lazy index vs remote findFiles)"
     ],
     "why": "Issue #13249 has a clear root cause (unbounded synchronous MiniSearch.addAll in FileSearch.initializeFileSearchState) and a concrete validation path, but open PR #13271 already directly covers the same code path with the same fix direction, and the duplicate assessment is explicitly 'human_review_required'. Whether independent implementation space remains is a materially blocking unknown for actionability."
+  },
+  "a1e055476274576e9e35b6e6f2373e63e304548f3f714448a2f021df4bc6797f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Pre-task duplicate status is 'none' while related-issue assessment reports potential duplicate #49247 and bot lists five similar issues"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "session reasoning/encrypted_content replay handling",
+      "provider error recovery path"
+    ],
+    "risks": [
+      "Duplicate coverage by #48805/#48915/#48947/#48319 and PRs #48908/#48918 may make this issue redundant",
+      "No reproduction or root-cause evidence to scope a fix"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with Muse Spark 1.3 Free: send a chat, then follow-up prompt in same session and confirm the invalid_request_error",
+      "Add regression test asserting stale encrypted_content is dropped/refreshed on provider rejection"
+    ],
+    "unknowns": [
+      "Whether existing PRs #48908/#48918 already resolve this exact scenario",
+      "Whether this issue is a duplicate of #49247 or the bot-listed issues",
+      "Concrete code path or reproduction steps beyond the error string"
+    ],
+    "why": "Issue is a user-facing provider error report with no reproduction evidence, no root-cause signal, and no code anchors beyond the error string `encrypted_content`. The bot comment lists five closely related issues (#48805, #48915, #48741, #48947, #48319) covering the same encrypted_content failure, and the related-issue assessment flags #49247 as a potential duplicate. Two open PRs (#48908, #48918) already target stale encrypted reasoning recovery. Duplicate/merged-fix coverage is unresolved, which materially blocks whether new code work is actionable."
   },
   "a1f569cd7ebfb2922f7aa3cadce4713ea7e0eab80fef503843a8334fcbe58acc": {
     "confidence": 0.8,
@@ -79850,6 +80014,36 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue is a well-reproduced bug with clear root cause and suggested fix, but PR #7656 overlaps in code paths and semantics, requiring manual comparison to avoid duplicate work. Maintainer has not approved or confirmed design, and the issue is under active investigation by a contributor."
   },
+  "b8db458e71146977204aec401aea8df6216a54e7f1902b74743a36ea2fe3a241": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Issue frames this as a bug with a concrete fix, while triage reclassifies it as an enhancement/design gap deferred to #3803"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No targeted attachments-only code change is warranted now; transport decision belongs to the deferred containerized/reverse-proxy milestone"
+    ],
+    "risks": [
+      "Chunked protocol would require upload-id lifecycle, assembly, atomicity, GC, and per-chunk auth across serve routes, SDK, and Web Shell",
+      "Attachments-only fix leaves /file/upload and other binary routes equally unreachable behind a 1 MiB proxy",
+      "Open PR #11913 touches the same web-shell session path and has changes requested, so overlap needs human comparison before any new work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If scope flips back to bug: nginx client_max_body_size 1m + paste >1 MiB <8 MiB PNG, assert daemon stores attachment or returns its own 8 MiB error rather than gateway 413"
+    ],
+    "unknowns": [
+      "Whether maintainers now consider proxied deployment in scope, which would flip this back to type/bug and make a fix actionable"
+    ],
+    "why": "Root cause is well established (single unchunked POST to /session/:id/attachments, express.raw 8mb, no chunk protocol), but triage reclassified this as an enhancement/design gap and folded it into the deferred v0.16.x reverse-proxy deployment milestone (#3803). The 413 originates from the operator's proxy, and proxied deployment is explicitly out of scope in current docs; the same gap affects all binary ingress routes (/file/upload 50 MiB, extensions 10 MiB, voice 10 MiB), so an attachments-only patch is not the right unit of work. A cheaper tracked option (--max-body-size flag + documented proxy requirement) already exists."
+  },
   "b8e9e2bf1a96ae1488f021ce08754a82d632ad2e3ff3751d048ec999cf882dde": {
     "confidence": 0.55,
     "contradictions": [
@@ -85785,6 +85979,43 @@
     ],
     "why": "The issue describes a real transport-shape gap (one unchunked POST for session attachments, unreachable 8 MiB cap behind a ~1 MiB proxy body limit), and the root cause is confirmed by code anchors and a collaborator's independent verification. However, the triage bot reclassified this as an enhancement and explicitly deferred it to the v0.16.x containerized/reverse-proxy milestone (#3803), noting the deployment shape is documented as out of scope today. The suggested fix (chunked upload protocol) is a cross-cutting design change touching serve routes, SDK, and Web Shell, and the maintainer explicitly asks for a transport decision rather than an attachments-only patch. This is a design/scope decision that materially determines whether code work is actionable, so it is not a normal implementation uncertainty."
   },
+  "c6be7f70814f56b9aa62cd65aaa5c990f5e46f5c3f39d713a1ebad774582459c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Collaborator agrees the UX change is probably time, but the issue body says not to begin implementation until it reaches Ready on the Goose Issues board"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ui/desktop message list rendering to group a turn's tool cards behind one compact row",
+      "bottom progress indicator to name the currently running tool",
+      "exclusion of pending-approval, errored, or cancelled calls from collapsing"
+    ],
+    "risks": [
+      "Collapsing by default changes existing behaviour for every user",
+      "Turn boundary detection cannot rely on identifyConsecutiveToolCalls because it breaks on text between calls",
+      "RTL layout is untested",
+      "Thinking-block handling is an unresolved design question"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a UI test rendering a turn with multiple tool calls and assert a single compact summary row appears",
+      "Assert a pending-approval tool call remains visible and actionable in place",
+      "Assert the running tool name appears in the bottom progress line while collapsed"
+    ],
+    "unknowns": [
+      "Whether the issue has reached Ready on the Goose Issues board",
+      "Whether the repository requires assignment before implementation",
+      "Which design trade-offs (collapsed by default vs setting, compact form contents, thinking blocks) are settled"
+    ],
+    "why": "The issue is a UX/rendering design request, not a concrete bug with a root cause. The issue body explicitly states design trade-offs must be settled in discussion, and the issue says not to begin implementation until it reaches Ready on the Goose Issues board. The candidate's own pre-task evidence flags assignment_required and reproduction_or_validation_missing, and the submission policy is needs_assignment. A collaborator agreed the change is probably time, but no design decision or assignment exists, and the sketch author explicitly declined to take it on."
+  },
   "c6c534faee3f0aa9e065bf623cca6c3fe79145346d70973e857d9f3489b14c24": {
     "confidence": 0.7,
     "contradictions": [],
@@ -88448,6 +88679,38 @@
       "Whether the regression exists on main or only on the b12x-vision branch, which affects where the patch should land"
     ],
     "why": "Issue pinpoints a concrete regression in encode_arguments_to_dsml(): unconditional json.loads() on an already-normalized dict raises TypeError, caught and wrapped as {\"arguments\": dict}, producing an extra DSML parameter layer. Expected vs actual output and the #28035 reference behavior are both supplied, giving a clear reference-vs-implementation test."
+  },
+  "cc8a94d839e9b198cbe8c2b2dd23dbc528a0e9a04e165928d34080f279e00f98": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "SOPEngine state restoration/validation logic to compare ordered step identities rather than only step count",
+      "Backward-compatible loading path for persisted states that lack step identity metadata",
+      "Regression test covering same-length reordered SOP steps"
+    ],
+    "risks": [
+      "Changing validation may break backward compatibility for legacy persisted states if identity fallback is not handled",
+      "Existing PR #2648 may already cover the same fix, risking duplicate work",
+      "Maintainer may have a preferred design for step identity/versioning not yet expressed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: build SOP with ordered steps A,B, persist SOPRunState with progress for A, rebuild SOP as B,A, construct SOPEngine(reordered_sop, stored_state) and assert it rejects or does not misassign A's record to B",
+      "Regression: verify legacy stored states without step identities still load successfully",
+      "Run targeted unit tests for the SOP engine package plus static checks"
+    ],
+    "unknowns": [
+      "Whether PR #2648 already implements an equivalent identity-based validation, which would make a competing fix redundant"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: SOPEngine restores SOPStepRunState by list index and only rejects runs when step counts differ, so same-length reorders silently misassign persisted progress. Expected behavior (reject state for reordered steps, keep backward compatibility for states lacking step identities) is well-defined and testable. Track is agent_ai_infra, not llm_algorithm, so algorithm-specific rejection does not apply. Open PR #2648 is directly related but has no root-cause coverage evidence and no direct code overlap, leaving room for a more complete fix."
   },
   "cc9accb934572a0bd63827dfbf2a1349b149640ceaa235668b082b7599f3bc63": {
     "confidence": 0.55,
