@@ -30,6 +30,9 @@ def spec(
 ) -> dict[str, object]:
     runtime_root = runtime_root.resolve()
     code_root = code_root.resolve()
+    runtime_python = runtime_root / ".venv" / "bin" / "python"
+    if not runtime_python.is_file():
+        raise RuntimeError("runtime Python interpreter is unavailable")
     manifest = code_root / "release-manifest.json"
     if not manifest.is_file() or manifest.is_symlink():
         raise RuntimeError("independent event release manifest is unavailable")
@@ -44,7 +47,7 @@ def spec(
     log = home / "Library" / "Logs" / "oss-pr-radar"
     return {
         "Label": LABEL,
-        "ProgramArguments": [sys.executable, str(script), "--root", str(runtime_root)],
+        "ProgramArguments": [str(runtime_python), str(script), "--root", str(runtime_root)],
         "WorkingDirectory": str(code_root),
         "StartInterval": 60,
         "ThrottleInterval": 60,

@@ -28,16 +28,25 @@ def test_launchagent_path_resolves_codex_runtime(tmp_path, monkeypatch):
     (code_root / "scripts" / "agentscope_event_worker.py").write_text(
         "# event worker\n", encoding="utf-8"
     )
+    runtime_root = tmp_path / "runtime"
+    runtime_python = runtime_root / ".venv" / "bin" / "python"
+    runtime_python.parent.mkdir(parents=True)
+    runtime_python.write_text("#!/bin/sh\n", encoding="utf-8")
 
-    value = MODULE.spec(tmp_path / "runtime", code_root=code_root, home=tmp_path / "home")
+    value = MODULE.spec(runtime_root, code_root=code_root, home=tmp_path / "home")
     environment = value["EnvironmentVariables"]
     launch_path = str(environment["PATH"])
 
     assert launch_path == str(codex_dir)
     assert shutil.which("codex", path=launch_path) == str(codex_dir / "codex")
+    assert value["ProgramArguments"][0] == str(runtime_python)
 
 
 def test_install_does_not_kill_run_at_load_worker(tmp_path, monkeypatch):
+    runtime_root = tmp_path / "runtime"
+    runtime_python = runtime_root / ".venv" / "bin" / "python"
+    runtime_python.parent.mkdir(parents=True)
+    runtime_python.write_text("#!/bin/sh\n", encoding="utf-8")
     code_root = tmp_path / "release"
     (code_root / "scripts").mkdir(parents=True)
     (code_root / "release-manifest.json").write_text("{}\n", encoding="utf-8")
@@ -52,7 +61,7 @@ def test_install_does_not_kill_run_at_load_worker(tmp_path, monkeypatch):
     )
 
     MODULE.install(
-        tmp_path / "runtime",
+        runtime_root,
         code_root=code_root,
         home=tmp_path / "home",
     )
@@ -104,6 +113,10 @@ def test_stage_cli_writes_without_loading(tmp_path, monkeypatch, capsys):
 
 
 def test_staged_install_verifies_plist_without_launchctl(tmp_path, monkeypatch):
+    runtime_root = tmp_path / "runtime"
+    runtime_python = runtime_root / ".venv" / "bin" / "python"
+    runtime_python.parent.mkdir(parents=True)
+    runtime_python.write_text("#!/bin/sh\n", encoding="utf-8")
     code_root = tmp_path / "release"
     (code_root / "scripts").mkdir(parents=True)
     (code_root / "release-manifest.json").write_text("{}\n", encoding="utf-8")
@@ -117,7 +130,7 @@ def test_staged_install_verifies_plist_without_launchctl(tmp_path, monkeypatch):
     )
 
     result = MODULE.install(
-        tmp_path / "runtime",
+        runtime_root,
         code_root=code_root,
         home=tmp_path / "home",
         load=False,
@@ -127,3 +140,16 @@ def test_staged_install_verifies_plist_without_launchctl(tmp_path, monkeypatch):
     assert result["loaded"] is False
     assert path.stat().st_mode & 0o777 == 0o600
     assert plistlib.loads(path.read_bytes()) == result["spec"]
+    assert result["spec"]["ProgramArguments"][0] == str(runtime_python)
+
+
+def test_spec_rejects_missing_runtime_python(tmp_path):
+    code_root = tmp_path / "release"
+    (code_root / "scripts").mkdir(parents=True)
+    (code_root / "release-manifest.json").write_text("{}\n", encoding="utf-8")
+    (code_root / "scripts" / "agentscope_event_worker.py").write_text(
+        "# event worker\n", encoding="utf-8"
+    )
+
+    with pytest.raises(RuntimeError, match="runtime Python interpreter is unavailable"):
+        MODULE.spec(tmp_path / "runtime", code_root=code_root, home=tmp_path / "home")
