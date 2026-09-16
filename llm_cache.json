@@ -5872,6 +5872,39 @@
     ],
     "why": "Issue describes a plausible substring-based auth classifier (Smt/QXu) and a resume-time refresh failure, but the reporter explicitly states they could not prove the refresh failure raised the banner, and the banner text is not found in the extension. The candidate's own actionability evidence shows root_cause_signal=false, probe_ready=false, and no code paths plan, so the actionable code surface is not established."
   },
+  "0e89f93dab2a8a6ea0b4473d48ff41053059e857143366fc62e9c9f4be1ac9d4": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Original report attributes the crash to QSA prefill kernel OOB at ~22 concurrent requests, but the reporter later retracts that analysis and reproduces at c=8",
+      "Comment thread first claims #37638 fixes the issue, then explicitly withdraws the correctness claim",
+      "pinkgom first reports --disable-overlap-schedule as a stable mitigation, then reports 7 recurrences with that flag set"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "No new code change is warranted; the actionable fix (clamp_max on group_locs in python/sglang/srt/layers/attention/qsa/qsa_indexer.py) is already merged via #38346"
+    ],
+    "risks": [
+      "The crash is probabilistic, so clean production runs are strong but not conclusive evidence; a latent second fault path (e.g. the host/device sequence-length disagreement hypothesized in get_prefill_mqa_inputs) could remain",
+      "Competing with merged #38346 or the open #37638 would duplicate already-landed or retracted work"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If any residual work is pursued, add a regression test for chunked-prefill requests whose final chunk is 1-3 tokens (input_ids length 4096*k+{1,2,3}) asserting no out-of-range compress-gather index and no illegal memory access under overlap scheduling"
+    ],
+    "unknowns": [
+      "Whether any residual fault path exists after #38346 on the original H20 workload beyond the reporter's clean run",
+      "Whether the host-snapshot vs device-derived row-range mismatch in get_prefill_mqa_inputs is a real second defect"
+    ],
+    "why": "The issue's own status update and comment thread converge on merged PR #38346 (clamp in qsa/qsa_indexer.py) as the fix for this crash: the reporter confirms it resolves the workload on the original H20 TP8 setup (1528 requests, 0 faults), and pinkgom's independent H200 box shows 43h/709 completions clean with only that hunk applied. The earlier QSA prefill-kernel bounds theory (#37638) was explicitly retracted by its author, and the overlap-scheduler race hypothesis was falsified by pinkgom's crashes with --disable-overlap-schedule. Remaining work is verification of an already-merged one-line fix, not a new code contribution."
+  },
   "0ea36cafa780884c9b68faf3baf645e3e3af6f8137cca0764b69ad6b71b87d3e": {
     "confidence": 0.55,
     "contradictions": [
@@ -18480,6 +18513,44 @@
     ],
     "why": "The issue reports a crash in embedding_service.py due to a vector count mismatch, but the root cause is not fully confirmed; the bot suggests possible causes in the OpenAI-compatible adapter but no maintainer has confirmed or assigned. The deterministic gate is HUMAN_REVIEW, and related issue lookup failed due to timeout, so actionability is uncertain."
   },
+  "2b1c3b61ee573517203cca00e7a725f4135a741eda03833270ddaaaaff97265f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims reopening A shows Connection lost, but the collaborator's real-daemon run showed A /load 200 with Idle and no Connection lost overlay",
+      "Collaborator's source harness with mocked SDK showed a later controlled switch to A reaching connected with error undefined, contradicting the claim that the cleanup path necessarily poisons the provider",
+      "Issue cites packages/webui/src/daemon/session/actions.ts and DaemonSessionProvider.tsx, but triage states packages/webui does not exist and the real paths are under packages/web-shell/client/daemon/session/"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/web-shell/client/utils/sessionPreparation.ts first-prompt failure/cleanup path",
+      "packages/web-shell/client/daemon/session/actions.ts releaseSession/requireSessionForAction session-id scoping",
+      "packages/web-shell/client/daemon/session/DaemonSessionProvider.tsx controlled sessionId transition handling"
+    ],
+    "risks": [
+      "Fixing only the cleanup warnings may not address the actual Connection lost condition if a different missing condition causes it",
+      "Changing releaseSession to be session-id scoped could alter behavior for other callers",
+      "Existing open PR #11913 overlaps the same session-creation path and may conflict"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a controlled-sessionId host test: createAndAttach in flight -> sessionId becomes B (attach AbortError) -> releaseSession fails / clearSession skipped -> sessionId becomes A -> assert connection.status reaches connected and transcript restore runs",
+      "Reproduce with a real daemon and browser at the pinned commit, capturing the final /load status and sanitized response, any SSE failure, and connection.error when reopening A"
+    ],
+    "unknowns": [
+      "The exact runtime condition that produces the final Connection lost symptom when reopening session A",
+      "Whether the reported symptom reproduces end-to-end at the pinned commit with a real daemon",
+      "Whether open PR #11913 already covers the same root cause or a different one"
+    ],
+    "why": "The issue describes a plausible client session-transition cleanup race, and static analysis maps the four console lines to sessionPreparation.ts L216-232, actions.ts startPendingSessionLoad/requireSessionForAction, and DaemonSessionProvider.tsx. However, the same collaborator's follow-up reproduction attempts did not reproduce the user-visible 'Connection lost' symptom: a real daemon/browser run showed A's /load returning 200 with Idle, and a source harness with mocked SDK showed a later controlled switch to A reaching connected with error undefined. The cleanup warnings are reproducible, but the final failure condition is not established, so the root cause of the reported symptom remains uncertain."
+  },
   "2b1e28ee916d47d6b50b0056a8e891455aee4f3308fc0a007229609651e11118": {
     "confidence": 0.9,
     "contradictions": [
@@ -20443,6 +20514,41 @@
       "Whether maintainers intend the full architectural fix or accept the incremental runtime_config copy in PR #14845"
     ],
     "why": "Issue #14762 is a model-card/runtime-config propagation bug in the ThunderAgent proxy registration path, not an LLM algorithm contribution. The supplied algorithm_evidence only matches generic terms (normalization, overflow) and the issue's own proposed direction is architectural plumbing: stop registering a synthetic model card and route through the existing pluggable router/flow-control contract. No training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology is present, so the llm_algorithm track requirement is not met. Additionally, open PR #14845 already directly covers the issue with tests and passing checks, making this a covered opportunity."
+  },
+  "30fc78275f52ed9ae08cc32fdc9fa7e37bd0c0a22ebd4b32db882efbc2c6c16f": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue suggests warn loudly; in-tree comment at kas_agents.py:465-473 explicitly chose DEBUG to avoid constant-payload log noise"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/acp/kas_agents.py: delivery path for hooks/toolsSettings/slashCommand or version-gated on-disk profile",
+      "src/kiro_crew/acp/kas_agents.py:465-473: possible once-per-session warning keyed to specs carrying dropped keys"
+    ],
+    "risks": [
+      "Fix depends on a KAS bundle release that honors disk-profile hooks; not landable in this repo alone",
+      "Raising DEBUG to WARNING reverses a written maintainer judgment and may drown logs",
+      "Unknown whether KAS merges on-disk profile with wire-injected agent of same name"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on default backend: preToolUse hook fires and blocks",
+      "Reproduce on KAS backend: hook silently dropped, no warning",
+      "If warning stopgap: assert one session-start notice per spec carrying UNSUPPORTED_SPEC_KEYS, not per session/new constant payload"
+    ],
+    "unknowns": [
+      "Whether KAS merges on-disk profile with wire-injected agent of same declared name",
+      "Which KAS bundle version honors disk-profile hooks",
+      "Maintainer ruling on DEBUG vs once-per-session notice"
+    ],
+    "why": "Root cause is source-confirmed (UNSUPPORTED_SPEC_KEYS in acp/kas_agents.py), but the actionable fix is blocked by an external dependency: the on-disk KAS profile delivery path does not work on the bundled KAS 0.63.3, and the stopgap warning contradicts an explicit in-tree DEBUG-vs-WARNING decision. The fix shape also depends on unknown KAS-side merge behavior. These are materially blocking unknowns, not normal implementation uncertainty."
   },
   "310a83e4c211ec8c0600d6fb851437b458f7e4da9ece1addf4628dc26715c9cf": {
     "confidence": 0.8,
@@ -49921,6 +50027,43 @@
       "Which of the two contracts (real ReLoRA restart vs rename) maintainers will accept for Claim A"
     ],
     "why": "Issue identifies two concrete, separable defects in ReLoRACallback._prune_and_reset: (A) adapter weights are magnitude-pruned without merging B@A into the base, changing the effective linear map (MSE 142.12 vs 8.77e-13 for merge-then-reset control), contradicting the module docstring's ReLoRA conformance claim; (B) strict '>' thresholding in magnitude_prune_tensor wipes all entries on ties, zeroing both factors and producing zero gradients. Owner confirmed both claims with real peft LoRA model runs on 2edc063, and the fix path (merge/reinit or rename+docstring, plus exact-count topk mask) is concrete and testable."
+  },
+  "71150677d6bfd819bbdd711243bff974359f2414ee66a5916f1c412106be690c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.duplicate.status is 'none' while related_issue_assessment.status is 'potential_overlap' with issue #49247",
+      "candidate.open_pr_assessment lists two open PRs with matching titles but marks semantic_overlap=false and direct_code_overlap=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "session reasoning/encrypted_content handling in the provider request path",
+      "streaming or session-resume state propagation for reasoning items"
+    ],
+    "risks": [
+      "Duplicate coverage by #49247 and the bot-listed related issues could make this issue non-actionable",
+      "Open PRs #48908/#48918 may already implement the fix, making a new contribution redundant",
+      "No code path or root cause is identified, so the fix scope is speculative"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the exact model/session flow from the issue and capture the failing request payload",
+      "Add a regression test that replays a stale encrypted reasoning item and asserts recovery instead of invalid_request_error"
+    ],
+    "unknowns": [
+      "Whether #49247 or the bot-listed issues are confirmed duplicates",
+      "Whether PRs #48908/#48918 already resolve this exact scenario",
+      "The concrete code path that emits or replays the stale encrypted_content reasoning item"
+    ],
+    "why": "The issue is a provider-side error report with no reproduction evidence, no root-cause signal, and no code anchors beyond the error string `encrypted_content`. The supplied evidence shows multiple open PRs (#48908, #48918) and a potential duplicate issue (#49247) plus a bot-listed cluster of related issues (#48805, #48915, #48741, #48947, #48319) that may already cover the same behavior, so duplicate/merged-fix coverage is unresolved. The track is agent_ai_infra, not llm_algorithm, and the candidate's own actionability evidence has public_repro_signals=0, reproduction_evidence=[], root_cause_signal=false, probe_ready=false."
   },
   "713b7f53871159ecf64b9d112afc33617674b73019e58e00dead20668f25d7d8": {
     "confidence": 0.85,
@@ -80067,6 +80210,37 @@
     ],
     "why": "The issue provides a clear root cause: MCPClient.tools() ignores the nextCursor continuation token, with a self-contained reproduction and expected/actual behavior. The fix is a small loop to follow cursors, and the existing PR #19242 is a draft lacking tests, leaving room for a complete contribution."
   },
+  "b77d06387e6fdceeda0563bf539212a46cbab5822c0b6812e93efc4f23d51ddc": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/eve/src/execution/workflow-steps.ts: prevent persisting internal-scheme file parts (eve-url:, eve-sandbox:, eve-attachment:) on pre-step cancellation, either by installing providers before throwIfTurnAborted or by reconstituting/degrading the part in preserveCancelledTurnMessage/stageAttachmentsToSandbox",
+      "packages/eve/src/execution/workflow-steps.test.ts: add permanent regression case asserting cancellation does not persist an internal attachment ref"
+    ],
+    "risks": [
+      "Fix must not alter mid-step cancellation staging behavior, which currently works",
+      "Degrading the attachment to a text note changes user-visible history content; maintainer may prefer reconstitution via adapter",
+      "Broadening stageAttachmentsToSandbox semantics could affect other callers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the bot's regression case to workflow-steps.test.ts: already-aborted turn settles as action: cancelled without invoking createExecutionNodeStep and history contains no eve-url: file part",
+      "Run pnpm --filter eve exec vitest run --config vitest.unit.config.ts src/execution/workflow-steps.test.ts -t \"does not persist a serialized URL file reference when cancelled before the harness starts\"",
+      "Verify a subsequent model call no longer throws AI_DownloadError and the session does not park"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer reconstitution-through-adapter versus degrade-to-text-note for the no-sandbox path"
+    ],
+    "why": "Issue provides a deterministic reproduction, a confirmed root cause on origin/main (serializeUrlFilePartsInMessage writes an eve-url: marker; pre-step cancellation calls preserveCancelledTurnMessage without SandboxKey, so stageAttachmentsToSandbox returns the raw marker into history), and a bot-confirmed failing regression test. Not a duplicate of #3009/#3041, which fixed the distinct No active eve context crash. Concrete code anchors and a validation path exist."
+  },
   "b7857582e5415f53b924e5b13c7211af3d02cc4d784f9a45cda8b7ffcc901e42": {
     "confidence": 0.8,
     "contradictions": [],
@@ -88940,6 +89114,41 @@
       "Whether PR #8487's draft implementation fully addresses both handle classes and the cross-process-group case"
     ],
     "why": "Issue provides a concrete, code-anchored root cause: AllGatherHandle/NoGatherHandle wait() is not idempotent, so a second wait after release sets AVAILABLE over freed (0-element) storage, causing the empty-weight matmul. Reproduction is described at handle level on 2 GPUs with two independent configurations and controls, and the expected fix (idempotent wait, re-check INFLIGHT) is well-defined. This is a distributed-training invariant with a concrete validation path, satisfying the llm_algorithm track."
+  },
+  "ca9e3ae6343f2cb98c697883abf0d268115497f164c8c605acdc6d097104c8a3": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment marks semantic_overlap_requires_review while also stating PR #4754 does not cover the root cause"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "torchtitan/experiments/torchft/manager.py: synchronize async healing export with the training thread or snapshot parameters before resharding",
+      "FSDP2 state-dict pre-save hook path (_fsdp_param_group.py / _fsdp_param.py) must not rebind live parameters mid-forward"
+    ],
+    "risks": [
+      "Race is timing-dependent; a non-deterministic test may pass without exercising the unsafe window",
+      "Fix may require changes in upstream torchft or FSDP2 rather than torchtitan, affecting where the patch belongs",
+      "Overlapping PR #4754 touches the same manager.py path and could conflict"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a deterministic reproduction that forces model.state_dict() to overlap an in-flight forward on an unsharded FSDP2 param group and assert no DTensor/plain-tensor mix error",
+      "Add a multi-rank regression test with fixed seed and small model verifying async quorum healing export does not corrupt in-flight parameters"
+    ],
+    "unknowns": [
+      "No concrete reproduction steps or failing test provided in the issue",
+      "Whether the fix belongs in torchtitan, torchft, or FSDP2 is unresolved",
+      "Whether PR #4754 or another open PR already addresses the async export race"
+    ],
+    "why": "Issue describes a plausible FSDP2/TorchFT async-healing race with code anchors, but the supplied evidence does not establish a concrete reproduction or validation path, and the only overlapping open PR (#4754) is a config change that does not cover the root cause, leaving unresolved duplicate/coverage uncertainty."
   },
   "cab2b6e5e69e766e6fe0f2a511d9856ad70672610dc92988afe16f41c5e29930": {
     "confidence": 0.6,
@@ -102272,6 +102481,40 @@
     ],
     "why": "Issue provides detailed reproduction steps, environment, and ruled-out fixes, but root cause is not yet identified. The ask is for guidance on instrumentation, not a concrete fix. However, the evidence includes code anchors and a clear validation path (reproducer), making it actionable for investigation and potential fix."
   },
+  "e73a91e1e4074937163b59f3bdc757fe24e7fb6e3751ef6a56d8eda01d50b7dd": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body says the script is not found in mem0ai/mem0 code search, while the candidate labels it a repo bug with code anchors"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "Cursor plugin hook registration (hooks/cursor-hooks.json) to invoke bash.exe instead of git-bash.exe",
+      "on_file_read_cursor.sh stdin handling to avoid blocking on a TTY"
+    ],
+    "risks": [
+      "The affected plugin scripts may not be present in this repository, making the fix non-actionable here",
+      "Repository AI-disclosure policy conflicts with automated public contribution",
+      "Changing the hook launcher could alter stdin/stdout semantics relied on by Cursor"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "On Windows with Git for Windows, enable the plugin and run agent file reads; confirm no mintty windows spawn and the hook exits within its 5s timeout",
+      "Regression: verify hook JSON is still consumed from stdin and hook output JSON is emitted correctly"
+    ],
+    "unknowns": [
+      "Whether on_file_read_cursor.sh and hooks/cursor-hooks.json actually exist in the mem0ai/mem0 repository",
+      "Whether the plugin source is maintained in this repo or only in the marketplace cache",
+      "How the AI-disclosure policy affects contribution eligibility"
+    ],
+    "why": "Issue reports a real Windows-only Cursor plugin bug with a clear reproduction and a plausible root cause (git-bash.exe/mintty windowed launcher), but the fix surface is not in this repository: the reporter states GitHub code search does not return on_file_read_cursor.sh and the files come from the installed marketplace plugin cache, so no code path in mem0ai/mem0 is confirmed to exist or be editable. The pre-task evidence also records policy status ai_disclosure_conflict and codePathsPlan empty, and the candidate's own risk notes a hard-disabled public action due to AI disclosure requirements."
+  },
   "e74dc45663b1c93c92111a327a13850493c8b709c21fb20bf14e3c862b61a0d7": {
     "confidence": 0.7,
     "contradictions": [],
@@ -106869,6 +107112,43 @@
       "Backend code location and whether a PR would be accepted without prior discussion"
     ],
     "why": "The issue reports a server-side bug where validate_credentials is ignored for API_KEY, with a clear repro and data. However, the repo is ComposioHQ/composio (agent_ai_infra), and the issue is labeled 'support' with an automated triage note deferring to support team. No maintainer confirmation or design decision is present, and the fix likely requires backend changes beyond a simple PR. The candidate is actionable but needs maintainer assignment or confirmation."
+  },
+  "f07adf97ac3e96bb5221f36c6a4a67ce84e3a44b5895c9c6408e259f4283edfb": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue frames this as a bug with a clear fix, but maintainer triage reclassified it as an enhancement and deferred it to the v0.16.x containerized/reverse-proxy milestone"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/serve/routes/session.ts (chunked upload protocol or tunable body cap)",
+      "packages/sdk-typescript/src/daemon/DaemonClient.ts (client-side chunking above threshold)",
+      "packages/web-shell/client/daemon/session/actions.ts (upload path)",
+      "docs/users/qwen-serve.md (proxy body-cap requirement)"
+    ],
+    "risks": [
+      "Maintainer triage explicitly deferred proxied deployment to v0.16.x and reclassified as enhancement, so a targeted patch may be rejected as out of scope",
+      "Chunking only the attachments route leaves /file/upload and other binary routes unreachable behind the same proxy cap",
+      "Open PR #11913 overlaps the same web-shell session path and needs manual comparison before any new work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with nginx client_max_body_size 1m in front of qwen serve, paste a >1 MiB and <8 MiB PNG, confirm gateway 413",
+      "After fix, verify upload succeeds up to the documented 8 MiB cap behind the 1 MiB proxy",
+      "Regression test that small files still use the one-shot POST path"
+    ],
+    "unknowns": [
+      "Whether maintainers consider proxied deployment in scope now or will keep it deferred to v0.16.x",
+      "Whether the preferred fix is a chunked protocol, a tunable --max-body-size flag, or documentation only",
+      "Whether PR #11913 already covers the relevant session upload path"
+    ],
+    "why": "The issue's root cause is well documented and independently confirmed: a single unchunked POST to /session/:id/attachments is rejected by a reverse proxy's default 1 MiB body cap before the daemon's 8 MiB handler runs. However, the maintainer triage explicitly reclassified this as an enhancement, not a bug, and folded it into the deferred v0.16.x containerized/reverse-proxy deployment milestone (#3803), stating proxied deployment is out of scope today. The triage also argues the gap is not attachments-specific but affects all daemon binary-ingress routes (/file/upload 50 MiB, extension/voice 10 MiB), so a targeted attachments-only patch would be incoherent. This is a scope/design decision that materially determines whether code work is actionable, and the open PR #11913 has semantic overlap on the same web-shell session path requiring manual comparison."
   },
   "f09984053d6886b36efa9dd86aae3ef601c059a6352f4d1e28e183deff0a22ef": {
     "confidence": 0.85,
