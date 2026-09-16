@@ -2155,6 +2155,41 @@
     ],
     "why": "Issue provides a clear root cause (substring check for 'gpt-5' misses 'gpt-6' family), concrete failing examples, and a suggested fix. A recent comment indicates a fix may already be merged (#40209), but the issue remains open and the fix's completeness is unverified. The code paths are well-anchored, making the contribution actionable."
   },
+  "060c6680f71fe9945371233edfe4602c08d057611b45d953c5ac6bb225a94b20": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body cites packages/webui/src/daemon/session/actions.ts and DaemonSessionProvider.tsx, but triage and collaborator comments confirm those paths do not exist; real paths are packages/web-shell/client/daemon/session/*"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/web-shell/client/utils/sessionPreparation.ts: skip releaseSession on the current (already switched) client when attach rejects with AbortError 'superseded by a newer request'; release A via an explicit session-id-scoped path or leave it for a later loadSession(A)",
+      "packages/web-shell/client/daemon/session/actions.ts: ensure a supersede abort does not leave the provider in disconnected state and that a later controlled sessionId=A runs a fresh attach/load",
+      "packages/web-shell/client/utils/sessionPreparation.test.ts: add regression test covering createAndAttach in flight -> sessionId=B (attach AbortError) -> sessionId=A -> connection.status reaches connected and transcript restore runs"
+    ],
+    "risks": [
+      "Open PR #11913 (fix(web-shell): allow sequential SDK requests during session creation) overlaps packages/web-shell/client/daemon/session/actions.ts and shares first_prompt/web_shell semantics; implementation boundary must be compared before writing code to avoid duplicate work",
+      "Changing release/clear semantics could affect the intentional skip-clearSession behavior pinned by existing tests; must preserve B staying mounted",
+      "Fix must not broaden API behavior beyond the abort-cleanup path"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test in sessionPreparation.test.ts: createAndAttach in flight, flip sessionId to B causing attach AbortError, then flip sessionId to A and assert connection.status is connected (or reaches connected) and transcript restore runs; fail if UI stays on Connection lost",
+      "Run targeted unit tests for packages/web-shell/client/utils and packages/web-shell/client/daemon/session",
+      "Manual reproduction: New Chat -> send first prompt -> immediately switch to existing session B -> open session A; verify A connects and /loads instead of showing Connection lost"
+    ],
+    "unknowns": [
+      "Whether PR #11913 already covers this exact root cause or only an adjacent sequential-request path; its root_cause_coverage is false and it does not reference this issue, so overlap requires manual comparison before implementation"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: the first-prompt failure path in sessionPreparation.ts cannot release a just-created session whose attach was superseded by a newer controlled sessionId, leaving the provider disconnected so a later loadSession(A) shows Connection lost. Two independent collaborators confirmed the mechanism against the pinned commit, and the missing test assertion (re-set sessionId=A and assert connected) is explicitly identified. This is a client session-transition cleanup bug with a clear reproduction and validation path."
+  },
   "06119c66a81e45df9748f211011bed91696509c2f93e8795653c14093385088a": {
     "confidence": 0.8,
     "contradictions": [
@@ -8293,6 +8328,33 @@
     ],
     "why": "Issue identifies a concrete algorithmic invariant violation in compute_policy_loss_kl_cov: KL-Cov top-k token selection and covariance statistics are computed per microbatch, so microbatch size changes the effective objective. Root cause is anchored to core_algos.py, a quota formula is given, and a controlled reference-vs-implementation experiment (one microbatch vs eight, with penalty-disabled control) shows 7.006e-3 vs 3.625e-6 relative L2 difference, reproduced on two hosts. This is a genuine post-training objective correctness issue with a concrete validation path."
   },
+  "14910f59756288907431e614e551a408aea4f9dc6122faf1c60e1f85172878d9": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "livekit-agents/livekit/agents/voice/transcription/synchronizer.py: shield shared rotation task from individual barrier() caller cancellation and/or handle CancelledError during segment rotation"
+    ],
+    "risks": [
+      "Shielding rotation may change cancellation semantics for session shutdown; upstream fix should also address ownership/recovery of explicitly cancelled rotations",
+      "Maintainer may prefer a different fix location or broader lifecycle change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's standalone repro.py against the patched SDK and assert 4 audio frames and 4 transcripts after cancellation",
+      "Add a regression unit test that cancels a barrier waiter during segment rotation and verifies subsequent turns still deliver synchronized text"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference for session-owned rotation cancellation semantics"
+    ],
+    "why": "Issue provides a standalone offline reproduction, identifies the exact cancellation-propagation path in synchronizer.py (barrier awaits shared _rotate_segment_atask; CancelledError not caught by except Exception or contextlib.suppress), and demonstrates a candidate shield fix that restores text delivery on two SDK versions. This is a concrete, actionable bug fix in the agent runtime path."
+  },
   "149186126a654c01d756afbaa84ae2cc5975a5897fd145ff4579e1c2ec2039b1": {
     "confidence": 0.85,
     "contradictions": [
@@ -14223,6 +14285,38 @@
     ],
     "why": "The issue identifies a clear root cause (unconfigured WebSocket limits) and impact, but the fix location is ambiguous: upstream in agent-client-protocol-http vs Goose-side. The reporter has asked for maintainer preference and is awaiting direction. No maintainer has responded, so design confirmation is needed before work starts."
   },
+  "22dabfad6b32ddf21ca03f4098e947ba030af2254ee0a3686668665227b27380": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence claims qualified LLM algorithm mechanisms while issue body describes model-card/runtime-config plumbing"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "ThunderAgent proxy registration path",
+      "ModelDeploymentCard/runtime_config inheritance",
+      "frontend admission ordering"
+    ],
+    "risks": [
+      "Architectural change may conflict with existing routing/flow-control contracts",
+      "Duplicate implementation of PR #14845 without added root-cause or key-path coverage"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce with SGLang worker at 131,072-token context and 135,010-token prompt; assert frontend rejects before routing",
+      "Regression test that proxy card inherits backend token_budget and truncation policy"
+    ],
+    "unknowns": [
+      "Whether maintainers intend the full architectural removal or accept the minimal runtime_config inheritance fix"
+    ],
+    "why": "Issue describes a real model-card ownership defect, but the proposed direction is architectural plumbing (remove proxy model registration, route via pluggable router) rather than an LLM algorithm mechanism; the algorithm_evidence mechanisms (model_architecture, numerics_quantization) are keyword matches on 'normalization'/'overflow' from token-budget prose, not a training objective, quantization method, kernel, or evaluation methodology. Additionally, open PR #14845 already directly covers the issue with tests and successful CI, leaving only a weak competition gap."
+  },
   "22db62978d916a17560fe40b3d3ec2a91f3c176caf7a43141d79a195c6ca4fba": {
     "confidence": 0.85,
     "contradictions": [
@@ -18630,6 +18724,43 @@
       "Whether maintainers prefer sanitization, exclusion, or fallback as the fix approach."
     ],
     "why": "The issue provides a clear, reproducible bug with a concrete toggle (threshold > 0 vs 0) and detailed environment/config. The triage bot's static analysis identifies a plausible root-cause chain in the codebase, and the reporter's follow-up experiments narrow the trigger to eager built-in tool schemas. The fix direction is actionable: extend eager-deferral eligibility or retry without preload on grammar errors."
+  },
+  "2c3c9abba8f084857a7be75947fdc241b7027f28b1e2951e0163d4414a570fef": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue presents the bug as open, but recent comment says it is fixed on main by #40869 and only the backport to rc/1.101.0 is missing",
+      "open_pr_assessment lists PR #41220 as semantic overlap but with direct_code_overlap=false and root_cause_coverage=false, so it is not confirmed to cover this root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/common_request_processing.py: make the armed deferred-stream callback dispatch on the stored args shape, or store callback+args as one unit",
+      "litellm/proxy/utils.py: _fire_deferred_stream_logging consumer alignment",
+      "litellm/llms/anthropic/experimental_pass_through/messages/streaming_iterator.py and litellm/litellm_core_utils/streaming_handler.py: consistent _deferred_stream_complete_args shape"
+    ],
+    "risks": [
+      "Fix may already exist on main via #40869, making a new PR redundant",
+      "Changing callback arity could alter guardrail execution semantics for other streaming routes",
+      "Backport-only fix may be the actual remaining work rather than a new implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with post-call guardrails enabled and a streaming /v1/messages request served by a custom_openai/OpenAI-format upstream (non-native Anthropic passthrough); assert no TypeError and that guardrails run on the assembled response",
+      "Add a regression test covering both the 1-tuple native path and the 2-tuple CustomStreamWrapper path against the same logging_obj"
+    ],
+    "unknowns": [
+      "Whether #40869 is merged and fully covers this root cause on main",
+      "Whether the remaining actionable work is only a backport to rc/1.101.0 rather than a new fix",
+      "Whether any open PR (#41220) already implements this exact arity fix"
+    ],
+    "why": "The issue supplies a precise root cause (arity mismatch between _on_deferred_native_stream_complete and the 2-tuple written by CustomStreamWrapper.__anext__) and a concrete fix, but a recent comment states the bug is already fixed on main by PR #40869, with only the backport to rc/1.101.0 missing. That unresolved merged-fix coverage directly determines whether new code work is actionable, so the evidence is contradictory/incomplete."
   },
   "2c3f1e7861212ab9543faa10e8ea644425aabc2d8c3ed0de62d3446d17078cb7": {
     "confidence": 0.7,
@@ -29524,6 +29655,32 @@
     ],
     "why": "The issue provides a concrete, reproducible bug with a clear expected vs actual output, and the comments include a detailed root-cause localization to layer 3 of the Qwen3.5 model, with a proposed next step to isolate internal sub-boundaries. This is a valid LLM algorithm bug with a clear validation path."
   },
+  "481a67cc97e745de6f66ba72933889a53cf6326892825388796ef3ceb976e578": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Candidate labels track as agent_ai_infra but issue is frontend UX only"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "web frontend workflow header button tooltips"
+    ],
+    "risks": [
+      "Low technical value; covered by open PR #42307",
+      "AI disclosure policy conflict blocks public submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Frontend component test asserting tooltip presence on header buttons"
+    ],
+    "unknowns": [],
+    "why": "Issue is a pure UI/UX enhancement request for adding tooltips to workflow editor header buttons; no algorithm, training, inference, RAG, or distributed-training mechanism is involved. Track is agent_ai_infra but the work is ordinary frontend plumbing, and an open PR #42307 already covers the same change."
+  },
   "481ab1efdd4bc763df9caf7515bcccb4d1ceb77282b497c9ab34b4659640fe40": {
     "confidence": 0.7,
     "contradictions": [
@@ -34509,6 +34666,35 @@
       "Whether the issue persists after upgrading hf-xet"
     ],
     "why": "Issue reports slow downloads but lacks a clear root cause; maintainer and contributor comments suggest a dependency version fix (hf-xet 1.5.2) and transient CDN issues, not a code defect in huggingface_hub. No actionable code path is identified, and the deterministic gate is ALLOW_TO_WORK but the evidence points to a maintainer-driven fix."
+  },
+  "52e6e670e8ef30c70c3322895b0116b0dde910d237a2b5596a7b23a13d4707ba": {
+    "confidence": 0.9,
+    "contradictions": [
+      "Issue claims bug affects standard SM100 path, but maintainer comment says it is already fixed on latest main"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new implementation needed; verify fmha_sm100.cmake MSA pin update from 087c161 to f355c37 (vLLM #56545) resolves the standard SM100 path"
+    ],
+    "risks": [
+      "Fix may be conflated with Rubin-specific validation in #56545, leaving the standard CUDA path unverified",
+      "Downgrade workaround masks the incompatible caller"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "On SM100 with quack-kernels==0.6.5 and nvidia-cutlass-dsl==4.7.1, run the minimal repro (vllm serve nvidia/MiniMax-M3-NVFP4 with minimax_m3_msa_decode_backend=cutlass) on latest main and confirm engine initialization reaches readiness without AttributeError"
+    ],
+    "unknowns": [
+      "Whether vLLM #56545 has merged and whether its MSA pin update is validated on the non-Rubin SM100 path"
+    ],
+    "why": "Issue is a well-documented dependency/vendored-pin incompatibility (quack.activation.sub_packed_f32x2 removed in quack-kernels 0.6.5) whose fix already exists upstream (MSA #12) and is already proposed in vLLM #56545; a maintainer comment states the bug is likely fixed on latest main. This is covered opportunity, not new code work."
   },
   "52ff6fa72a3afbc6bfbc663b844da3f47e017620db72c2f22af51d5dac987344": {
     "confidence": 0.7,
@@ -40068,6 +40254,37 @@
       "Exact scope of remaining work after PR #18695."
     ],
     "why": "Issue provides a clear root cause (wiki eligibility requires compilation template resolution, absent for Built-in datasets) and a concrete reproduction path. The candidate is actionable: improve error messaging or pre-validation. Existing PR #18695 already merged with a guard for missing compilation config, but the issue's broader UX problem (misleading message, no pre-validation) remains partially unaddressed. The evidence includes source-verified root cause and a test plan."
+  },
+  "5eebfa239069fd9d83f8d1f8270affc1f3cb7249a7f4cc104dc9ff4a94ebf9f8": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "linkedin_mcp_server/scraping/message_sender.py: broaden _PROFILE_MESSAGE_TARGET_JS to locate the top card via main h1 (or equivalent) rather than only the first section child of main",
+      "Preserve the fail-closed behavior when multiple/zero unambiguous recipient-specific Message actions exist"
+    ],
+    "risks": [
+      "Broadening the DOM scope could select a non-recipient-specific compose link and send to the wrong recipient if ambiguity checks are weakened",
+      "LinkedIn markup may vary across locales/account types, so the fix should remain fail-closed on ambiguity"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test feeding the sanitized DOM snapshot (or a fixture matching the confirmed markup: 0 h1 in first section, compose links elsewhere) into _read_profile_message_target and assert a resolved target",
+      "Run the targeted message_sender unit tests and static checks",
+      "Verify send_message no longer returns recipient_resolution_failed for the confirmed markup shape while still failing closed on genuinely ambiguous pages"
+    ],
+    "unknowns": [
+      "Exact sanitized DOM snapshot from the maintainer's second snippet is not yet supplied, so the precise selector shape for the fix is not fully pinned down"
+    ],
+    "why": "Issue provides a concrete, reproducible failure (recipient_resolution_failed across 4 attempts and a fresh session) plus a source-level root cause: _PROFILE_MESSAGE_TARGET_JS scopes its DOM search to the first <section> child of <main>, requiring exactly one visible <h1> and at most one active compose anchor. A maintainer-requested DevTools probe confirmed h1Count=0 and composeHrefs=[] inside that section while 4 compose links exist elsewhere on the page, validating the narrow-scoping hypothesis. Maintainer then proposed a candidate resolution (locating the card via main h1 instead of main.children), giving a concrete validation path. No duplicate/merged fix covers this; the three open PRs only share the send_message keyword and have no direct code-path overlap."
   },
   "5f225779e17c986d138bc4d049860f192656ad81c161a597de915b541fa4c3f6": {
     "confidence": 0.8,
@@ -46796,6 +47013,41 @@
       "Whether maintainers consider the issue already covered"
     ],
     "why": "The issue clearly identifies a real defect: use_flash_attn/use_liger are validated and auto-enabled for all tasks but only consumed by SFT's text path. However, the supplied evidence shows an open PR #983 with the exact same title and semantic overlap, plus PRs #955 and #965 touching the same fields, and a contributor comment claiming to be actively fixing it. This unresolved duplicate/coverage uncertainty materially blocks deciding whether new code work is actionable."
+  },
+  "6ca8a25d4ac12475f08ba877b02806f1172ed6f24cce12c93aa38843005abd08": {
+    "confidence": 0.55,
+    "contradictions": [
+      "algorithm_evidence claims numerics_quantization/model_architecture mechanisms, but the reported failure is a hardware memory violation in mm_kernel, not a numerical or algorithmic defect"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/flag_gems/runtime/backend/_metax/ops/mm.py",
+      "src/flag_gems/utils/libentry.py"
+    ],
+    "risks": [
+      "Metax-specific hardware trap may not be reproducible on available CI hardware",
+      "Fixing the autotuner path could mask an underlying mm kernel memory-safety bug",
+      "No tensor shapes/dtypes means the failing configuration cannot be reconstructed"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a minimal mm call on Metax C550 using the reported dtypes/shapes and capture the failing config",
+      "Run the same mm call with autotuning disabled to isolate whether the crash is in the kernel or the libentry benchmark path",
+      "Compare against a CPU/FP32 reference for numerical correctness once the crash is resolved"
+    ],
+    "unknowns": [
+      "Minimal reproduction with concrete tensor shapes, dtypes, and strides for the failing mm call",
+      "Whether the crash occurs in the mm kernel itself or in the libentry autotuner benchmark path",
+      "Whether the failure is reproducible on non-Metax hardware or requires the specific Metax C550 environment"
+    ],
+    "why": "The issue reports a Metax-specific illegal memory access in mm_kernel during autotuning, but supplies no minimal reproduction, no tensor shapes/dtypes, and no root-cause evidence; the crash could stem from the Metax backend mm kernel, libentry autotuner benchmarking, or Triton codegen, and the issue itself notes it may not reproduce on standard CUDA. The candidate's algorithm_evidence claims numerics_quantization and model_architecture mechanisms, but the actual failure is a hardware memory violation, not a numerical or algorithmic defect, so the llm_algorithm track justification is not supported by the evidence."
   },
   "6cae41cd393d79350b284187980b239210e7cbf1332458c26026fe74601b9a6d": {
     "confidence": 0.72,
@@ -77963,6 +78215,39 @@
     ],
     "why": "Issue provides a clear root cause (retract only decrements lock refs for radix-owned prefix, leaving KV resident), measured impact (old-weight KV reuse causing logprob divergence), and a concrete validation path (prefix matching and logprob comparison). The suggested fix is actionable and aligns with documented retract semantics."
   },
+  "b6e512393b4a82e7269b2ce56b3168f8b27a3b0bc8ddde3a05c44e544726e312": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue reporter is unsure whether the discrepancy is a bug or intended metric-scope difference",
+      "Comment reproduces a similar gap on 1.17.0 but notes the original trace array is absent, so it is not a direct reproduction of the reported contract"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Clarify whether workflow wall-clock duration and node elapsed_time are intended to be additive; if a bug, fix the aggregation in api/core/app/workflow/layers/persistence.py and api/core/app/apps/common/workflow_response_converter.py"
+    ],
+    "risks": [
+      "Fixing a non-bug metric-scope difference could change API semantics",
+      "Open PR #42163 already covers a related duration mismatch with tests, risking duplicate work",
+      "Repository has an AI disclosure conflict policy that blocks automated public submission"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Instrument the workflow run start/finish and node start/finish timestamps on a linear workflow to determine whether the gap is orchestration overhead or a counting defect, then add a regression test asserting the intended relationship"
+    ],
+    "unknowns": [
+      "Whether maintainers consider the metric-scope difference intended behavior",
+      "Whether the observed gap is orchestration overhead or a counting defect",
+      "Whether PR #42163 already resolves the actionable portion of this issue"
+    ],
+    "why": "The issue reports a timing discrepancy between summed trace node elapsed_time and conversation duration, but the reporter explicitly states it is unclear whether this is a counting bug or merely different statistical calibers. The only substantive comment reproduces a similar discrepancy on a newer version where the original trace array no longer exists, and explicitly cannot attribute the gap to any specific component without runtime instrumentation. No confirmed root cause or concrete failing test is established."
+  },
   "b6eedd046ca39d7273f2cb0c46f4067f6655b4f1083a03472dd5e2884c4e771e": {
     "confidence": 0.85,
     "contradictions": [
@@ -78867,6 +79152,45 @@
       "Exact test framework and location for the regression test."
     ],
     "why": "Issue provides a clear root cause (set -e in entrypoint.sh kills background subshell on non-zero exit), detailed reproduction steps, and a diagnostic script. The fix is a minimal, well-scoped change to entrypoint.sh loops, with an existing open PR (#18545) that addresses the issue but lacks tests. The contribution is actionable and valuable."
+  },
+  "b899ff3da0952a12ceb1acf41d0fab8d1bc5817bdf7bcc4770a054ff58596f8b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with gate_decision HUMAN_REVIEW, but the issue body says not to begin implementation until Ready on the board, and the collaborator comment is only a clarifying question, not a design decision"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "ui/desktop message list rendering: group a turn's tool cards behind one compact row",
+      "bottom progress indicator: name the currently running tool",
+      "exclude pending-approval calls from collapsing and keep them in place"
+    ],
+    "risks": [
+      "Collapsing by default changes existing behaviour for every user",
+      "Open design questions (thinking blocks, intermediate reply density, expanded-state lifetime) are unresolved and could invalidate an implementation",
+      "RTL is untested in the sketch",
+      "Turn-boundary derivation cannot use identifyConsecutiveToolCalls and needs a different definition"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a UI test that renders a turn with multiple tool calls and asserts a single compact summary row plus the running tool name",
+      "Add a test that a call awaiting approval remains visible and actionable in its original position",
+      "Add a test that the compact row keeps a stable position as new assistant replies arrive"
+    ],
+    "unknowns": [
+      "Whether the issue has reached Ready on the Goose Issues board",
+      "Whether the maintainer has settled the collapsed-by-default vs setting question",
+      "Whether thinking blocks are in scope",
+      "Whether intermediate reply density changes are in scope",
+      "Whether the repository requires assignment before implementation"
+    ],
+    "why": "The issue is a UX/rendering design request, not a concrete bug with a root cause. The pre-task evidence explicitly flags reproduction_or_validation_missing and assignment_required, and the issue itself says 'Do not begin implementation until the issue reaches Ready on the Goose Issues board.' The collaborator comment only agrees the UX change is worth doing and asks for clarification; it is not a design decision or approval. The sketch from a non-collaborator is useful input but does not settle the open design questions (collapsed-by-default vs setting, thinking blocks, density of intermediate replies, expanded-state lifetime)."
   },
   "b8a3dd60c35baf2f6f8e10682cd0ea134f317a24dc96be25b2a44fb560d56e40": {
     "confidence": 0.55,
@@ -86674,6 +86998,41 @@
     ],
     "unknowns": [],
     "why": "The issue is a dependency compatibility bug: xxhash 4.0 requires encoded bytes, while lighteval passes a string. This is a straightforward API usage fix, not an LLM algorithm contribution. The track requires concrete algorithmic mechanisms and validation paths, which are absent."
+  },
+  "ca20320b56d851c25cee0a074ce52ecf0e1769ed0f60a13eabf2cd14162d200d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims finish-tool wiring vs agent-server 1.46.0 is the root cause; commenter shows get_default_agent and event_router.py are byte-identical between 1.46.0 and 1.47.0",
+      "Issue body presents 24,102 B and 18,771 B as stock shipped templates; reporter later admits both were locally patched (+538 B), so the A/B was not stock-vs-stock",
+      "FinishTool-not-registered hypothesis was proposed and then disproven on the reporter's host by the launcher flags being present"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unknown until traceback is obtained; candidate areas are agent-server event handling for POST /api/conversations/{id}/events and preset template finish-tool wiring"
+    ],
+    "risks": [
+      "Fixing based on the disproven version-skew theory would be wasted or harmful work",
+      "The real defect may be environment-specific (self-hosted launcher/systemd setup) rather than a code bug",
+      "Open PRs #17286/#16136 show only semantic keyword overlap, not confirmed coverage, so duplicate risk is unresolved"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a trivial prompt-preset automation on agent-canvas 1.17.0 against agent-server 1.46.0",
+      "Enable LOG_TO_FILE=1 LOG_DIR=/var/log/openhands to capture the full traceback, then build a regression test around the identified failure"
+    ],
+    "unknowns": [
+      "The actual traceback behind the 500 on POST /api/conversations/{id}/events",
+      "Whether the failure is a code defect or a self-hosted deployment/launcher configuration issue",
+      "Whether any open PR actually covers the real root cause"
+    ],
+    "why": "The issue's stated root cause (finish-tool wiring vs pinned agent-server 1.46.0) was disproven by byte-level comparison in the comments, and the alternative FinishTool-registration hypothesis was also disproven on the reporter's host. The actual cause remains unknown pending a file-logged traceback that the reporter deferred to a maintenance window. No concrete, validated root cause or fix path is established."
   },
   "ca35ae9b2d49ca895fd5159d649b4255794409db9af22e3904c52618d4cc4761": {
     "confidence": 0.8,
@@ -96310,6 +96669,38 @@
     ],
     "why": "Issue describes a concrete dense-DP IPC payload selection bug with a plausible root cause (data_parallel_rank reset to 0 vs data_parallel_index) and a reproduction script, but supplied evidence contains a materially blocking contradiction: an open PR #56950 already directly references this issue with a matching fix title ('Use DP index for dense DP weight updates'), 2 test files, and review approval, while the duplicate assessment simultaneously claims root_cause_coverage=false and no material competition gaps. This unresolved coverage/duplicate status determines whether independent code work is actionable."
   },
+  "e001e260a5ed2fdd769d74f02f0262b35373fd44754a00396f3aa234a58bda61": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Add cwd field to StructuredPlanChild and thread it into child dispatch/worktree resolution",
+      "Reject or warn on unknown plan-child keys instead of silently dropping cwd",
+      "Improve the multi-repo ambiguity error to name an actionable remedy for the plan path"
+    ],
+    "risks": [
+      "Maintainer may prefer the alternative remedy (error-message change or config guidance) over adding cwd to the plan schema",
+      "Broadening plan schema could affect serialization compatibility for existing plans"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test constructing a structured plan with two parallel write children in a multi-repo parent and assert cwd is honored",
+      "Regression test asserting a cwd key in a plan child is not silently ignored",
+      "Run targeted unit tests for crates/tui workflow and subagent worktree modules plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference for plan-schema cwd vs. error-message remedy"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: StructuredPlanChild lacks a cwd field (crates/tui/src/tools/workflow/mod.rs:2649-2671) and does not deny unknown fields, so cwd is silently dropped, while worktree discovery in crates/tui/src/tools/subagent/worktree.rs:168-171 rejects ambiguous multi-repo parents. Reproduction steps, expected/actual behavior, and a verified workaround are supplied, giving a clear reference-vs-implementation validation path."
+  },
   "e00433ffa87a5d108842ac720c7da8fec52475bb746c6dc351ace8338927e27c": {
     "confidence": 0.85,
     "contradictions": [
@@ -96938,6 +97329,38 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue describes a reproducible degenerate output on DeepSeek-V4-Flash with SM120, but the root cause is not identified. Existing PR #49636 and #50455 overlap semantically with the issue's code paths and may already address the bug, requiring manual comparison before creating a new task."
   },
+  "e18b59e7b07891626fb1872274cd8ebe16467a233733d34a4258d0151ef0a9f3": {
+    "confidence": 0.55,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "src/api/providers/openai.ts: configure Undici dispatcher with headersTimeout/bodyTimeout derived from apiRequestTimeout",
+      "Provider initialization path for OpenAI-compatible clients to pass a custom dispatcher or fetch implementation"
+    ],
+    "risks": [
+      "Overriding Undici dispatcher timeouts may affect other providers or global fetch behavior",
+      "Potential overlap with open PR #1291 (abort signal support for openai-compatible) which touches the same provider code paths",
+      "Assignment requirement (needs_assignment) is unresolved and may block contribution"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that simulates a stalled response body beyond 300s (using a mock server or fake timers) and asserts the request is not terminated before apiRequestTimeout",
+      "Run targeted unit tests for src/api/providers/openai.ts and any provider-settings tests"
+    ],
+    "unknowns": [
+      "Whether the repository requires assignment before accepting external contributions (policy status: needs_assignment)",
+      "Whether maintainers prefer a specific approach for overriding Undici timeouts vs. using a custom fetch/dispatcher",
+      "Whether open PR #1291 already addresses or conflicts with the timeout fix"
+    ],
+    "why": "The issue provides a detailed root-cause hypothesis (Undici default 300s body/headers timeout overriding apiRequestTimeout) and a concrete traceback, but the submission policy is needs_assignment and assignmentRequired is true, which is a materially blocking repository requirement. Additionally, the proposed fix requires overriding the Undici dispatcher, which is a non-trivial change to the HTTP client layer and may conflict with existing abort-signal PRs (#1291) that touch the same provider paths."
+  },
   "e1976a06033d1d1e0f8782c81823016d9a26a52b8e0b8d4efa647c988d4a3bbe": {
     "confidence": 0.85,
     "contradictions": [
@@ -97553,6 +97976,41 @@
     ],
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The design is technically sound and addresses a real bug, but the maintainer has requested specific revisions (write source mechanism, whitespace normalization, and error-propagation call-site impact) before approval. The candidate is not yet actionable until the design is revised and approved."
+  },
+  "e2d2850eec4adea6aa9bff6d41ddbb00465a988cf48f04b579e225adb0c4b7e4": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "csrc/utils/torch_compat.hpp: retain TensorView owner when wrapping with torch::from_blob",
+      "csrc/apis/layout.hpp: SM90 FP32 (128,128) weight-scale branch must return owned storage or retain input owner",
+      "csrc/tvm_ffi_api.cpp: ensure DLPack export of transform_sf_into_required_layout does not expose a non-owning alias",
+      "Add regression test covering input deletion and allocator reuse"
+    ],
+    "risks": [
+      "Distinguishing a genuine ownership/lifetime bug from allocator-dependent pointer reuse; the reproducer makes source_pointer_reused visible to control for this",
+      "Copying every transform could add performance overhead; fix should retain owner or return owned storage only where needed",
+      "Requires SM90 hardware to reproduce; non-SM90 environments cannot validate the specific branch"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the provided repro.py on one idle SM90 GPU with sgl-deep-gemm 0.2.0; assert finite output and allclose to 0.0005 after del sf and gc.collect()",
+      "Run repro.py --clone as diagnostic control to confirm the failure is ownership-related, not numerical",
+      "Add a regression test that deletes the input, forces allocator reuse with sentinel buffers, and verifies the returned tensor remains valid and unchanged",
+      "Verify no-op transform path returns independently owned storage or retains the input owner"
+    ],
+    "unknowns": [
+      "Whether the fix belongs in sglang or upstream DeepGEMM, since Issues are disabled on sgl-project/DeepGEMM and the report was filed in sglang as a redirect request",
+      "Whether PR #30775 or other open PRs already cover this specific library-level ownership path (semantic overlap flagged but no direct code overlap)"
+    ],
+    "why": "Issue provides a concrete, reproducible SM90 lifetime/ownership defect in deep_gemm.transform_sf_into_required_layout: the returned tensor aliases the input scale without retaining the owner, so allocator reuse corrupts live output. Root cause is anchored to specific code paths (torch_compat.hpp convert_to_torch_tensor from_blob without owner, layout.hpp SM90 FP32 (128,128) no-op branch, tvm_ffi_api.cpp DLPack export), with a minimal standalone reproducer and a clone-based diagnostic control. This is a numerical/kernel-algorithm correctness issue with a clear reference-vs-implementation validation path."
   },
   "e2d2a199cc6480e51a694d8cbb4f8902ac431f9ff69c0e759716f006872e7cda": {
     "confidence": 0.9,
@@ -109297,6 +109755,35 @@
       "Which fix option maintainer prefers for Claim A"
     ],
     "why": "Issue provides concrete algorithm-conformance bug with root cause: ReLoRA pruning without merging and strict thresholding zeroing both factors on ties. Maintainer confirmed both claims with measured evidence. Clear fix options and acceptance criteria."
+  },
+  "fb822f727c2d34448f903758d28d445e2389d45e2984d53f0bc1d143f7682bf9": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "build_context URI resolution: try literal permalink lookup before normalized fallback",
+      "error/empty-result handling for unresolved memory:// URIs"
+    ],
+    "risks": [
+      "Changing resolution order could regress the #304 normalization behavior if fallback is not preserved",
+      "Returning an error instead of empty success may alter existing API behavior for callers relying on empty results"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Create a note with frontmatter permalink 's/2026/09/ses_AbCdEfGhIj' and assert build_context with 'memory://s/2026/09/ses_AbCdEfGhIj' returns primary_count 1",
+      "Regression test that the #304 case (underscore URI vs hyphenated stored permalink) still resolves",
+      "Assert unresolved memory:// URI does not silently return empty success"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer literal-first fallback versus error-on-miss, or both, as the accepted design"
+    ],
+    "why": "Issue provides a concrete, reproducible bug: build_context normalizes memory:// URIs through generate_permalink(), which rewrites explicitly-set permalinks (underscores/camelCase) and silently returns zero results, while the literal path works. Root cause is clearly localized to the URI resolution path in build_context, with a stated minimal fix (literal-first with normalized fallback) and a clear validation path (both query forms must resolve the note)."
   },
   "fbae8339bae5fb837265e3fa612c71d28c7405cb2e51ddef6594c02630580ea5": {
     "confidence": 0.6,
