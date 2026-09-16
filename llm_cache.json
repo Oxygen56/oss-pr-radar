@@ -551,6 +551,40 @@
     "wait_reason": null,
     "why": "Issue provides a clear, reproducible bug with source-verified root cause: ProxyException not caught by MCP handlers, causing 500 instead of 401. Fix is localized and testable."
   },
+  "01be30f8579c220b15a08363a92ebbfcef6711ea60c5ccc231732acbf7907d67": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body presents the bug as open, but recent comment says it is fixed on main by #40869"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/common_request_processing.py: unify deferred stream-complete callback arity or store callback+args as one unit",
+      "litellm/proxy/utils.py: _fire_deferred_stream_logging dispatch on stored arg shape",
+      "litellm/llms/anthropic/experimental_pass_through/messages/streaming_iterator.py and litellm/litellm_core_utils/streaming_handler.py: align _deferred_stream_complete_args shape"
+    ],
+    "risks": [
+      "Fix may already exist on main via #40869, making a new PR redundant",
+      "PR #41220 overlaps semantically and may cover the same path",
+      "Broadening callback signature could mask other arity mismatches"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce streaming /v1/messages with post-call guardrails on a custom_openai/OpenAI-format upstream and assert no TypeError",
+      "Add regression test covering both CustomStreamWrapper and native anthropic_messages streaming branches with post-call guardrails active"
+    ],
+    "unknowns": [
+      "Whether #40869 actually covers this exact root cause and whether a backport PR already exists",
+      "Whether PR #41220 addresses the same deferred-stream-complete path"
+    ],
+    "why": "Issue provides a precise root cause (callback/args arity mismatch between _on_deferred_native_stream_complete and _deferred_stream_complete_args producers) and a concrete fix, but a recent comment states the bug is already fixed on main by PR #40869, with only a backport to rc/1.101.0 outstanding. That unresolved merged-fix coverage directly determines whether new code work is actionable, and the open-PR assessment also flags semantic overlap with PR #41220 requiring manual comparison."
+  },
   "01e6df9b41bd785105328ea14b77dc41fa4d7ac39a094c9a87560df06fb400f9": {
     "confidence": 0.8,
     "contradictions": [
@@ -7293,6 +7327,41 @@
       "Whether the cache corruption part is reproducible in a clean environment; maintainer design preference for streaming support vs. rejection."
     ],
     "why": "Issue provides a clear, reproducible bug with a concrete traceback and a minimal reproducer, identifying the root cause as a non-iterable ModelResponseStream object in the streaming interception path. The expected fix is well-scoped and testable."
+  },
+  "11ddf733a1238d609c042ce263a4966cd5913b56e9cfd59965363b8747e66de6": {
+    "confidence": 0.72,
+    "contradictions": [
+      "open_pr_assessment marks PR #2648 as technically_complete with tests and CI, yet root_cause_coverage is false and gaps list missing root-cause coverage"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "SOPEngine state restoration: validate persisted step identity/order rather than only step count",
+      "SOPStepRunState/SOPRunState serialization: persist step identity for new states while tolerating legacy states without it",
+      "Add regression test covering same-length reordered steps and legacy-state loading"
+    ],
+    "risks": [
+      "Backward-compatibility handling for legacy states without step identities could be implemented inconsistently",
+      "Fix may need to avoid broad API behavior changes beyond state validation",
+      "Open PR #2648 may overlap; coordinate to avoid duplicate implementation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: build SOP with steps A,B, persist SOPRunState with progress on A, rebuild SOP as B,A, construct SOPEngine(reordered_sop, stored_state) and assert rejection",
+      "Regression: verify legacy stored states lacking step identities still load for backward compatibility",
+      "Run targeted SOPEngine unit tests and static checks for the affected package"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred identity scheme (step name vs. hash) for persisted step state",
+      "Whether PR #2648 already resolves the same-length reorder case despite the reported root-cause coverage gap"
+    ],
+    "why": "Issue gives a concrete, reproducible root cause: SOPEngine restores SOPStepRunState by list index and only rejects stored runs when step counts differ, so same-length reorders silently mis-map persisted progress. Expected behavior and backward-compatibility constraint (states without step identities must still load) are stated, and a minimal reproduction is provided. An open PR #2648 exists but is assessed as weak competition with root-cause coverage gaps, so independent work remains actionable."
   },
   "11e07a0613c6c48288a2a775dcf259cd06be93aa039df21fcf6f6af2c9e362d6": {
     "confidence": 0.8,
@@ -25239,6 +25308,34 @@
       "Exact implementation details of existing PR #12326 and whether it already covers the required fix; need to compare to avoid duplication."
     ],
     "why": "Issue provides a clear, verified root cause (UTC-naive timestamps in desktop SQL chat) and a concrete acceptance test with fixture and expected output. The fix is mechanical and well-scoped, with explicit out-of-scope items. Existing PR #12326 is open but lacks root-cause coverage, leaving room for a competitive contribution."
+  },
+  "3d36cfbae3243454c048b4d19788e4fb0d435134031e400ee49c17c790b2fe46": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "app/api/core/memory/token_buffer_memory.py: handle or explicitly support the 'agent' conversation mode in _build_prompt_message_with_files instead of raising AssertionError",
+      "app/api/services/message_service.py: ensure get_suggested_questions_after_answer tolerates agent-mode conversations"
+    ],
+    "risks": [
+      "Fix could silently change prompt construction semantics for agent-mode conversations if the intended behavior is to skip file prompts",
+      "Repository AI disclosure policy conflict may block public submission even though the code work is valid"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that constructs a conversation with mode 'agent' and calls get_history_prompt_text / get_suggested_questions_after_answer, asserting no AssertionError and a valid prompt message list",
+      "Run the targeted API unit tests for message_service and token_buffer_memory plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers intend agent mode to be supported in this memory path or excluded upstream"
+    ],
+    "why": "Issue provides a full traceback pinpointing the assertion in token_buffer_memory._build_prompt_message_with_files that rejects app mode 'agent', reached via the suggested-questions endpoint. The root cause is concrete and the fix surface is a small, well-anchored code path, so the work is actionable despite no maintainer pre-approval."
   },
   "3d3e13b5614d3cc45e027bca6f3987e95c9ed16078b2d2a7497ee93410bbd110": {
     "confidence": 0.85,
@@ -67438,6 +67535,39 @@
     ],
     "why": "Issue reports a clear crash with root cause and repro, but the deterministic gate says HUMAN_REVIEW and the related issue audit timed out. An existing draft PR (#50894) directly addresses the bug but has failed CI and is incomplete, so a better PR may be possible. However, maintainer design preference and PR status need confirmation."
   },
+  "9b7f0cf30f27f6f7f122d58ce27358e041815a903bf3f3f98b0d60858a3b2820": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.why claims LLM algorithm mechanism (numerics_quantization) while issue body describes model-card/runtime-config plumbing"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "ThunderAgent proxy registration path",
+      "ModelDeploymentCard/runtime_config inheritance",
+      "frontend admission ordering"
+    ],
+    "risks": [
+      "Architectural change may conflict with existing routing/flow-control contract",
+      "Duplicate implementation of open PR #14845",
+      "No numerical/algorithmic validation path exists for this plumbing fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Reproduce with SGLang 131072-token context and 135010-token prompt; assert frontend rejects before routing",
+      "Regression test that proxy card inherits backend runtime_config.token_budget"
+    ],
+    "unknowns": [
+      "Whether maintainers intend the full architectural removal or accept the minimal runtime_config copy fix"
+    ],
+    "why": "Issue describes a real model-card ownership defect, but the proposed direction is architectural plumbing (remove proxy model registration, route after preprocessing) rather than an LLM algorithm mechanism. The algorithm_evidence mechanisms (model_architecture, numerics_quantization) are keyword matches (normalization/overflow) with no formula, no training objective, no quantization/numerical method, and no kernel/eval methodology. Additionally, open PR #14845 already directly covers the issue with tests and CI, so the remaining opportunity is low-value competition."
+  },
   "9b7f751b78e7be838eb399bb676dafc20c245101011b8d788e0509c01b0ae302": {
     "confidence": 0.82,
     "contradictions": [
@@ -85508,6 +85638,44 @@
     "wait_reason": "ASSIGNMENT",
     "why": "Issue clearly describes inconsistent validation across three paths with a concrete repro, but lacks root-cause analysis and code anchors. Submission policy requires assignment, and no maintainer approval or design confirmation exists."
   },
+  "c69f0a443aa8be10ff2def6a42ec68c88a9dd52101dc7be391f10d3aecc6402d": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Triage bot reclassified as enhancement and deferred to v0.16.x reverse-proxy milestone, while the issue frames it as a bug and the candidate category is WAIT_MAINTAINER",
+      "Open PR #11913 overlaps packages/web-shell/client/daemon/session/actions.ts semantically but does not reference this issue and has changes requested"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/serve/routes/session.ts (chunked upload route or assemble step)",
+      "packages/sdk-typescript/src/daemon/DaemonClient.ts (client-side chunking above threshold)",
+      "packages/web-shell/client/daemon/session/actions.ts (upload path)",
+      "possibly other binary ingress routes (/file/upload, extensions, voice) for coherence"
+    ],
+    "risks": [
+      "Chunking requires upload-id lifecycle, assembly, atomicity, GC for abandoned uploads, and per-chunk ownership/auth",
+      "If only attachments are chunked, /file/upload (50 MiB) and other binary routes remain unreachable behind the same proxy cap",
+      "Maintainer may prefer the cheaper documented proxy requirement + tunable --max-body-size flag instead of a new protocol"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce behind nginx/OpenResty with client_max_body_size 1m and a >1 MiB <8 MiB PNG paste; assert gateway 413 before fix",
+      "After fix, assert successful upload up to the documented 8 MiB cap through the proxy",
+      "Regression test that small files still use the one-shot POST path"
+    ],
+    "unknowns": [
+      "Whether maintainers consider proxied deployment in scope now or defer to the v0.16.x milestone",
+      "Which chunk contract (if any) maintainers prefer, or whether they prefer the documented proxy requirement + --max-body-size flag",
+      "Whether the fix should cover all binary ingress routes or only attachments"
+    ],
+    "why": "The issue describes a real transport-shape gap (one unchunked POST for session attachments, unreachable 8 MiB cap behind a ~1 MiB proxy body limit), and the root cause is confirmed by code anchors and a collaborator's independent verification. However, the triage bot reclassified this as an enhancement and explicitly deferred it to the v0.16.x containerized/reverse-proxy milestone (#3803), noting the deployment shape is documented as out of scope today. The suggested fix (chunked upload protocol) is a cross-cutting design change touching serve routes, SDK, and Web Shell, and the maintainer explicitly asks for a transport decision rather than an attachments-only patch. This is a design/scope decision that materially determines whether code work is actionable, so it is not a normal implementation uncertainty."
+  },
   "c6c534faee3f0aa9e065bf623cca6c3fe79145346d70973e857d9f3489b14c24": {
     "confidence": 0.7,
     "contradictions": [],
@@ -92242,6 +92410,45 @@
       "Maintainer preference on approach (spawn vs. lazy CUDA init)"
     ],
     "why": "The issue reports a CUDA fork-safety bug in trl vllm-serve with tensor_parallel_size > 1. The root cause is clear (fork start method with CUDA), but the track is llm_algorithm and the issue is operational/infrastructure rather than an algorithm mechanism. The supplied gate says HUMAN_REVIEW, and there is an existing PR (#6651) by a collaborator that may already address the issue, requiring maintainer comparison."
+  },
+  "d56f7a75d59183ef45fbdff851f270606d29fb9c01eb45e1011b311186d313af": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body says do not begin implementation until Ready, while the candidate is scored as a high-value actionable fix",
+      "Collaborator agrees the UX change is timely but does not approve a specific design or implementation"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "UI message-list rendering to group a turn's tool cards behind one compact row",
+      "bottom progress indicator to name the currently running tool",
+      "turn-boundary detection that ignores tool-response messages using the user role"
+    ],
+    "risks": [
+      "Collapsing by default changes existing behavior for every user",
+      "Open design questions about thinking blocks and intermediate reply density are unresolved",
+      "RTL layout is untested in the sketch",
+      "Implementation before the issue reaches Ready may conflict with maintainer design preferences"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a UI regression test that renders a turn with multiple tool calls and asserts a single compact summary row plus an expandable detail view",
+      "Test that calls awaiting approval remain visible and actionable in place",
+      "Test that the compact row keeps a stable position as new assistant replies arrive"
+    ],
+    "unknowns": [
+      "Whether the issue has reached Ready on the Goose Issues board",
+      "Whether a maintainer will assign the issue or approve a design direction",
+      "Whether thinking blocks and intermediate reply density belong in the same change",
+      "Whether collapsed-by-default or a user setting is preferred"
+    ],
+    "why": "The issue is an open UX design discussion with explicit instructions not to begin implementation until it reaches Ready on the Goose Issues board, and the submission policy requires assignment. The supplied evidence shows no assignee, no maintainer approval, and no reproduction/validation path; the only implementation sketch is from a non-collaborator and leaves open design questions (thinking blocks, density, collapsed-by-default behavior). This is a materially blocking unknown for actionable code work."
   },
   "d59694b5518e0d93c32e4ab833892d10568ae3bbbf5923979411ac7af2b8e27a": {
     "confidence": 0.85,
@@ -100810,6 +101017,41 @@
     ],
     "wait_reason": null,
     "why": "Issue provides a minimal reproducer, exact traceback, and root-cause analysis (zero-sized parameter absent from param_to_partition_ids) with a clear fix direction. It is a concrete distributed-training bug in ZeRO stage 1/2, actionable and testable."
+  },
+  "e7d09ed47b484d1a9d825a1d52eff17f11352bb730930d3e0a253e611cad17c9": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_checks.py: add fallback-aware budget evaluation or a fallback_budget_check sibling",
+      "litellm/proxy/auth/fallback_model_access.py: add budget counterpart to fallback access check",
+      "litellm/proxy/auth/user_api_key_auth.py: wire fallback budget check into router fallback path",
+      "Router fallback execution: skip over-budget fallback targets and continue walking"
+    ],
+    "risks": [
+      "Opt-in vs default-on behavior for enforce_fallback_budget is unresolved and affects whether the leak is closed by default.",
+      "Partial coverage (key + user budgets only) leaves team, team-member, end-user, org, global, and per-model budgets unenforced on the fallback path.",
+      "Budget functions have side effects before raising (alerts, reserve_budget_for_request), so a naive try/except wrapper could fire alerts or take reservations for skipped targets."
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing regression test with a zero-cost primary model and a paid fallback, an exhausted max_budget user, and a failing free upstream; assert the paid fallback is skipped and the caller sees the upstream error.",
+      "Add a control test where the free upstream is healthy and the user is over budget; assert the free call still succeeds at $0.",
+      "Add a test where the user is under budget and the free upstream fails; assert the paid fallback executes and bills normally."
+    ],
+    "unknowns": [
+      "Maintainer preference on opt-in vs default-on for the fallback budget check.",
+      "Whether full budget-dimension coverage should land in the same PR or a follow-up."
+    ],
+    "why": "Issue provides a concrete root cause: _is_model_cost_zero in litellm/proxy/auth/auth_checks.py only inspects the requested model group and ignores litellm_settings.fallbacks, so user_api_key_auth.py sets skip_budget_checks=True and no budget gate re-runs when run_async_fallback routes to a priced deployment. The issue includes a minimal YAML reproduction, expected vs actual behavior, and a concrete fallback-time budget-check design mirroring the existing fallback_access_check mechanism. Open PRs #41379 (draft) and #41345 are keyword-overlap only with no direct code-path or mechanism overlap, so they do not block implementation."
   },
   "e7e922a26c2cb25779d45e6a36f2fbcf2e37f9410a7d57691f6db57b7a257a7d": {
     "confidence": 0.85,
