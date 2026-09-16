@@ -7,6 +7,7 @@ from pathlib import Path
 from oss_pr_radar.agentscope_events import EventLane
 from oss_pr_radar.recovery_repair import (
     event_artifact_path,
+    migrate_unmarked_transient_model_recoveries,
     rearm_historical_recoveries,
 )
 
@@ -129,6 +130,71 @@ def test_rearm_advances_artifact_generation_and_is_bounded(tmp_path: Path) -> No
     )
     assert second["rearmed"] == 0
     assert second["skipped"] == 1
+
+
+def test_unmarked_transient_recovery_migrates_once_to_astra(tmp_path: Path) -> None:
+    lane, _key, _root_id, recovery_id = _seed_exhausted(
+        tmp_path, namespace="agentscope", repo="agentscope-ai/agentscope", number=8
+    )
+    with lane.writer() as db:
+        row = db.execute(
+            "SELECT payload_json FROM event_lane_events WHERE event_id=?", (recovery_id,)
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+        payload["transientModelRetry"] = {
+            "schemaVersion": "oss_pr_radar_transient_model_retry_v1",
+            "error": "selected model is at capacity",
+        }
+        db.execute(
+            "UPDATE event_lane_events SET status='pending',attempts=0,payload_json=? WHERE event_id=?",
+            (json.dumps(payload, sort_keys=True), recovery_id),
+        )
+        turn = db.execute(
+            "SELECT receipt_json FROM event_lane_turns WHERE event_id=?", (recovery_id,)
+        ).fetchone()
+        receipt = json.loads(turn["receipt_json"])
+        receipt["terminalError"] = {"code": "serverOverloaded"}
+        db.execute(
+            "UPDATE event_lane_turns SET receipt_json=? WHERE event_id=?",
+            (json.dumps(receipt, sort_keys=True), recovery_id),
+        )
+
+    first = migrate_unmarked_transient_model_recoveries(
+        lane, namespace="agentscope", now=1_700_000_000
+    )
+    assert first == {"candidates": 1, "migrated": 1, "skipped": 0}
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts,payload_json FROM event_lane_events WHERE event_id=?",
+            (recovery_id,),
+        ).fetchone()
+    payload = json.loads(row["payload_json"])
+    assert (row["status"], row["attempts"]) == ("pending", 0)
+    assert payload["modelFallback"]["candidates"][0] == "gpt-6-astra"
+    assert payload["modelFallback"]["nextIndex"] == 0
+    assert payload["historicalModelRepair"]["automaticRearmCount"] == 1
+    with lane.connect() as db:
+        before_second = tuple(
+            db.execute(
+                "SELECT e.payload_json,t.receipt_json FROM event_lane_events e "
+                "JOIN event_lane_turns t USING(event_id) WHERE e.event_id=?",
+                (recovery_id,),
+            ).fetchone()
+        )
+    assert migrate_unmarked_transient_model_recoveries(lane, namespace="agentscope") == {
+        "candidates": 0,
+        "migrated": 0,
+        "skipped": 0,
+    }
+    with lane.connect() as db:
+        after_second = tuple(
+            db.execute(
+                "SELECT e.payload_json,t.receipt_json FROM event_lane_events e "
+                "JOIN event_lane_turns t USING(event_id) WHERE e.event_id=?",
+                (recovery_id,),
+            ).fetchone()
+        )
+    assert after_second == before_second
 
 
 def test_rearm_supersedes_chain_only_for_a_later_valid_completed_turn(tmp_path: Path) -> None:

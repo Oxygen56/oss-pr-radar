@@ -143,6 +143,55 @@ def _receipt_object(value: object) -> dict[str, Any]:
     return dict(parsed) if isinstance(parsed, dict) else {}
 
 
+def advance_model_fallback(
+    event: dict[str, Any],
+    *,
+    model: str,
+    candidates: tuple[str, ...],
+    error: object,
+    now: float | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Record one actual failed model and select the next unused candidate."""
+    ordered = tuple(str(item).strip() for item in candidates if str(item).strip())
+    selected = str(model).strip()
+    if not ordered or len(set(ordered)) != len(ordered) or not selected:
+        raise ValueError("invalid transient model fallback candidates")
+    current = time.time() if now is None else float(now)
+    updated = dict(event)
+    prior = updated.get("modelFallback")
+    prior = dict(prior) if isinstance(prior, dict) else {}
+    history = prior.get("history")
+    history = [dict(item) for item in history if isinstance(item, dict)] if isinstance(history, list) else []
+    attempted = [str(item.get("model") or "") for item in history]
+    if selected not in attempted:
+        history.append(
+            {
+                "model": selected,
+                "failedAt": datetime.fromtimestamp(current, UTC)
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "error": str(error)[:500],
+            }
+        )
+    history = history[-(len(ordered) + 1) :]
+    attempted_set = {
+        str(item.get("model") or "") for item in history if isinstance(item, dict)
+    }
+    next_index = next(
+        (index for index, candidate in enumerate(ordered) if candidate not in attempted_set),
+        len(ordered),
+    )
+    state = "exhausted" if next_index >= len(ordered) else "pending"
+    updated["modelFallback"] = {
+        "schemaVersion": "oss_pr_radar_event_model_fallback_v1",
+        "candidates": list(ordered),
+        "nextIndex": next_index,
+        "history": history,
+        "state": state,
+    }
+    return updated, state
+
+
 def _receipt_has_live_bridge(receipt: dict[str, Any]) -> bool:
     """Fail closed when any known bridge PID is still a live event worker."""
     for field in ("workerPid", "pid", "processId", "launchPid"):
@@ -1501,6 +1550,134 @@ class EventLane:
             if removed.rowcount != 1:
                 raise RuntimeError("prestart authorization reservation changed")
             return True
+
+    def record_transient_model_failure(
+        self,
+        event_id: str,
+        *,
+        model: str,
+        candidates: tuple[str, ...],
+        error: object,
+        lease_token: str | None = None,
+        owner: str = "event-lane",
+        retry_not_before: float | None = None,
+    ) -> str:
+        """Advance one durable model fallback chain without refunding an attempt.
+
+        The event-lane attempt is deliberately retained: a capacity failure is
+        a real model attempt, not an infrastructure pre-start refund.  This
+        makes the finite candidate list the authority and prevents a stale
+        receipt from resetting an event into an unbounded retry loop.
+        """
+        ordered = tuple(str(item).strip() for item in candidates if str(item).strip())
+        selected = str(model).strip()
+        if not ordered or len(set(ordered)) != len(ordered) or not selected:
+            raise ValueError("invalid transient model fallback candidates")
+        current = time.time()
+        with self.writer() as db:
+            row = db.execute(
+                "SELECT status,attempts,payload_json FROM event_lane_events WHERE event_id=?",
+                (str(event_id),),
+            ).fetchone()
+            if row is None or str(row["status"] or "") not in {
+                "leased",
+                "delivered",
+                "needs_reconcile",
+            }:
+                return "conflict"
+            if lease_token and (
+                str(row["status"] or "") != "leased"
+                or db.execute(
+                    "SELECT 1 FROM event_lane_events WHERE event_id=? AND lease_owner=? AND lease_token=?",
+                    (str(event_id), str(owner), str(lease_token)),
+                ).fetchone()
+                is None
+            ):
+                return "conflict"
+            try:
+                event = json.loads(row["payload_json"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                event = {"eventId": str(event_id)}
+            if not isinstance(event, dict):
+                event = {"eventId": str(event_id)}
+            prior_fallback = event.get("modelFallback")
+            legacy_reset = bool(
+                selected not in ordered
+                and not (
+                    isinstance(prior_fallback, dict)
+                    and prior_fallback.get("schemaVersion")
+                    == "oss_pr_radar_event_model_fallback_v1"
+                )
+            )
+            event, fallback_state = advance_model_fallback(
+                event,
+                model=selected,
+                candidates=ordered,
+                error=error,
+                now=current,
+            )
+            fallback = event["modelFallback"]
+            if legacy_reset:
+                try:
+                    generation = int(event.get("recoveryGeneration") or 0)
+                except (TypeError, ValueError, OverflowError):
+                    generation = 0
+                event["recoveryGeneration"] = generation + 1
+                event["legacyModelFallbackMigration"] = {
+                    "schemaVersion": "oss_pr_radar_legacy_model_fallback_migration_v1",
+                    "previousModel": selected,
+                    "previousAttempts": int(row["attempts"] or 0),
+                }
+            exhausted = fallback_state == "exhausted"
+            if exhausted:
+                event["terminalReason"] = "model_capacity_retries_exhausted"
+                event.pop("retryNotBefore", None)
+                status = "needs_reconcile"
+            else:
+                event.pop("terminalReason", None)
+                if retry_not_before is not None:
+                    event["retryNotBefore"] = float(retry_not_before)
+                status = "pending"
+            result = db.execute(
+                "UPDATE event_lane_events SET status=?,attempts=?,payload_json=?,delivered_at=?,"
+                "lease_until=NULL,lease_owner=NULL,lease_token=NULL WHERE event_id=?",
+                (
+                    status,
+                    0 if legacy_reset and not exhausted else int(row["attempts"] or 0),
+                    json.dumps(event, sort_keys=True),
+                    current if exhausted else None,
+                    str(event_id),
+                ),
+            )
+            if result.rowcount != 1:
+                return "conflict"
+            turn = db.execute(
+                "SELECT event_key,turn_id,receipt_json FROM event_lane_turns WHERE event_id=?",
+                (str(event_id),),
+            ).fetchone()
+            if turn is not None:
+                receipt = _receipt_object(turn["receipt_json"])
+                receipt.update(
+                    {
+                        "model": selected,
+                        "terminalError": str(error)[:500],
+                        "modelFallback": fallback,
+                    }
+                )
+                if exhausted:
+                    receipt["terminalReason"] = "model_capacity_retries_exhausted"
+                receipt_json = json.dumps(receipt, sort_keys=True)
+                db.execute(
+                    "UPDATE event_lane_turns SET status='needs_reconcile',receipt_json=? WHERE event_id=?",
+                    (receipt_json, str(event_id)),
+                )
+                if str(turn["turn_id"] or ""):
+                    db.execute(
+                        "UPDATE event_lane_threads SET status='needs_reconcile',receipt_json=? "
+                        "WHERE event_key=? AND turn_id=?",
+                        (receipt_json, str(turn["event_key"]), str(turn["turn_id"])),
+                    )
+            return "exhausted" if exhausted else "retry"
 
     def try_reserve_handler_turn_if_idle(
         self,

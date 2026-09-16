@@ -22,6 +22,7 @@ _REARM_SCHEMA = "oss-pr-radar-model-compatibility-rearm-v1"
 _MAX_REARM_HISTORY = 4
 _TERMINAL_STATUSES = {"completed", "failed", "interrupted"}
 _OUTCOME_STATES = {"no_action", "claimed_or_pr", "design_wait"}
+_EVENT_MODEL_CANDIDATES = ("gpt-6-astra", "gpt-5.6-terra", "gpt-5.6-luna")
 
 
 def event_artifact_path(
@@ -239,6 +240,151 @@ def _live_receipt(receipt: dict[str, Any]) -> bool:
     from .agentscope_events import _receipt_has_live_bridge
 
     return _receipt_has_live_bridge(receipt)
+
+
+def _transient_model_failure(value: object) -> bool:
+    """Recognize the bounded capacity/configuration errors from the bridge."""
+    try:
+        text = json.dumps(value, sort_keys=True) if isinstance(value, dict) else str(value or "")
+    except (TypeError, ValueError):
+        text = str(value or "")
+    folded = text.casefold()
+    return any(
+        marker in folded
+        for marker in (
+            "selected model is at capacity",
+            "model is at capacity",
+            "model is not supported when using codex with a chatgpt account",
+            "serveroverloaded",
+            "stream disconnected before completion",
+        )
+    )
+
+
+def migrate_unmarked_transient_model_recoveries(
+    lane: EventLane,
+    *,
+    namespace: str,
+    now: float | None = None,
+) -> dict[str, int]:
+    """One-time, auditable migration of old exhausted capacity recoveries.
+
+    Older rows have no fallback marker and therefore cannot safely infer
+    which model was attempted.  They get exactly one fresh generation with an
+    explicit candidate index at Astra; subsequent failures consume the normal
+    finite fallback chain and are never rearmed by this migration again.
+    """
+    current = time.time() if now is None else float(now)
+    stamp = _stamp(current)
+    stats = {"candidates": 0, "migrated": 0, "skipped": 0}
+    with lane.writer() as db:
+        rows = db.execute(
+            "SELECT e.event_id,e.status,e.attempts,e.payload_json,t.status AS turn_status,"
+            "t.receipt_json FROM event_lane_events e JOIN event_lane_turns t USING(event_id) "
+            "WHERE e.status IN ('pending','needs_reconcile') AND t.status='needs_reconcile'"
+        ).fetchall()
+        for row in rows:
+            event_id = str(row["event_id"])
+            event = _object(row["payload_json"])
+            fallback = event.get("modelFallback")
+            if not _is_recovery(event_id, event, namespace) or (
+                isinstance(fallback, dict)
+                and fallback.get("schemaVersion")
+                == "oss_pr_radar_event_model_fallback_v1"
+            ):
+                continue
+            receipt = _object(row["receipt_json"])
+            retry_marker = event.get("transientModelRetry")
+            terminal_error = receipt.get("terminalError", receipt.get("error"))
+            if terminal_error is None:
+                terminal_error = event.get("terminalError")
+            if terminal_error is None and isinstance(retry_marker, dict):
+                terminal_error = retry_marker.get("error")
+            if not (
+                _transient_model_failure(terminal_error)
+                or receipt.get("transientModelRetry") is True
+                or isinstance(retry_marker, dict)
+            ):
+                continue
+            stats["candidates"] += 1
+            root_id = _root_id(event)
+            key = str(event.get("eventKey") or "")
+            root_row = db.execute(
+                "SELECT status,payload_json FROM event_lane_events WHERE event_id=?", (root_id,)
+            ).fetchone()
+            root_turn = db.execute(
+                "SELECT status,receipt_json FROM event_lane_turns WHERE event_id=?", (root_id,)
+            ).fetchone()
+            if (
+                root_row is None
+                or root_turn is None
+                or not _lineage_valid(event_id, event, root_id, _object(root_row["payload_json"]), key, namespace)
+                or str(root_row["status"] or "") not in {"delivered", "needs_reconcile"}
+                or str(root_turn["status"] or "") != "needs_reconcile"
+                or _valid_outcome(receipt, event_id, key, namespace)
+                or _valid_outcome(_object(root_turn["receipt_json"]), root_id, key, namespace)
+                or _live_receipt(receipt)
+                or _live_receipt(_object(root_turn["receipt_json"]))
+            ):
+                stats["skipped"] += 1
+                continue
+            marker = _repair_marker(event) or {}
+            try:
+                automatic_rearms = int(marker.get("automaticRearmCount") or 0)
+            except (TypeError, ValueError, OverflowError):
+                automatic_rearms = 0
+            marker.update(
+                {
+                    "schemaVersion": _REARM_SCHEMA,
+                    "state": "rearmed",
+                    # This migration is the one permitted compatibility reset;
+                    # rearm_historical_recoveries must not reset it a second time.
+                    "automaticRearmCount": max(1, automatic_rearms),
+                    "migration": "unmarked_transient_model_recovery_v1",
+                    "migratedAt": stamp,
+                }
+            )
+            marker.setdefault("originalAttempts", int(row["attempts"] or 0))
+            marker.setdefault(
+                "originalPayloadSha256",
+                hashlib.sha256(str(row["payload_json"] or "").encode("utf-8")).hexdigest(),
+            )
+            marker.setdefault(
+                "originalReceiptSha256",
+                hashlib.sha256(str(row["receipt_json"] or "").encode("utf-8")).hexdigest(),
+            )
+            repaired = dict(event)
+            repaired["historicalModelRepair"] = marker
+            repaired["modelFallback"] = {
+                "schemaVersion": "oss_pr_radar_event_model_fallback_v1",
+                "candidates": list(_EVENT_MODEL_CANDIDATES),
+                "nextIndex": 0,
+                "history": [],
+                "state": "pending",
+            }
+            try:
+                generation = int(event.get("recoveryGeneration") or 0) + 1
+            except (TypeError, ValueError, OverflowError):
+                generation = 1
+            repaired["recoveryGeneration"] = generation
+            marker["lastArtifactGeneration"] = generation
+            for key_to_remove in ("terminalReason", "recoveryExhausted", "recoveryAttempts", "retryNotBefore"):
+                repaired.pop(key_to_remove, None)
+            changed = db.execute(
+                "UPDATE event_lane_events SET status='pending',attempts=0,payload_json=?,"
+                "delivered_at=NULL,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
+                "WHERE event_id=? AND status=? AND attempts=?",
+                (
+                    json.dumps(repaired, sort_keys=True),
+                    event_id,
+                    str(row["status"]),
+                    int(row["attempts"] or 0),
+                ),
+            )
+            if changed.rowcount != 1:
+                raise RuntimeError("transient model recovery changed during migration")
+            stats["migrated"] += 1
+    return stats
 
 
 def rearm_historical_recoveries(

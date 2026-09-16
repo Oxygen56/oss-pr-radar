@@ -107,6 +107,9 @@ def _signed_dispatch_queue(
     queue_overrides: dict | None = None,
     intent_overrides: dict | None = None,
 ) -> dict:
+    issued_at = datetime.now(UTC)
+    issued_at_text = iso_z(issued_at)
+    expires_at_text = iso_z(issued_at + timedelta(days=7))
     signer = MODULE.DispatchSigner(os.environ["RADAR_DISPATCH_HMAC_KEY"])
     owner_repo, number_text = key.split("#", 1)
     number = int(number_text)
@@ -126,9 +129,9 @@ def _signed_dispatch_queue(
             "issueNumber": number,
             "issueUrl": issue_url,
             "title": "Useful bug",
-            "issuedAt": "2026-08-21T00:00:00Z",
-            "expiresAt": "2026-08-28T00:00:00Z",
-            "issueUpdatedAt": "2026-08-21T00:00:00Z",
+            "issuedAt": issued_at_text,
+            "expiresAt": expires_at_text,
+            "issueUpdatedAt": issued_at_text,
             "policyDigest": "policy-digest",
             "scannerVersion": scanner_version,
             "decisionContractDigest": decision_digest,
@@ -146,7 +149,7 @@ def _signed_dispatch_queue(
     queue = {
         "version": QUEUE_VERSION,
         "mode": "shadow",
-        "issuedAt": "2026-08-21T00:00:00Z",
+        "issuedAt": issued_at_text,
         "scannerVersion": scanner_version,
         "decisionContractDigest": decision_digest,
         "contractDigest": dispatch_contract,
@@ -13301,6 +13304,79 @@ def _task_turn_messages(process: _FakeTaskTurnProcess) -> list[dict[str, object]
     return [
         json.loads(line) for write in process.stdin.writes for line in write.splitlines() if line
     ]
+
+
+def test_agentscope_event_worker_propagates_requested_model(monkeypatch, tmp_path):
+    state = tmp_path / "state"
+    receipt = state / "agentscope_event_receipts" / "event.json"
+    outcome = state / "agentscope_event_outcomes" / "event.json"
+    request = state / "agentscope_event_receipts" / "event.request.json"
+    receipt.parent.mkdir(parents=True)
+    outcome.parent.mkdir(parents=True)
+    outcome.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "agentscope_event_outcome_v1",
+                "eventId": "event-1",
+                "publicKey": "agentscope-ai/agentscope#7",
+                "state": "no_action",
+            }
+        ),
+        encoding="utf-8",
+    )
+    request.write_text(
+        json.dumps(
+            {
+                "eventId": "event-1",
+                "eventKey": "agentscope-ai/agentscope#7",
+                "threadId": "",
+                "clientUserMessageId": "client:event-1",
+                "cwd": str(tmp_path),
+                "prompt": "handle the event",
+                "outcomePath": str(outcome),
+                "model": "gpt-5.6-terra",
+            }
+        ),
+        encoding="utf-8",
+    )
+    process = _FakeTaskTurnProcess()
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {}}
+        if response_id == 2:
+            return buffer, {"result": {"thread": {"id": "thread-1"}}}
+        return buffer, {"result": {"turn": {"id": "turn-1"}}}
+
+    monkeypatch.setattr(MODULE, "STATE", state)
+    monkeypatch.setattr(MODULE, "ledger", lambda _path: object())
+    monkeypatch.setattr(MODULE, "_app_server_action_session", action_session)
+    monkeypatch.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+    monkeypatch.setattr(MODULE, "_read_app_server_response", read_response)
+    monkeypatch.setattr(
+        MODULE,
+        "_wait_for_app_server_terminal_turn",
+        lambda *_args, **_kwargs: {"turnId": "turn-1", "status": "completed"},
+    )
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    result = MODULE._agentscope_event_worker(
+        SimpleNamespace(
+            request=str(request),
+            receipt=str(receipt),
+            ledger=tmp_path / "ledger.sqlite3",
+        )
+    )
+
+    turn = next(
+        item for item in _task_turn_messages(process) if item.get("method") == "turn/start"
+    )
+    assert turn["params"]["model"] == "gpt-5.6-terra"
+    assert result["model"] == "gpt-5.6-terra"
 
 
 def test_validation_attempt_scopes_delivery_files_and_client_id_but_not_worker_lock(

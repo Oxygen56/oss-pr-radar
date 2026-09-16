@@ -20,6 +20,7 @@ from oss_pr_radar.agentscope_events import (  # noqa: E402
     EventLane,
     GitHubIssuePoller,
     PollResult,
+    advance_model_fallback,
     dispatch_once,
     github_event_effective_time,
 )
@@ -28,6 +29,7 @@ from oss_pr_radar.local_publication import run_bridge  # noqa: E402
 from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
 from oss_pr_radar.recovery_repair import (  # noqa: E402
     event_artifact_path,
+    migrate_unmarked_transient_model_recoveries,
     rearm_historical_recoveries,
 )
 from scripts.migrate_event_recovery_chains import (  # noqa: E402
@@ -60,6 +62,7 @@ EVENT_OUTCOME_DIR = "agentscope_event_outcomes"
 EXHAUSTED_EVIDENCE_RECHECK_SECONDS = 15 * 60
 EXTERNAL_CLAIM_WATCH_SECONDS = 24 * 60 * 60
 TRANSIENT_MODEL_RETRY_DELAY_SECONDS = 5 * 60
+EVENT_MODEL_CANDIDATES = ("gpt-6-astra", "gpt-5.6-terra", "gpt-5.6-luna")
 _CONDITIONAL_EXTERNAL_CLAIM_RE = re.compile(
     r"(?:"
     r"\b(?:if|unless)\b.{0,160}\b(?:i(?:['’]?d|['’]?ll| am| will| would)|we)\b"
@@ -104,6 +107,44 @@ def _transient_model_error(value: object) -> bool:
         "selected model is at capacity" in folded
         or "model is at capacity" in folded
         or "model is not supported when using codex with a chatgpt account" in folded
+        or "serveroverloaded" in folded
+        or "stream disconnected before completion" in folded
+    )
+
+
+def _event_model(event: dict) -> str:
+    """Choose the first candidate not durably recorded as a capacity failure."""
+    fallback = event.get("modelFallback") if isinstance(event.get("modelFallback"), dict) else {}
+    history = fallback.get("history") if isinstance(fallback, dict) else []
+    history = history if isinstance(history, list) else []
+    attempted = {
+        str(item.get("model") or "")
+        for item in history
+        if isinstance(item, dict) and str(item.get("model") or "") in EVENT_MODEL_CANDIDATES
+    }
+    for model in EVENT_MODEL_CANDIDATES:
+        if model not in attempted:
+            return model
+    # The lane will terminalize this stale/invalid state before another turn
+    # can start.  Returning the final candidate keeps the caller total.
+    return EVENT_MODEL_CANDIDATES[-1]
+
+
+def _record_transient_model_failure(
+    lane: EventLane,
+    *,
+    event: dict,
+    model: str,
+    error: object,
+) -> str:
+    """Persist one capacity failure; no branch refunds its consumed attempt."""
+    return lane.record_transient_model_failure(
+        str(event.get("eventId") or ""),
+        model=model,
+        candidates=EVENT_MODEL_CANDIDATES,
+        error=error,
+        lease_token=str(event.get("leaseToken") or "") or None,
+        retry_not_before=datetime.now(UTC).timestamp() + TRANSIENT_MODEL_RETRY_DELAY_SECONDS,
     )
 
 
@@ -996,9 +1037,29 @@ def _retry_or_exhaust_outcome_recovery(
     root_event_id: str,
     outcome: dict,
     transient_error: object = None,
+    used_model: object = None,
 ) -> str:
     """Reuse one recovery row until its existing EventLane budget is spent."""
     now = datetime.now(UTC).timestamp()
+    if _transient_model_error(transient_error):
+        with lane.connect() as db:
+            row = db.execute(
+                "SELECT payload_json FROM event_lane_events WHERE event_id=?", (str(event_id),)
+            ).fetchone()
+        if row is None:
+            return "missing"
+        try:
+            event = json.loads(row["payload_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            event = {"eventId": str(event_id), "kind": "outcome_reconcile"}
+        outcome = lane.record_transient_model_failure(
+            str(event_id),
+            model=str(used_model or _event_model(event if isinstance(event, dict) else {})),
+            candidates=EVENT_MODEL_CANDIDATES,
+            error=transient_error,
+            retry_not_before=now + TRANSIENT_MODEL_RETRY_DELAY_SECONDS,
+        )
+        return "transient_retry" if outcome == "retry" else outcome
     with lane.writer() as db:
         row = db.execute(
             "SELECT attempts,payload_json FROM event_lane_events WHERE event_id=?",
@@ -1024,56 +1085,7 @@ def _retry_or_exhaust_outcome_recovery(
             payload["eventId"] = str(root_event_id)
             payload["rootEventId"] = str(root_event_id)
         event["payload"] = payload
-        try:
-            previous_generation = int(event.get("recoveryGeneration") or 0)
-        except (TypeError, ValueError, OverflowError):
-            previous_generation = 0
         attempts = int(row["attempts"] or 0)
-        if _transient_model_error(transient_error):
-            retry_at = now + TRANSIENT_MODEL_RETRY_DELAY_SECONDS
-            event["transientModelRetry"] = {
-                "schemaVersion": "oss_pr_radar_transient_model_retry_v1",
-                "retryAt": datetime.fromtimestamp(retry_at, UTC).isoformat().replace("+00:00", "Z"),
-                "error": str(transient_error)[:500],
-            }
-            event.pop("terminalReason", None)
-            event.pop("recoveryExhausted", None)
-            event.pop("recoveryAttempts", None)
-            event["retryNotBefore"] = retry_at
-            # A transient retry resets attempts to zero.  Move to a fresh
-            # artifact/client generation so an old terminal receipt cannot
-            # short-circuit the new bridge turn.
-            event["recoveryGeneration"] = previous_generation + 1
-            db.execute(
-                "UPDATE event_lane_events SET status='pending',attempts=0,payload_json=?,"
-                "delivered_at=NULL,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
-                "WHERE event_id=?",
-                (json.dumps(event, sort_keys=True), str(event_id)),
-            )
-            turn = db.execute(
-                "SELECT event_key,turn_id,receipt_json FROM event_lane_turns WHERE event_id=?",
-                (str(event_id),),
-            ).fetchone()
-            if turn is not None:
-                try:
-                    receipt = json.loads(turn["receipt_json"] or "{}")
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    receipt = {}
-                receipt["terminalError"] = transient_error
-                receipt["transientModelRetry"] = True
-                receipt["retryNotBefore"] = retry_at
-                receipt_json = json.dumps(receipt, sort_keys=True)
-                db.execute(
-                    "UPDATE event_lane_turns SET status='needs_reconcile',receipt_json=? "
-                    "WHERE event_id=?",
-                    (receipt_json, str(event_id)),
-                )
-                db.execute(
-                    "UPDATE event_lane_threads SET status='needs_reconcile',receipt_json=? "
-                    "WHERE event_key=? AND turn_id=?",
-                    (receipt_json, str(turn["event_key"]), str(turn["turn_id"] or "")),
-                )
-            return "transient_retry"
         if attempts < lane.max_attempts:
             event.pop("terminalReason", None)
             event.pop("recoveryExhausted", None)
@@ -1226,6 +1238,7 @@ def issue_handler_delivery(
         target = dict(target)
         target["kind"] = "issue_closeout"
     event_id = str(event["eventId"])
+    model = _event_model(event)
     lane.expire_handler_turns()
     existing_turn = lane.handler_turn(event_id)
     if existing_turn and str(existing_turn.get("status") or "") == "started":
@@ -1327,6 +1340,8 @@ def issue_handler_delivery(
                 event_id,
                 "--event-key",
                 key,
+                "--model",
+                model,
                 "--thread-id",
                 str(binding.get("thread_id") or "") if binding else "",
                 "--client-user-message-id",
@@ -1353,13 +1368,17 @@ def issue_handler_delivery(
             )
             raise
         if _transient_model_error(exc):
-            if lane.defer_prestart_retryable(
+            lane.release_handler_reservation(
                 event_id,
-                lease_token=str(event.get("leaseToken") or ""),
-            ):
-                raise RuntimeError(
-                    f"AgentScope event worker deferred transient model failure: {str(exc)[:300]}"
-                ) from exc
+                {"model": model, "error": f"{type(exc).__name__}:{str(exc)[:300]}"},
+                reason="transient_model_failure",
+            )
+            state = _record_transient_model_failure(
+                lane, event=event, model=model, error=exc
+            )
+            raise RuntimeError(
+                f"AgentScope event worker recorded transient model failure ({state}): {str(exc)[:300]}"
+            ) from exc
         lane.release_handler_reservation(
             event_id,
             {"error": f"{type(exc).__name__}:{str(exc)[:300]}"},
@@ -1404,6 +1423,19 @@ def issue_handler_delivery(
             raise RuntimeError(
                 f"AgentScope event authorization deferred before turn creation: {result}"
             )
+        if _transient_model_error(result):
+            lane.release_handler_reservation(
+                event_id,
+                result | {"model": str(result.get("model") or model)},
+                reason="transient_model_failure",
+            )
+            state = _record_transient_model_failure(
+                lane,
+                event=event,
+                model=str(result.get("model") or model),
+                error=result,
+            )
+            raise RuntimeError(f"AgentScope event worker recorded transient model failure ({state})")
         lane.release_handler_reservation(
             event_id,
             result,
@@ -1514,6 +1546,7 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
                     root_event_id=root_event_id,
                     outcome=outcome,
                     transient_error=value.get("terminalError"),
+                    used_model=value.get("model"),
                 )
             else:
                 recovery = {
@@ -1532,7 +1565,25 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
                 }
                 if value.get("terminalError") is not None:
                     recovery["terminalError"] = value["terminalError"]
-                if not lane.append(recovery, priority=250):
+                if isinstance(event.get("modelFallback"), dict):
+                    recovery["modelFallback"] = dict(event["modelFallback"])
+                if _transient_model_error(value.get("terminalError")):
+                    failed_model = str(value.get("model") or _event_model(event))
+                    recovery, fallback_state = advance_model_fallback(
+                        recovery,
+                        model=failed_model,
+                        candidates=EVENT_MODEL_CANDIDATES,
+                        error=value.get("terminalError"),
+                    )
+                    if fallback_state == "exhausted":
+                        recovery["terminalReason"] = "model_capacity_retries_exhausted"
+                appended = lane.append(recovery, priority=250)
+                if appended and recovery.get("terminalReason") == "model_capacity_retries_exhausted":
+                    lane.terminalize_event(
+                        str(recovery["eventId"]),
+                        reason="model_capacity_retries_exhausted",
+                    )
+                elif not appended:
                     _revive_superseded_auth_gap_recovery(lane, recovery)
         elif outcome_state == "design_wait":
             lane.mark_design_wait(str(row["event_id"]))
@@ -1714,6 +1765,11 @@ def run_once(
         namespace=RECOVERY_EVENT_NAMESPACE,
         apply=True,
     )
+    transient_model_migration = migrate_unmarked_transient_model_recoveries(
+        lane,
+        namespace=RECOVERY_EVENT_NAMESPACE,
+        now=current.timestamp(),
+    )
     historical_repair = rearm_historical_recoveries(
         lane,
         namespace=RECOVERY_EVENT_NAMESPACE,
@@ -1855,6 +1911,7 @@ def run_once(
         "claimsExpired": expired,
         "turnsExpired": turns_expired,
         "recoveryMigration": recovery_migration,
+        "transientModelMigration": transient_model_migration,
         "historicalRecoveryRepair": historical_repair,
         "recoveryQueue": recovery_queue,
         "recoverySettlement": recovery_settlement,

@@ -1681,6 +1681,7 @@ def test_unmapped_event_uses_explicit_independent_release_bridge(tmp_path, monke
     assert calls[0][2]["inactive_release"] is True
     assert calls[0][2]["code_root"] == worker.ROOT
     extra = calls[0][2]["extra_args"]
+    assert extra[extra.index("--model") + 1] == "gpt-6-astra"
     assert extra[extra.index("--thread-id") + 1] == CENTRAL_THREAD
     assert lane.handler_thread("agentscope-ai/agentscope#10")["thread_id"] == CENTRAL_THREAD
     assert all(operation != "drain-once" for _, operation, _ in calls)
@@ -2090,6 +2091,52 @@ def test_retryable_start_failure_releases_reservation_and_retries(tmp_path, monk
     turn = lane.handler_turn(event["eventId"])
     assert turn["status"] == "started"
     assert turn["thread_id"] == CENTRAL_THREAD
+
+
+def test_transient_model_failover_is_bounded_and_never_refunds_attempts(tmp_path):
+    lane = EventLane(tmp_path / "events.db", max_attempts=3)
+    event = {
+        "eventId": "model-fallback",
+        "eventKey": "agentscope-ai/agentscope#5",
+        "repo": "agentscope-ai/agentscope",
+        "number": 5,
+        "kind": "issue_update",
+    }
+    lane.append(event)
+    models = ("gpt-6-astra", "gpt-5.6-terra", "gpt-5.6-luna")
+    for index, model in enumerate(models):
+        claimed = lane.claim(limit=1)[0]
+        assert claimed["attempts"] == index + 1
+        outcome = lane.record_transient_model_failure(
+            event["eventId"],
+            model=model,
+            candidates=models,
+            error={"code": "serverOverloaded"},
+            lease_token=claimed["leaseToken"],
+            retry_not_before=0,
+        )
+        assert outcome == ("exhausted" if index == len(models) - 1 else "retry")
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts,payload_json FROM event_lane_events WHERE event_id=?",
+            (event["eventId"],),
+        ).fetchone()
+    payload = json.loads(row["payload_json"])
+    assert (row["status"], row["attempts"]) == ("needs_reconcile", 3)
+    assert payload["terminalReason"] == "model_capacity_retries_exhausted"
+    assert [item["model"] for item in payload["modelFallback"]["history"]] == list(models)
+    assert lane.claim(limit=1) == []
+
+
+def test_transient_model_classifier_accepts_server_overloaded_code():
+    worker = _event_worker_module()
+    assert worker.EVENT_MODEL_CANDIDATES == (
+        "gpt-6-astra",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    )
+    assert worker._transient_model_error({"code": "serverOverloaded"})
+    assert worker._transient_model_error("stream disconnected before completion")
 
 
 def test_operational_authorization_gap_refunds_attempt_without_reconcile(tmp_path, monkeypatch):
@@ -3151,6 +3198,71 @@ def test_noncompleted_turn_cannot_publish_a_structurally_valid_outcome(tmp_path,
             (worker._outcome_recovery_event_id(event_id),),
         ).fetchone()[0]
     assert recovery_count == 1
+
+
+def test_capacity_failed_root_recovery_starts_with_the_next_model(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    _configure_manifest(worker, tmp_path, monkeypatch)
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    event_id = "root-capacity"
+    event_key = "agentscope-ai/agentscope#1"
+    lane.append(
+        {
+            "eventId": event_id,
+            "eventKey": event_key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 1,
+            "kind": "issue_update",
+        }
+    )
+    claimed = lane.claim(limit=1)[0]
+    lane.reserve_handler_turn(event_key, event_id, "client:capacity")
+    lane.bind_handler_turn(
+        event_key, event_id, "thread-1", "turn-capacity", {}, status="started"
+    )
+    assert lane.ack(event_id, lease_token=claimed["leaseToken"])
+    receipt = worker._event_artifact_path(tmp_path, worker.EVENT_RECEIPT_DIR, event_id)
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        json.dumps(
+            {
+                "turnStatus": "failed",
+                "model": "gpt-6-astra",
+                "terminalError": {"code": "serverOverloaded"},
+                "outcome": {
+                    "schemaVersion": "agentscope_event_outcome_v1",
+                    "eventId": event_id,
+                    "publicKey": event_key,
+                    "state": "no_action",
+                },
+            }
+        )
+    )
+
+    assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
+    recovery_id = worker._outcome_recovery_event_id(event_id)
+    with lane.connect() as db:
+        payload = json.loads(
+            db.execute(
+                "SELECT payload_json FROM event_lane_events WHERE event_id=?", (recovery_id,)
+            ).fetchone()[0]
+        )
+    assert [item["model"] for item in payload["modelFallback"]["history"]] == [
+        "gpt-6-astra"
+    ]
+    calls = []
+    monkeypatch.setattr(
+        worker,
+        "run_bridge",
+        lambda _root, _operation, **kwargs: (
+            calls.append(kwargs)
+            or {"ok": True, "threadId": CENTRAL_THREAD, "turnId": "turn-recovery"}
+        ),
+    )
+    recovery = lane.claim(limit=1)[0]
+    worker.issue_handler_delivery(tmp_path, lane, recovery)
+    extra = calls[0]["extra_args"]
+    assert extra[extra.index("--model") + 1] == "gpt-5.6-terra"
 
 
 def test_invalid_recovery_reuses_one_event_and_exhausts_existing_attempt_budget(tmp_path):

@@ -33,6 +33,7 @@ sys.path.insert(0, str(ROOT / "src"))
 # is available on some Codex hosts. Pin a supported account model, with an
 # explicit deployment override for other hosts.
 CODEX_TASK_MODEL = os.environ.get("OSS_PR_RADAR_CODEX_MODEL", "gpt-5.5")
+EVENT_TASK_MODELS = ("gpt-6-astra", "gpt-5.6-terra", "gpt-5.6-luna")
 
 from oss_pr_radar.action_guard import (  # noqa: E402
     ledger_action_guard_root,
@@ -5548,9 +5549,12 @@ def _agentscope_event_worker(args: argparse.Namespace) -> dict[str, Any]:
     event_id = str(request.get("eventId") or "")
     event_key = str(request.get("eventKey") or "")
     prompt = str(request.get("prompt") or "")
+    model = str(request.get("model") or "").strip()
     outcome_path = Path(str(request.get("outcomePath") or "")).resolve()
-    if not event_id or not event_key or not prompt:
+    if not event_id or not event_key or not prompt or not model:
         raise RuntimeError("AgentScope event request is incomplete")
+    if model not in EVENT_TASK_MODELS:
+        raise RuntimeError("AgentScope event request model is not allowed")
     allowed_outcome_dir = Path(args.receipt).resolve().parent.parent / "agentscope_event_outcomes"
     if outcome_path.parent != allowed_outcome_dir:
         raise RuntimeError("AgentScope outcome path is outside the private outcome directory")
@@ -5639,7 +5643,7 @@ def _agentscope_event_worker(args: argparse.Namespace) -> dict[str, Any]:
                 "approvalPolicy": "never",
                 "sandboxPolicy": {"type": "dangerFullAccess"},
                 "summary": "auto",
-                "model": CODEX_TASK_MODEL,
+                "model": model,
                 "clientUserMessageId": client_message_id,
             }
             process.stdin.write(
@@ -5663,6 +5667,7 @@ def _agentscope_event_worker(args: argparse.Namespace) -> dict[str, Any]:
                     "threadId": thread_id,
                     "turnId": turn_id,
                     "clientUserMessageId": client_message_id,
+                    "model": model,
                     "turnStarted": True,
                 },
             )
@@ -5699,6 +5704,7 @@ def _agentscope_event_worker(args: argparse.Namespace) -> dict[str, Any]:
                     "eventKey": event_key,
                     "turnStarted": bool(turn_id),
                     "turnId": turn_id or None,
+                    "model": model,
                     "retryable": "DESKTOP_ACTIVE_WRITER" in str(exc),
                     "error": f"{type(exc).__name__}:{str(exc)[:300]}",
                 },
@@ -5726,7 +5732,13 @@ def agentscope_event_create(args: argparse.Namespace) -> dict[str, Any]:
     launch_state = read_json(launch, missing={})
     worker_pid = int(launch_state.get("pid") or 0)
     if worker_pid and _pid_is_alive(worker_pid):
-        return existing | {"ok": True, "pending": True, "workerPid": worker_pid, "receipt": str(receipt)}
+        return existing | {
+            "ok": True,
+            "pending": True,
+            "workerPid": worker_pid,
+            "receipt": str(receipt),
+            "model": str(getattr(args, "model", "") or existing.get("model") or ""),
+        }
     if (
         existing.get("ok")
         and existing.get("turnId")
@@ -5742,6 +5754,7 @@ def agentscope_event_create(args: argparse.Namespace) -> dict[str, Any]:
         {
             "eventId": args.event_id,
             "eventKey": args.event_key,
+            "model": str(getattr(args, "model", "") or EVENT_TASK_MODELS[0]),
             "threadId": args.thread_id or "",
             "clientUserMessageId": args.client_user_message_id,
             "cwd": str(args.cwd or GITHUB_ROOT),
@@ -5775,7 +5788,14 @@ def agentscope_event_create(args: argparse.Namespace) -> dict[str, Any]:
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-    _atomic_json(launch, {"pid": worker.pid, "startedAt": iso_z(datetime.now(UTC))})
+    _atomic_json(
+        launch,
+        {
+            "pid": worker.pid,
+            "startedAt": iso_z(datetime.now(UTC)),
+            "model": str(getattr(args, "model", "") or EVENT_TASK_MODELS[0]),
+        },
+    )
     deadline = monotonic() + 60
     while monotonic() < deadline:
         if receipt.exists():
@@ -5786,7 +5806,13 @@ def agentscope_event_create(args: argparse.Namespace) -> dict[str, Any]:
         if worker.poll() is not None:
             break
         sleep(0.25)
-    return {"ok": True, "pending": True, "workerPid": worker.pid, "receipt": str(receipt)}
+    return {
+        "ok": True,
+        "pending": True,
+        "workerPid": worker.pid,
+        "receipt": str(receipt),
+        "model": str(getattr(args, "model", "") or EVENT_TASK_MODELS[0]),
+    }
 
 
 def _codex_decision_prompt(event: dict[str, Any]) -> str:
@@ -16551,6 +16577,7 @@ def main() -> int:
     agentscope_event_parser = subparsers.add_parser("agentscope-event-create")
     agentscope_event_parser.add_argument("--event-id", required=True)
     agentscope_event_parser.add_argument("--event-key", required=True)
+    agentscope_event_parser.add_argument("--model", required=True, choices=EVENT_TASK_MODELS)
     agentscope_event_parser.add_argument("--thread-id", default="")
     agentscope_event_parser.add_argument("--client-user-message-id", required=True)
     agentscope_event_parser.add_argument("--cwd", type=Path, default=GITHUB_ROOT)
