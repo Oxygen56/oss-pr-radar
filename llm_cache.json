@@ -6406,6 +6406,44 @@
     ],
     "why": "The issue identifies a concrete logging bug in the VS Code extension: args are dropped on release builds and the error parameter is never passed, causing MCP failures to log without cause. This is a clear, actionable code-level fix with high impact on diagnosability."
   },
+  "0fe60648076cecd107d3bc351449380ce67c3624581b7cf27e382414687d0222": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Collaborator agrees the change is probably time, but the issue body says do not begin implementation until it reaches Ready on the Goose Issues board"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ui/desktop message list rendering: group a turn's tool cards behind one compact row",
+      "bottom progress indicator: name the currently running tool",
+      "exclude pending-approval/errored/cancelled calls from collapsing",
+      "turn-boundary detection that ignores tool-response messages using the user role"
+    ],
+    "risks": [
+      "Collapsing by default changes existing behavior for every user",
+      "Thinking blocks and intermediate-reply density are unresolved and could cause regressions if decided implicitly",
+      "RTL layout untested in the sketch"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a multi-tool-call turn in Goose Desktop and verify the compact row appears above the turn's first assistant message",
+      "Verify a pending-approval tool call remains visible and actionable in place",
+      "Verify the running tool is named in the bottom progress line while collapsed",
+      "Verify viewport does not jump as new replies arrive"
+    ],
+    "unknowns": [
+      "Whether the issue has reached Ready on the Goose Issues board",
+      "Whether an assignee has been designated",
+      "Final design decisions on collapse-by-default, compact form contents, thinking blocks, and reply density"
+    ],
+    "why": "The issue is a UX/rendering design request with explicitly open design questions (collapse-by-default vs setting, compact form contents, thinking blocks, reply density). The collaborator comment only agrees the change is probably time; it does not settle the design. The issue itself states implementation must not begin until it reaches Ready on the Goose Issues board, and the pre-task policy is needs_assignment with assignmentRequired=true. A sketch commit exists but is not a PR and does not resolve the design or assignment blockers."
+  },
   "101eaf6b17f2b8eed1889fed67867c9962941316bf4d6470cd189ec24d86d750": {
     "confidence": 0.7,
     "contradictions": [
@@ -37272,6 +37310,42 @@
     ],
     "why": "The issue identifies a concrete, reproducible bug in the gemma4 tool parser: tool_choice='required' does not enforce tool generation, and finish_reason is incorrectly set to 'tool_calls' with empty tool_calls. Root cause is partially known (translation layer in #53255) and the enforcement gap is clearly described. The issue provides a loop script and failure statistics, enabling a concrete validation path. Although the exact payload is private, the sanitized payload and load conditions are specified, making the bug actionable."
   },
+  "569f9e8c1e6b73c5eb444510b71874dad423234ab3408f656f85389185a90dd3": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue suggests on-disk profile as delivery path, but empirical evidence shows KAS 0.63.3 ignores disk-profile hooks",
+      "Issue suggests loud warning, but in-tree comment explicitly chose DEBUG to avoid constant-payload log noise"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/acp/kas_agents.py (delivery path for hooks/toolsSettings/slashCommand)",
+      "session-start warning/notice behavior for dropped spec keys"
+    ],
+    "risks": [
+      "Fix depends on external KAS bundle behavior not available in this repo",
+      "Raising log level contradicts documented in-tree rationale at kas_agents.py:465-473",
+      "Unknown KAS-side merge semantics between on-disk profile and wire-injected agent of same name"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on KAS backend: agent with preToolUse hook, confirm hook does not fire",
+      "If a KAS bundle with working disk-profile hooks is available, verify on-disk profile delivery end-to-end",
+      "Regression test asserting a once-per-session notice when a spec carrying UNSUPPORTED_SPEC_KEYS is projected onto KAS"
+    ],
+    "unknowns": [
+      "Whether any shipped KAS bundle honors disk-profile hooks",
+      "Whether KAS merges on-disk profile with wire-injected agent of same declared name",
+      "Maintainer ruling on DEBUG vs once-per-session notice"
+    ],
+    "why": "Root cause is source-confirmed (UNSUPPORTED_SPEC_KEYS in acp/kas_agents.py drops hooks/toolsSettings/slashCommand), but the actionable fix is materially blocked: the proposed on-disk KAS profile delivery path is verified non-functional on the bundled KAS 0.63.3 (disk-profile hooks ignored), so the real fix depends on an external KAS bundle change or version-gating against a release that does not exist. The stopgap (loud warning) reverses an explicit in-tree DEBUG-vs-WARNING decision, and the fix shape depends on the unresolved question of whether KAS merges an on-disk profile with a wire-injected agent of the same name. These are materially blocking unknowns, not normal implementation uncertainty."
+  },
   "56a19fcf29dd9a34162841dae39f36dfdba7deb8432f5b543e621a6bd6a1a7a9": {
     "confidence": 0.8,
     "contradictions": [],
@@ -48496,6 +48570,39 @@
     ],
     "why": "Issue provides a clear root cause (OM observer includes working-memory state signals as user-authored history), a concrete reproduction with expected/actual behavior, and a suggested fix with regression test steps. Maintainer bot confirms the bug and proposes a narrow fix. No duplicate PR or issue found."
   },
+  "6dda93c378bff78b0d083e56017c5ac0191ec894b133759e1e75f759e131d518": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Cursor plugin hook registration (hooks/cursor-hooks.json) to invoke a non-mintty bash on Windows",
+      "scripts/on_file_read_cursor.sh stdin handling so it does not block on a TTY",
+      "any shared hook launcher used by other mem0 Cursor hooks (e.g. on_user_prompt_cursor.sh)"
+    ],
+    "risks": [
+      "Fix must not break non-Windows hook execution or the stdin JSON contract",
+      "Changing the launcher may affect hook timeout/exit semantics",
+      "Repository has an AI disclosure conflict policy that blocks automated public submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "On Windows with Git for Windows, enable the plugin and run agent file reads; assert no mintty.exe/git-bash.exe windows spawn and hook processes exit within the declared timeout",
+      "Regression test that the hook still consumes hook JSON from stdin and emits expected output when stdin is a pipe",
+      "Verify other hooks (on_user_prompt_cursor.sh) do not regress under the same launcher change"
+    ],
+    "unknowns": [
+      "Whether the plugin source lives in this repo or only in the marketplace cache, which affects where the fix lands",
+      "Whether maintainers prefer a launcher change vs. a script-level stdin guard"
+    ],
+    "why": "Issue provides a concrete Windows-only root cause: the Cursor plugin hook invokes a .sh script through git-bash.exe, which is a mintty wrapper that opens a focus-stealing window and leaves stdin as a TTY so `INPUT=$(cat)` never sees EOF. A commenter independently identifies the same mechanism and a concrete fix direction (invoke Git's bash.exe instead of git-bash.exe). Reproduction is ordered and includes expected-vs-actual plus process-level evidence."
+  },
   "6def428eca918f977af4886a9262a4bce096f44489bcb76248e39e327b54ec04": {
     "confidence": 0.85,
     "contradictions": [
@@ -53986,6 +54093,40 @@
       "Exact code path causing unbounded allocation not yet identified"
     ],
     "why": "Issue provides a detailed, reproducible memory leak with clear root-cause hypothesis (auto agent-team initialization) and concrete validation path (reproduce with --no-teams flag). No competing open PR or duplicate found."
+  },
+  "7b20ed69bfd4a7d74451bf9f27b6ff9baaaf0d1fe3b1c38e14d21b0e1a4cc7b0": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Original report attributes the crash to QSA prefill kernel OOB writes; later comments retract that and attribute it to the compress-gather clamp fixed by #38346",
+      "pinkgom first reported --disable-overlap-schedule as sufficient, then reported 7 recurrences with that flag set"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new code change identified; the actionable fix (qsa_indexer.py compress-gather clamp) is already merged in #38346"
+    ],
+    "risks": [
+      "Crash is probabilistic, so a clean run is strong evidence rather than proof of resolution",
+      "Residual low-concurrency crashes reported by pinkgom may indicate a second, still-unidentified fault path",
+      "The reporter's original H20 workload has not been rerun on the #38346 revision"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run the c=8/c=16 bench_serving reproducer on a revision containing #38346 with overlap scheduling enabled and record revision/flags",
+      "Add a regression test for chunked-prefill requests whose final chunk is 1-3 tokens (input_ids length 4096*k + {1,2,3})"
+    ],
+    "unknowns": [
+      "Whether any residual crash remains after #38346 on the original H20 TP8 workload",
+      "Whether the low-concurrency H200 NVL crashes share the same root cause as the H20 high-concurrency crashes"
+    ],
+    "why": "The issue's own status update and comment thread converge on merged PR #38346 (clamp in qsa/qsa_indexer.py) as the fix: the reporter confirms the c=16 reproducer runs clean with overlap re-enabled, and pinkgom reports 43h/0 faults on the patched revision. The originally proposed #37638 was retracted by its author and does not fix this crash. Remaining work is verification of an already-merged one-line clamp, not a new code contribution."
   },
   "7b2d2909816ef73effbff2e5e3fc246e172ac0b3d272a18aed755b7766eee8ab": {
     "confidence": 0.8,
@@ -69103,6 +69244,36 @@
       "Maintainer preference on validation strictness and scope for non-image types"
     ],
     "why": "Issue clearly identifies a security-relevant bug in shared download path with verified repro and suggested fix direction. However, existing PR #7162 is closed and weak, and repository requires assignment; maintainer design confirmation is needed for scope (which URL types to validate)."
+  },
+  "9d1a15edabdb7de635737e54325d6f91013dbe35d0f4f0c0db6e15881de481e8": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/openai/encoding_dsv4.py: accept str or dict arguments and validate dict result",
+      "regression test covering already-normalized dictionary input to encode_arguments_to_dsml()"
+    ],
+    "risks": [
+      "Fix is on b12x-vision branch; main may already carry #28035 behavior, so the patch must target the correct branch",
+      "Image republish and cookbook digest update are release steps outside the code fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test calling encode_arguments_to_dsml({'name':'read','arguments':{'filePath':'/tmp/example.txt'}}) and asserting a single DSML parameter name=\"filePath\" string=\"true\" with no nested arguments wrapper",
+      "Regression test asserting JSON-string input still parses identically to #28035 behavior",
+      "Negative test asserting non-object parsed arguments raise ValueError"
+    ],
+    "unknowns": [
+      "Whether main already contains the #28035 fix, making this branch-only"
+    ],
+    "why": "Issue pinpoints a concrete regression in encode_arguments_to_dsml(): unconditional json.loads() on an already-normalized dict raises TypeError, caught and wrapped as {\"arguments\": dict}, producing an extra DSML parameter layer. Expected vs actual output and the #28035 reference behavior are both supplied, giving a clear reference-vs-implementation test."
   },
   "9d61ecad8a3474080ad6be7d49014fe666ca2c881b83dcea714c256257144656": {
     "confidence": 0.9,
@@ -112979,6 +113150,42 @@
       "Exact code location for the shape bug (frontend vs plugin) not yet identified"
     ],
     "why": "Issue provides a minimal ONNX model, exact reproduction script, and clear expected vs actual output shapes, establishing a concrete root cause in Expand shape handling for empty target shape. The fix is localized and testable."
+  },
+  "fe4e899eb27528cb2ffa4fc899a818146d5b28a8c78a5976b99134e472da6ebd": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue frames this as a bug with a concrete fix; maintainer triage reclassified it as type/enhancement and deferred it to the v0.16.x reverse-proxy milestone, stating proxied deployment is out of scope today"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/serve/routes/session.ts (chunked upload route or tunable body cap)",
+      "packages/sdk-typescript/src/daemon/DaemonClient.ts (chunked upload client)",
+      "packages/web-shell/client/daemon/session/actions.ts (client-side chunking or downscale)"
+    ],
+    "risks": [
+      "Chunking touches serve routes + SDK + Web Shell and requires upload-id lifecycle, assembly, atomicity, GC, and per-chunk auth; other binary routes (/file/upload 50 MiB, extensions 10 MiB, voice 10 MiB) share the same gap and would remain unreachable",
+      "Maintainer may prefer the cheaper documented-proxy-requirement + --max-body-size route, making a chunked-protocol PR wasted effort",
+      "Open PR #11913 overlaps packages/web-shell/client/daemon/session/actions.ts and needs comparison before any new work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with nginx client_max_body_size 1m in front of qwen serve, paste a >1 MiB and <8 MiB PNG, confirm gateway 413 before daemon handler",
+      "After a chosen fix, assert upload succeeds up to the documented 8 MiB cap and that small files still use the one-shot POST path"
+    ],
+    "unknowns": [
+      "Whether maintainers consider proxied/containerized deployment in scope now or only in the deferred v0.16.x milestone",
+      "Which fix direction maintainers prefer (chunked protocol vs. documented proxy requirement + tunable --max-body-size vs. client-side downscale)",
+      "Whether open PR #11913 already covers the relevant session-creation/upload path"
+    ],
+    "why": "The issue describes a real transport-shape gap (single unchunked POST to /session/:id/attachments, 8 MiB daemon cap unreachable behind a ~1 MiB proxy cap), and the triage bot independently confirmed the code anchors at the pinned SHA. However, the maintainer triage explicitly reclassified this as an enhancement, deferred it to the v0.16.x containerized/reverse-proxy milestone (#3803), and stated that proxied deployment is out of scope today. The fix direction is also unresolved: chunked protocol vs. documented proxy requirement + tunable --max-body-size vs. client-side downscale. This is a design/scope decision that materially determines whether code work is actionable, so it is not a normal implementation-uncertainty case."
   },
   "fe634aba69fac3dad4c77014885e740ae7eee358fc8a007bff0608c6396f9be6": {
     "confidence": 0.8,
