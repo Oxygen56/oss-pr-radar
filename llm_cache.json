@@ -25571,6 +25571,40 @@
     "unknowns": [],
     "why": "Issue provides a concrete, reproducible root cause: the pinned wolfi-base digest has drifted from the apk package repository, so apk add python3 installs an interpreter requiring a newer glibc than the pinned base provides; the suggested fix (bump LITELLM_BUILD_IMAGE/LITELLM_RUNTIME_IMAGE digests) is specific and testable via docker build and runtime import check."
   },
+  "3d4f048312783cd4493e1f42bbe0fc7935fd1f34b188f18c74c086788a6d58e2": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Gemini message conversion (convertToGoogleGenerativeAIMessages) handling of mixed server-side search toolCall/toolResponse and client functionCall parts",
+      "Agent runtime history replay for native Google Search tool invocations",
+      "Provider/runtime regression test for parallel webSearchTool + skill turns"
+    ],
+    "risks": [
+      "Fix may drop search grounding from earlier steps, degrading multi-step quality if not echoed losslessly",
+      "Behavior change in message conversion could affect other Gemini tool combinations",
+      "Maintainer may prefer a different conversion strategy"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the linked minimal repro: agent with webSearchTool + inline skill, prompt to call both in one turn, assert next step does not 400",
+      "Add a unit test on the Gemini conversion layer asserting replayed contents preserve valid tool-call context for mixed server/client tool parts",
+      "Run targeted package unit tests and static checks for the affected core/provider package"
+    ],
+    "unknowns": [
+      "Exact internal function/line responsible for emitting the invalid mixed parts",
+      "Whether maintainers want the stopgap omission approach or a lossless echo of Gemini's opaque search context"
+    ],
+    "why": "Issue provides a concrete, reproducible failure on the Gemini provider path: parallel native GOOGLE_SEARCH_WEB toolCall plus client-side skill functionCall in the same model turn causes a 400 'Corrupted tool call context' on the next step. The full request body, ordered parts, and a working local patch (omit server-side search toolCall/toolResponse on history replay) give a clear code anchor in the Gemini message-conversion layer. No open PR or duplicate issue covers it. Remaining uncertainty is implementation choice, not actionability."
+  },
   "3d6dc850165aafebe13b50ce4834470bea9c02a4b1a9a9c3fb473c402342b11e": {
     "confidence": 0.72,
     "contradictions": [
@@ -55728,6 +55762,43 @@
     "unknowns": [],
     "why": "Bot-generated per-run failure record for the repo's own gh-aw sweep workflow. The httpx2.ReadTimeout is the documented, checked-in design: shim _LLM_TIMEOUT (120s read timeout) plus GH_AW_HARNESS_MAX_RETRIES=0, with the failure issue auto-expiring. No code defect exists to fix; acting would revise a deliberate bounded-timeout/no-retry trade-off, which is a maintainer-intent question, not a bug fix."
   },
+  "7f240c1df65eb63309bf5e8ff89bec752ee59e34d81b232d138362c42f9a2943": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body claims a concrete reproduction with 6/6 passing checks, but actionability_evidence reports public_repro_signals=0 and reproduction_evidence=[]",
+      "Pre-task evidence sets probe_ready=false while the issue describes an executed proof of concept"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_utils.py: resolve Azure deployment segment (openai/deployments/{id}) against router model groups and litellm_params.model deployment ids",
+      "litellm/proxy/pass_through_endpoints/llm_passthrough_endpoints.py: refuse raw-relay branch for keys with non-empty models[] when path names an unknown Azure deployment",
+      "litellm/llms/azure/passthrough/transformation.py: extend azure_router_model_in_endpoint to recognize deployment ids"
+    ],
+    "risks": [
+      "PR #40030 may already cover the same pass-through root cause, making this a duplicate",
+      "Broadening model resolution on Azure routes could change routing behavior for legitimate deployment-style paths",
+      "Vertex custom-endpoint paths share the same genus and may need separate handling"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting get_model_from_request('/azure/openai/deployments/premium-o3/chat/completions') returns a model and can_key_call_model raises 403 for a key scoped to cheap-model",
+      "Add a handler-level test asserting azure_proxy_route does not relay to an out-of-scope deployment with gateway credentials",
+      "Run targeted proxy auth/pass-through unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #40030 actually fixes the Azure pass-through allowlist bypass or only touches unrelated pass-through refactors",
+      "Whether maintainers consider the Azure and Vertex instances one issue or separate fixes",
+      "Whether the reproduction harness is available in-repo for a reference-vs-implementation test"
+    ],
+    "why": "The issue presents a clear, code-anchored root cause (Azure pass-through route resolves no model, so can_key_call_model is skipped and the raw relay uses gateway credentials) and a concrete reproduction. However, the supplied duplicate assessment flags PR #40030 as semantic_overlap_requires_review with overlapping pass-through paths, and the pre-task evidence explicitly forbids auto-creating a duplicate task until a human compares implementation boundaries. That unresolved duplicate/merged-fix coverage is a materially blocking unknown for actionability."
+  },
   "7f2f19f1dc6e0fcce5e5e7f0e2b2e2c15b1baf99667bdf666e21f508605fe232": {
     "confidence": 0.8,
     "contradictions": [
@@ -59970,6 +60041,37 @@
     ],
     "why": "Issue clearly identifies a module-level unguarded os.makedirs causing import failure in restricted environments. Existing PR #6813 directly addresses it but lacks tests, leaving room for a materially better PR with regression tests."
   },
+  "8944af40b140686d6507611cc28e2917da38b5e0b5c847bd54ae90d8e2c3d939": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Original report blamed QSA prefill kernel OOB; later comments retract that and attribute the crash to the compress-gather clamp fixed by #38346",
+      "PR #37638 was claimed to fix the issue, then the correctness claim was withdrawn"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No new code change warranted; verification of merged #38346 on a revision containing it"
+    ],
+    "risks": [
+      "Residual probabilistic race may persist after #38346, so a clean short run is not proof of stability",
+      "Duplicate/overlapping issue #32470 shares crash/memory/scheduler signals"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run the original H20 TP8/EP8 workload plus chunk-boundary tails (input_ids lengths 4096*k+{1,2,3}) on a revision containing #38346, recording revision and flags"
+    ],
+    "unknowns": [
+      "Whether the original H20 workload has been rerun on a revision containing #38346 by the reporter"
+    ],
+    "why": "The issue's own status update and comment thread retract the QSA kernel bounds/race hypotheses and converge on merged PR #38346 (clamp in qsa_indexer.py) as the fix, with the reporter confirming resolution on the original H20 workload. The remaining actionable work is a verification run on a revision containing #38346, not a new code contribution; the competing PR #37638 is explicitly not credited with fixing this issue."
+  },
   "894c01b33fe62be74160ca2d820c132b9963846d9f01044e86d4b183d7f7ec83": {
     "confidence": 0.85,
     "contradictions": [],
@@ -63074,6 +63176,44 @@
       "Whether FastMCP's AzureProvider supports all required production features (e.g., durable storage, explicit signing key) in the current version"
     ],
     "why": "The issue reports a concrete OAuth failure with a clear reproduction path and identifies the root cause as a mismatch between the MCP resource indicator and Entra's required resource-qualified scopes. The discussion confirms that the standalone FastMCP AzureProvider/OAuthProxy is the intended translation layer, and the proposed migration path is actionable."
+  },
+  "900a00756e3a5aba1f1234615f5e189ae63012787e72ab889a3ed57514c9c857": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue frames this as a bug with a clear fix, but triage bot reclassified it to type/enhancement and deferred it to the v0.16.x containerized/reverse-proxy milestone, stating proxied deployment is out of scope today"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/serve/routes/session.ts (chunked upload protocol or tunable body cap)",
+      "packages/sdk-typescript/src/daemon/DaemonClient.ts (client-side chunking above threshold)",
+      "packages/web-shell/client/daemon/session/actions.ts (blob splitting / optional downscale)",
+      "docs/users/qwen-serve.md (proxy body-cap requirement)"
+    ],
+    "risks": [
+      "Scope decision unresolved: triage folded this into deferred v0.16.x reverse-proxy milestone (#3803), so a targeted patch may be rejected as out of scope",
+      "Attachments-only chunking leaves /file/upload (50 MiB), extension archive, and voice upload equally unreachable behind a 1 MiB proxy, inviting the same report again",
+      "Open PR #11913 overlaps packages/web-shell/client/daemon/session/actions.ts and has changes requested; duplicate/coverage status unresolved",
+      "Chunked protocol adds upload-id lifecycle, assembly, atomicity, GC, and per-chunk auth complexity"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce behind nginx/OpenResty with client_max_body_size 1m and paste a >1 MiB, <8 MiB PNG; assert gateway 413 before daemon handler",
+      "After fix, assert upload succeeds up to the documented 8 MiB cap and that small files still use the one-shot POST",
+      "Regression test that abandoned chunked uploads are GC'd and per-chunk ownership/auth is enforced"
+    ],
+    "unknowns": [
+      "Whether maintainers consider reverse-proxy deployment in scope now (which would flip this back to type/bug and make a patch actionable)",
+      "Whether PR #11913 already covers the root cause or only adjacent session-creation behavior",
+      "Which chunk contract maintainers prefer, if any, and whether it must cover all binary ingress routes"
+    ],
+    "why": "The issue's root cause is well documented and independently confirmed by a collaborator: a single unchunked POST to /session/:id/attachments is rejected by a reverse proxy's default 1 MiB body cap before the daemon's 8 MiB handler runs. However, the triage bot explicitly reclassified this from bug to enhancement and folded it into the deferred v0.16.x containerized/reverse-proxy deployment milestone (#3803), noting that proxied deployment is documented as out of scope for v0.16-alpha. The issue is also not attachments-specific: /file/upload (50 MiB), extension archive (10 MiB), and voice upload (10 MiB) are all unchunked POSTs equally unreachable behind a 1 MiB proxy, so a targeted attachments-only patch would be incoherent. This unresolved scope/design decision materially determines whether any code work is actionable, and the open PR #11913 has semantic overlap on the same path with changes requested."
   },
   "90133600ab2458083b494a4eddaf482c6b14af58add9ea08910d4995b0805743": {
     "confidence": 0.7,
@@ -68731,6 +68871,46 @@
       "Whether maintainers prefer rejecting non-serializable parses vs. converting them to strings"
     ],
     "why": "Issue provides a deterministic minimal repro (_format_json_in_text(\"pandas,[...]\") raises TypeError), a full traceback pinpointing crew_run_tui.py:122 json.dumps of ast.literal_eval result [Ellipsis], and a clear root cause: _try_parse_structured accepts ast.literal_eval output without checking JSON-serializability. This is a concrete, user-visible crash with a well-scoped fix and regression test path."
+  },
+  "9ca75d19f68ce97370ff823095e12f0cc3c7204cb1e6d7129ce3f6ca8ff71341": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge B@A into base weight and reinitialize A (Kaiming) / B (zeros) for a true ReLoRA restart, or rename the feature and correct the docstring",
+      "src/soup_cli/utils/relora.py: replace threshold comparison with deterministic exact-count index selection (topk/stable-order mask) honoring prune_ratio under ties",
+      "src/soup_cli/utils/relora.py: retarget optimizer-state pruning/reset to optimizer moments rather than learned adapter weights",
+      "src/soup_cli/utils/relora.py: explicit support or loud rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A is a maintainer contract decision (implement real restarts vs rename/correct docs); a partial fix doing half of option 1 would be worse than either complete option",
+      "Tie-case production frequency is unverified; freshly-initialized lora_B is all zeros by PEFT convention, so the first relora_steps interval may hit the natural tie",
+      "Numerical tolerance and seed/hardware must be fixed to distinguish real semantic error from floating-point noise",
+      "Scope creep: quantized/FSDP/DeepSpeed/streaming support could balloon the change beyond the core fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Numerical regression: assert the effective linear map is preserved across merge/reinitialization within tolerance (merge-then-reset control MSE ~1e-13)",
+      "Deterministic tie test: constant-magnitude A/B with prune_ratio=0.9 must retain exactly the requested keep count and never zero both factors",
+      "Gradient test: after a restart, grad-norm of lora_A and lora_B must be non-zero (no dead branch)",
+      "Accumulation test: successive restarts accumulate low-rank updates in the base model",
+      "Compatibility test: unsupported quantized/distributed/streamed configurations fail clearly instead of partially applying a restart"
+    ],
+    "unknowns": [
+      "Which of the two coherent contracts (real ReLoRA restart vs rename to periodic LoRA weight pruning) the maintainer will accept for Claim A",
+      "Whether the tie case fires in ordinary runs at the first relora_steps interval after initialization"
+    ],
+    "why": "Issue identifies two concrete, independently reproduced defects in ReLoRACallback._prune_and_reset: (A) adapter weights are magnitude-pruned without merging B@A into the frozen base, so the learned effective linear map is discarded rather than restarted (base weight delta = 0, MSE 142.12 vs merge-control 8.77e-13); (B) strict `abs(t) > threshold` masking wipes all entries on ties, zeroing both lora_A and lora_B and leaving a permanently dead zero-gradient branch. Owner confirmed both halves with real peft LoRA runs and pinned kernel probes, and the module docstring at relora.py:3-5 claims paper/Axolotl conformance, giving a clear reference-vs-implementation contract."
   },
   "9cb15991a8836519e9e9515041b41c577795152f3949ef315a390ebec74c4a57": {
     "confidence": 0.85,
@@ -76167,6 +76347,39 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The issue describes a real session-breaking bug for text-only models, but the maintainer's comments indicate the serializer already filters images and the remaining root cause is a capability-selection policy for unknown/custom profiles. The maintainer explicitly states this needs a maintainer decision on unknown-model capability policy, and the gate decision is HUMAN_REVIEW. The proposed Option A is already partially implemented, and Option B requires TUI design confirmation. Thus, design confirmation is required before work can start."
   },
+  "af6a415136b8e48a14f2e9a12b9e2407bd1dd72b72d0c9f0f926467129c301b0": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue body says GitHub code search does not return on_file_read_cursor.sh, so the file may not exist in the repo tree, complicating a direct repo fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "hooks/cursor-hooks.json command target for on_file_read_cursor.sh (and likely sibling hook scripts) to avoid git-bash.exe/mintty",
+      "scripts/on_file_read_cursor.sh stdin handling so it does not block on a TTY"
+    ],
+    "risks": [
+      "Fix may need to cover multiple hook scripts, not just on_file_read_cursor.sh",
+      "Hardcoding Git install path may break non-standard Git for Windows installs",
+      "Root cause is inferred, not instrumented (no test -t 0 confirmation)"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "On Windows with Git for Windows, enable the plugin and run agent file reads; assert no new mintty.exe processes appear and hook exits within the 5s timeout",
+      "Regression: verify hook still consumes stdin JSON and emits expected hook output on both Windows and non-Windows"
+    ],
+    "unknowns": [
+      "Whether the hook scripts and cursor-hooks.json actually live in the mem0ai/mem0 repository or only in the marketplace plugin cache",
+      "Whether maintainers want the fix in-repo vs. in the plugin packaging pipeline"
+    ],
+    "why": "Issue provides a concrete Windows-only reproduction with ordered steps, expected/actual pair, and process-level evidence showing git-bash.exe/mintty spawning hung windows for on_file_read_cursor.sh on Read hooks. A commenter supplies a plausible root cause (git-bash.exe is a mintty wrapper) and a concrete fix direction (point hook at Git's bin/bash.exe). This is actionable code work in the plugin hook scripts, not the Python SDK."
+  },
   "af93e795ad3c6bda430639c6c9fae128bf392221249184eaeba6d3c228ddb5fa": {
     "confidence": 0.7,
     "contradictions": [
@@ -78092,6 +78305,42 @@
       "Whether PR #35677 will be merged or updated with tests"
     ],
     "why": "Issue provides a clear reproduction command, full traceback, and environment details. Root cause is evident: CPU inference path invokes a Triton kernel that requires a GPU driver, causing RuntimeError. Existing PR #35677 addresses the same root cause but lacks tests and has CI failures, leaving room for a more complete contribution."
+  },
+  "b483526cb189a531f16131510067a848097f8d8cc87ef33b06f9cded32d805e6": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate `why` claims a high-value reproducible fix opportunity, but maintainer comments state the fix was already attempted and reverted, the corrected design is maintainer-owned, and #6207 is the tracking issue",
+      "Candidate `actionability_evidence.root_cause_signal` is false while the maintainer thread supplies an explicit root cause (`is_missing_session_store()` / `symlink_metadata`)"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "crates/lane/src/runtime.rs: replace `is_missing_session_store()` symlink_metadata-only predicate with a liveness+emptiness-aware adoption check",
+      "crates/tui/src/task_manager.rs: route in-TUI `/resume` through the launch adoption path (`open_for_session` / `validate_existing_store`)",
+      "error message text for the refusal path"
+    ],
+    "risks": [
+      "Adopting a live-but-unflushed store would drop in-flight work — the exact failure that caused the maintainer's earlier revert",
+      "Scope-pinned automations live outside the runtime store directory and are invisible to a naive emptiness check",
+      "Duplicating maintainer-owned work on #6207 / PR #6233"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Regression: start codewhale, /quit, start codewhale, /resume, pick previous session — must adopt, not refuse",
+      "Negative: hold a live store lock and confirm adoption is still refused (no in-flight work dropped)",
+      "Confirm scope-pinned automations outside the runtime store dir are counted in the emptiness check"
+    ],
+    "unknowns": [
+      "Whether #6207 is assigned or has an in-flight maintainer branch",
+      "Whether PR #6233 is intended to close #6225 or only to improve the message"
+    ],
+    "why": "Maintainer (OWNER) has already diagnosed the root cause in-thread: the guard is `is_missing_session_store()`, whose only content-bearing statement is a `symlink_metadata` call on the store directory; directory exists → refuse. Maintainer states the fix is to make the existing adoption path (used by `codewhale resume <id>` at launch) reachable from a running process, and that #6207 is the tracking issue. PR #6233 (OWNER-authored, open, CI green, includes a test) already covers the message/route fix for this issue. Remaining work is maintainer-owned design work on #6207, not an open competition opportunity."
   },
   "b48c9b2dd2505d07d3951dd87b8cc4fedd07258582f22a4bf0bb50441e308323": {
     "confidence": 0.8,
@@ -104053,6 +104302,41 @@
       "Whether any remaining root cause is distinct from #38346 and the related issues #32470/#39173/#34152/#38207"
     ],
     "why": "The issue's own reporter retracted the QSA kernel bounds root cause and re-characterized the crash as an overlap-scheduler race; a later commenter reports the crash persists with --disable-overlap-schedule and attributes it to merged PR #38346 (chunked-prefill last-chunk 1-3 tokens reading past token_k), which is already merged. Supplied evidence therefore contains contradictory root-cause claims and unresolved duplicate/merged-fix coverage, so it is not established that actionable code work remains."
+  },
+  "ebf2cc119eb75bf6a9e29743899881d0136b025eedc458773ddf076bb6e98718": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment marks semantic_overlap_requires_review while individual PR entries report semantic_overlap=false for #38562 and #29807"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/hooks/responses_id_security.py: handle non-async-iterable ModelResponse in async_post_call_streaming_iterator_hook",
+      "litellm/proxy/proxy_server.py / litellm/proxy/utils.py: ensure streaming iterator wrapping tolerates converted ModelResponse",
+      "Add streaming regression test for websearch_interception with stream=true"
+    ],
+    "risks": [
+      "Existing open PRs #38562/#35571 may already fix or conflict with this change",
+      "Broadening the hook to accept ModelResponse could alter streaming semantics for other callbacks",
+      "Legal/CLA confirmation still required before submission"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's curl request against a proxy configured with websearch_interception and stream=true, asserting HTTP 200 and SSE chunks ending in [DONE]",
+      "Run targeted unit tests for responses_id_security and proxy streaming hooks",
+      "Verify non-streaming control still returns HTTP 200 chat.completion"
+    ],
+    "unknowns": [
+      "Whether PR #38562 or #35571 already resolves this exact TypeError root cause",
+      "Whether maintainers have a preferred fix location or design for converting ModelResponse to streaming chunks"
+    ],
+    "why": "Issue provides a concrete reproduction, traceback, and a tested workaround for a streaming crash in ResponsesIDSecurity.async_post_call_streaming_iterator_hook. However, the supplied duplicate assessment reports three open PRs with semantic overlap on websearch_interception, including PR #38562 titled 'fix: streamed /v1/responses 500s when websearch interception is enabled' and PR #35571 overlapping litellm/proxy/proxy_server.py. The duplicate status is 'semantic_overlap_requires_review' and no PR is confirmed to cover this exact root cause, so whether independent code work is actionable is unresolved."
   },
   "ebf8284ce21821bc9e8f10aa538a9a2693ff66fb87a33b5f76b13afc0d51fffd": {
     "confidence": 0.85,
