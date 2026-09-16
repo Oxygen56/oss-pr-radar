@@ -54,6 +54,11 @@ def _parse_time(value: str | None) -> datetime | None:
 def _valid_machine_outcome_receipt(receipt: dict[str, Any], event_id: str, event_key: str) -> bool:
     """Validate the private outcome shape without importing the worker."""
 
+    # A valid payload inside a failed/interrupted bridge wrapper is not a
+    # completed result.  Keep the recovery gate conservative so it can retry
+    # that stale turn instead of silently treating it as settled.
+    if str(receipt.get("turnStatus") or "") != "completed":
+        return False
     outcome = receipt.get("outcome")
     if not isinstance(outcome, dict) or outcome.get("error"):
         return False

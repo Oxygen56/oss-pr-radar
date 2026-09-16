@@ -26,6 +26,10 @@ from oss_pr_radar.agentscope_events import (  # noqa: E402
 from oss_pr_radar.claims import detect_claims  # noqa: E402
 from oss_pr_radar.local_publication import run_bridge  # noqa: E402
 from oss_pr_radar.operational_auth import require_operational_authorization  # noqa: E402
+from oss_pr_radar.recovery_repair import (  # noqa: E402
+    event_artifact_path,
+    rearm_historical_recoveries,
+)
 from scripts.migrate_event_recovery_chains import (  # noqa: E402
     _declared_lineage_ids,
     _event_source,
@@ -932,13 +936,25 @@ def _event_artifact_path(
     *,
     attempt: int = 1,
     is_recovery: bool = False,
+    generation: object = None,
 ) -> Path:
     """Keep every terminal recovery attempt in a distinct evidence file."""
-    identity = str(event_id)
-    if is_recovery and int(attempt) > 1:
-        identity = f"{identity}:attempt:{int(attempt)}"
-    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-    return root / "state" / directory / f"{digest}.json"
+    return event_artifact_path(
+        root,
+        directory,
+        event_id,
+        attempt=attempt,
+        is_recovery=is_recovery,
+        generation=generation,
+    )
+
+
+def _recovery_generation(event: dict[str, object]) -> object:
+    """Read a durable rearm generation, preserving legacy path semantics."""
+    value = event.get("recoveryGeneration")
+    if value is None and isinstance(event.get("payload"), dict):
+        value = event["payload"].get("recoveryGeneration")
+    return value
 
 
 def _outcome_recovery_lineage(lane: EventLane, event_id: str) -> tuple[str, bool]:
@@ -1008,6 +1024,10 @@ def _retry_or_exhaust_outcome_recovery(
             payload["eventId"] = str(root_event_id)
             payload["rootEventId"] = str(root_event_id)
         event["payload"] = payload
+        try:
+            previous_generation = int(event.get("recoveryGeneration") or 0)
+        except (TypeError, ValueError, OverflowError):
+            previous_generation = 0
         attempts = int(row["attempts"] or 0)
         if _transient_model_error(transient_error):
             retry_at = now + TRANSIENT_MODEL_RETRY_DELAY_SECONDS
@@ -1020,6 +1040,10 @@ def _retry_or_exhaust_outcome_recovery(
             event.pop("recoveryExhausted", None)
             event.pop("recoveryAttempts", None)
             event["retryNotBefore"] = retry_at
+            # A transient retry resets attempts to zero.  Move to a fresh
+            # artifact/client generation so an old terminal receipt cannot
+            # short-circuit the new bridge turn.
+            event["recoveryGeneration"] = previous_generation + 1
             db.execute(
                 "UPDATE event_lane_events SET status='pending',attempts=0,payload_json=?,"
                 "delivered_at=NULL,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
@@ -1221,9 +1245,13 @@ def issue_handler_delivery(
     binding = {"thread_id": central_thread}
     recovery_attempt = int(event.get("attempts") or 1)
     is_recovery = event.get("kind") == "outcome_reconcile"
+    recovery_generation = _recovery_generation(event) if is_recovery else 0
     client_message_id = f"oss-pr-radar:agentscope-event:{event_id}"
-    if is_recovery and recovery_attempt > 1:
-        client_message_id += f":attempt:{recovery_attempt}"
+    if is_recovery:
+        if recovery_generation not in (None, "", 0, "0"):
+            client_message_id += f":generation:{recovery_generation}"
+        if recovery_attempt > 1:
+            client_message_id += f":attempt:{recovery_attempt}"
     reservation = lane.try_reserve_handler_turn_if_idle(
         key,
         event_id,
@@ -1271,6 +1299,7 @@ def issue_handler_delivery(
         event_id,
         attempt=recovery_attempt,
         is_recovery=is_recovery,
+        generation=recovery_generation,
     )
     outcome_path = _event_artifact_path(
         root,
@@ -1278,6 +1307,7 @@ def issue_handler_delivery(
         event_id,
         attempt=recovery_attempt,
         is_recovery=is_recovery,
+        generation=recovery_generation,
     )
     outcome_instruction = (
         f" Write the terminal outcome JSON to {outcome_path}: schemaVersion=agentscope_event_outcome_v1, "
@@ -1413,6 +1443,11 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
             str(row["event_id"]),
             attempt=int(row["attempts"] or 1),
             is_recovery=event.get("kind") == "outcome_reconcile",
+            generation=(
+                _recovery_generation(event)
+                if event.get("kind") == "outcome_reconcile"
+                else 0
+            ),
         )
         try:
             value = json.loads(receipt.read_text(encoding="utf-8"))
@@ -1679,6 +1714,11 @@ def run_once(
         namespace=RECOVERY_EVENT_NAMESPACE,
         apply=True,
     )
+    historical_repair = rearm_historical_recoveries(
+        lane,
+        namespace=RECOVERY_EVENT_NAMESPACE,
+        now=current.timestamp(),
+    )
     authorization_gap_repair = _repair_exhausted_worker_binding_failures(root, lane)
     poll = GitHubIssuePoller(state / "agentscope-poll.json")
     had_poll_state = (state / "agentscope-poll.json").exists()
@@ -1815,6 +1855,7 @@ def run_once(
         "claimsExpired": expired,
         "turnsExpired": turns_expired,
         "recoveryMigration": recovery_migration,
+        "historicalRecoveryRepair": historical_repair,
         "recoveryQueue": recovery_queue,
         "recoverySettlement": recovery_settlement,
         "authorizationGapRepair": authorization_gap_repair,
