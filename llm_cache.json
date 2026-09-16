@@ -837,6 +837,36 @@
     ],
     "why": "Issue provides a clear root cause: missing num_speculative_tokens in SpeculativeConfig.compute_hash() causes torch.compile cache collisions. Concrete reproduction steps and a proposed fix are given. The related PR #53367 directly addresses the same root cause but lacks tests, leaving room for a more complete contribution."
   },
+  "02a5d91dee8efb42c7d06178fabb54338a1cd235f71c983c6fdb9603eaad1e52": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "linkedin_mcp_server/scraping/message_sender.py: broaden _PROFILE_MESSAGE_TARGET_JS recipient resolution beyond first section child of main",
+      "recipient resolution logic in _read_profile_message_target()/send_message()"
+    ],
+    "risks": [
+      "Broadening the DOM scope could match multiple compose links and reintroduce ambiguity, so disambiguation logic must remain fail-closed",
+      "LinkedIn markup may vary across locales/account types, so the fix should not over-fit one observed layout"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test with a fixture DOM where the Message anchor/h1 sits outside the first main section child, asserting recipient resolution succeeds",
+      "Run the maintainer's DevTools candidate-resolution snippet against a live profile to confirm cardComposeCount == 1 before/after fix",
+      "Run targeted unit tests for message_sender.py"
+    ],
+    "unknowns": [
+      "Whether the maintainer's candidate resolution snippet has been run and confirmed to yield exactly one compose link on the affected profile"
+    ],
+    "why": "Issue provides ordered reproduction steps, a concrete code anchor (_PROFILE_MESSAGE_TARGET_JS in message_sender.py scoping to main.children), and maintainer-confirmed DevTools evidence that the top card is not reached via main.children (h1Count 0, 0 scoped compose links, 4 compose links elsewhere). Maintainer proposed a candidate resolution (locating card via main h1) and a validation snippet, establishing a concrete reference-vs-implementation test path."
+  },
   "02ab4354e2fb0c36ff87a3987c29dd305d0434085224a6b7fbe155dff35eeb3d": {
     "confidence": 0.85,
     "contradictions": [
@@ -5691,6 +5721,48 @@
       "Whether a fix is desired or feasible"
     ],
     "why": "Issue reports intermittent missing reasoning in multi-turn tool calls for DeepSeek-V4-Flash-0731, but root cause is unclear: could be chat-template handling, reasoning parser, or model behavior. No maintainer confirmation or design direction. The supplied algorithm evidence is inflated by keyword matches (block size, fp8, tensor parallel) that are not central to the reported bug. The issue is a usage/bug report without a concrete algorithm mechanism or validation path."
+  },
+  "0e2fe77ce0581d22d11a38ae7a640b974d3218ffaba8bd922c4a1c5e8fcd9821": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body provides detailed measured trials and code anchors, but actionability_evidence reports root_cause_signal=false and reproduction_evidence=[]"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "livekit-agents/livekit/agents/llm/_provider_format/google.py: emit or derive effective behavior for models whose default is NON_BLOCKING",
+      "livekit-plugins-google/livekit/plugins/google/realtime/realtime_api.py: derive supports_silent_scheduling from effective behavior rather than the client option",
+      "livekit-agents/livekit/agents/llm/tool_context.py: add per-tool behavior/scheduling fields",
+      "livekit-plugins-google/livekit/plugins/google/utils.py: per-tool scheduling on FunctionResponse",
+      "livekit-agents/livekit/agents/voice/agent_activity.py and voice/tool_executor.py: send tool results without waiting for playout"
+    ],
+    "risks": [
+      "Three independent behavioral changes bundled together; scope may need splitting",
+      "Changing default behavior emission could alter existing users' tool semantics",
+      "Per-tool API surface is a design decision that may conflict with maintainer preferences",
+      "Removing the playout wait may regress models that do not support concurrent responses"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a minimal failing test that sets no tool_behavior on a model documented as NON_BLOCKING-by-default and asserts the plugin does not emit the 'tool result wants no reply' warning",
+      "Add a regression test asserting supports_silent_scheduling reflects the effective server-side behavior",
+      "Add a per-tool behavior/scheduling test once the API shape is agreed",
+      "Add a test that a NON_BLOCKING tool result is sent before queued speech finishes playing"
+    ],
+    "unknowns": [
+      "No minimal reproduction script or failing test is supplied",
+      "No maintainer-confirmed root cause or preferred fix direction among the three reported problems",
+      "Whether the three issues should be addressed as one PR or separately",
+      "Whether the referenced related issues (#2367, #3482, #6741, #7197) already cover any of the proposed changes"
+    ],
+    "why": "The issue describes three distinct behavioral problems in the Google realtime plugin (hybrid blocking/non-blocking state, per-session rather than per-tool behavior/scheduling, and tool results waiting for playout), with code anchors and measured trial numbers. However, the supplied actionability evidence explicitly records reproduction_or_validation_missing, public_repro_signals=0, reproduction_evidence=[], root_cause_signal=false, and probe_ready=false. The issue body contains no minimal reproduction script or failing test, and the three proposed fixes are independent design changes with no maintainer-approved direction. This is a materially blocking unknown: without a concrete reproduction or agreed root cause, it is not determinable which of the three issues is actionable as a single code contribution."
   },
   "0e43ee603bf6f2a4019ee8553f3310c2552808ca8da803c15e2e492ed52ea043": {
     "confidence": 0.55,
@@ -13885,6 +13957,43 @@
       "Exact list of models that reject max_tokens; only Gemma is mentioned."
     ],
     "why": "Issue clearly identifies a bug: mem0's default max_tokens is sent to Gemma models via Bedrock Mantle, which rejects it. The code path is in mem0/llms/base.py where only GPT-5 models are guarded. However, the fix requires design decisions about model-specific parameter mapping (e.g., max_output_tokens) and maintainer confirmation on the intended approach. No open PR directly addresses this issue; the existing PR #5278 is closed and only adds GPT-5 models to a whitelist, not a general fix."
+  },
+  "21ad27f468c5093d3216674e32c8f50c68d6dab0e3c08adbd81d08a83a23b0dc": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body asserts reopening A yields Connection lost; collaborator follow-up reports A reached status 'connected' with error undefined in both a real-daemon attempt and a source harness",
+      "Issue body cites packages/webui/src/daemon/session/actions.ts, which does not exist; triage and follow-up place the files under packages/web-shell/client/daemon/session/"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/web-shell/client/utils/sessionPreparation.ts — first-prompt failure path after a superseded attach",
+      "packages/web-shell/client/daemon/session/actions.ts — session-id-scoped release / pending-load abort handling",
+      "packages/web-shell/client/daemon/session/DaemonSessionProvider.tsx — controlled sessionId transition state after abort"
+    ],
+    "risks": [
+      "Fixing the cleanup warnings without the missing failure condition may not address the reported Connection lost symptom",
+      "Changing releaseSession/clearSession semantics could regress the intentionally pinned 'do not clear B' behavior covered by existing tests",
+      "PR #11913 touches the same actions.ts path and may overlap the eventual fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test: createAndAttach in flight → controlled sessionId becomes B (attach AbortError) → releaseSession fails / clearSession skipped → controlled sessionId becomes A → assert connection.status reaches 'connected' and transcript restore runs",
+      "Reproduce end-to-end at the pinned commit with a controlled-sessionId host and capture the /load status, sanitized response, any SSE failure, and connection.error when reopening A"
+    ],
+    "unknowns": [
+      "The actual final request/error when reopening session A (load status, SSE failure, connection.error) that produces the reported Connection lost",
+      "Whether the reported symptom requires a timing window not yet exercised (exact attach-in-flight vs preparation-in-flight)",
+      "Whether PR #11913 already covers the same root cause"
+    ],
+    "why": "The issue's static root-cause chain (superseded attach → releaseSession on the wrong client → skipped clearSession) is well documented and code-anchored, but the user-visible symptom (Connection lost on reopening session A) is not reproduced: a collaborator's follow-up reports that both a real-daemon attempt and a source harness reached status 'connected' with error undefined after switching back to A, and explicitly retracts the earlier claim that the cleanup path necessarily poisons the provider. The final failure condition is therefore unknown, so a fix cannot be validated against the reported symptom."
   },
   "21ad298e38e58cffac8e72b201250ae086eadda22c92d16e7e8a1dab8fd35f90": {
     "confidence": 0.85,
@@ -91973,6 +92082,45 @@
     ],
     "why": "Issue provides a clear root cause: native aarch64 build without toolchain file leaves AARCH64_BUILD unset, causing CMake to select SM80/86/89 instead of SM87 for XQA kernels, leading to runtime GQA kernel failure. Concrete reproduction steps and a validated workaround are supplied, making the fix actionable."
   },
+  "d455efa5630e8ccbe004d23afed7aadfedff3187e09f236700a7dac7472234e6": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue frames this as a bug with a concrete fix, but maintainer triage reclassified it as an enhancement and deferred it to the v0.16.x reverse-proxy milestone",
+      "Issue proposes chunking as the fix, while triage suggests the cheaper --max-body-size flag plus proxy documentation as the first step"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/serve/routes/session.ts (chunked attachment route or tunable body cap)",
+      "packages/sdk-typescript/src/daemon/DaemonClient.ts (chunked upload client)",
+      "packages/web-shell/client/daemon/session/actions.ts (client-side chunking or downscale)",
+      "docs/users/qwen-serve.md (proxy body-cap requirement)"
+    ],
+    "risks": [
+      "Chunked protocol touches serve routes, SDK, and Web Shell and needs upload-id lifecycle, assembly atomicity, GC, and per-chunk auth",
+      "Attachments-only fix leaves /file/upload (50 MiB) and other binary routes equally unreachable behind a 1 MiB proxy",
+      "Maintainer may prefer the cheaper --max-body-size flag plus documentation over a new protocol"
+    ],
+    "root_cause_clarity": "high",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with nginx client_max_body_size 1m in front of qwen serve, paste a >1 MiB <8 MiB PNG, confirm gateway 413",
+      "After a chosen fix, verify upload succeeds up to the documented 8 MiB cap behind the same proxy",
+      "Regression: small files still use the existing one-shot POST path"
+    ],
+    "unknowns": [
+      "Whether maintainers consider proxied deployment in scope now or will keep it deferred to v0.16.x",
+      "Which transport contract (chunked protocol vs tunable cap vs client downscale) maintainers will accept",
+      "Whether the fix should cover all binary ingress routes or only attachments"
+    ],
+    "why": "The issue describes a real transport-shape limitation (single unchunked POST to /session/:id/attachments, 8 MiB daemon cap unreachable behind a ~1 MiB proxy cap), and the triage bot independently confirmed the code paths at the pinned SHA. However, the maintainer triage explicitly reclassified this as an enhancement, deferred it to the v0.16.x containerized/reverse-proxy milestone (#3803), and stated that proxied deployment is out of scope today. The same gap affects all binary ingress routes (/file/upload 50 MiB, extensions 10 MiB, voice 10 MiB), so a targeted attachments-only patch would be incomplete. The suggested chunked protocol requires maintainer design decisions (upload-id lifecycle, assembly, GC, auth) that are not yet settled, and the cheaper tracked alternative (--max-body-size flag + proxy documentation) is already noted. This is a design/scope decision, not an actionable code fix at this time."
+  },
   "d4876a2640369bc841726e867da270a80ee3c082d177fd42b57a511b016bca87": {
     "confidence": 0.6,
     "contradictions": [
@@ -110229,6 +110377,39 @@
       "Whether underlying tracing context loss is considered a bug"
     ],
     "why": "The issue identifies a clear crash in released versions due to a missing guard that already exists in main, but the fix is a release backport and requires maintainer triage. The underlying tracing-context loss after OM buffering is unresolved and needs design confirmation."
+  },
+  "fb42ac911a51df809ec2c9e6f0f5ea90548f2e11632dc0a1eb79f2a65557dcd9": {
+    "confidence": 0.8,
+    "contradictions": [
+      "preTaskEvidence duplicate status is 'none' while related_issue_assessment reports potential_overlap with #49247 and the bot comment lists five similar issues"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.related_issue_assessment",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "session reasoning state handling for stale encrypted_content",
+      "provider error recovery path"
+    ],
+    "risks": [
+      "Overlaps with multiple open issues and PRs (#48908, #48918) already targeting the same fix",
+      "No confirmed code surface or reproduction path"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the reported model/session flow and assert the stale reasoning item is not replayed",
+      "Add a regression test for follow-up prompts after model switch or idle resume"
+    ],
+    "unknowns": [
+      "Whether an existing issue/PR already covers this exact scenario",
+      "Whether a concrete reproduction or code path can be established"
+    ],
+    "why": "Issue is a user-facing provider error report with no reproduction evidence, no root-cause signal, and no code anchors beyond the error string `encrypted_content`. The bot comment lists at least five closely related existing issues (#48805, #48915, #48741, #48947, #48319) covering the same stale encrypted reasoning failure, and the related_issue_assessment flags #49247 as a potential duplicate. Duplicate/merged-fix coverage is unresolved, which materially determines whether new code work is actionable."
   },
   "fb4b1ed8e7c5b617ddaecb50553947bf1d3c76b1c8ab552086818039c605989a": {
     "confidence": 0.85,
