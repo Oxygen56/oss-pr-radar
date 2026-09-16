@@ -1056,6 +1056,35 @@ def test_production_queue_snapshot_imports_pr_followup_once(tmp_path, monkeypatc
     assert delivered == []
 
 
+def test_run_once_migrates_legacy_model_failures_before_receipt_reconciliation(
+    tmp_path, monkeypatch
+):
+    worker = _event_worker_module()
+    order = []
+    migrate = worker.migrate_unmarked_transient_model_recoveries
+    reconcile = worker.reconcile_detached_receipts
+
+    def tracked_migration(*args, **kwargs):
+        order.append("migration")
+        return migrate(*args, **kwargs)
+
+    def tracked_reconciliation(*args, **kwargs):
+        order.append("reconciliation")
+        return reconcile(*args, **kwargs)
+
+    monkeypatch.setattr(worker, "migrate_unmarked_transient_model_recoveries", tracked_migration)
+    monkeypatch.setattr(worker, "reconcile_detached_receipts", tracked_reconciliation)
+    monkeypatch.setattr(
+        worker.GitHubIssuePoller,
+        "poll",
+        lambda _self: type("Poll", (), {"events": (), "status": "not_modified"})(),
+    )
+
+    worker.run_once(tmp_path, deliver=lambda _event: None)
+
+    assert order[:2] == ["migration", "reconciliation"]
+
+
 def test_queue_identity_is_stable_and_legacy_rows_retire_once(tmp_path):
     lane = EventLane(tmp_path / "events.db")
     first = {
@@ -2093,7 +2122,7 @@ def test_retryable_start_failure_releases_reservation_and_retries(tmp_path, monk
     assert turn["thread_id"] == CENTRAL_THREAD
 
 
-def test_transient_model_failover_is_bounded_and_never_refunds_attempts(tmp_path):
+def test_transient_model_failover_is_bounded_outside_the_lease_attempt_budget(tmp_path):
     lane = EventLane(tmp_path / "events.db", max_attempts=3)
     event = {
         "eventId": "model-fallback",
@@ -2106,7 +2135,7 @@ def test_transient_model_failover_is_bounded_and_never_refunds_attempts(tmp_path
     models = ("gpt-6-astra", "gpt-5.6-terra", "gpt-5.6-luna")
     for index, model in enumerate(models):
         claimed = lane.claim(limit=1)[0]
-        assert claimed["attempts"] == index + 1
+        assert claimed["attempts"] == 1
         outcome = lane.record_transient_model_failure(
             event["eventId"],
             model=model,
@@ -2122,8 +2151,48 @@ def test_transient_model_failover_is_bounded_and_never_refunds_attempts(tmp_path
             (event["eventId"],),
         ).fetchone()
     payload = json.loads(row["payload_json"])
-    assert (row["status"], row["attempts"]) == ("needs_reconcile", 3)
+    assert (row["status"], row["attempts"]) == ("needs_reconcile", 0)
     assert payload["terminalReason"] == "model_capacity_retries_exhausted"
+    assert [item["model"] for item in payload["modelFallback"]["history"]] == list(models)
+    assert lane.claim(limit=1) == []
+
+
+def test_model_fallback_keeps_prior_non_model_attempts_and_can_try_all_models(tmp_path):
+    lane = EventLane(tmp_path / "events.db", max_attempts=3)
+    event = {
+        "eventId": "model-fallback-after-start-failures",
+        "eventKey": "agentscope-ai/agentscope#6",
+        "repo": "agentscope-ai/agentscope",
+        "number": 6,
+        "kind": "issue_update",
+    }
+    lane.append(event)
+    for expected_attempt in (1, 2):
+        claimed = lane.claim(limit=1)[0]
+        assert claimed["attempts"] == expected_attempt
+        assert lane.defer_event(event["eventId"], lease_token=claimed["leaseToken"])
+
+    models = ("gpt-6-astra", "gpt-5.6-terra", "gpt-5.6-luna")
+    for index, model in enumerate(models):
+        claimed = lane.claim(limit=1)[0]
+        assert claimed["attempts"] == 3
+        state = lane.record_transient_model_failure(
+            event["eventId"],
+            model=model,
+            candidates=models,
+            error={"code": "serverOverloaded"},
+            lease_token=claimed["leaseToken"],
+            retry_not_before=0,
+        )
+        assert state == ("exhausted" if index == len(models) - 1 else "retry")
+
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts,payload_json FROM event_lane_events WHERE event_id=?",
+            (event["eventId"],),
+        ).fetchone()
+    payload = json.loads(row["payload_json"])
+    assert (row["status"], row["attempts"]) == ("needs_reconcile", 2)
     assert [item["model"] for item in payload["modelFallback"]["history"]] == list(models)
     assert lane.claim(limit=1) == []
 
@@ -3200,7 +3269,16 @@ def test_noncompleted_turn_cannot_publish_a_structurally_valid_outcome(tmp_path,
     assert recovery_count == 1
 
 
-def test_capacity_failed_root_recovery_starts_with_the_next_model(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("receipt_model", "recorded_model", "next_model"),
+    [
+        ("gpt-6-astra", "gpt-6-astra", "gpt-5.6-terra"),
+        (None, "legacy-unrecorded", "gpt-6-astra"),
+    ],
+)
+def test_capacity_failed_root_recovery_uses_only_the_recorded_model(
+    tmp_path, monkeypatch, receipt_model, recorded_model, next_model
+):
     worker = _event_worker_module()
     _configure_manifest(worker, tmp_path, monkeypatch)
     lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
@@ -3217,27 +3295,23 @@ def test_capacity_failed_root_recovery_starts_with_the_next_model(tmp_path, monk
     )
     claimed = lane.claim(limit=1)[0]
     lane.reserve_handler_turn(event_key, event_id, "client:capacity")
-    lane.bind_handler_turn(
-        event_key, event_id, "thread-1", "turn-capacity", {}, status="started"
-    )
+    lane.bind_handler_turn(event_key, event_id, "thread-1", "turn-capacity", {}, status="started")
     assert lane.ack(event_id, lease_token=claimed["leaseToken"])
     receipt = worker._event_artifact_path(tmp_path, worker.EVENT_RECEIPT_DIR, event_id)
     receipt.parent.mkdir(parents=True)
-    receipt.write_text(
-        json.dumps(
-            {
-                "turnStatus": "failed",
-                "model": "gpt-6-astra",
-                "terminalError": {"code": "serverOverloaded"},
-                "outcome": {
-                    "schemaVersion": "agentscope_event_outcome_v1",
-                    "eventId": event_id,
-                    "publicKey": event_key,
-                    "state": "no_action",
-                },
-            }
-        )
-    )
+    receipt_value = {
+        "turnStatus": "failed",
+        "terminalError": {"code": "serverOverloaded"},
+        "outcome": {
+            "schemaVersion": "agentscope_event_outcome_v1",
+            "eventId": event_id,
+            "publicKey": event_key,
+            "state": "no_action",
+        },
+    }
+    if receipt_model is not None:
+        receipt_value["model"] = receipt_model
+    receipt.write_text(json.dumps(receipt_value))
 
     assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
     recovery_id = worker._outcome_recovery_event_id(event_id)
@@ -3247,9 +3321,7 @@ def test_capacity_failed_root_recovery_starts_with_the_next_model(tmp_path, monk
                 "SELECT payload_json FROM event_lane_events WHERE event_id=?", (recovery_id,)
             ).fetchone()[0]
         )
-    assert [item["model"] for item in payload["modelFallback"]["history"]] == [
-        "gpt-6-astra"
-    ]
+    assert [item["model"] for item in payload["modelFallback"]["history"]] == [recorded_model]
     calls = []
     monkeypatch.setattr(
         worker,
@@ -3262,7 +3334,82 @@ def test_capacity_failed_root_recovery_starts_with_the_next_model(tmp_path, monk
     recovery = lane.claim(limit=1)[0]
     worker.issue_handler_delivery(tmp_path, lane, recovery)
     extra = calls[0]["extra_args"]
-    assert extra[extra.index("--model") + 1] == "gpt-5.6-terra"
+    assert extra[extra.index("--model") + 1] == next_model
+
+
+def test_legacy_capacity_receipt_without_model_retries_recovery_with_astra(tmp_path):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    root_event_id = "github:agentscope-ai/agentscope:2:issue_update:legacy-capacity"
+    recovery_id = worker._outcome_recovery_event_id(root_event_id)
+    event_key = "agentscope-ai/agentscope#2"
+    lane.append(
+        {
+            "eventId": root_event_id,
+            "eventKey": event_key,
+            "repo": "agentscope-ai/agentscope",
+            "number": 2,
+            "kind": "issue_update",
+        }
+    )
+    lane.append(
+        {
+            "eventId": recovery_id,
+            "eventKey": event_key,
+            "kind": "outcome_reconcile",
+            "rootEventId": root_event_id,
+            "eventIdSource": root_event_id,
+            "payload": {
+                "eventId": root_event_id,
+                "rootEventId": root_event_id,
+                "publicKey": event_key,
+            },
+        },
+        priority=250,
+    )
+    claimed = lane.claim(limit=1)[0]
+    assert claimed["eventId"] == recovery_id
+    lane.reserve_handler_turn(event_key, recovery_id, "client:legacy-capacity")
+    lane.bind_handler_turn(
+        event_key,
+        recovery_id,
+        "thread-legacy",
+        "turn-legacy-capacity",
+        {},
+        status="started",
+    )
+    assert lane.ack(recovery_id, lease_token=claimed["leaseToken"])
+    receipt = worker._event_artifact_path(
+        tmp_path,
+        worker.EVENT_RECEIPT_DIR,
+        recovery_id,
+        attempt=1,
+        is_recovery=True,
+    )
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(
+        json.dumps(
+            {
+                "turnStatus": "failed",
+                "terminalError": {"code": "serverOverloaded"},
+                "outcome": {"error": "OUTCOME_MISSING_OR_INVALID"},
+            }
+        )
+    )
+
+    assert worker.reconcile_detached_receipts(tmp_path, lane) == 1
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts,payload_json FROM event_lane_events WHERE event_id=?",
+            (recovery_id,),
+        ).fetchone()
+    payload = json.loads(row["payload_json"])
+    assert (row["status"], row["attempts"]) == ("pending", 0)
+    assert [item["model"] for item in payload["modelFallback"]["history"]] == [
+        worker.LEGACY_UNRECORDED_MODEL
+    ]
+    assert payload["modelFallback"]["nextIndex"] == 0
+    assert worker._event_model(payload) == "gpt-6-astra"
 
 
 def test_invalid_recovery_reuses_one_event_and_exhausts_existing_attempt_budget(tmp_path):

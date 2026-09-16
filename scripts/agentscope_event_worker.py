@@ -63,6 +63,7 @@ EXHAUSTED_EVIDENCE_RECHECK_SECONDS = 15 * 60
 EXTERNAL_CLAIM_WATCH_SECONDS = 24 * 60 * 60
 TRANSIENT_MODEL_RETRY_DELAY_SECONDS = 5 * 60
 EVENT_MODEL_CANDIDATES = ("gpt-6-astra", "gpt-5.6-terra", "gpt-5.6-luna")
+LEGACY_UNRECORDED_MODEL = "legacy-unrecorded"
 _CONDITIONAL_EXTERNAL_CLAIM_RE = re.compile(
     r"(?:"
     r"\b(?:if|unless)\b.{0,160}\b(?:i(?:['’]?d|['’]?ll| am| will| would)|we)\b"
@@ -1052,9 +1053,10 @@ def _retry_or_exhaust_outcome_recovery(
             event = json.loads(row["payload_json"])
         except (TypeError, ValueError, json.JSONDecodeError):
             event = {"eventId": str(event_id), "kind": "outcome_reconcile"}
+        recorded_model = str(used_model or "").strip() or LEGACY_UNRECORDED_MODEL
         outcome = lane.record_transient_model_failure(
             str(event_id),
-            model=str(used_model or _event_model(event if isinstance(event, dict) else {})),
+            model=recorded_model,
             candidates=EVENT_MODEL_CANDIDATES,
             error=transient_error,
             retry_not_before=now + TRANSIENT_MODEL_RETRY_DELAY_SECONDS,
@@ -1568,7 +1570,7 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
                 if isinstance(event.get("modelFallback"), dict):
                     recovery["modelFallback"] = dict(event["modelFallback"])
                 if _transient_model_error(value.get("terminalError")):
-                    failed_model = str(value.get("model") or _event_model(event))
+                    failed_model = str(value.get("model") or "").strip() or LEGACY_UNRECORDED_MODEL
                     recovery, fallback_state = advance_model_fallback(
                         recovery,
                         model=failed_model,
@@ -1756,19 +1758,21 @@ def run_once(
     production_delivery = deliver is None
     seed_items = _sync_public_work_seed(root, lane)
     bootstrap_boundary, bootstrap = _bootstrap_boundary(root, lane)
-    receipts_reconciled = reconcile_detached_receipts(root, lane)
     current = (now or datetime.now(UTC)).astimezone(UTC)
+    # Normalize old, model-less capacity failures before detached receipts can
+    # be interpreted under the current Astra-first fallback policy.
+    transient_model_migration = migrate_unmarked_transient_model_recoveries(
+        lane,
+        namespace=RECOVERY_EVENT_NAMESPACE,
+        now=current.timestamp(),
+    )
+    receipts_reconciled = reconcile_detached_receipts(root, lane)
     expired = lane.expire_claims(now=current.timestamp())
     turns_expired = lane.expire_handler_turns(now=current.timestamp())
     recovery_migration = migrate_recovery_chains(
         lane.path,
         namespace=RECOVERY_EVENT_NAMESPACE,
         apply=True,
-    )
-    transient_model_migration = migrate_unmarked_transient_model_recoveries(
-        lane,
-        namespace=RECOVERY_EVENT_NAMESPACE,
-        now=current.timestamp(),
     )
     historical_repair = rearm_historical_recoveries(
         lane,

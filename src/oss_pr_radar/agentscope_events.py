@@ -1562,12 +1562,14 @@ class EventLane:
         owner: str = "event-lane",
         retry_not_before: float | None = None,
     ) -> str:
-        """Advance one durable model fallback chain without refunding an attempt.
+        """Advance one durable model fallback chain outside the lease budget.
 
-        The event-lane attempt is deliberately retained: a capacity failure is
-        a real model attempt, not an infrastructure pre-start refund.  This
-        makes the finite candidate list the authority and prevents a stale
-        receipt from resetting an event into an unbounded retry loop.
+        A capacity failure consumes one entry in ``modelFallback.history`` but
+        not one of the generic bridge lease attempts.  Keeping those counters
+        separate lets every configured model run once even when earlier
+        non-model start failures have already spent most of the lease budget.
+        Duplicate model receipts are not refunded, so stale evidence cannot
+        turn the finite fallback chain into an unbounded retry loop.
         """
         ordered = tuple(str(item).strip() for item in candidates if str(item).strip())
         selected = str(model).strip()
@@ -1601,6 +1603,15 @@ class EventLane:
             if not isinstance(event, dict):
                 event = {"eventId": str(event_id)}
             prior_fallback = event.get("modelFallback")
+            prior_history = (
+                prior_fallback.get("history")
+                if isinstance(prior_fallback, dict)
+                and isinstance(prior_fallback.get("history"), list)
+                else []
+            )
+            newly_recorded_failure = selected not in {
+                str(item.get("model") or "") for item in prior_history if isinstance(item, dict)
+            }
             legacy_reset = bool(
                 selected not in ordered
                 and not (
@@ -1638,12 +1649,15 @@ class EventLane:
                 if retry_not_before is not None:
                     event["retryNotBefore"] = float(retry_not_before)
                 status = "pending"
+            lease_attempts = int(row["attempts"] or 0)
+            if newly_recorded_failure:
+                lease_attempts = max(0, lease_attempts - 1)
             result = db.execute(
                 "UPDATE event_lane_events SET status=?,attempts=?,payload_json=?,delivered_at=?,"
                 "lease_until=NULL,lease_owner=NULL,lease_token=NULL WHERE event_id=?",
                 (
                     status,
-                    0 if legacy_reset and not exhausted else int(row["attempts"] or 0),
+                    lease_attempts,
                     json.dumps(event, sort_keys=True),
                     current if exhausted else None,
                     str(event_id),

@@ -371,10 +371,11 @@ def migrate_unmarked_transient_model_recoveries(
             for key_to_remove in ("terminalReason", "recoveryExhausted", "recoveryAttempts", "retryNotBefore"):
                 repaired.pop(key_to_remove, None)
             changed = db.execute(
-                "UPDATE event_lane_events SET status='pending',attempts=0,payload_json=?,"
+                "UPDATE event_lane_events SET status='pending',attempts=?,payload_json=?,"
                 "delivered_at=NULL,lease_until=NULL,lease_owner=NULL,lease_token=NULL "
                 "WHERE event_id=? AND status=? AND attempts=?",
                 (
+                    max(0, int(row["attempts"] or 0) - 1),
                     json.dumps(repaired, sort_keys=True),
                     event_id,
                     str(row["status"]),
