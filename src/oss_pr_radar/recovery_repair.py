@@ -193,7 +193,8 @@ def _later_valid_turn(
     rows = db.execute(
         "SELECT t.event_id,t.turn_id,t.status,t.created_at,t.receipt_json,e.payload_json "
         "FROM event_lane_turns t LEFT JOIN event_lane_events e USING(event_id) "
-        "WHERE t.event_key=? AND t.event_id<>? ORDER BY t.created_at",
+        "WHERE t.event_key=? AND t.event_id<>? AND t.status='completed' "
+        "ORDER BY t.created_at",
         (key, root_id),
     ).fetchall()
     for row in rows:
