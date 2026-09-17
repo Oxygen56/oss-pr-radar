@@ -4893,6 +4893,38 @@
     ],
     "why": "Issue provides a concrete reproduction with ordered steps and a clear observed/expected behavior. A contributor traced the current code path and identified plausible root causes (token expiry during long-pending approval, auth-retry wiring, or mid-stream error handling) with specific code anchors. The validation path is a retest on latest build with the same 45-minute wait and log inspection, which is actionable."
   },
+  "0b9860091bfc1580e8d49bfc26d141f6c7d24d41832ee5939519a058bbd914b7": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/openai/encoding_dsv4.py: accept str or dict arguments and validate result is a dict",
+      "regression test covering already-normalized assistant tool-call history through encode_arguments_to_dsml()"
+    ],
+    "risks": [
+      "Fix targets b12x-vision branch; main may already carry #28035 behavior, so the patch must be verified against the affected branch/image commit",
+      "Image republish and cookbook digest update are release steps outside the code change",
+      "Overlap with #38386 could be misread as coverage, but that PR addresses output parsing, not prompt-history encoding"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: call encode_arguments_to_dsml({'name':'read','arguments':{'filePath':'/tmp/example.txt'}}) and assert a single parameter name=\"filePath\" string=\"true\" with no nested arguments wrapper",
+      "Regression test: pass a JSON-string arguments value and assert identical DSML output to the dict form",
+      "Negative test: non-object arguments (e.g. list/scalar) raises ValueError"
+    ],
+    "unknowns": [
+      "Whether the b12x-vision branch is publicly accessible for a PR or only the main branch is targetable",
+      "Whether maintainers require the image republish/cookbook update in the same change"
+    ],
+    "why": "Issue pinpoints a concrete regression in encode_arguments_to_dsml(): unconditional json.loads() on an already-normalized dict raises TypeError, caught and wrapped as {\"arguments\": dict}, producing an extra DSML parameter layer. Expected vs actual output and the #28035 reference behavior are supplied, giving a clear reference-vs-implementation test."
+  },
   "0ba796a3316eb770c789db4614f1f168162f6db7c65ba6acf7889e7bb123c2b7": {
     "confidence": 0.85,
     "contradictions": [
@@ -22181,6 +22213,43 @@
       "Exact status of PR #3251's failed CI and whether it can be fixed quickly"
     ],
     "why": "Issue provides a clear root cause and a minimal fix for two bugs in OAuthClientProvider._initialize() that break transparent token refresh. Existing PR #3251 is weak (failed CI) and lacks complete evidence, leaving room for a materially better PR with robust tests and full root-cause coverage."
+  },
+  "34d54884215590bc2dbd3f840d1d30c2bdcd9c46b6a47cf3eadcbc213b1bbb2d": {
+    "confidence": 0.6,
+    "contradictions": [
+      "The issue asks for a library-level ownership fix, but the duplicate assessment lists open PRs #39977 and #91 that already implement ownership-preserving fixes with tests, while the issue author's comment says the fix was submitted at the library level"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "deep_gemm_wrapper.transform_sf_into_required_layout ownership retention",
+      "csrc/tvm_ffi_api.cpp DLPack export lifetime",
+      "csrc/utils/torch_compat.hpp convert_to_torch_tensor owner retention"
+    ],
+    "risks": [
+      "Fixing at the DeepGEMM library level vs. a defensive clone in the SGLang wrapper changes which repository owns the change",
+      "Pointer reuse depends on caching-allocator behavior, so the regression test must force reuse deterministically",
+      "The two open PRs may already cover the root cause, making additional work duplicative"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's repro.py on SM90 with sgl-deep-gemm 0.2.0 and confirm aliases_input=true and after_nan=5120",
+      "Re-run with --clone to confirm the diagnostic control passes",
+      "Add a regression test that deletes the input, forces allocator reuse, and asserts the output remains finite and equal to the original scale"
+    ],
+    "unknowns": [
+      "Whether PR #39977 or #91 already fully resolves the reported root cause and would make additional code work redundant",
+      "Which repository (sglang vs. DeepGEMM) is the intended target for the fix"
+    ],
+    "why": "The issue supplies a concrete SM90 reproduction, a clear root cause (non-owning torch::from_blob view returned through DLPack), and a validation path, so the underlying defect is actionable. However, the supplied duplicate assessment shows two open PRs (#39977 in sglang and #91 in DeepGEMM) that already implement the ownership fix with regression tests, and the issue author's own comment states the fix was submitted at the library level. Whether any code work remains uncovered is unresolved, which materially determines actionability."
   },
   "34f77276395bf13cc886ad7faac1c9dd213a4e2f28efc3e8aa171d94d9941638": {
     "confidence": 0.6,
@@ -42553,6 +42622,39 @@
     ],
     "why": "The issue reports two intermittent, non-deterministic CUDA runtime failures (cudaErrorInvalidValue in cuDNN SM90 DSA backward, cudaErrorUnknown in packed-THD build_attention_indices) with no deterministic reproducer; the reporter explicitly states they lack a small reproducer and CUDA_LAUNCH_BLOCKING was off, so the reported call may not be the originating kernel. Root cause is not established, and the maintainer comment only suggests padding flags and an untested community PR. Multiple open PRs (#6848, #6910, #6939, #7169) overlap the failing code paths, so duplicate/coverage status is unresolved."
   },
+  "6176cdeb8a3e456b494e73a829602c9cce4faeb4c553858126617dac7182bf03": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims webhook is not registered after publish, but contributor's simulation on current main shows AppTrigger is created and the chain works."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/trigger/webhook_service.py",
+      "api/services/workflow_service.py"
+    ],
+    "risks": [
+      "Fixing a non-reproducible path could introduce regressions in the trigger publish/sync flow.",
+      "The reported behavior may be version-specific or deployment-specific rather than a current-main bug."
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on the reporter's exact self-hosted commit with a minimal Webhook Trigger app, then inspect app_triggers and workflow_webhook_triggers rows after publish and POST to the webhook URL."
+    ],
+    "unknowns": [
+      "Exact self-hosted version/commit used by the reporter",
+      "Whether an app_triggers row exists for the app when the 404 occurs",
+      "Whether undo/redo or node re-adding was involved",
+      "API logs around the publish request"
+    ],
+    "why": "The issue reports a user-visible 404 after publishing a Webhook Trigger, but a contributor's end-to-end simulation on current main could not reproduce it and shows the expected AppTrigger row is created and stale rows pruned. The reporter's version/commit is unknown, and the contributor explicitly asks for the self-hosted version and whether the app_triggers row exists. Without that, the root cause is not established and the fix is not actionable."
+  },
   "6179b467e65724e314a3c2989e92abae47778a313ff50f51a1757155cd57c5cb": {
     "confidence": 0.85,
     "contradictions": [
@@ -49292,6 +49394,39 @@
       "Whether maintainers prefer a different implementation or have design constraints not stated in the issue."
     ],
     "why": "The issue provides a clear root cause (detectPackageManager only checks cwd for lockfiles), a concrete reproduction (nested pnpm workspace returns npm), and a specific fix (ancestor walk with precedence). A related PR (#23194) exists but is closed and lacks root-cause coverage, so the issue remains actionable."
+  },
+  "6def6ff5c1c16a67c5405f0c9c904ed425fc4b2de8c7c502b0ef1fa5aa47657b": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mem0-ts OpenAI embedder/LLM client construction to honor HTTP_PROXY/HTTPS_PROXY (e.g. via undici ProxyAgent or a proxy-aware fetch)",
+      "shared HTTP client/config plumbing in mem0-ts so all provider calls inherit the proxy setting",
+      "regression test that asserts a CONNECT is issued to the configured proxy during _autoInitialize"
+    ],
+    "risks": [
+      "Proxy support may need to be threaded through multiple provider clients, expanding the change beyond a single file",
+      "Node/undici version differences in env-proxy handling could make the fix environment-sensitive",
+      "Repository policy flags an AI-disclosure conflict, which may affect how a contribution can be submitted"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit/integration test that starts a local HTTP proxy, sets HTTP_PROXY/HTTPS_PROXY, constructs Memory with the OpenAI provider and an unset vectorStore dimension, and asserts the proxy receives a CONNECT to api.openai.com",
+      "Run the mem0-ts package's targeted unit tests and typecheck/lint after the change",
+      "Verify NO_PROXY/no_proxy still bypasses the proxy and that non-proxy environments are unaffected"
+    ],
+    "unknowns": [
+      "The issue's 'Why This Is a Bug' and 'What I Ruled Out' sections are empty, so the reporter's expected contract is inferred from the repro rather than explicitly stated",
+      "Whether maintainers want proxy support implemented via undici ProxyAgent, a custom fetch, or per-provider agent injection"
+    ],
+    "why": "Issue reports a concrete, user-visible TypeScript SDK bug: mem0ai/oss ignores http_proxy/HTTPS_PROXY when the OpenAI provider is used, with a self-contained repro that stands up a local proxy and shows zero CONNECT attempts. The failure path (Memory._autoInitialize -> embedder.embed -> OpenAI SDK) is anchored in the stack trace, and the fix scope (passing a proxy-aware agent/fetch to the OpenAI client in the TS SDK) is a bounded, testable change. No duplicate or merged fix covers this path; the closest open PRs (#7290 proxy search path, #7326 integration surface, #7340 profiles) have no direct code overlap. The main caveat is that the issue's 'Why This Is a Bug' and 'What I Ruled Out' sections are empty templates, so the intended contract (env-var proxy support) is inferred from the repro rather than stated by the reporter."
   },
   "6df6dcff75a04256852e315834d381c9640fef49ce1948e7a3f2e6001e37f519": {
     "confidence": 0.8,
@@ -61076,6 +61211,43 @@
     ],
     "why": "The issue reports a clear performance regression with MTP at high context, and a detailed comment identifies the root cause: the `use_3d` guard in `triton_unified_attention` incorrectly disables the 3D path when `max_seqlen_q > 1`, causing a significant slowdown on Ampere GPUs. The comment provides measurements and a workaround, and suggests a concrete fix direction (per-token buffer sizing). This is actionable for a performance fix."
   },
+  "8996eba36aac6d9b68db098b6c3d3fb413bc83fe2cefd59540ee0d783ecb54b2": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue proposes per-layer opt-out plus two registry fixes, while PR #39972 is described as carrying the registry fix and overlapping the exp2/intra_chunk/per_channel/prefill semantics without referencing the issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/layers/attention/attention_registry.py (attn_backend_wrapper: spec, cfg = spec_result)",
+      "python/sglang/srt/arg_groups/overrides.py (supports_mamba_cache_extra_buffer registry-first lookup)",
+      "KDA chunk_kda/chunk_kda_fwd fused_intra plumbing and TritonKDAKernel.extend forwarding"
+    ],
+    "risks": [
+      "PR #39972 may already implement the same fixes, making an independent patch duplicative",
+      "The three bundled issues have different root causes and may need separate PRs",
+      "Numerical tolerance must be fixed with seed and hardware pinned to distinguish math error from float noise"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a fixed-seed fp32 torch recurrence reference for one real KDA layer's q/k/v/gate/beta at T=298 and compare rel-L2 against chunk_kda fused vs unfused paths",
+      "Construct a synthetic gate with cumulative log2 decay beyond -126 inside a 16-token sub-block and assert fused == unfused within tolerance",
+      "Regression test that a registry-registered linear-attn model with support_mamba_cache_extra_buffer=True resolves --mamba-radix-cache-strategy auto to extra_buffer and that attn_backend_wrapper does not raise AttributeError on full_attention_layer_ids"
+    ],
+    "unknowns": [
+      "Whether PR #39972 already fixes the clamp collapse, the extra-buffer resolution, and the attn_backend_wrapper config discard",
+      "Which of the three bundled problems is the intended scope of this candidate",
+      "Whether the ±126 clamp is reachable in supported models or only in the reporter's custom model"
+    ],
+    "why": "The issue bundles three distinct problems: a numerically plausible ±126 clamp collapse in the fused intra-chunk KDA prefill kernel, a registry-vs-hardcoded mamba extra-buffer resolution bug, and an attn_backend_wrapper config-discard bug. The clamp analysis is concrete and testable, but the supplied evidence does not establish which of the three is the intended contribution, and the open-PR assessment flags PR #39972 (BerryLM) as carrying the proposed fixes with semantic overlap on exp2/intra_chunk/per_channel/prefill while not referencing this issue. That unresolved duplicate/coverage question materially determines whether independent code work is actionable."
+  },
   "89c2c47063fac8e1d3469fa0963a9fc7206d6765cdc1e27e4bb3d9949c27666d": {
     "confidence": 0.8,
     "contradictions": [],
@@ -68480,6 +68652,43 @@
       "Maintainer preference on whether to reject at return or change serialization setting; no maintainer response yet"
     ],
     "why": "Issue provides a precise root cause (Pydantic JSON mode serializes non-finite floats as null, failing client schema validation), a minimal reproduction, and a clear fix direction (reject non-finite floats at return with a clear message, matching existing practice). This is a concrete, actionable bug in the MCP SDK's core tool-call path."
+  },
+  "9a99fdada64c719fdc8ac789eb4ac7ae95de89810afe90f50cc23b284ea58998": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/advanced_precision.py: map NVFP4 to a real torchao 0.18 class (e.g. prototype NVFP4TrainingConfig) and replace hasattr-on-package-root with explicit imports catching ImportError",
+      "src/soup_cli/utils/save_formats.py: fix scheme_factory_map names for Int8DynActInt4/Float8DynActFloat8/NVFP4 and drop or remap inner_k_tiles",
+      "pyproject.toml / commands/doctor.py / commands/export.py: unify the torchao version floor in one place",
+      "tests: add a contract test importing real torchao (pytest.importorskip) asserting every configured class name resolves"
+    ],
+    "risks": [
+      "Whether torchao NVFP4 kernels actually execute on sm_120 is unverified; is_sm_at_least_100() may pass while kernels fail",
+      "Choosing between NVFP4TrainingConfig and an inference config changes semantics; maintainer intent for the training.nvfp4 flag must be confirmed",
+      "Open PRs #1044/#1022/#947 touch overlapping paths and may conflict or partially cover the fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Install torchao 0.18.0 and run a contract test that imports the real package and asserts each scheme name in save_formats.py and advanced_precision.py resolves; confirm it fails on current code",
+      "Reproduce apply_nvfp4 on a bf16 nn.Linear and confirm it no longer degrades to a yellow warning + bf16 run",
+      "Run export_torchao for all four schemes against torchao 0.18.0 and verify success or explicit allowlist removal",
+      "Run a real training.nvfp4: true end-to-end run on Blackwell (sm_120) and record in benchmarks/"
+    ],
+    "unknowns": [
+      "Whether an older torchao release ever exported the misspelled class names (issue states only 0.18.0 was checked)",
+      "Whether the maintainer intends training.nvfp4 to mean NVFP4 training (NVFP4TrainingConfig) or post-training quantization"
+    ],
+    "why": "Issue #826 documents a concrete, reproducible defect: Soup resolves torchao class names (NVFP4Config, Int8DynActInt4Config, Float8DynActFloat8Config) that torchao 0.18.0 does not export, with exact file/line anchors, a real-hardware reproduction transcript, and a clear root cause (name lookup against a non-existent public API plus hasattr/MagicMock tests that cannot catch it). The proposed fix and acceptance criteria are concrete and testable. This is a numerics/quantization mechanism issue, not mere CLI plumbing, since it concerns whether NVFP4 training actually applies. Open PRs #1044/#1022/#947 overlap semantically but none directly closes this issue or covers the class-name resolution root cause, so they are competition context rather than a blocker."
   },
   "9a9c5dddd49b3ba54a513fcd4ec11a2ba6a0deed34f43d9917b17bc22118fec3": {
     "confidence": 0.7,
@@ -80161,6 +80370,44 @@
     ],
     "wait_reason": null,
     "why": "Issue provides a clear, reproducible bug with root cause identified (fresh lookup uses storage.get_agent instead of resource access service) and a concrete regression test. No competing PR or issue found. The fix is actionable and scoped to the AgentInvite path."
+  },
+  "b5c2744e7de5401876ae4217fef5ee7bddd98258eca59517d47b35ef30d5a759": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge B@A into base weight and reinitialize A (Kaiming) / B (zeros) on restart, or rename feature and correct docstring to drop ReLoRA conformance claims",
+      "src/soup_cli/utils/relora.py: replace strict `abs(t) > threshold` mask with deterministic exact-count selection (topk/stable-order) so requested keep count is honored under ties and at least one entry survives",
+      "src/soup_cli/utils/relora.py: target optimizer-state pruning/reset at optimizer moments rather than learned adapter weights",
+      "src/soup_cli/utils/relora.py: explicit support or loud rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A fix is a maintainer contract decision (implement real restarts vs rename feature); a partial implementation could leave the docstring/behavior inconsistent",
+      "Quantized bases, FSDP/DeepSpeed wrappers, and layer streaming may not support merge/reinit and need explicit rejection to avoid partial restarts",
+      "Tie-case production frequency is unverified; owner notes freshly-initialized lora_B is all zeros by PEFT convention, so the natural tie may fire on the first relora_steps interval",
+      "Numerical tolerance must be fixed with seed and hardware to distinguish real regressions from float noise"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reference-vs-implementation test: build a small peft LoRA linear layer with fixed seed, capture effective map W + B@A before callback, run _prune_and_reset, assert MSE(before, after) <= numerical tolerance for the merge-then-reset contract",
+      "Regression test: constant-magnitude lora_A/lora_B with prune_ratio=0.9, assert nonzero count equals requested keep count and both factors retain at least one nonzero entry",
+      "Regression test: after callback, assert gradient norm of lora_A and lora_B is nonzero (branch not dead) for prune_ratio < 1",
+      "Kernel-level test: ones(10) and arange(1..10) with prune_ratio=0.9 both yield exactly 1 survivor",
+      "Accumulation test: successive restarts accumulate low-rank updates in the base weight"
+    ],
+    "unknowns": [
+      "Whether maintainer will choose the full ReLoRA restart contract or the smaller rename/docstring correction (owner states both are acceptable and separable)",
+      "Measured production frequency of the tie case beyond the constructed and freshly-initialized lora_B scenarios"
+    ],
+    "why": "Issue identifies two concrete, independently reproduced defects in ReLoRACallback._prune_and_reset: (A) adapter weights are magnitude-pruned without merging B@A into the frozen base, so the learned effective linear map is discarded rather than restarted (base weight delta 0, MSE 142.12 vs merge-then-reset control 8.77e-13); (B) strict `abs(t) > threshold` masking wipes all entries on ties, zeroing both lora_A and lora_B and producing zero gradient norm, permanently killing the branch. Owner confirmed both halves with real peft LoRA runs and pinned kernel probes, and the module docstring at relora.py:3-5 claims paper/Axolotl conformance. This is a concrete algorithm-conformance and numerical-correctness defect with a clear reference-vs-implementation validation path."
   },
   "b5cd2e181fc5bc44aa623875ac9e034f10b37017dc90ee2e9a83401815051729": {
     "confidence": 0.8,
@@ -92097,6 +92344,41 @@
     ],
     "why": "Issue provides a clear user-visible regression with a concrete reproduction command, isolated variables, and a known working version. Root cause is localized to generation/sampling path for Qwen3.5-arch models in 0.5.17, making it actionable for a targeted fix."
   },
+  "d0adf84d4f14ec269762c457075ca1751d7e917a40a58a1230e1d01d564dadf2": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Open PR #2648 is marked technical_complete=true but root_cause_coverage=false, so its actual coverage of the reordered-step root cause is uncertain"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "SOPEngine state restoration: validate persisted step identity/order before applying SOPStepRunState",
+      "Backward-compatible handling for legacy states lacking step identifiers",
+      "Regression test covering same-length reordered steps and legacy state loading"
+    ],
+    "risks": [
+      "Fix may need a step-identity field or hash that is not present in older persisted states",
+      "Behavior change could break existing users relying on index-based restoration",
+      "Open PR #2648 may already cover the same fix, creating duplicate effort"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build SOP with ordered steps A,B, persist SOPRunState with progress on A, rebuild SOP as B,A, construct SOPEngine(reordered_sop, stored_state), assert rejection or correct remapping",
+      "Verify legacy stored states without step identifiers still load successfully",
+      "Run targeted SOPEngine unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #2648 already implements a correct identity-based validation or only a partial guard",
+      "Whether maintainers have a preferred design for step identity/backward compatibility"
+    ],
+    "why": "Issue #2647 describes a concrete, reproducible state-restoration bug in SOPEngine: persisted SOPStepRunState is mapped by list index, so same-length reordered steps silently receive the wrong progress. The issue supplies expected/actual behavior, ordered reproduction steps, and code anchors (SOPEngine, SOPStepRunState, SOPRunState). A directly related open PR #2648 exists but is assessed as weak competition with missing root-cause coverage, so a minimal fix plus regression test remains actionable."
+  },
   "d0c84a2ac81835b27354bec3a1625d87d13382c59c012ac073a1e139a36071f3": {
     "confidence": 0.85,
     "contradictions": [
@@ -94492,6 +94774,41 @@
       "Whether the reported quality bar is officially required for T2VA"
     ],
     "why": "The issue reports empirical observations about DBCache knobs on MiniMax-H3, but lacks a clear root cause for the inert default threshold and the quality gap. It is filed as a set of observations, not a concrete code fix. The open PR and related issue lookups timed out, so duplicate work cannot be excluded. The deterministic gate requires HUMAN_REVIEW."
+  },
+  "d4d4e289682a481af31dced2734b92bc1dec7f0b79a79330b4c2990355d1d6f1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mlx/distributed/ring backend socket exchange for large payloads",
+      "all_sum/average_gradients collective synchronization",
+      "stream handling for CPU vs GPU communication streams"
+    ],
+    "risks": [
+      "Distinguishing a genuine ring-backend race from Metal watchdog timing or network flakiness",
+      "Reproduction requires multi-host Apple hardware (>=3 ranks) not available in CI",
+      "Probabilistic ~3-4% rate means tests need many iterations to be reliable"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run cpu_stream_loop_repro.py at >=3 ranks with fixed seed and synthetic gradient tree; assert all iterations complete without hang",
+      "Run gpu_stream_repro.py with injected skew; assert no kIOGPUCommandBufferCallbackErrorTimeout",
+      "Add a regression test that repeats all_sum on a large payload many times across ranks and fails on timeout",
+      "Cross-check with py-spy stack traces that no rank remains blocked in recvfrom/sendto"
+    ],
+    "unknowns": [
+      "Exact root cause inside the ring socket exchange is not yet identified",
+      "Whether the GPU-stream watchdog kill and CPU-stream deadlock share one underlying race"
+    ],
+    "why": "Issue provides a self-contained reproduction of a probabilistic ring-backend deadlock in mx.distributed.all_sum/average_gradients, with measured ~3-4% per-collective failure rate, ruled-out variables (tree shape, chunking, skew, pre-barrier), and independent py-spy stack traces from a second reporter showing both ranks parked inside all_sum. This is a concrete distributed-training invariant failure with a clear reference-vs-implementation validation path."
   },
   "d4d7f4702a351398f4e27e9eb5ef2733cb30355d1a684756f398bfa4ec251ffc": {
     "confidence": 0.85,
@@ -111916,6 +112233,40 @@
       "Reporter verification on RC1/current main is pending; maintainer has not confirmed final resolution."
     ],
     "why": "The issue is a well-documented bug with independent reproductions and a confirmed fix in RC1, but the maintainer has explicitly requested verification on RC1/current main and marked it awaiting-reporter. The candidate is not a new clean contribution; it is a regression case already routed for RC. Work should wait for maintainer confirmation and reporter verification."
+  },
+  "f93c96b01a6c8208ef38bac8f51010621cb82b5b91cb71c20ad4dd2b58073128": {
+    "confidence": 0.6,
+    "contradictions": [
+      "algorithm_evidence claims qualified algorithm mechanism (post_training_objective etc.) while the actual failure is a DDP buffer-broadcast plumbing bug, not an algorithm/objective defect"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.algorithm_evidence"
+    ],
+    "expected_changes": [
+      "swift/trainers/mixin.py DDP buffer broadcast handling for MiniCPM-o position cache",
+      "possibly model-specific buffer registration for MiniCPM-o"
+    ],
+    "risks": [
+      "PR #10187 may already cover the same root cause, making a second fix redundant",
+      "Truncated traceback may hide the actual divergent buffer source",
+      "NCCL hang may be environment/driver-specific rather than a code defect"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with MiniCPM-o 4.5 LoRA + audio-video dataset under DDP, confirm rank buffer shape mismatch in _sync_buffers",
+      "Add regression test asserting all ranks broadcast identical buffer shapes, or a unit test on the buffer-exclusion logic"
+    ],
+    "unknowns": [
+      "Whether PR #10187 fully resolves the reported root cause",
+      "Full traceback and any maintainer diagnosis in the truncated issue body",
+      "Whether the divergent buffer originates in ms-swift code or the MiniCPM-o model implementation"
+    ],
+    "why": "The issue reports a concrete DDP collective shape mismatch (rank 2 broadcasting 24,084,544 floats vs 64 on other ranks) during MiniCPM-o 4.5 LoRA SFT, and PR #10187 proposes excluding the MiniCPM-o position cache from DDP broadcasts. However, the supplied evidence marks duplicate status as human_review_required with direct code overlap in swift/trainers/mixin.py, and the issue body is truncated before the full traceback and any maintainer diagnosis. Whether an independent fix is actionable depends on comparing against PR #10187, which is a materially blocking unknown."
   },
   "f9435df087301b75c7c05fbe6fe78ede18598dee7e9673512792ee8a8e79aefe": {
     "confidence": 0.7,
