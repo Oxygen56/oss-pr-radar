@@ -13598,6 +13598,40 @@
     ],
     "why": "Issue provides a precise root cause (arity mismatch between _on_deferred_native_stream_complete and _deferred_stream_complete_args producers) and a concrete fix, but a recent comment states the bug is already fixed on main by PR #40869, with only a backport to rc/1.101.0 outstanding. Whether code work is actionable depends on whether the fix is truly merged and whether the remaining gap is a backport rather than a new implementation."
   },
+  "20980ee724d13a2dad1d2989e54311f6c92b610d2340c17cd448aef7abe56770": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/workspace/workspace.ts skills getter / WorkspaceSkillsImpl construction to resolve filesystem per request",
+      "getScoped({ requestContext }) to build/cache a WorkspaceSkillsImpl backed by the resolved filesystem (e.g. skillsCacheKey or resolved fs id)",
+      "optional: warn or throw when filesystem is a resolver and skills is set without an explicit skillSource"
+    ],
+    "risks": [
+      "Per-request WorkspaceSkillsImpl caching could leak across tenants if the cache key is not derived from the resolved filesystem identity",
+      "Changing the skills getter may alter behavior for existing static filesystem users",
+      "Maintainer may prefer the skillSource resolver alternative over resolving filesystem inside getScoped"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add the issue's repro.mjs as a regression test asserting dynamic workspace lists 'demo @ skills/demo' and never 'leaked-from-local-disk'",
+      "Run targeted unit tests for packages/core workspace/skills and static checks",
+      "Verify skill:inject span reports the resolved skill count in an agent run"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer resolving filesystem in getScoped versus adding a skillSource resolver",
+      "Whether a skillsCacheKey convention already exists or must be introduced"
+    ],
+    "why": "Issue pinpoints the exact line in packages/core/src/workspace/workspace.ts where the skills getter falls back to this._fs ?? new LocalSkillSource(), which is undefined when filesystem is a resolver function, causing skills to be read from the server's local disk. A self-contained, no-LLM reproduction with a control case demonstrates the leak and the missing discovery, and the expected behavior is concrete."
+  },
   "20c7f520726b094abb49b75fecfbb7aceeb0ca83b0a9197bd3b6c32056e72b58": {
     "confidence": 0.6,
     "contradictions": [],
@@ -30929,6 +30963,37 @@
     ],
     "why": "Issue reports a concrete LLM algorithm regression: FP8-to-MXFP4 conversion yields degenerate output and FP8 completion length doubles. It includes conversion config, reproduction details, and expected behavior, but root cause is unconfirmed and related-issue/open-PR lookups timed out, so duplicate work cannot be excluded."
   },
+  "4965b22a3fce6d9a2ab8ac831cd1a0ce4beaace7f8ad4bc5fa86f52f68621ce7": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "build_context URI resolution: try literal permalink lookup before normalized fallback",
+      "build_context error handling: return a loud error instead of an empty success when resolution fails",
+      "regression test covering explicit permalink with underscore/mixed case via memory:// URI"
+    ],
+    "risks": [
+      "Changing lookup order could regress the #304 normalization behavior if fallback is not preserved",
+      "Returning an error instead of empty success may alter API behavior for callers relying on zero-result responses"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's bm tool write-note + build-context commands and confirm memory:// returns primary_count 0 while plain permalink returns 1",
+      "Add a unit test asserting memory://s/2026/09/ses_AbCdEfGhIj resolves the note with the explicit permalink",
+      "Verify #304 behavior (underscore URI against hyphenated stored permalink) still resolves after the literal-first change"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer literal-first fallback versus error-only, though both are reasonable and neither blocks implementation"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: build_context normalizes memory:// URIs through generate_permalink() before lookup, so explicitly-set permalinks that are not fixed points of that function silently miss and return zero results. Expected vs actual outputs and ordered repro steps are supplied, and the code anchors (build_context, read_note, search_notes) point to the service layer. No open PR or duplicate covers this; the three merged PRs only share the build_context token and do not overlap semantically or in paths."
+  },
   "49688798b6135d4b9fa1ab19ad3afe3b9abb0a9b92a7376919362a58ce4aa239": {
     "confidence": 0.85,
     "contradictions": [],
@@ -40382,6 +40447,39 @@
     ],
     "why": "Issue provides a concrete reproduction, code anchor (rag/nlp/__init__.py _build_cks), and a clear root cause: table/image chunks are appended before the pending text buffer (seg) is flushed, which also swaps context_above/context_below. However, an open PR #19521 already directly targets the same function and code identifiers with a matching fix, and the duplicate status is human_review_required. Whether independent implementation space remains is unresolved, which materially affects actionability."
   },
+  "5c69f39737d59d5b156b79468b0fdaa63d14f7601f2e8ab636ff5357787f7aa3": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "internal/im/types.go: add locale field to IMChannel",
+      "internal/im/service.go: set LanguageContextKey in withIMIdentity from channel locale",
+      "internal/types/context_helpers.go: reuse ResolveLanguage precedence",
+      "config/prompt_templates/fallback.yaml: verify {{language}} rendering under IM path"
+    ],
+    "risks": [
+      "Step 2 language detection adds nondeterminism and should be deferred",
+      "Schema migration for new locale column needs backward-compatible default",
+      "Avoid conflating document-processing language with reply language"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test asserting LanguageContextKey is set on the IM caller context after withIMIdentity",
+      "Regression test: IM message on a channel with locale=vi renders fallback prompt with Vietnamese language rule",
+      "Run targeted unit tests for internal/im and internal/types packages"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer channel-scoped locale vs agent-scoped output language",
+      "Whether a migration path for existing IMChannel rows is required"
+    ],
+    "why": "Issue provides precise code anchors and a clear root cause: IM paths never populate LanguageContextKey, so ResolveLanguage falls through to DefaultLanguage(), pinning all IM replies to one deployment-wide language. Step 1 (per-channel locale column + context.WithValue in withIMIdentity) is a concrete, reviewable fix with a clear validation path."
+  },
   "5c83dc9b124cd89d8c54abf1a8a017b88ad8aebb8f6f48d7418c48abd459fe3b": {
     "confidence": 0.85,
     "contradictions": [],
@@ -44930,6 +45028,42 @@
       "No concrete reproduction or witness of a retained port, FD, or shared-memory segment after failed initialize() retries."
     ],
     "why": "The only supplied technical evidence is a contributor's trace showing the proposed leak mechanism is not present: reassigning self.engine drops the prior wrapper, CPython immediately runs the destructor, and Mooncake's RAII teardown frees transport/RPC resources. No public close/destroy/shutdown exists, so the suggested cleanup cannot be added at this layer. No concrete retained port/FD/shared-memory witness is supplied."
+  },
+  "66e85407439d0b6bcd7776769c612277bab1a2d0c1eb57802ed486b7a4ad8100": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports a reproducible 404 on two apps, while the contributor's end-to-end simulation on current main could not reproduce it and found the error state does not arise through those paths"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/trigger/webhook_service.py",
+      "api/services/workflow_service.py",
+      "app_triggers / workflow_webhook_triggers relationship handling"
+    ],
+    "risks": [
+      "Fixing a non-reproducible issue may change correct publish/webhook behavior",
+      "The reported failure may be deployment-specific or already fixed by recent trigger refactors"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on the reporter's exact self-hosted version/commit",
+      "Inspect app_triggers and workflow_webhook_triggers rows for the failing webhook ID",
+      "Add a regression test around publish-time trigger registration and webhook resolution if a real failure is confirmed"
+    ],
+    "unknowns": [
+      "Exact self-hosted version/commit",
+      "Whether an app_triggers row exists and matches the webhook trigger node_id",
+      "API logs/traceback around the publish request",
+      "Whether undo/redo or node re-adding was involved"
+    ],
+    "why": "The report describes a user-visible 404 after publishing a Webhook Trigger, but the only supplied technical evidence is a contributor's reproduction attempt on current main that could not reproduce the failure and instead identified the error state as unreachable through the normal draft-sync/publish paths. No root cause is established, and the reporter has not yet supplied the requested version, database state, or logs."
   },
   "66eec25e14d73955edd6bf2e85d3750707be572552b9310d936751a77a264d88": {
     "confidence": 0.72,
@@ -50884,6 +51018,37 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue provides a clear root cause and a concrete fix path, but the only proposed PR was withdrawn due to intermittent corruption, and the remaining fix (FlashInfer instantiation) lacks a validated implementation. The issue is actionable but requires maintainer confirmation on the correct fix direction and a regression test."
+  },
+  "723189cc9ee62022c60757191475da6c03a90edc60b390bfa1a75945ad258cf3": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docker/Dockerfile.database: bump LITELLM_BUILD_IMAGE and LITELLM_RUNTIME_IMAGE to current wolfi-base digests",
+      "optionally set UV_PYTHON_DOWNLOADS=never to fail fast on interpreter selection"
+    ],
+    "risks": [
+      "Bumping the base digest may pull in other package changes requiring additional Dockerfile adjustments",
+      "UV_PYTHON_DOWNLOADS=never could break other build paths that rely on uv-managed interpreters"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run `docker build -f docker/Dockerfile.database -t litellm-test .` on linux/amd64 and confirm the apk add and uv sync layers succeed",
+      "Run the built image with `--entrypoint sh` and verify /app/.venv/bin/python resolves and `import litellm` succeeds",
+      "Confirm the venv symlink points to a system interpreter present in both builder and runtime stages"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred base-image pinning strategy or a specific target digest"
+    ],
+    "why": "Issue provides a concrete, reproducible build failure with two distinct failure modes traced to a single root cause: the pinned wolfi-base digest has drifted from the current apk package repository, so apk-installed python3 requires a newer glibc than the pinned base provides. Reproduction commands, version/commit anchors, and a concrete fix (bump LITELLM_BUILD_IMAGE and LITELLM_RUNTIME_IMAGE digests) are supplied. No open PR or duplicate issue covers it."
   },
   "72394d1e6c8193ab3d165fb2b845d591799e3a5749163226f672ada7755cf94f": {
     "confidence": 0.7,
@@ -69491,6 +69656,43 @@
     ],
     "why": "The issue describes a user-visible regression in Mastra Studio's Schedules tab for dynamically created workflows, with clear reproduction steps and expected behavior. The bot's triage provides a detailed analysis of the likely code paths and identifies the missing information (exact versions and dynamic workflow construction snippet) needed for a definitive root cause. The candidate is actionable because the reproduction path is clear and the fix likely involves adding schedule persistence/rehydration for dynamic workflows, with a concrete test plan."
   },
+  "9c6c3d68c3502728e8d3ad7b23e82923ab4a7e247a5b4bb74d3197dda31d4d4d": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge B@A into base weight and reinitialize A/B (Kaiming/zeros) before pruning optimizer moments, or rename feature and correct the docstring claim of ReLoRA conformance",
+      "src/soup_cli/utils/relora.py: replace strict threshold comparison with deterministic exact-count selection (stable topk mask) so requested keep count is honored under ties and at least one entry survives per non-trivial factor",
+      "src/soup_cli/utils/relora.py: explicit support or loud rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A is partly a maintainer contract decision (implement real restarts vs rename and correct docs); a partial fix that only renames or only merges without reinitialization would be incoherent.",
+      "Tie-frequency in production is unproven; the constructed case is deterministic but the natural all-zero lora_B initialization may or may not hit the first relora_steps interval.",
+      "Numerical tolerance and seed/hardware must be fixed to distinguish genuine math errors from floating-point noise.",
+      "Distributed/quantized/streamed paths may require explicit rejection rather than silent partial application."
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reference test: build a small peft LoRA model with fixed seed, capture the effective linear map before and after the callback, and assert MSE is within numerical tolerance of a merge-then-reset control (target ~1e-12, not 142.12).",
+      "Regression test: constant-magnitude lora_A/lora_B with prune_ratio=0.9 must retain exactly the requested keep count and leave both factors non-zero with non-zero gradient norm.",
+      "Kernel unit test: magnitude_prune_tensor on ones(10) with prune_ratio=0.9 must keep 1 entry (currently 0), and arange(1..10) must keep 1.",
+      "Accumulation test: successive restarts must accumulate low-rank updates in the base model rather than discarding them.",
+      "Compatibility test: unsupported quantized/distributed/streamed configurations must fail clearly instead of partially applying a restart."
+    ],
+    "unknowns": [
+      "Whether the maintainer prefers the full ReLoRA restart implementation or the smaller rename-and-correct-docstring contract; both are actionable but lead to different patches.",
+      "Whether the all-zero lora_B initialization actually triggers the tie bug on the first relora_steps interval in ordinary runs."
+    ],
+    "why": "Issue identifies two concrete, separable algorithm defects in ReLoRACallback._prune_and_reset: (A) adapter weights are magnitude-pruned without merging B@A into the frozen base, so the learned function is discarded rather than restarted (base weight delta = 0, effective-map MSE 142.12 vs 8.77e-13 for a merge-then-reset control); (B) strict `abs(t) > threshold` masking zeroes both lora_A and lora_B under tied magnitudes even when prune_ratio < 1, producing a permanently dead zero-gradient branch. Maintainer confirmed both halves with real peft LoRA runs and pinned a base commit, giving a clear root cause and a concrete reference-vs-implementation validation path."
+  },
   "9c80e14fc2f53885dea21941fdc211baeb7d3c6cf53be248a907561b8bf389e5": {
     "confidence": 0.7,
     "contradictions": [],
@@ -82588,6 +82790,41 @@
     ],
     "why": "Issue provides an offline, deterministic reproduction with a failing desired-behavior assertion and a concrete root-cause chain: stock factory-plan skill directs factory_transition_work_item(stage: execute) instead of submit_plan, the controller mount does not override the Code SDK default yolo: true, and session.resolveToolApproval returns allow without emitting a human tool_approval_required event, so the plan checkpoint is bypassed. This is a concrete agent/controller/tool-approval behavior bug with a clear validation path, not mere plumbing."
   },
+  "bb448b0dc837a1a8ba76ad98bcd4afaddd2e092d84a526de847fd59ef82c5cd7": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mlx/distributed/ring backend socket exchange for large payloads",
+      "all_sum / average_gradients collective synchronization",
+      "CPU-stream vs GPU-stream collective handling"
+    ],
+    "risks": [
+      "Deadlock is probabilistic (~3-4%/call), so a single passing run does not prove a fix",
+      "Requires multi-host ring hardware (>=3 ranks) to reproduce, limiting CI coverage",
+      "Distinguishing a genuine ring-backend race from Metal watchdog timing behavior"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run cpu_stream_loop_repro.py at >=3 ranks in a loop to reproduce the probabilistic hang",
+      "Run gpu_stream_repro.py with a >5s rank skew to reproduce the watchdog kill",
+      "Add a regression test that repeats all_sum/average_gradients many times across >=3 ranks and asserts forward progress within a timeout",
+      "Capture py-spy stacks on hang to confirm both ranks blocked in recvfrom/sendto inside libmlx.dylib"
+    ],
+    "unknowns": [
+      "Exact socket-level race location in the ring backend is not yet identified",
+      "Whether the GPU-stream watchdog kill and CPU-stream deadlock share one root cause"
+    ],
+    "why": "Issue provides a self-contained, dependency-free reproduction of a probabilistic ring-backend deadlock in mx.distributed.all_sum/average_gradients, with measured ~3-4%/collective failure rate, ruled-out variables (tree shape, chunking, skew, pre-barrier), and a corroborating py-spy stack trace from an independent setup pinning both ranks inside all_sum. This is a concrete distributed-training invariant failure with a clear reference-vs-implementation validation path."
+  },
   "bb4b0322b7aac7c0909ffd4d316c67a96b8b6dc44cb702507ca38a2e6b743161": {
     "confidence": 0.7,
     "contradictions": [
@@ -88361,6 +88598,39 @@
       "Whether the closed PR #7261 will be reopened or superseded"
     ],
     "why": "Issue clearly identifies a concrete bug in OTel GenAI message role mapping with a minimal reproduction and root cause in code. However, the track is llm_algorithm and the issue is about telemetry semantics, not a training objective, model mechanism, or numerical method. The existing PR #7261 is closed and technically complete, but the issue explicitly requests design confirmation on the approach, and the repository requires assignment. Thus, maintainer confirmation is needed before starting new work."
+  },
+  "c8a2d2303aa99377865eedb1145d86b0aeafe20d1406f98f3ee657c51d2d4965": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "SOPEngine state restoration/validation logic to compare ordered step identities instead of only step count",
+      "SOPStepRunState/SOPRunState serialization to persist step identity for new states while tolerating legacy states without identities",
+      "Regression tests covering same-length reordered steps and backward-compatible legacy state loading"
+    ],
+    "risks": [
+      "Changing state validation could break backward compatibility for legacy persisted states if identity fallback is not handled",
+      "Maintainer may prefer a different rejection mechanism (exception type or migration path) than the one chosen",
+      "Overlap with open PR #2648 could cause duplicate effort if that PR is later completed"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: build SOP with ordered steps A,B, persist SOPRunState with progress on A, rebuild SOP as B,A, construct SOPEngine(reordered_sop, stored_state) and assert it rejects the mismatched state",
+      "Regression: load a legacy stored state lacking step identities and assert it still loads for backward compatibility",
+      "Run targeted unit tests for the SOP engine package plus static checks"
+    ],
+    "unknowns": [
+      "Exact step-identity field available on SOPStepRunState/SOPRunState in current main",
+      "Whether maintainers have a preferred rejection or migration approach for legacy states"
+    ],
+    "why": "Issue gives a concrete, reproducible root cause: SOPEngine restores SOPStepRunState by list index and only rejects stored runs when step counts differ, so same-length reorders silently mis-map persisted progress. Expected behavior (reject state for a different ordered step sequence, keep legacy states without step identities loadable) is well specified and testable. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific rejection rule does not apply. Open PR #2648 is a weak competitor with no root-cause coverage evidence, leaving room for a better-tested fix."
   },
   "c8aa89ee514f69269be4bbb10636204bbb7d11541763f82f06965074825a7884": {
     "confidence": 0.7,
@@ -101106,6 +101376,39 @@
     ],
     "why": "The issue provides a clear root cause (wiki eligibility gate in dataset_wiki_generator.py) and a reproducible scenario. The candidate is actionable: improve the misleading error message and/or pre-validate wiki generation. Existing PR #18691 already addresses the message, but the issue also calls for pre-validation and docs, leaving room for a complementary fix. The evidence includes source-verified code paths and a concrete test plan."
   },
+  "e3633d9b508262386726afb5f82a76ea0a5d4490f24de4af4a712fd325626982": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "Add repository-relative cwd field to StructuredPlanChild and thread it into child dispatch/worktree resolution",
+      "Reject or warn on unknown child keys instead of silently dropping cwd",
+      "Optionally improve the ambiguity error to name the plan-expressible remedy"
+    ],
+    "risks": [
+      "Expanding plan schema may change documented plan behavior or API surface",
+      "Maintainer may prefer error-message-only fix over adding cwd to the plan schema",
+      "Worktree resolution semantics for repository-relative cwd need to match task() behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that runs a structured plan with risk: writes and multiple children from a non-git parent containing multiple repos, asserting children are not rejected",
+      "Regression test that a cwd key in a plan child is honored rather than silently ignored",
+      "Run targeted unit tests for the workflow tool and worktree resolver plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer adding cwd to the structured plan versus only clarifying the refusal message"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: StructuredPlanChild lacks a cwd field (crates/tui/src/tools/workflow/mod.rs:2649-2671) while the worktree resolver rejects ambiguous multi-repo parents (crates/tui/src/tools/subagent/worktree.rs:168-171), and the struct silently drops unknown cwd keys. Reproduction steps, expected/actual behavior, and a verified workaround are supplied, giving a clear reference-vs-implementation validation path."
+  },
   "e36b12961891edcbbbce82f213260d5901d150c7a218f94997c91ff608a9af72": {
     "confidence": 0.85,
     "contradictions": [
@@ -101347,6 +101650,39 @@
       "Whether maintainers prefer to extend #8241 or create new PR."
     ],
     "why": "Issue identifies a concrete distributed-training invariant violation: process-wide global for Ulysses KV head count causes incorrect all-to-all layout for second model with different head count. Root cause is clearly located in deepspeed/sequence/layer.py with code anchors and a suggested per-model fix mirroring existing PR #8241. Validation path includes a specific regression test with two models and different head counts."
+  },
+  "e3fea5268b773e20821c2bbc9415fc9b63d2d55c5fe8eaf0bfa7aad6cf389e94": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/responses/streaming_iterator.py: unwrap/restore encrypted_content and item IDs in _mask_response_create before forwarding",
+      "litellm/proxy/response_api_endpoints/endpoints.py: apply encrypted_content_affinity pre-call check for WS deployment selection",
+      "litellm/responses/streaming_iterator.py: route backend error/response.failed frames to failure handlers for correct logging"
+    ],
+    "risks": [
+      "Behavior change in WS frame transformation could affect PII masking or authorized-model enforcement ordering",
+      "Affinity pinning on WS may interact with existing router pre-call-check semantics",
+      "Overlapping PRs #40377 and #33463 touch adjacent paths and may conflict"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that opens a native WS session, sends a response.create producing encrypted_content, then sends a second frame with previous_response_id and asserts no 400 invalid_encrypted_content",
+      "Add a test asserting the forwarded frame's encrypted_content is unwrapped (no litellm_enc: prefix) before backend_ws.send",
+      "Add a test that a backend error frame is recorded as a failure in spend/observability logs",
+      "Run targeted unit tests for litellm/responses and litellm/proxy/response_api_endpoints plus static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer a shared helper between HTTP and WS paths or a WS-local fix"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: the native WS handler's _mask_response_create never calls _restore_encrypted_content_item_ids_in_input, so litellm_enc:-wrapped encrypted_content is forwarded to the provider, and the WS deployment selection bypasses the encrypted_content_affinity pre-call check; a third gap is missing failure-handler dispatch. Reproduction steps and an HTTP-vs-WS comparison give a clear reference-vs-implementation validation path. The two overlapping PRs are explicitly ruled out by the issue and are not direct code overlap, so they do not block actionability."
   },
   "e4060a665aaeed17f8d0c3da5d9851d57b47fe5c3bc81da364de738cc727fe55": {
     "confidence": 0.55,
@@ -111580,6 +111916,42 @@
       "Reporter verification on RC1/current main is pending; maintainer has not confirmed final resolution."
     ],
     "why": "The issue is a well-documented bug with independent reproductions and a confirmed fix in RC1, but the maintainer has explicitly requested verification on RC1/current main and marked it awaiting-reporter. The candidate is not a new clean contribution; it is a regression case already routed for RC. Work should wait for maintainer confirmation and reporter verification."
+  },
+  "f9435df087301b75c7c05fbe6fe78ede18598dee7e9673512792ee8a8e79aefe": {
+    "confidence": 0.7,
+    "contradictions": [
+      "candidate.open_pr_assessment reports status 'none' and only an unrelated merged PR, while issue_data.recent_comments states #1925 and #1926 already implement the escaping fix with tests and passing CI"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/server/src/server/streamableHttp.ts writeSSEEvent escaping",
+      "packages/server-legacy/src/sse/sse.ts SSE data line escaping",
+      "src/server/sse.ts and src/server/webStandardStreamableHttp.ts on v1.x"
+    ],
+    "risks": [
+      "Duplicating already-open PRs #1925/#1926",
+      "Escaping may alter wire bytes for clients that currently rely on literal separators",
+      "Assignment is required by repo policy before work can proceed"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the bot-supplied repro.ts against current main and assert raw U+2028/U+2029 are absent from the SSE body",
+      "Add a regression test that splits the SSE body with a naive U+2028/U+2029-aware splitter and asserts JSON.parse succeeds",
+      "Verify the same behavior on the v1.x branch paths"
+    ],
+    "unknowns": [
+      "Whether #1925/#1926 are still open and unmerged at review time",
+      "Whether the Claude.AI timeout is solely the SSE framing path or also a separate client fail-fast/JSON-response-mode issue",
+      "Whether the repo requires assignment before a PR can be opened"
+    ],
+    "why": "The issue describes a real, reproducible SSE framing bug (raw U+2028/U+2029 emitted literally in SSE data lines), and a bot comment supplies a concrete repro and code anchors. However, the supplied evidence explicitly states that the fix is already covered by two open PRs (#1925 for main, #1926 for v1.x) with regression tests and passing CI, and the candidate's own duplicate assessment only surfaced an unrelated merged PR. This unresolved duplicate/coverage fact materially determines whether new code work is actionable."
   },
   "f9491403afb16860cb171bfd179f13f34345ff68a9b5515cca75ec841ad78253": {
     "confidence": 0.85,
