@@ -328,6 +328,40 @@
     ],
     "why": "Issue provides a clear root cause: scheduler fails to check chunk budget after resuming a chunked request, leading to unnecessary waiting-queue scans and potential host-cache load-back. Reproduction steps are concrete and deterministic at scheduler level. Existing PR #35645 addresses the same issue but lacks tests, leaving room for a more complete contribution."
   },
+  "010397f73d7618d25b8c704079b54f4c30cb03ed3d06d3b23d52d5d00b9b4f6e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate claims agent/inference/RAG critical path, but the error is a provider entitlement rejection with no algorithm component"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unclear; likely server-side entitlement/context validation, not a repo code change",
+      "Possibly client context header propagation if a repo-side cause is confirmed"
+    ],
+    "risks": [
+      "Fixing a server-side entitlement check from the client repo may be impossible or out of scope",
+      "Multiple duplicate reports (#49579, #49438) suggest this is already tracked elsewhere",
+      "Bundled app.asar stack frames do not map to editable source"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the Desktop app against the Console provider and capture the request headers/context sent to the API",
+      "Compare against a working client to isolate whether the client context is missing or the server rejects it"
+    ],
+    "unknowns": [
+      "Whether the rejection is caused by any repository-side code or is purely server-side",
+      "Whether an existing tracked issue/PR already covers this regression",
+      "Whether the Console provider context is set by repo code or by the Desktop app bundle"
+    ],
+    "why": "The issue reports a server-side rejection ('free tier can only be used from within OpenCode') from the Console provider in the Desktop app. The stack trace points into bundled app.asar chunks (postToApi23), not into repository source, and the failure is a server-side entitlement/context check. No root cause in the repo is established, and the candidate's own actionability evidence has root_cause_signal=false. This is provider/entitlement plumbing, not an agent/inference/RAG algorithm fix."
+  },
   "0110a994ce0245b2d28898dcbdd831dd893ac2ab6700c75061938e436dd183b8": {
     "confidence": 0.7,
     "contradictions": [],
@@ -11618,6 +11652,42 @@
       "Maintainer approval status for implementation is pending; but design is already authorized and this is a design-only issue, so not blocking for semantic review"
     ],
     "why": "The issue provides a clear root cause (unchecked entries[0] access on empty list), a concrete design with exact code change, and a detailed verification plan including baseline red and fixed green tests. The evidence includes a reproducible command and code anchors, satisfying actionability."
+  },
+  "1b71b2be6d3ddd083e31141091598306b8da8aa41abaed06589927ce5d96532b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.algorithm_evidence claims qualified=true with formula/experiment signals, but the issue body contains only a runtime traceback and no formula, objective, or controlled experiment",
+      "candidate.gate_decision is ALLOW_PRIVATE_WORK while preTaskEvidence policy status is ai_disclosure_conflict"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "vllm/v1/attention/backends/mla/flashmla_sparse.py workspace allocation",
+      "vllm/models/deepseek_v32/attention.py sparse indexer path"
+    ],
+    "risks": [
+      "OOM may be environment/config-specific (DP=16, TP=2, multi-node) and not reproducible in CI",
+      "Distinguishing a genuine allocation bug from expected memory pressure requires hardware not available to the reviewer",
+      "Repository requires public AI-usage disclosure, conflicting with automated public action"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a small fixed-seed MLA/DeepSeek-V3.2 config and measure workspace allocation vs available memory",
+      "Add a numerical regression comparing flash_mla_sparse_fwd output against a reference attention implementation under fixed tolerance"
+    ],
+    "unknowns": [
+      "Whether the OOM is a genuine workspace-allocation bug or expected memory pressure under the reported DP/TP topology",
+      "Whether a minimal reproduction exists without the full multi-node GLM5.3-FP8 deployment",
+      "Whether the repository's AI-disclosure policy permits any automated contribution at all"
+    ],
+    "why": "The issue is a runtime OOM in the MLA attention workspace (flashmla_sparse.py / flash_mla_sparse_fwd) on a multi-node GLM5.3-FP8 deployment. The supplied evidence shows a traceback and code anchors, but no confirmed root cause, no minimal reproduction, and no concrete algorithm-level fix. The candidate's own pre-task evidence reports policy status 'ai_disclosure_conflict' and pre-review failure 'no_code_surface', and the algorithm_evidence is a keyword-based match (adapters, all reduce, fp8, gemm, etc.) rather than a concrete training objective, model mechanism, distributed-training invariant, quantization/numerical method, kernel algorithm, or evaluation methodology. This is an operational OOM/plumbing issue, not an llm_algorithm contribution."
   },
   "1b7c66d012d382ff5a72380a7b29f5a73b84be527139e775fa88caace9e9002d": {
     "confidence": 0.85,
@@ -87513,6 +87583,40 @@
     ],
     "why": "Issue pins a concrete seam: @mastra/inngest never calls runDurableFinishSideEffects before emitFinishEvent, so ProcessorRunner.runOutputProcessors and finish-time memory persistence are skipped; version-by-version grep evidence (1.8.5 no call, 1.8.6+ nested step) and a minimal probe with a mock model establish root cause and a reference-vs-implementation validation path against core's createDurableAgent."
   },
+  "c3903cc782ed86393096d2bd727181f3d8ef1fcafdc6b0f3a8d87fa804b1d09b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims CREDENTIAL_POINTER_ENV_VARS strips AWS pointers on this path; collaborator shows it only fires when KIROCREW_POD==1 and '.sbox-session' is absent from repo source",
+      "Issue evidence #6 shows failure persists with correct env winning, contradicting the proposed env-pointer fix"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Possibly none in this repo; if in scope, host-session opt-out of the kiro-cli shim's internal sandbox for operator-declared MCP servers (security-posture change)"
+    ],
+    "risks": [
+      "Fix may be out of repository scope (toolbox sandbox wrapper)",
+      "Security-posture change to sandbox/shim behavior",
+      "Opaque RetryError masks true cause, complicating validation"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Minimal reproducer stdio MCP server with named-profile credential_process, run standalone vs gateway-spawned, capturing child env and gateway/MCP stderr",
+      "Verify whether CREDENTIAL_POINTER_ENV_VARS path is reached on a non-pod host session (KIROCREW_POD unset)"
+    ],
+    "unknowns": [
+      "Whether the defect is in KiroCrew or the external kiro-cli/aim sandbox shim",
+      "Whether a host-session opt-out is acceptable security posture",
+      "Actual mechanism causing divergence after correct env wins"
+    ],
+    "why": "Supplied evidence contains a direct contradiction: the issue's code-backed root cause (CREDENTIAL_POINTER_ENV_VARS stripping AWS_CONFIG_FILE/AWS_SHARED_CREDENTIALS_FILE) is disputed by a collaborator who shows that mechanism only fires under KIROCREW_POD==1, that '.sbox-session' appears nowhere in the repo, and that the rewrite matches the external kiro-cli/aim sandbox shim. The reporter's own evidence #6 shows failure persists even when correct env wins, so the proposed fix would not close the gap. Root cause is not pinned and the fix may belong outside this repository."
+  },
   "c3af34662662b67f572dcee3259df73f5bea81e288453b39619ea180e4c986fe": {
     "confidence": 0.85,
     "contradictions": [
@@ -88585,6 +88689,39 @@
     ],
     "why": "The issue clearly identifies a root cause: the provisioning reader's `[0]` selector returns newest-created rows instead of execution-tier authority, causing Shared/Dedicated ordering dependence, and the mutation chain lacks fail-closed Shared-tier barriers. The acceptance criteria and evidence plan provide concrete validation paths (deterministic selector tests, fail-closed boundary tests, billing-exemption tests). The maintainer (standujar) is actively working on the fix with multiple PRs, confirming actionability."
   },
+  "c5d8791dde2318298df8e837b107f7c98ff4249eeacd9e333c72ca9224b49712": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment marks PR #41470 as COVERAGE with direct code overlap while also reporting root_cause_coverage=false and no tests, leaving independent implementation space unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_utils.py: add model_id candidate for /watsonx routes in get_model_from_request/_extract_model_candidates_from_request",
+      "regression test asserting can_key_call_model is invoked for Watsonx pass-through bodies"
+    ],
+    "risks": [
+      "PR #41470 may already cover the same fix, making a second implementation redundant",
+      "Broadening model extraction could affect other pass-through routes if not scoped to /watsonx",
+      "No test files in the existing PR, so regression coverage may still be missing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test: get_model_from_request with body {\"model_id\": \"ibm/granite-3-8b-instruct\"} on /watsonx route returns the model",
+      "Integration test: virtual key with models=[\"cheap-model\"] POSTing /watsonx/ml/v1/text/generation with out-of-scope model_id is denied 403",
+      "Control: same key on /v1/chat/completions with out-of-scope model still denied 403"
+    ],
+    "unknowns": [
+      "Whether PR #41470's 10-line change already resolves the issue or is incomplete/incorrect",
+      "Whether maintainers consider the Watsonx model_id resolution a distinct fix from the referenced PR"
+    ],
+    "why": "Issue provides a concrete root cause (Watsonx pass-through body key model_id never read by get_model_from_request, so can_key_call_model is skipped) and a suggested minimal fix, but the supplied open-PR assessment shows PR #41470 directly references this issue, hits the same code path (litellm/proxy/auth/auth_utils.py) and same distinctive identifiers (model_id, virtual_key), and is flagged human_review_required for duplicate/coverage comparison. That unresolved coverage question materially determines whether independent code work is actionable."
+  },
   "c5dcad16e6dc6680e0a7d08a11f85616aa426084bcd63644a10cc3b94c84d1df": {
     "confidence": 0.85,
     "contradictions": [
@@ -89267,6 +89404,42 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a single OOM/SIGABRT crash on a non-documented configuration path; root cause is unconfirmed (three hypotheses), no maintainer confirmation of supported config, and no reproducible test yet. The crash is severe but the exact code path and expected behavior need maintainer input."
+  },
+  "c73c1c28e5d92cfea9cd051e1623b763ae87f687c35a2162b9ce5f4be0dd65fd": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims the protocol layer is blocked; triage and the second collaborator show the response-level _meta extension point already exists and is already used on this exact response, so layer 1 is not blocked"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/acp-integration/session/permissionUtils.ts: read optional rejection reason from response _meta instead of collapsing to bare Cancel",
+      "packages/core/src/core/coreToolScheduler.ts:4356-4360: use the supplied reason in place of the 'User did not allow tool call' fallback",
+      "packages/acp-bridge/src/bridgeTypes.ts / permission.ts: widen the closed cancel-reason enum or add a qwen rejection-reason key with graceful fallback",
+      "packages/cli/src/ui/opentui/dialogs-confirm.tsx and packages/vscode-ide-companion/src/services/acpConnection.ts: optional free-text reason input on reject"
+    ],
+    "risks": [
+      "Maintainer design preference on the _meta key name and whether to extend the closed cancel-reason enum vs add a new key",
+      "Scope creep across protocol/core/UI layers; the issue itself offers to split, and the core-only change is the smallest valuable slice",
+      "Distinguishing explicit user deny from Esc/abort/timeout (the in-repo TODO's explicit-denied outcome) is adjacent and should not be conflated with the reason text"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: resolvePermissionOutcome with a response carrying a rejection reason in _meta yields a cancelMessage equal to that reason, not the bare constant",
+      "Regression test: response without _meta still produces the existing 'User did not allow tool call' fallback (graceful degradation)",
+      "Integration test: rejected tool call surfaces the reason in functionResponse.response.error delivered to the model",
+      "CLI/VS Code dialog test: reject with typed reason propagates through the permission controller to the scheduler"
+    ],
+    "unknowns": [
+      "Whether a maintainer has a preferred _meta key name or wants the three layers split into separate issues before implementation"
+    ],
+    "why": "Two independent collaborator verifications against main establish the root cause: the permission response collapses to a ToolConfirmationOutcome enum (permissionUtils.ts:230-235) and the model-visible signal is the bare constant 'User did not allow tool call' (coreToolScheduler.ts:4356-4360), while the cancelMessage plumbing already exists end-to-end (tools.ts:1062, coreToolScheduler.ts:1982/1996-2006) and is only fed by machine-generated producers. The _meta extension point is already live on this exact response (bridgeClient.ts:578-593, bridgeTypes.ts:1093-1102), so no upstream ACP change is required. Concrete code anchors and a validation path (thread reason through resolvePermissionOutcome into cancelMessage, assert model-visible functionResponse.response.error) make this actionable."
   },
   "c74a4eb85404456b99bf73d7b7a84eac965c9126bb21e851fd659687b1f0d428": {
     "confidence": 0.7,
