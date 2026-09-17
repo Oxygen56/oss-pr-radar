@@ -35326,6 +35326,34 @@
     ],
     "why": "The issue is a well-documented ROCm segfault with a concrete reproducer and a plausible unsynchronised-access hypothesis, but the root cause is explicitly 'not pinned' and the candidate's own actionability evidence records root_cause_signal=false. The strongest lead (output_copy_stream not synchronised against graph replay) is a hypothesis, not a confirmed defect, and the duplicate assessment flags semantic overlap with open PRs #952 and #56342 that may already cover the same ROCm/DSv4.1 FULL_DECODE_ONLY path. Under the llm_algorithm track, the issue is a runtime/runner synchronization bug rather than a training objective, model mechanism, numerical method, or evaluation methodology, so it does not meet the algorithm-track bar. The unresolved duplicate coverage and unconfirmed root cause are materially blocking unknowns."
   },
+  "51c4d48ca7d727de5d38c0c36bbdfb42cc1c332b8143eb202088d55d3375d4b0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate claims no related open issues, but the issue body and bot comment reference #49579, #49533, and #49438 as identical reports"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Fixing a server-side entitlement rejection in client code may be impossible or out of scope",
+      "Duplicate issues #49579/#49438 may already track the same regression",
+      "Bundled app.asar stack frames do not map to actionable repository source"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [],
+    "unknowns": [
+      "Whether the rejection is caused by a client-side header/context bug or purely server-side entitlement logic",
+      "Whether #49579 or #49438 already has an accepted fix or maintainer investigation",
+      "Which repository source file, if any, is responsible for the Console provider client context"
+    ],
+    "why": "The issue reports a server-side rejection from the Console provider free tier, with no code-level root cause identified. The stack trace points into bundled app.asar chunks, not repository source, and the error is explicitly described as a server-side rejection. No concrete training objective, model mechanism, distributed invariant, quantization method, kernel algorithm, or evaluation methodology is present, so the llm_algorithm/agent_ai_infra track requirement is not met. Duplicate coverage is unresolved: the bot comment flags #49579 and #49438 as the same error, and the issue itself cites #49579, #49533, #49438."
+  },
   "51d0a451caf43b6647d10b7b0c635ae9a2b16ee30c0b4b4ca8732cac6fc87a55": {
     "confidence": 0.9,
     "contradictions": [
@@ -42032,6 +42060,34 @@
       "Maintainer preference on whether to expand the summary line or exclude assistant text from folding; no maintainer response yet."
     ],
     "why": "The issue clearly identifies a user-visible bug in the TUI where folded assistant messages are disposed and unrecoverable, with a detailed source investigation pointing to specific files and functions. The expected behavior is well-defined and the fix is actionable: either make the summary line expandable or exclude assistant text from folding. No competing PR or issue exists, and the maintainer has not yet responded, but the bug is concrete and reproducible."
+  },
+  "600fe3213c869c4a5d2a220755f5450da9324031ced3f8b85f2f1a4ed227763b": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "docker/Dockerfile.database: bump LITELLM_BUILD_IMAGE and LITELLM_RUNTIME_IMAGE to a current wolfi-base digest",
+      "docker/Dockerfile.database: optionally add UV_PYTHON_DOWNLOADS=never to make interpreter selection fail loudly"
+    ],
+    "risks": [
+      "Digest bump may pull in other Wolfi package changes and require re-validating the full image",
+      "Without UV_PYTHON_DOWNLOADS=never, future uv default changes could silently reintroduce a managed-interpreter venv that dangles in the runtime stage"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run `docker build -f docker/Dockerfile.database -t litellm-test .` on linux/amd64 and confirm the apk layer and uv sync succeed",
+      "Run the built image with `docker run --rm --entrypoint sh <image> -c 'ls -l /app/.venv/bin/python && python -c \"import litellm\"'` to confirm the venv symlink resolves and import works"
+    ],
+    "unknowns": [
+      "No supplied evidence that this is an algorithm/model/training/evaluation contribution rather than container build plumbing"
+    ],
+    "why": "The issue is a well-diagnosed Docker build failure caused by a drifted wolfi-base digest pin versus current apk packages. The root cause is clear and a concrete fix is suggested (bump LITELLM_BUILD_IMAGE/LITELLM_RUNTIME_IMAGE digests, optionally set UV_PYTHON_DOWNLOADS=never). However, this is container image pinning and build plumbing, not an algorithm, model mechanism, training objective, quantization/numerical method, kernel, or evaluation methodology. Under the track=llm_algorithm rule, installation/CLI/configuration/docs/wrapper/provider-integration/ordinary API plumbing work must be rejected even in an algorithm repository. The candidate track is agent_ai_infra, but the supplied algorithm_evidence is null and the work is infrastructure packaging, so it is low-value for this radar."
   },
   "602e048f0ce449e571e37fbc8b47a87860d94cba48f2f744335950f833cd721c": {
     "confidence": 0.8,
@@ -51869,6 +51925,44 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue reports an AttributeError in ParallelLMHead but lacks a minimal reproduction script, model config, or stack trace beyond the error line. The algorithm relevance is inferred from environment variables and model type, but the root cause is not clearly identified. Potential duplicate issue #52407 shares stack signatures but not the specific error, so overlap is uncertain."
+  },
+  "7348b4e46b752491b196c5bb4379f7ea13473611641530e3b39914b450bf0184": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge B@A into base weight and reinitialize A (Kaiming) / B (zeros) for a canonical ReLoRA restart, or rename the feature and correct the module docstring at relora.py:3-5 to stop claiming paper/Axolotl conformance",
+      "src/soup_cli/utils/relora.py: replace 'abs(t) > threshold' kthvalue mask with deterministic exact-count selection (topk/stable-order) so the requested keep count is honored under ties and at least one entry survives per non-trivial factor",
+      "src/soup_cli/utils/relora.py: retarget optimizer-state pruning/reset to optimizer moments rather than learned adapter weights",
+      "src/soup_cli/utils/relora.py: explicit support or loud compatibility rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A is a maintainer contract decision (implement real restarts vs rename/correct docs); a partial implementation of option 1 would be worse than either coherent choice",
+      "Claim B's production frequency is unmeasured; the constructed tie case is deterministic but the natural all-zero lora_B initialization case needs confirmation",
+      "Quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume interactions may require broader changes than the core kernel fix",
+      "Distinguishing genuine numerical/algorithmic error from floating-point tolerance in the effective-map comparison requires fixed seed and explicit tolerance"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Numerical regression: with fixed seed and synthetic LoRA factors, assert the effective linear map is preserved across merge/reinitialization to tolerance (control MSE ~1e-13), and that successive restarts accumulate low-rank updates in the base weight",
+      "Tie regression: constant-magnitude A and B with prune_ratio=0.9 must retain exactly the requested keep count (e.g. 4 of 32) and must not zero both factors; assert nonzero gradient norm for A and B after the callback",
+      "Kernel-level unit test on magnitude_prune_tensor: ones(10) with prune_ratio=0.9 keeps 1 survivor (currently 0), arange(1..10) keeps 1",
+      "Assert optimizer-state reset touches optimizer moments, not adapter parameter values",
+      "Negative test: unsupported quantized/distributed/streamed configurations fail clearly instead of partially applying a restart"
+    ],
+    "unknowns": [
+      "Which of the two coherent contracts the maintainer will accept (real ReLoRA restart vs rename/correct docstring) is stated as an open maintainer decision, though both are actionable and the issue explicitly asks the contributor to declare which half they take",
+      "Whether the natural all-zero lora_B initialization actually triggers the tie wipe on the first relora_steps interval in production"
+    ],
+    "why": "Issue identifies two concrete, code-anchored defects in ReLoRACallback._prune_and_reset: (A) adapters are pruned without merging B@A into the frozen base, so the learned effective linear map is discarded rather than restarted (maintainer reproduced max|delta|=0 on base weight with MSE 142.12 vs 8.77e-13 for a merge-then-reset control); (B) strict '>' thresholding against kthvalue wipes all entries on ties, zeroing both lora_A and lora_B and leaving a permanently dead zero-gradient branch (maintainer reproduced 0 nonzero where 4 were requested, grad-norm 0.0). Both are algorithm-level LoRA/PEFT correctness issues with deterministic reference-vs-implementation validation paths, matching the llm_algorithm track."
   },
   "7372012f7ca3664a8e96c6d3d7519b76bf5018245fd9abb1a59da525b25eb634": {
     "confidence": 0.85,
