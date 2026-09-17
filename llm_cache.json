@@ -26056,6 +26056,38 @@
     ],
     "why": "The issue itself is technically concrete: a pinned MSA revision calls the removed private Quack helper quack.activation.sub_packed_f32x2, and the fix is to bump the fmha_sm100.cmake MSA pin to the revision containing MSA #12. However, the supplied evidence states that vLLM PR #56545 already updates that pin to the fixed revision, and the duplicate assessment flags open PRs #55838 and #56932 with semantic overlap. Whether any code work remains actionable depends on whether #56545 is still open and whether it fully covers the standard SM100 path, which the supplied evidence does not resolve."
   },
+  "3d7dbe6da19d9ed0c654e51189c05336ff6e446bd4f3b6e48a173f2ae1c39467": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment reports PR #41470 as direct code overlap with rootCauseCoverage=false and no tests, while the issue claims a complete root cause and fix path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_utils.py: add /watsonx route fallback reading request_data['model_id'] as a model candidate",
+      "litellm/proxy/auth/user_api_key_auth.py: ensure resolved model reaches can_key_call_model for the watsonx pass-through route"
+    ],
+    "risks": [
+      "Overlapping open PR #41470 may already implement the same fix, making a duplicate contribution low value",
+      "Broadening model extraction could affect other pass-through routes if the /watsonx prefix match is too loose"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting get_model_from_request returns the model_id for a /watsonx body with model_id and no model key",
+      "Add an enforcement test that a virtual key with models=['cheap-model'] is denied 403 on POST /watsonx/ml/v1/text/generation with body model_id='ibm/granite-3-8b-instruct'",
+      "Control: same out-of-list model on a covered route still returns 403"
+    ],
+    "unknowns": [
+      "Whether PR #41470 already resolves the issue or is incomplete/abandoned",
+      "Whether maintainers consider the watsonx model_id resolution already covered by an in-flight change"
+    ],
+    "why": "The issue gives a clear root cause (Watsonx pass-through body key model_id is never read by get_model_from_request, so can_key_call_model is skipped) and a concrete fix location, but the supplied evidence shows an open PR #41470 that directly references this issue and touches the same auth_utils.py path with the same model_id/virtual_key semantics. Whether that PR already covers the fix is unresolved (duplicateStatus=human_review_required, rootCauseCoverage=false, no test files), which materially determines whether independent code work is actionable."
+  },
   "3d8d56f2a1163257e8c3b98b83a3d76268af7143c63433fde8a248ec68177279": {
     "confidence": 0.85,
     "contradictions": [],
@@ -26533,6 +26565,36 @@
       "Exact code location where the popup value is dropped; maintainer design preference for the fix."
     ],
     "why": "The issue provides a clear, reproducible bug with a minimal example, explicit steps, and a working contrast path, establishing a concrete root cause in the graph-page popup request-context handling. The fix is actionable and testable."
+  },
+  "3f17002d3044f789aaf1b0ba6df119055532ffd1c801681b6a530fa268326724": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/proxy/proxy_server.py audio_speech failure path",
+      "spend-log failure-row writing for /v1/audio/speech (call_type/status/metadata.error_information)"
+    ],
+    "risks": [
+      "Fix could broaden API behavior beyond the failure-logging path",
+      "Existing open PRs touching proxy_server.py may conflict at merge time",
+      "Root cause not fully confirmed; fix may need to trace the failure hook payload path"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that issues a failing /v1/audio/speech request and asserts a LiteLLM_SpendLogs row with status='failure' and metadata.error_information",
+      "Run targeted proxy spend-logging unit tests and static checks"
+    ],
+    "unknowns": [
+      "Exact point where the failure payload is dropped before update_database is not confirmed"
+    ],
+    "why": "Issue provides a concrete, reproducible proxy bug: failed /v1/audio/speech calls write no LiteLLM_SpendLogs failure row while success rows and other routes' failure rows are written. Repro is executable (curl + SQL), code anchors point to proxy_server.py audio_speech and _ProxyDBLogger.async_post_call_failure_hook. Root cause is narrowed but not definitively identified, which is normal implementation uncertainty rather than a blocker. Open PRs show only semantic overlap on litellm_spendlogs/proxy_server.py, not direct code overlap or root-cause coverage, so no duplicate fix is established."
   },
   "3f1cb0a8920bb47501c74f04bc648edfdb763d965831773ffe1eaa25097f24d3": {
     "confidence": 0.85,
@@ -62033,6 +62095,43 @@
     ],
     "why": "The mechanism is real and code-anchored (one-shot raw POST at DaemonClient.ts:4153, express.raw 8mb at routes/session.ts:6739, no chunk protocol), but the maintainer triage explicitly reclassified this from bug to enhancement and deferred the transport decision to the v0.16.x containerized/reverse-proxy milestone (#3803), noting proxied deployment is documented as out of scope for v0.16-alpha. The gap is also not attachments-specific: /file/upload (50 MiB), extension archive (10 MiB), voice (10 MiB) and JSON routes (10 MiB) are all unchunked, so a targeted attachments patch would be incoherent and the cheaper tracked path (--max-body-size flag plus proxy-cap documentation) already covers the deployment case. This is a low-value/covered opportunity for an independent code contribution, not a concrete actionable fix."
   },
+  "8b4571cd6a10e86cc17814c9ee5f58eca92b5fba3f451b813a993a488c5bac2b": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.actionability_evidence reports maintainer_approved=false and needs_confirmation=true, while open_pr_assessment shows PR #12007 is maintainer_owned (COLLABORATOR) and touches the same Session.ts path with 'end_turn' overlap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/acp-integration/session/Session.ts: terminal stop-reason selection must consult the final provider finishReason after output recovery is exhausted",
+      "packages/core/src/core/llm-chat.ts: surface an exhausted-while-still-truncated recovery as a distinct terminal signal (currently the loop just exits with no flag/event)",
+      "packages/core/src/telemetry/detailed-span-attributes.ts: expose the captured finishReason for terminal selection rather than telemetry-only write"
+    ],
+    "risks": [
+      "stopReason 'max_tokens' is already produced by the session cumulative token budget path (Session.ts:8574 -> GOAL_PAUSE_REASON_SESSION_TOKEN_LIMIT); reusing it may overload an existing protocol meaning and needs a maintainer contract decision",
+      "Open PR #12007 touches the same Session.ts path and may already cover the root cause, making an independent fix duplicative",
+      "Scope extends beyond ACP: headless -p modes and BaseJsonOutputAdapter also discard the finish reason, so a narrow ACP-only fix may leave the same defect on other machine-consumable surfaces"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's standalone ACP repro against a local SSE fixture returning finish_reason=length on every request; assert session/prompt returns a non-success terminal reason instead of end_turn",
+      "Regression: finish_reason=stop returns end_turn in one request",
+      "Regression: verify existing session-token-budget max_tokens semantics (Session.ts:8574) are not overloaded by the new terminal mapping"
+    ],
+    "unknowns": [
+      "Whether open PR #12007 already fixes this exact defect or only shares the Session.ts/end_turn surface",
+      "Maintainer decision on whether to reuse the existing max_tokens stopReason or add a distinct non-success outcome",
+      "Whether the fix should be scoped to ACP only or also cover headless -p and BaseJsonOutputAdapter surfaces"
+    ],
+    "why": "Issue provides a strong standalone reproduction and a well-evidenced root cause (ACP terminal selection defaults to end_turn without consulting the final provider finishReason after output recovery exhausts). However, the supplied evidence contains a materially blocking unknown: open PR #12007 (maintainer-owned, COLLABORATOR, 4 test files, overlapping path packages/cli/src/acp-integration/session/Session.ts, distinctive overlap on 'end_turn') is flagged semantic_overlap_requires_review with root_cause_coverage=false and technical_complete=false. Whether that PR already covers this defect determines whether independent code work is actionable, so this must be resolved before proceeding."
+  },
   "8b6931d63178165a01655721004fdd844b81d100016a2e8ce5506bd5e5136674": {
     "confidence": 0.7,
     "contradictions": [
@@ -95416,6 +95515,34 @@
       "Whether a narrower retry (only the two named codes) is acceptable without server changes"
     ],
     "why": "Issue describes a real user-visible bug with a concrete repro and expected behavior, but the proposed fix (client-side bounded retry) is undermined by a collaborator's finding that the shared-tier path does not honor clientMessageId, so idempotency is not guaranteed. This requires design confirmation on server-side deduplication or a narrower retry scope before implementation."
+  },
+  "d6247da43698161fd6974094e3285a450e5c8cc7d562f7ba8436e52821c59bcd": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/litellm_pre_call_utils.py: make key-level opted_out_global_guardrails take precedence over team-level empty list, or skip team assignment when the team list is empty",
+      "litellm/integrations/custom_guardrail.py: verify _get_admin_metadata merge precedence and should_run_guardrail consumption"
+    ],
+    "risks": [
+      "Precedence semantics between key-level and team-level opt-out may need maintainer confirmation to avoid unintended behavior change",
+      "Fix must not break existing team-level opt-out behavior when the team list is non-empty"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test creating a key with key-level opted_out_global_guardrails and a team whose metadata has opted_out_global_guardrails: [], then assert should_run_guardrail returns False for a default_on guardrail",
+      "Run targeted proxy pre-call-utils and custom_guardrail unit tests plus static checks"
+    ],
+    "unknowns": [
+      "Exact runtime execution order of team vs key metadata merge was not confirmed by the reporter, but the static hypothesis and controlled experiment are sufficient to attempt a fix"
+    ],
+    "why": "Issue provides a controlled 4-key experiment isolating team membership as the only variable, plus a concrete static-code hypothesis: team-level metadata assignment in litellm_pre_call_utils.py overwrites key-level opted_out_global_guardrails with an empty list, while add_key_level_controls() never propagates the key-level field. This is a user-visible correctness bug with a clear reference-vs-implementation validation path."
   },
   "d62b14c6a75257008390929777da0f8bec8a8857640cb42103690142ca5e821d": {
     "confidence": 0.8,
