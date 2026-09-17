@@ -8631,6 +8631,39 @@
     ],
     "why": "The issue provides a clear bug description with reproduction steps, expected vs actual behavior, and a detailed code-path analysis identifying two lifecycle gaps. The root cause is well-defined: cancellation state is not shared between the original HTTP context and the remote Prefill context, and the SGLang cancellation monitor cannot abort before the first output because it learns the request ID only from the first response. This is a concrete, actionable bug fix opportunity."
   },
+  "142c2b4f76401ea1fd43e3497311f633eecb34275cd4b114163d4e465e311961": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "src/kiro_crew/mcp_gateway/rewriter.py: emit cmd.exe-safe argv on Windows (8.3 short paths for --target-command/--work-dir/--socket) and add a metacharacter warning guard",
+      "src/kiro_crew/slack/gateway.py: fix stale gate comment and either migrate enabled:false installs to an empty stub_servers set or restore the old third leg of the stub-path gate",
+      "rewriter .rewrite-fingerprint: include rewriter source hash so code changes regenerate the overlay"
+    ],
+    "risks": [
+      "8.3 short-name generation may be disabled on some volumes, requiring the base64 --target-args-b64 fallback",
+      "Changing the stub-path gate could alter behavior for installs that intentionally rely on stub_servers with enabled:false",
+      "Packaged hash-based .pyc with check_source=0 can mask the source fix until bytecode is invalidated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a Windows unit test asserting no wrapped-entry args element contains a character from the cmd.exe-unsafe set, using a fixture where sys.executable lives under a directory with a space",
+      "Regression test that a config with enabled:false plus non-empty stub_servers does not silently flip onto the stub path after upgrade",
+      "End-to-end ACP session/new check that a stubbed server registers (pool_size 0 -> 1) and tool_search/identity-gated tools are present"
+    ],
+    "unknowns": [
+      "Whether maintainers require assignment before a PR (policy status needs_assignment) and whether they prefer the migration fix or restoring the old gate leg"
+    ],
+    "why": "Issue provides directly observed root cause (cmd.exe /C quote-stripping destroying the wrapped argv when a second quoted Program Files path is present), a controlled repro matrix across two kiro-cli versions, a concrete rewriter patch with 8.3 short-path conversion plus an argv guard, a migration/gate fix, and end-to-end live verification. Track is agent_ai_infra, so the algorithm-track restriction does not apply; the work is a concrete runtime/gateway defect with a clear validation path."
+  },
   "1473a4a066770da258ab0b5289b854f8b217589f0c96e24c6457ac7c178cd28d": {
     "confidence": 0.8,
     "contradictions": [],
@@ -52750,6 +52783,39 @@
     ],
     "why": "The issue clearly identifies a TypeScript overload gap where workflow targets cannot use gates or threshold scorers despite runtime support. The provided repro and runtime proof are strong evidence. However, the deterministic gate is HUMAN_REVIEW and the issue is labeled 'needs triage' with no maintainer approval or design confirmation. The fix is straightforward but requires maintainer assignment to proceed."
   },
+  "7459dd509d065907753c3120509d5ed9cb8d952523acbb712b4753cc709c52e8": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims no existing fix, but open PR #41470 is directly linked and overlaps the same code path and distinctive terms"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_utils.py: add model_id candidate for /watsonx routes in get_model_from_request/_extract_model_candidates_from_request",
+      "litellm/proxy/auth/user_api_key_auth.py: existing can_key_call_model enforcement then applies unchanged"
+    ],
+    "risks": [
+      "PR #41470 may already implement the same fix, making this redundant",
+      "Route-specific model_id extraction could affect other pass-through routes if not scoped to /watsonx",
+      "No test files in the existing PR, so regression coverage may still be missing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that posts a Watsonx-shaped body {model_id: out-of-scope-model} to /watsonx/... with a virtual key scoped to models=[cheap-model] and asserts 403",
+      "Control test: same out-of-scope model on a resolver-covered route still returns 403",
+      "Control test: in-scope model_id on /watsonx is allowed"
+    ],
+    "unknowns": [
+      "Whether PR #41470 fully resolves the issue or leaves independent work (e.g., tests) for a separate contribution",
+      "Maintainer preference on where to add the /watsonx model_id fallback"
+    ],
+    "why": "The issue gives a clear root cause (Watsonx pass-through body key model_id is never read by get_model_from_request, so can_key_call_model is skipped) and a concrete fix location, but the supplied open-PR assessment shows PR #41470 already directly covers the same code path (auth_utils.py) with the same distinctive terms (model_id, virtual_key) and is explicitly linked to this issue. Duplicate/coverage status is human_review_required, which is a materially blocking unknown for whether independent code work is actionable."
+  },
   "746c29f9b63ead5e6ba0ae81b53ae8195e7e58338c14c5ca04475675668d1a9f": {
     "confidence": 0.85,
     "contradictions": [],
@@ -55058,6 +55124,35 @@
       "Whether PR #40377 or #33463 already implement any of the three gaps in native WS forwarding"
     ],
     "why": "Issue provides a concrete, code-anchored root cause: the native Responses WebSocket path never calls _restore_encrypted_content_item_ids_in_input before forwarding frames, and never applies the encrypted_content_affinity pre-call check, unlike the HTTP path. Reproduction steps are ordered and isolate each gap, and the issue explicitly rules out the two overlapping PRs (#40377 bridge path, #33463 deployment defaults) as not touching native WS encrypted-content handling."
+  },
+  "7a28f2ec9a63ee03e9743c32f8862c907bdcaa02e29a635884368103dd28b7a2": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/mcp/src/tool/oauth.ts: auth() recovery should not invalidate pre-registered client credentials on invalid_client/unauthorized_client during authorization-code exchange",
+      "packages/mcp/src/tool/oauth.ts: rethrow the original InvalidClientError/UnauthorizedClientError instead of retrying with the same authorizationCode",
+      "packages/mcp/src/tool/oauth.ts: preserve invalidateCredentials('all') retry only for DCR-issued clients on a fresh auth without authorizationCode"
+    ],
+    "risks": [
+      "Changing recovery behavior could affect DCR flows if the pre-registered vs dynamically-registered distinction is not detected correctly",
+      "Maintainer may prefer a different detection mechanism for pre-registered clients, but this is normal review uncertainty, not a blocker"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test using the issue's minimal reproduction: static clientInformation(), authorizationCode set, token endpoint returns 401 invalid_client; assert thrown error is InvalidClientError with errorCode 'invalid_client' and clientInformation remains unchanged",
+      "Add a test for fresh auth() without authorizationCode where a DCR client receives invalid_client and retry via registerClient() is still attempted",
+      "Run targeted unit tests for the @ai-sdk/mcp package and static type checks"
+    ],
+    "unknowns": [],
+    "why": "Issue provides a concrete root cause in packages/mcp/src/tool/oauth.ts: auth() catches InvalidClientError/UnauthorizedClientError, calls invalidateCredentials('all'), and retries authInternal with the same options, which wipes a pre-registered static client and masks the original error during authorization-code exchange. A minimal reproduction with expected/actual behavior is supplied, and the fix scope is localized to the auth/authInternal recovery logic."
   },
   "7a3b310c094519b54ceaa56368ca2d87edbe94b3ea8984e455071d2351c5c656": {
     "confidence": 0.7,
