@@ -497,6 +497,45 @@
     ],
     "why": "The issue reports a real, well-localized rendering loop (React #185 from Ink commit-phase layout listeners feeding virtualized row-height state), but the supplied triage evidence states this is very likely the same defect as #11500, whose confirmed driver is duplicate history-item keys, and that the fix PR #11743 is still open and unmerged. The reporter's main repro commit predates #11743, so the evidence does not separate a new root cause from the known one. This unresolved duplicate/merged-fix coverage is a materially blocking unknown for deciding whether new code work is actionable."
   },
+  "01750377f0ab9a4a8691f45edcfcbb86d362d2b7f639724d0eee86ec1c1367e2": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body claims self-contained CPU reproductions for each finding, but candidate.actionability_evidence reports public_repro_signals=0 and reproduction_evidence=[]",
+      "Candidate category is WAIT_MAINTAINER with gate_decision HUMAN_REVIEW while actionability_evidence shows no wait_reasons and maintainer_approved=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "megatron/core/tensor_parallel/cross_entropy.py label-smoothing reduction over TP group",
+      "megatron/core/models/gpt/gpt_model.py padding_mask scatter group and gathered-logits CE path",
+      "megatron/core/transformer/multi_token_prediction.py per-token loss normalization and recompute TP group"
+    ],
+    "risks": [
+      "Issue is AI-generated and the author states not every finding was personally verified, so some findings may be false positives",
+      "PR #5088 overlaps the same padding_mask scatter code path and may already cover finding 5",
+      "Bundled multi-finding scope makes a single actionable PR ambiguous"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied CPU/Gloo reproductions for findings 1-3 and 8-9 with fixed seed and tolerance to confirm the reported numerical deltas",
+      "Compare PR #5088's padding_mask scatter change against finding 5 to determine whether the root cause is already covered",
+      "Add a regression test asserting TP-rank-invariant loss and gradient for vocab_parallel_cross_entropy with label_smoothing>0"
+    ],
+    "unknowns": [
+      "Whether PR #5088 already fixes the finding-5 padding_mask scatter root cause",
+      "Which single finding the maintainers consider in-scope and actionable",
+      "Whether the reported numerical deltas reproduce on the current base SHA 919d381b28b5936e27bc6504b0277f67c3e9242e"
+    ],
+    "why": "The issue bundles 13 distinct findings across cross-entropy, MTP, MoE routing, cross-attention, LLaVA, attention sinks, CP loss means, GDN, FSDP checkpointing, and CP group restoration. Several findings (1, 2, 3, 8, 9) have concrete numerical reproductions and root-cause anchors, but the candidate's own actionability evidence reports reproduction_or_validation_missing and probe_ready=false, and the open-PR assessment flags semantic overlap with PR #5088 on the same padding_mask scatter path (finding 5) that requires human comparison before any code work. The issue is also explicitly AI-generated and self-described as unverified, so the actionable scope is not yet narrowed to a single root cause with a concrete validation path."
+  },
   "019dc891b99a11e4121f6501603094c3184ab3ef806089a806aaf128e308f66a": {
     "confidence": 0.72,
     "contradictions": [
@@ -8731,6 +8770,37 @@
       "Whether the pinned-commit reproduction still holds on current main (source inspection only, not rerun)"
     ],
     "why": "Issue identifies a concrete algorithmic invariant violation in compute_policy_loss_kl_cov: KL-Cov top-k token selection and covariance statistics are computed per microbatch, so microbatch size changes the effective objective. Root cause is anchored to core_algos.py, a quota formula is given, and a controlled reference-vs-implementation experiment (one microbatch vs eight, with penalty-disabled control) shows 7.006e-3 vs 3.625e-6 relative L2 difference, reproduced on two hosts. This is a genuine post-training objective correctness issue with a concrete validation path."
+  },
+  "147cf947ab8085ddb486d608789d79c73fda85578ed39741ec9a7438bcd5a9fd": {
+    "confidence": 0.6,
+    "contradictions": [
+      "open_pr_assessment marks PR #41470 as COVERAGE with direct code overlap while also reporting root_cause_coverage=false and no tests, leaving independent implementation space unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_utils.py: add model_id candidate for /watsonx routes in get_model_from_request/_extract_model_candidates_from_request",
+      "regression test asserting out-of-scope Watsonx model_id is denied 403"
+    ],
+    "risks": [
+      "PR #41470 may already implement the same fix, making a new PR redundant",
+      "Broadening model resolution could affect other pass-through routes if the /watsonx prefix match is too loose"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test: get_model_from_request with body {\"model_id\": \"ibm/granite-3-8b-instruct\"} on /watsonx route returns the model",
+      "Integration test: virtual key with models=[\"cheap-model\"] POSTing /watsonx/ml/v1/text/generation with out-of-scope model_id is rejected 403",
+      "Control: same key on /v1/chat/completions with out-of-scope model still 403"
+    ],
+    "unknowns": [
+      "Whether PR #41470 is technically correct and will be merged, which determines if independent code work is actionable"
+    ],
+    "why": "Issue gives a clear root cause (Watsonx pass-through body key model_id never read by get_model_from_request, so can_key_call_model is skipped) and a concrete fix location, but the supplied duplicate assessment reports an open PR #41470 that directly references this issue and overlaps the same code path (auth_utils.py) with the same distinctive terms (model_id, virtual_key). Coverage by an open PR is an unresolved duplicate/merged-fix question that determines whether independent code work is actionable."
   },
   "14910f59756288907431e614e551a408aea4f9dc6122faf1c60e1f85172878d9": {
     "confidence": 0.85,
@@ -29169,6 +29239,42 @@
       "Whether maintainers accept the private Ink layout-listener dependency"
     ],
     "why": "The issue describes a real commit-phase layout feedback loop in VirtualizedList, and the reporter supplies a deterministic unique-key regression that still fails with #11743 applied and passes with the proposed fix. However, the supplied evidence leaves the duplicate/coverage question unresolved: triage states this is very likely the same defect as #11500 whose confirmed driver is duplicate history-item keys, and the open PR #11761 (draft, same code paths, semantic overlap 7) may already cover the same root cause. The reporter's own scope note concedes the regression does not prove the field crash was initiated independently of the duplicate-ID driver. That unresolved duplicate/merged-fix coverage is a materially blocking unknown for deciding whether new code work is actionable."
+  },
+  "4444f931e8224be6b92c2f635679663d46e761c707bdde4694e3796ca1846757": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue claims layer 1 is blocked at the ACP protocol layer, but triage and collaborator verification show RequestPermissionResponse already carries an optional _meta extension point and qwen-code already uses it on this response"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/acp-integration/session/permissionUtils.ts: propagate rejection reason instead of collapsing to bare Cancel",
+      "packages/core/src/core/coreToolScheduler.ts:4356-4360: use supplied reason in place of 'User did not allow tool call'",
+      "packages/acp-bridge/src/bridgeClient.ts / bridgeTypes.ts: carry reason via response _meta with graceful fallback",
+      "packages/cli/src/ui/opentui/dialogs-confirm.tsx and vscode-ide-companion acpConnection.ts: optional reason input on reject"
+    ],
+    "risks": [
+      "Maintainer design decision pending on whether to split protocol/core/UI into separate issues",
+      "Extending _meta key naming/semantics may need agreement to avoid conflicting with existing qwen.daemon.permissionCancelReason usage",
+      "Cancel currently conflates explicit deny with Esc/abort/timeout; reason plumbing should not silently change that semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: resolvePermissionOutcome with a reason-bearing response yields a ToolConfirmationOutcome carrying the reason",
+      "Regression test: rejected tool call surfaces the reason in functionResponse.response.error rather than the bare constant",
+      "Fallback test: client that omits _meta still produces the existing default message"
+    ],
+    "unknowns": [
+      "Whether maintainer wants the three layers split into separate issues before implementation",
+      "Whether the reason should ride SelectedPermissionOutcome._meta, the cancelled variant's _meta, or a dedicated field"
+    ],
+    "why": "Issue requests reject-with-reason feedback to the model; triage and an independent collaborator verification both anchor the gap in concrete code: cancelMessage plumbing exists (tools.ts:1062, coreToolScheduler.ts:4356-4360, 1982, 1996-2006) but no UI sets it, and resolvePermissionOutcome (permissionUtils.ts:230-235) drops any reason. ACP _meta extension point is confirmed present and already used (bridgeClient.ts:578-593, bridgeTypes.ts:1093-1102), so no upstream protocol blocker. Concrete validation path exists: thread reason through resolvePermissionOutcome into cancelMessage and assert the model-visible functionResponse.error carries the reason."
   },
   "447881da00eca6e4fcf0e3eeffb9938167d89c2a821176298b1a21ce7a7eba48": {
     "confidence": 0.8,
@@ -91652,6 +91758,43 @@
     ],
     "wait_reason": null,
     "why": "The issue identifies a concrete race condition in ChatService.interrupt where the assembly phase of _run_impl is not cancellable because the interrupt judge relies solely on is_locked, which is False before lock acquisition. The root cause is precisely located with code references, and the fix directions are actionable and minimally invasive. The bug is user-visible (ghost replies persisted) and affects a critical path. No competing PR or issue exists, and the maintainer has not yet responded, but the issue is self-contained with a clear reproduction sketch."
+  },
+  "cb27ba32d91c7c9d0e64f6c2f3a6cbfff64cdc6e2c904bdf6fd1f5a153fefec5": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate duplicate assessment reports no relevant open PR, but recent_comments cite open PRs #1925 and #1926 as covering the same fix",
+      "Candidate category WAIT_MAINTAINER with design_confirmation true, yet bot comment already establishes root cause and fix location"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/server/src/server/streamableHttp.ts writeSSEEvent escaping",
+      "packages/server-legacy/src/sse/sse.ts SSE data line escaping",
+      "src/server/sse.ts and src/server/webStandardStreamableHttp.ts on v1.x"
+    ],
+    "risks": [
+      "Duplicating already-open PRs #1925/#1926",
+      "Repository requires assignment before work; no assignee present",
+      "Unclear whether Claude.AI timeout is solely SSE framing or also a client fail-fast issue"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the bot-provided repro.ts against unfixed code to confirm raw U+2028/U+2029 bytes in SSE data lines",
+      "Add a regression test asserting SSE data lines contain escaped \\u2028/\\u2029 and parse under a naive splitter",
+      "Verify against pkg.pr.new builds from #1925/#1926 before writing new code"
+    ],
+    "unknowns": [
+      "Whether #1925/#1926 will merge and fully cover the issue",
+      "Whether assignment will be granted",
+      "Whether a separate client-side fail-fast fix is needed beyond SSE escaping"
+    ],
+    "why": "The issue describes a real, reproducible U+2028/U+2029 SSE framing bug, and the bot comment provides a concrete root cause and repro. However, the supplied evidence shows the fix is already covered by open PRs #1925 (main) and #1926 (v1.x), which the commenter explicitly says implement the escaping fix and should not be duplicated. The candidate's own duplicate assessment only found an unrelated merged PR #73, so the duplicate/coverage status is contradictory and unresolved. Additionally, the repository policy requires assignment (needs_assignment) and no assignee is present, which is a materially blocking unknown for actionability."
   },
   "cb33abb2648b8236080971886d87e22547a9ed3cc54f8e2631bfc3dbb4724e53": {
     "confidence": 0.8,
