@@ -38512,6 +38512,39 @@
     ],
     "why": "Issue provides a clear user-visible bug with detailed reproduction steps and root cause analysis pointing to missing adjust_request calls in chat completions path. The fix is actionable and testable."
   },
+  "57189478fabadfaa2d48c5fdf77f130268c1ff60a2b597452a340bbfb2cc7f3d": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Pre-task duplicate status is 'none' while related_issue_assessment reports potential_overlap with #49553 and the bot comment lists five similar issues"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "reasoning replay / encrypted_content handling in the LLM provider layer (unconfirmed)"
+    ],
+    "risks": [
+      "Duplicate coverage by #48805/#48915/#48741/#48947/#48319 or PR #49618 may already address the same behavior",
+      "No repository code anchor or reproduction path, so the fix location is speculative"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the invalid_request_error with a stale session, then add a regression test that replays reasoning items across sessions"
+    ],
+    "unknowns": [
+      "Whether the open PR #49618 or the listed duplicate issues already fix this exact failure mode",
+      "Whether the error originates in opencode client code or the upstream provider/Opencode Zen service",
+      "No minimal reproduction or code path in the repository"
+    ],
+    "why": "Issue is a user-facing provider error report with no reproduction evidence, no root-cause signal, and no code anchors in the repository; the only 'fix' is an external gist script, and the bot lists five potentially duplicate issues (#48805, #48915, #48741, #48947, #48319) plus a related open PR #49618 touching the same encrypted_content reasoning replay path. Whether code work is actionable depends on unresolved duplicate/coverage facts."
+  },
   "571a5bd07ffc2f8dc99b28f3833a40fe28fffe914a0f2b04b0afa6e8daa9d0aa": {
     "confidence": 0.85,
     "contradictions": [],
@@ -52928,6 +52961,50 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "The issue provides a clear bug report with a minimal reproduction and a specific root cause (unconditional indexing of an empty list in Memory.delete_all). However, the candidate is gated as HUMAN_REVIEW and lacks maintainer approval or active investigation, and there is a potential duplicate issue #5509 that needs triage. The implementation is straightforward but requires maintainer confirmation to avoid duplicate work and ensure alignment."
   },
+  "74a8a26407ef30b040b3634ef05002f739f37d28bfeee8b8db227f3197227142": {
+    "confidence": 0.55,
+    "contradictions": [
+      "algorithm_evidence.qualified=true and formula/experiment/code_path signals true, but actionability_evidence reports public_repro_signals=0, reproduction_evidence=[], root_cause_signal=false, probe_ready=false",
+      "Issue body claims self-contained CPU reproductions in comments, while actionability_evidence records no reproduction evidence",
+      "open_pr_assessment lists PR #5088 as semantic overlap for finding #5 but direct_code_overlap=false and root_cause_coverage=false, leaving coverage unresolved"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "megatron/core/tensor_parallel/cross_entropy.py: reduce local log-prob sums over TP and use global vocab size in smoothing and backward",
+      "megatron/core/models/gpt/gpt_model.py: assert sharded logits or fall back to ordinary CE when logits are gathered",
+      "megatron/core/transformer/multi_token_prediction.py: all-reduce token counts over the DP/CP group before forming the MTP loss ratio",
+      "megatron/core/transformer/dot_product_attention.py: mark learnable softmax_offset as tensor_model_parallel so it enters the clip norm"
+    ],
+    "risks": [
+      "Issue is AI-generated and self-described as unverified; some findings may be false positives or already fixed on main",
+      "Open PR #5088 overlaps finding #5's code path; a new fix could duplicate or conflict",
+      "Findings span many subsystems, so a single PR cannot address all of them cleanly",
+      "Some findings require explicit pg_collection.tp differing from global TP, a configuration that may be rare in practice"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied 2-rank CPU/Gloo reproduction for finding #1 and confirm rank losses differ and match the global-vocabulary reference",
+      "Run the 2-rank reproduction for finding #2 and confirm observed loss equals correct + log(TP)",
+      "Add a numerical regression comparing sharded vs single-rank CE with label_smoothing>0 and TP=2",
+      "For finding #8, verify clip norm includes all TP head shards with softmax_type='learnable'"
+    ],
+    "unknowns": [
+      "Whether the supplied CPU/Gloo reproductions actually execute and reproduce the reported numerical errors",
+      "Whether PR #5088 already fixes finding #5's padding-mask scatter group",
+      "Which of the 13 findings are still live on current main versus already fixed",
+      "Whether maintainers consider the explicit-pg_collection.tp configurations in scope"
+    ],
+    "why": "The issue bundles 13 distinct findings across cross-entropy, MTP, MoE padding masks, cross-attention, LLaVA, attention sinks, CP loss means, router counts, GDN, MFSDP checkpointing, and CP group restoration. Individual findings (e.g. #1 label smoothing over local vocab, #2 gathered logits into vocab-parallel CE) do have concrete code anchors, formulas, and CPU/Gloo reproductions, so the track is llm_algorithm and the work is potentially valuable. However, the candidate's own actionability evidence reports public_repro_signals=0, reproduction_evidence=[], root_cause_signal=false, and probe_ready=false, and the pre-review gate failed with reproduction_or_validation_missing. The duplicate assessment flags PR #5088 as semantic_overlap_requires_review with direct_code_overlap=false and root_cause_coverage=false, so coverage of finding #5 is unresolved. The issue is also explicitly AI-generated and self-described as unverified ('I haven't personally verified every single one'), which makes the root-cause claims uncertain until reproduced. These are materially blocking unknowns rather than normal implementation uncertainty."
+  },
   "74acec9982b47626419268c5b3f79085baf9148e8ca0c0ceec8be39de685defe": {
     "confidence": 0.7,
     "contradictions": [],
@@ -53597,6 +53674,35 @@
       "Whether an existing PR or issue already addresses this problem"
     ],
     "why": "The issue reports a plausible DSpark speculative decoding acceptance collapse after position 0 on DeepSeek-V4-Flash-0731, with detailed environment and ruled-out factors. However, a maintainer suspects the benchmark artifact (random tokens) and a member's data supports that random prompts degrade acceptance, while the reporter's own data shows higher acceptance with probabilistic sampling. The root cause is not yet confirmed; it could be a kernel issue on DGX Spark or a benchmark artifact. The deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded."
+  },
+  "76603e1918225e7ccd05b278ea1e8e78965757e95f7329779e81bfe77a1f1951": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/openai/encoding_dsv4.py: accept already-normalized dict arguments and validate result is a dict",
+      "regression test covering encode_arguments_to_dsml() with a normalized dict input"
+    ],
+    "risks": [
+      "Open draft PR #39857 touches serving_chat.py and mentions dsv4; must confirm it does not already fix encoding_dsv4.py before duplicating work",
+      "Fix is branch-specific (b12x-vision); main may already carry the #28035 behavior, so the change must target the affected branch"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's minimal reproduction calling encode_arguments_to_dsml({'name': 'read', 'arguments': {'filePath': '/tmp/example.txt'}}) and assert the DSML parameter is name=\"filePath\" string=\"true\", not a nested arguments wrapper",
+      "Add a unit test asserting both JSON-string and pre-normalized-dict inputs produce identical DSML output, and that non-object arguments raise ValueError"
+    ],
+    "unknowns": [
+      "Whether PR #39857 already restores the encoding_dsv4.py behavior on the affected branch"
+    ],
+    "why": "Issue provides a concrete root cause: encode_arguments_to_dsml() in encoding_dsv4.py unconditionally calls json.loads(), so an already-normalized dict from serving_chat.py raises TypeError and gets wrapped as {\"arguments\": dict}, producing an extra DSML parameter layer. Expected vs actual output and a minimal reproduction are supplied, and the fix restores the #28035 isinstance(str) branch plus dict validation."
   },
   "76679596ff97dbe1f5dc68a46effa910232e59b6edc5cee05ef90d8df52d2f7b": {
     "confidence": 0.7,
@@ -79661,6 +79767,40 @@
     ],
     "why": "Issue describes a plausible spend-tracking gap for non-streaming Bedrock calls on client disconnect, but the only concrete reproduction evidence in the comments shows the bug is NOT reproducible on default config and requires general_settings.cancel_on_disconnect. The candidate's actionability evidence claims reproduction_evidence and root_cause_signal, yet the supplied comment contradicts the default-config reproduction path and the open-PR assessment flags semantic overlap requiring review. This is a materially blocking unknown: whether the fix is actionable without the non-default flag, and whether existing PRs already cover the root cause."
   },
+  "b2d481d34d21d30bdc35f6b3fbcdcef97168e7e82361fda8190c345676659b15": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue reports fields dropped with ccr_hashes=[] and no marker, while the candidate summary describes the same path as a compression/CCR concern; the exact mechanism is not pinned down"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "headroom/transforms/smart_crusher.py: preserve non-null top-level JSON fields in tool_result content when below crush thresholds",
+      "regression test asserting byte-for-byte preservation of small tool_result JSON"
+    ],
+    "risks": [
+      "Open PR #3227 touches smart_crusher/tool_result semantics and may already cover or conflict with the fix",
+      "Fix could alter intended compression behavior for small payloads if the drop is deliberate",
+      "No confirmed root-cause location means the minimal fix boundary is uncertain"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's curl /v1/compress repro against a local build and assert tags and subtasks remain in the returned content",
+      "Add a unit test in the smart_crusher test suite covering a ~350B tool_result JSON with mixed null/non-null fields and assert no field is dropped without a CCR marker"
+    ],
+    "unknowns": [
+      "Whether PR #3227 already fixes or supersedes this issue",
+      "The exact smart_crusher code path that selectively drops non-null fields",
+      "Whether maintainers consider the field-dropping behavior intentional for this payload size"
+    ],
+    "why": "Issue provides a strong, reproducible user-visible bug: smart_crusher drops non-null top-level fields (tags, subtasks) from small MCP tool_result JSON while preserving null fields, with a curl repro and transforms_applied=[router:smart_crusher:0.58], ccr_hashes=[]. However, the supplied evidence does not establish the internal root cause (no code anchor beyond the smart_crusher module name, no identified field-selection logic), and an open PR (#3227) has semantic overlap on smart_crusher/tool_result with 15 changed files and 2318 additions, so duplicate/coverage status is unresolved. These are materially blocking unknowns for deciding whether a new code contribution is actionable."
+  },
   "b2e6841f11a295c061d4c63efdef59e7315e2d69895946e2165e348b7b3ebaab": {
     "confidence": 0.85,
     "contradictions": [],
@@ -94227,6 +94367,38 @@
       "No maintainer triage or assignment confirming the issue is accepted as an OpenVINO bug"
     ],
     "why": "The issue reports a GPU-plugin segfault at compile_model() on Gen12 iGPU, but the supplied evidence contains no root-cause signal, no code anchor tying the crash to a specific OpenVINO source path, and no maintainer investigation. The only code anchors are Python package paths (openvino/runtime/__init__.py), which are not actionable source locations. The crash signature is also non-deterministic (SIGSEGV vs SIGABRT/glibc heap corruption), and the reporter's own suspicion points at mismatched compute-runtime packages (legacy level-zero vs newer opencl-icd), which is an environment/dependency issue rather than a confirmed OpenVINO code defect. Without a stack trace, core dump, or a reproducible failure isolated from the driver package mismatch, the code work is not actionable."
+  },
+  "d2821ffb153234124a74eb7f4a7def40ff2e8d366f18d4e7d85d718c96bbdaae": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body presents the defect as unaddressed, while open PR #41470 is titled as fixing the same watsonx model_id scope enforcement and overlaps the same code path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_utils.py: add model_id as a candidate for /watsonx routes in get_model_from_request/_extract_model_candidates_from_request",
+      "regression test covering /watsonx pass-through with a virtual key whose models[] excludes the requested model_id"
+    ],
+    "risks": [
+      "Open PR #41470 may already cover the fix, making a new implementation duplicative",
+      "Broadening model resolution for /watsonx could affect other pass-through routes if the branch is not route-scoped"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test: get_model_from_request with body {\"model_id\": \"ibm/granite-3-8b-instruct\"} on a /watsonx route returns the model id",
+      "Integration test: virtual key with models=[\"cheap-model\"] POSTs /watsonx/ml/v1/text/generation with an out-of-scope model_id and receives 403",
+      "Control: same key on a covered route with an out-of-list model still returns 403"
+    ],
+    "unknowns": [
+      "Whether PR #41470 is technically complete and will be merged, or leaves independent implementation space (it has no test files and root_cause_coverage=false)",
+      "Maintainer preference on where to add the /watsonx model_id resolution"
+    ],
+    "why": "The issue gives a clear root cause (Watsonx pass-through body key model_id is never read by get_model_from_request, so can_key_call_model is skipped) and a concrete fix location, but the supplied evidence shows an open PR #41470 that directly references this issue, overlaps the same code path (litellm/proxy/auth/auth_utils.py) and the same distinctive terms (model_id, virtual_key), and is assessed as human_review_required with duplicateStatus human_review_required. Whether independent implementation space remains is unresolved, which materially determines whether new code work is actionable."
   },
   "d285ed568ad08e169fcb17404655514917a8083dfc1d11e88b64494b0f6894ea": {
     "confidence": 0.8,
