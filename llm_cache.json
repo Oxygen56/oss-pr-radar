@@ -14435,6 +14435,37 @@
     ],
     "why": "Issue reports a reproducible 502 without upstream dial, but root cause is unclear: possible seat gating or relay bug. No maintainer response or design confirmation. Track is agent_ai_infra, not llm_algorithm, so algorithm evidence not required. Actionable fix likely but needs maintainer input."
   },
+  "2228985af6cfcb317b16d0a25e6c881fe06129c05b8382e5c3409ace645634a4": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Triage bot labels this as support/non-SDK bug while the issue body describes a concrete schema defect in the tool definition"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MCP tool schema generation for COMPOSIO_MANAGE_SKILL to declare top-level type:object",
+      "Schema serialization/validation path in the MCP server or core package"
+    ],
+    "risks": [
+      "Schema change could affect other MCP clients relying on the current anyOf shape",
+      "Fix location (server endpoint vs SDK) may need maintainer confirmation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test asserting the generated COMPOSIO_MANAGE_SKILL parameters schema has type:object at the root",
+      "Regression test validating the schema against OpenAPI 3.0 / Vertex AI functionDeclaration requirements",
+      "Reproduce via MCP client with Vertex AI provider and confirm no INVALID_ARGUMENT error"
+    ],
+    "unknowns": [
+      "Whether the schema is generated in the SDK repo or only on the hosted connect.composio.dev endpoint"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: the COMPOSIO_MANAGE_SKILL tool schema exposes a bare top-level anyOf without an outer type:object, which Vertex AI rejects with HTTP 400 INVALID_ARGUMENT. Reproduction steps, exact error output, and the offending schema are supplied, and the fix (wrap union in an object schema) is well-defined and testable."
+  },
   "22355f19eb9136e702528c93193209f90055ebe15317909e8aa4ea004b7a5de5": {
     "confidence": 0.9,
     "contradictions": [],
@@ -56377,6 +56408,38 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue reports a deterministic crash in DCP+DSPARK decode path with clear traceback and root cause. However, existing PR #34432 has semantic overlap with the same code path and key terms, and the supplied gate decision is HUMAN_REVIEW. Need maintainer comparison of PR #34432 and related PRs before starting new work."
+  },
+  "7cf0b8e7ec4b5450789edf3d9c7656abab542730ac5e028e00dc9d67e732fc31": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no existing fix, while open PR #41470 is described as directly referencing the issue with direct code overlap on auth_utils.py"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_utils.py: add model_id body candidate for /watsonx routes in get_model_from_request/_extract_model_candidates_from_request",
+      "regression test covering virtual-key models[] enforcement on the Watsonx pass-through route"
+    ],
+    "risks": [
+      "PR #41470 may already cover the same fix, making a parallel implementation redundant",
+      "Broadening model extraction could affect other pass-through routes if the /watsonx prefix check is not scoped tightly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test: get_model_from_request with body {\"model_id\": \"ibm/granite-3-8b-instruct\"} on /watsonx/ml/v1/text/generation returns the model id",
+      "Integration test: virtual key with models=[\"cheap-model\"] POSTing to /watsonx/ml/v1/text/generation with an out-of-scope model_id is rejected 403 by can_key_call_model",
+      "Control: same out-of-list model on a covered route still returns 403"
+    ],
+    "unknowns": [
+      "Whether PR #41470 fully resolves the issue or leaves independent implementation space (e.g., missing regression test)",
+      "Whether maintainers consider the Watsonx model_id resolution already covered by the open PR"
+    ],
+    "why": "The issue gives a clear root cause (Watsonx pass-through body key model_id is never read by get_model_from_request, so can_key_call_model is skipped) and a concrete fix location, but the supplied open-PR assessment shows PR #41470 directly references this issue, hits the same code path (litellm/proxy/auth/auth_utils.py) and the same distinctive identifiers (model_id, virtual_key), and is only 1 day old and still open. Duplicate/coverage status is explicitly human_review_required, which is a materially blocking unknown for whether independent code work is actionable."
   },
   "7cf36c7ae9304d10b958e94f4b778117daa2faf0404775f56273cca084cc4420": {
     "confidence": 0.8,
