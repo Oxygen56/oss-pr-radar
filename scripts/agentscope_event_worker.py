@@ -1375,9 +1375,7 @@ def issue_handler_delivery(
                 {"model": model, "error": f"{type(exc).__name__}:{str(exc)[:300]}"},
                 reason="transient_model_failure",
             )
-            state = _record_transient_model_failure(
-                lane, event=event, model=model, error=exc
-            )
+            state = _record_transient_model_failure(lane, event=event, model=model, error=exc)
             raise RuntimeError(
                 f"AgentScope event worker recorded transient model failure ({state}): {str(exc)[:300]}"
             ) from exc
@@ -1437,7 +1435,9 @@ def issue_handler_delivery(
                 model=str(result.get("model") or model),
                 error=result,
             )
-            raise RuntimeError(f"AgentScope event worker recorded transient model failure ({state})")
+            raise RuntimeError(
+                f"AgentScope event worker recorded transient model failure ({state})"
+            )
         lane.release_handler_reservation(
             event_id,
             result,
@@ -1478,9 +1478,7 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
             attempt=int(row["attempts"] or 1),
             is_recovery=event.get("kind") == "outcome_reconcile",
             generation=(
-                _recovery_generation(event)
-                if event.get("kind") == "outcome_reconcile"
-                else 0
+                _recovery_generation(event) if event.get("kind") == "outcome_reconcile" else 0
             ),
         )
         try:
@@ -1580,7 +1578,10 @@ def reconcile_detached_receipts(root: Path, lane: EventLane) -> int:
                     if fallback_state == "exhausted":
                         recovery["terminalReason"] = "model_capacity_retries_exhausted"
                 appended = lane.append(recovery, priority=250)
-                if appended and recovery.get("terminalReason") == "model_capacity_retries_exhausted":
+                if (
+                    appended
+                    and recovery.get("terminalReason") == "model_capacity_retries_exhausted"
+                ):
                     lane.terminalize_event(
                         str(recovery["eventId"]),
                         reason="model_capacity_retries_exhausted",
@@ -1879,6 +1880,7 @@ def run_once(
         audit["terminalized"] = bootstrap["terminalized"]
         lane.set_state_value(BOOTSTRAP_BOUNDARY_STATE_KEY, audit)
     pr_snapshots_coalesced = lane.coalesce_pending_pr_updates(now=current.timestamp())
+    issue_snapshots_coalesced = lane.coalesce_pending_issue_updates(now=current.timestamp())
     recovery_settlement = _settle_exhausted_outcome_recoveries(
         root,
         lane,
@@ -1906,6 +1908,7 @@ def run_once(
         "eventsSeen": len(events),
         "eventsInserted": inserted,
         "prSnapshotsCoalesced": pr_snapshots_coalesced,
+        "issueSnapshotsCoalesced": issue_snapshots_coalesced,
         "codexWake": bool(drained["delivered"]),
         "drain": drained,
         "receiptsReconciled": receipts_reconciled,

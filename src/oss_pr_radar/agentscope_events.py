@@ -161,22 +161,22 @@ def advance_model_fallback(
     prior = updated.get("modelFallback")
     prior = dict(prior) if isinstance(prior, dict) else {}
     history = prior.get("history")
-    history = [dict(item) for item in history if isinstance(item, dict)] if isinstance(history, list) else []
+    history = (
+        [dict(item) for item in history if isinstance(item, dict)]
+        if isinstance(history, list)
+        else []
+    )
     attempted = [str(item.get("model") or "") for item in history]
     if selected not in attempted:
         history.append(
             {
                 "model": selected,
-                "failedAt": datetime.fromtimestamp(current, UTC)
-                .isoformat()
-                .replace("+00:00", "Z"),
+                "failedAt": datetime.fromtimestamp(current, UTC).isoformat().replace("+00:00", "Z"),
                 "error": str(error)[:500],
             }
         )
     history = history[-(len(ordered) + 1) :]
-    attempted_set = {
-        str(item.get("model") or "") for item in history if isinstance(item, dict)
-    }
+    attempted_set = {str(item.get("model") or "") for item in history if isinstance(item, dict)}
     next_index = next(
         (index for index, candidate in enumerate(ordered) if candidate not in attempted_set),
         len(ordered),
@@ -200,12 +200,14 @@ def _receipt_has_live_bridge(receipt: dict[str, Any]) -> bool:
     return False
 
 
-def _bounded_receipt_history(receipt: dict[str, Any], *, captured_at: float) -> list[dict[str, Any]]:
+def _bounded_receipt_history(
+    receipt: dict[str, Any], *, captured_at: float
+) -> list[dict[str, Any]]:
     """Keep a small immutable trail when a recovery turn is retried."""
     prior = receipt.get("receiptHistory")
     history: list[dict[str, Any]] = []
     if isinstance(prior, list):
-        for item in prior[-_RECEIPT_HISTORY_LIMIT :]:
+        for item in prior[-_RECEIPT_HISTORY_LIMIT:]:
             if not isinstance(item, dict):
                 continue
             try:
@@ -233,9 +235,7 @@ def _bounded_receipt_history(receipt: dict[str, Any], *, captured_at: float) -> 
     return (history + [{"capturedAt": captured, "receipt": snapshot}])[-_RECEIPT_HISTORY_LIMIT:]
 
 
-def _merge_receipt_history(
-    existing: dict[str, Any], incoming: dict[str, Any]
-) -> dict[str, Any]:
+def _merge_receipt_history(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     """Carry retry history through the bridge's replacement receipt."""
     merged = dict(incoming)
     existing_history = existing.get("receiptHistory")
@@ -1208,20 +1208,20 @@ class EventLane:
         finally:
             db.close()
 
-    def _coalesce_pending_pr_updates(
+    def _coalesce_pending_github_updates(
         self,
         db: sqlite3.Connection,
         *,
+        kind: str,
         current: float,
         event_key: str | None = None,
-        keep_event_id: str | None = None,
     ) -> int:
         query = (
             "SELECT e.rowid AS queue_rowid,e.event_id,e.payload_json,e.created_at "
             "FROM event_lane_events e "
-            "WHERE json_extract(e.payload_json,'$.kind')='pr_update'"
+            "WHERE json_extract(e.payload_json,'$.kind')=?"
         )
-        params: list[object] = []
+        params: list[object] = [kind]
         if event_key:
             query += " AND json_extract(e.payload_json,'$.eventKey')=?"
             params.append(str(event_key))
@@ -1239,15 +1239,26 @@ class EventLane:
         for key_rows in groups.values():
             if len(key_rows) <= 1:
                 continue
-            keep = next(
-                (row for row in key_rows if str(row["event_id"]) == str(keep_event_id or "")),
-                max(key_rows, key=lambda row: int(row["queue_rowid"])),
-            )
+
+            def snapshot_order(row: sqlite3.Row) -> tuple[float, int]:
+                try:
+                    payload = json.loads(row["payload_json"])
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    payload = {}
+                effective = github_event_effective_time(payload)
+                return (
+                    effective.timestamp() if effective is not None else float("-inf"),
+                    int(row["queue_rowid"]),
+                )
+
+            keep = max(key_rows, key=snapshot_order)
             for row in key_rows:
                 if row["event_id"] == keep["event_id"]:
                     continue
                 payload = json.loads(row["payload_json"])
-                payload["terminalReason"] = "superseded_by_newer_pr_snapshot"
+                payload["terminalReason"] = (
+                    f"superseded_by_newer_{kind.removesuffix('_update')}_snapshot"
+                )
                 payload["supersededByEventId"] = str(keep["event_id"])
                 result = db.execute(
                     "UPDATE event_lane_events SET status='coalesced',payload_json=?,"
@@ -1263,12 +1274,47 @@ class EventLane:
                 coalesced += result.rowcount
         return coalesced
 
+    def _coalesce_pending_pr_updates(
+        self,
+        db: sqlite3.Connection,
+        *,
+        current: float,
+        event_key: str | None = None,
+    ) -> int:
+        return self._coalesce_pending_github_updates(
+            db,
+            kind="pr_update",
+            current=current,
+            event_key=event_key,
+        )
+
+    def _coalesce_pending_issue_updates(
+        self,
+        db: sqlite3.Connection,
+        *,
+        current: float,
+        event_key: str | None = None,
+    ) -> int:
+        return self._coalesce_pending_github_updates(
+            db,
+            kind="issue_update",
+            current=current,
+            event_key=event_key,
+        )
+
     def coalesce_pending_pr_updates(self, *, now: float | None = None) -> int:
         """Keep only the newest unstarted snapshot for each pull request."""
 
         current = time.time() if now is None else now
         with self.writer() as db:
             return self._coalesce_pending_pr_updates(db, current=current)
+
+    def coalesce_pending_issue_updates(self, *, now: float | None = None) -> int:
+        """Keep only the newest unstarted snapshot for each issue."""
+
+        current = time.time() if now is None else now
+        with self.writer() as db:
+            return self._coalesce_pending_issue_updates(db, current=current)
 
     def append(self, event: dict[str, Any], *, priority: int = 0, now: float | None = None) -> bool:
         event_id = str(event.get("eventId") or _digest(event))
@@ -1327,7 +1373,6 @@ class EventLane:
                                     db,
                                     current=current,
                                     event_key=str(payload["eventKey"]),
-                                    keep_event_id=str(latest["event_id"]),
                                 )
                         return False
                     generation = latest_generation + 1
@@ -1362,7 +1407,12 @@ class EventLane:
                                     db,
                                     current=current,
                                     event_key=str(payload.get("eventKey") or ""),
-                                    keep_event_id=str(row["event_id"]),
+                                )
+                            elif updated.rowcount and payload.get("kind") == "issue_update":
+                                self._coalesce_pending_issue_updates(
+                                    db,
+                                    current=current,
+                                    event_key=str(payload.get("eventKey") or ""),
                                 )
                         return False
             result = db.execute(
@@ -1374,7 +1424,12 @@ class EventLane:
                     db,
                     current=current,
                     event_key=str(payload.get("eventKey") or ""),
-                    keep_event_id=event_id,
+                )
+            elif result.rowcount == 1 and payload.get("kind") == "issue_update":
+                self._coalesce_pending_issue_updates(
+                    db,
+                    current=current,
+                    event_key=str(payload.get("eventKey") or ""),
                 )
             return result.rowcount == 1
 
@@ -1743,11 +1798,15 @@ class EventLane:
                 receipt = _receipt_object(turn["receipt_json"])
                 terminal_status = str(receipt.get("turnStatus") or "")
                 terminal_reason = str(receipt.get("terminalReason") or "")
-                has_terminal_marker = terminal_status in {
-                    "completed",
-                    "failed",
-                    "interrupted",
-                } or terminal_reason in _RECOVERY_RETRY_TERMINAL_REASONS
+                has_terminal_marker = (
+                    terminal_status
+                    in {
+                        "completed",
+                        "failed",
+                        "interrupted",
+                    }
+                    or terminal_reason in _RECOVERY_RETRY_TERMINAL_REASONS
+                )
                 # A valid outcome must never be overwritten by a retry.  The
                 # worker normally catches this earlier, but keeping the check
                 # at the atomic SQL boundary protects against stale callers.

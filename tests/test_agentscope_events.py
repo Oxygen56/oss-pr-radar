@@ -650,10 +650,16 @@ def test_recovery_retry_resets_dead_bound_turn_and_preserves_bounded_history(tmp
     )
     rebound = lane.handler_turn(event_id)
     assert rebound is not None
-    assert json.loads(rebound["receipt_json"])["receiptHistory"][0]["receipt"]["workerPid"] == 1_000_000_000
+    assert (
+        json.loads(rebound["receipt_json"])["receiptHistory"][0]["receipt"]["workerPid"]
+        == 1_000_000_000
+    )
     thread = lane.handler_thread("agentscope-ai/agentscope#1")
     assert thread is not None
-    assert json.loads(thread["receipt_json"])["receiptHistory"][0]["receipt"]["turnStatus"] == "completed"
+    assert (
+        json.loads(thread["receipt_json"])["receiptHistory"][0]["receipt"]["turnStatus"]
+        == "completed"
+    )
 
 
 def test_recovery_retry_does_not_clear_live_or_valid_bound_turn(tmp_path, monkeypatch):
@@ -666,7 +672,9 @@ def test_recovery_retry_does_not_clear_live_or_valid_bound_turn(tmp_path, monkey
             "outcome": {"error": "OUTCOME_MISSING_OR_INVALID"},
         },
     )
-    monkeypatch.setattr("oss_pr_radar.agentscope_events._event_bridge_process_alive", lambda _pid: True)
+    monkeypatch.setattr(
+        "oss_pr_radar.agentscope_events._event_bridge_process_alive", lambda _pid: True
+    )
     live = lane.try_reserve_handler_turn_if_idle(
         "agentscope-ai/agentscope#1",
         event_id,
@@ -688,7 +696,9 @@ def test_recovery_retry_does_not_clear_live_or_valid_bound_turn(tmp_path, monkey
         ).fetchone()
     assert dict(live_event) == {"status": "pending", "attempts": 0, "lease_token": None}
 
-    monkeypatch.setattr("oss_pr_radar.agentscope_events._event_bridge_process_alive", lambda _pid: False)
+    monkeypatch.setattr(
+        "oss_pr_radar.agentscope_events._event_bridge_process_alive", lambda _pid: False
+    )
     lane2 = EventLane(tmp_path / "events-valid.db")
     event_id2, claimed2 = _prepare_bound_recovery_retry(
         lane2,
@@ -717,7 +727,9 @@ def test_recovery_retry_does_not_clear_live_or_valid_bound_turn(tmp_path, monkey
 
 def test_reconcile_carries_launch_pid_into_terminal_receipt(tmp_path, monkeypatch):
     worker = _event_worker_module()
-    monkeypatch.setattr("oss_pr_radar.agentscope_events._event_bridge_process_alive", lambda _pid: False)
+    monkeypatch.setattr(
+        "oss_pr_radar.agentscope_events._event_bridge_process_alive", lambda _pid: False
+    )
     lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
     event_id = worker._outcome_recovery_event_id("root-for-pid")
     event_key = "agentscope-ai/agentscope#1"
@@ -862,12 +874,8 @@ def test_github_identity_ignores_metadata_drift_and_tracks_material_revisions(tm
     assert lane.append(material_change) is True
     assert lane.append(changed) is True
     seen = []
-    assert dispatch_once(lane, seen.append, limit=3)["delivered"] == 3
-    assert [event["eventId"] for event in seen] == [
-        first["eventId"],
-        material_change["eventId"],
-        changed["eventId"],
-    ]
+    assert dispatch_once(lane, seen.append, limit=3)["delivered"] == 1
+    assert [event["eventId"] for event in seen] == [changed["eventId"]]
 
 
 def test_plain_issue_has_no_material_suffix_and_stable_legacy_identity():
@@ -1419,6 +1427,182 @@ def test_pr_snapshot_sweep_uses_newer_started_turn_as_authority(tmp_path):
     assert [(row["event_id"], row["status"]) for row in rows] == [
         (older["eventId"], "coalesced"),
         (newer["eventId"], "leased"),
+    ]
+
+
+def test_issue_updates_keep_only_latest_unstarted_snapshot(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    older = _github_event(2500, "2026-08-28T13:50:56Z")
+    newer = _github_event(2500, "2026-08-28T13:51:56Z")
+
+    assert lane.append(older, priority=10, now=1)
+    assert lane.append(newer, priority=10, now=2)
+
+    with lane.connect() as db:
+        rows = db.execute(
+            "SELECT event_id,status,payload_json FROM event_lane_events ORDER BY rowid"
+        ).fetchall()
+    assert [(row["event_id"], row["status"]) for row in rows] == [
+        (older["eventId"], "coalesced"),
+        (newer["eventId"], "pending"),
+    ]
+    superseded = json.loads(rows[0]["payload_json"])
+    assert superseded["terminalReason"] == "superseded_by_newer_issue_snapshot"
+    assert superseded["supersededByEventId"] == newer["eventId"]
+
+
+def test_issue_updates_keep_newer_effective_snapshot_when_older_arrives_late(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    newer = _github_event(2500, "2026-08-28T13:51:56Z")
+    older = _github_event(2500, "2026-08-28T13:50:56Z")
+
+    assert lane.append(newer, priority=10, now=1)
+    assert lane.append(older, priority=10, now=2)
+
+    with lane.connect() as db:
+        rows = db.execute(
+            "SELECT event_id,status,payload_json FROM event_lane_events ORDER BY rowid"
+        ).fetchall()
+    assert [(row["event_id"], row["status"]) for row in rows] == [
+        (newer["eventId"], "pending"),
+        (older["eventId"], "coalesced"),
+    ]
+    superseded = json.loads(rows[1]["payload_json"])
+    assert superseded["supersededByEventId"] == newer["eventId"]
+
+    delivered = []
+    assert dispatch_once(lane, delivered.append, limit=3)["delivered"] == 1
+    assert [event["eventId"] for event in delivered] == [newer["eventId"]]
+
+
+def test_issue_update_handoff_cannot_replace_newer_effective_snapshot(tmp_path, monkeypatch):
+    import sqlite3
+
+    lane = EventLane(tmp_path / "events.db")
+    handoff = tmp_path / "handoff.jsonl"
+    newer = _github_event(2500, "2026-08-28T13:51:56Z")
+    older = _github_event(2500, "2026-08-28T13:50:56Z")
+    assert lane.append(newer, priority=10, now=1)
+    original = lane.append
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(lane, "append", locked)
+    assert lane.append_or_handoff(older, priority=10, handoff_path=handoff) == "handoff"
+    monkeypatch.setattr(lane, "append", original)
+    assert lane.drain_handoff(handoff) == 1
+
+    with lane.connect() as db:
+        rows = db.execute(
+            "SELECT event_id,status,payload_json FROM event_lane_events ORDER BY rowid"
+        ).fetchall()
+    assert [(row["event_id"], row["status"]) for row in rows] == [
+        (newer["eventId"], "pending"),
+        (older["eventId"], "coalesced"),
+    ]
+    assert json.loads(rows[1]["payload_json"])["supersededByEventId"] == newer["eventId"]
+
+
+def test_existing_issue_replay_does_not_force_older_snapshot_as_authority(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    older = _github_event(2500, "2026-08-28T13:50:56Z")
+    newer = _github_event(2500, "2026-08-28T13:51:56Z")
+    for event in (older, newer):
+        event["eventKey"] = f"{event['repo']}#{event['number']}"
+    with lane.writer() as db:
+        for event, created_at in ((older, 1), (newer, 2)):
+            db.execute(
+                "INSERT INTO event_lane_events(event_id,payload_json,priority,created_at) "
+                "VALUES(?,?,10,?)",
+                (event["eventId"], json.dumps(event, sort_keys=True), created_at),
+            )
+
+    assert lane.append(older, priority=10, now=3) is False
+
+    with lane.connect() as db:
+        rows = db.execute(
+            "SELECT event_id,status,payload_json FROM event_lane_events ORDER BY rowid"
+        ).fetchall()
+    assert [(row["event_id"], row["status"]) for row in rows] == [
+        (older["eventId"], "coalesced"),
+        (newer["eventId"], "pending"),
+    ]
+    assert json.loads(rows[0]["payload_json"])["supersededByEventId"] == newer["eventId"]
+
+
+def test_issue_snapshot_sweep_preserves_started_turn_and_other_issue(tmp_path):
+    lane = EventLane(tmp_path / "events.db")
+    older = _github_event(2500, "2026-08-28T13:50:56Z")
+    newer = _github_event(2500, "2026-08-28T13:51:56Z")
+    other = _github_event(2501, "2026-08-28T13:51:56Z")
+    for event in (older, newer, other):
+        event["eventKey"] = f"{event['repo']}#{event['number']}"
+    with lane.writer() as db:
+        snapshots = ((older, 10, 1), (newer, 20, 2), (other, 10, 3))
+        for event, priority, created_at in snapshots:
+            db.execute(
+                "INSERT INTO event_lane_events(event_id,payload_json,priority,created_at) "
+                "VALUES(?,?,?,?)",
+                (event["eventId"], json.dumps(event, sort_keys=True), priority, created_at),
+            )
+    claimed = lane.claim(limit=1, owner="event-lane", now=3)[0]
+    assert claimed["eventId"] == newer["eventId"]
+    lane.reserve_handler_turn(newer["eventKey"], newer["eventId"], "client:newer")
+    lane.bind_handler_turn(
+        newer["eventKey"],
+        newer["eventId"],
+        "thread-newer",
+        "turn-newer",
+        {"ok": True},
+        status="started",
+    )
+
+    assert lane.coalesce_pending_issue_updates(now=4) == 1
+    with lane.connect() as db:
+        rows = db.execute("SELECT event_id,status FROM event_lane_events ORDER BY rowid").fetchall()
+    assert [(row["event_id"], row["status"]) for row in rows] == [
+        (older["eventId"], "coalesced"),
+        (newer["eventId"], "leased"),
+        (other["eventId"], "pending"),
+    ]
+
+
+def test_worker_sweeps_preexisting_pending_issue_snapshots(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    _write_bootstrap_seed(tmp_path, "2026-08-27T00:00:00Z")
+    older = _github_event(2500, "2026-08-28T13:50:56Z")
+    newer = _github_event(2500, "2026-08-28T13:51:56Z")
+    for event in (older, newer):
+        event["eventKey"] = f"{event['repo']}#{event['number']}"
+    lane = EventLane(tmp_path / "state" / "agentscope-events.sqlite3")
+    with lane.writer() as db:
+        for event, created_at in ((older, 1), (newer, 2)):
+            db.execute(
+                "INSERT INTO event_lane_events(event_id,payload_json,priority,created_at) "
+                "VALUES(?,?,10,?)",
+                (event["eventId"], json.dumps(event, sort_keys=True), created_at),
+            )
+    monkeypatch.setattr(
+        worker.GitHubIssuePoller,
+        "poll",
+        lambda _self, **_kwargs: type("Poll", (), {"events": (), "status": "ok"})(),
+    )
+    delivered = []
+
+    result = worker.run_once(
+        tmp_path,
+        deliver=delivered.append,
+        now=datetime(2026, 8, 28, 14, tzinfo=UTC),
+    )
+
+    assert result["issueSnapshotsCoalesced"] == 1
+    assert [event["eventId"] for event in delivered] == [newer["eventId"]]
+    with lane.connect() as db:
+        rows = db.execute("SELECT event_id,status FROM event_lane_events ORDER BY rowid").fetchall()
+    assert [(row["event_id"], row["status"]) for row in rows] == [
+        (older["eventId"], "coalesced"),
+        (newer["eventId"], "delivered"),
     ]
 
 
