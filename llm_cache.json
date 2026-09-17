@@ -33599,6 +33599,40 @@
     ],
     "why": "The issue describes a real model-card ownership defect, but the supplied evidence shows an open PR #14845 that directly references this issue, is technically complete, includes 3 test files, and has passing CI. The issue's own proposed direction (remove public model registration) is a large architectural change, while the existing PR already implements the smaller fix. This is a covered opportunity with weak competition space."
   },
+  "4e311b2b951c422449e7647c68408bf1dc1d4a3fecc617b98452cff1aa78ed78": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Candidate claims root_cause_signal=true and probe_ready=true, but issue body states the bug is not reliably reproducible and no reproduction evidence is supplied"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/kimi_cli/tools/file/read.py",
+      "src/kimi_cli/notifications/wire.py"
+    ],
+    "risks": [
+      "Fixing the wrong layer (harness vs model) if root cause is not established",
+      "Overlapping with open PR #2651 and duplicating its approach",
+      "Hard-stop threshold may change legitimate repeated-read behavior"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Obtain the session wire.jsonl and construct a deterministic replay/fixture that reproduces repeated identical Read emissions",
+      "Add a regression test asserting the harness hard-stops or suppresses N identical consecutive Read calls"
+    ],
+    "unknowns": [
+      "The wire.jsonl session log that would establish the actual emission sequence and root cause",
+      "Whether the loop originates in the harness loop-detection/reminder path or in model decoding",
+      "Whether PR #2651 already covers the intended fix path"
+    ],
+    "why": "Issue reports a real user-visible loop bug, but the reporter explicitly states it is 'Not reliably reproducible on demand' and offers the wire.jsonl log only on request; no reproduction evidence is supplied. The candidate's own actionability evidence shows public_repro_signals=0 and empty reproduction_evidence, and the open PR #2651 is assessed as lacking root-cause coverage. Without a reproduction or root-cause anchor, it is undetermined whether the actionable code work is a harness hard-stop, a Read-tool re-read guard, or a model-side issue."
+  },
   "4e3b53fa7fffc4f46600a47995d50f19f01f306c6596ffa0725a475771361e13": {
     "confidence": 0.85,
     "contradictions": [],
@@ -104855,6 +104889,38 @@
       "Whether PR #40256 already resolves or subsumes this missing-input validation, since it is not directly linked to the issue"
     ],
     "why": "Issue provides a concrete, provider-independent reproduction (curl omitting 'input' yields HTTP 500 with raw TypeError), a specific code path (responses_api in litellm/proxy/response_api_endpoints/endpoints.py dispatching kwargs to aresponses in litellm/responses/main.py where 'input' is a required positional arg), and a clear expected behavior (400/422 naming the missing field, consistent with the existing missing-model handling). This is a well-scoped, testable proxy-layer validation fix."
+  },
+  "e9fdf549dfb1995e87042cdaeb2e79a9f9c05dbc478a6fa9f10e6759403ea2a7": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "issue_data.issue_body",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "nemo_rl/models/automodel/data.py: translate packing metadata into native top-level cu_seqlens/seq_idx layout",
+      "nemo_rl/models/automodel/train.py: pass boundary metadata at top level instead of nested flash_attn_kwargs",
+      "Nemotron attention/Mamba path: honor packing boundaries for both attention and recurrent state"
+    ],
+    "risks": [
+      "Fix must cover Mamba/recurrent-state isolation, not only attention",
+      "Native positive control changes both metadata placement and tensor layout, so equivalence must be verified separately",
+      "Potential overlap with related FSDP2/AutoModel issues (#4166, #4169, #4170) sharing stack paths"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the supplied check_packing_boundaries.py probe; assert nemo_metadata_second_sequence_max_delta == 0 and native positive control remains 0",
+      "Add packed-vs-separate forward and gradient equivalence test for the hybrid Nemotron model",
+      "Add regression test asserting trajectory B output is invariant to changes in trajectory A under packing"
+    ],
+    "unknowns": [
+      "Whether related issues #4166/#4169/#4170 represent duplicate coverage or independent work"
+    ],
+    "why": "Issue provides a concrete, self-contained CUDA component reproducer showing that NeMo RL packing metadata is passed nested under flash_attn_kwargs while the native Nemotron attention backend reads top-level cu_seqlens/seq_idx, causing cross-trajectory attention leakage (delta 0.2178 vs native positive control 0.0). This is a genuine algorithmic/distributed-training correctness bug with a clear reference-vs-implementation validation path."
   },
   "e9fef21c6a2cfd201e804e6659ac954075fd8fac688ee74d93ab9b56aa1cd9a0": {
     "confidence": 0.8,
