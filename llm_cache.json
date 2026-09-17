@@ -34483,6 +34483,38 @@
     ],
     "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP servers, breaking external Python interpreters. Reporter supplies a minimal reproduction, /proc environ evidence, and a working workaround. Triage bot disputed the AppImage attribution, but the reporter rebutted with binary-level string evidence and a mount-prefix match to the Qwen AppImage, plus a second leak channel (LD_LIBRARY_PATH/libsqlite3 3.37.2) with a reproduction matrix. Code anchors (mcp-client.ts spawn env, sanitize-child-env.ts, shared-env-keys.ts) give a plausible fix location. This is ordinary platform/env plumbing, not an llm_algorithm contribution, so it is in scope for agent_ai_infra."
   },
+  "502fad3c6a662af0e2065de1fa3318e5a9dbf3651563771ca09b3cc5f7060406": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate claims agent/inference/RAG critical path and high actionability, but the evidence shows a provider entitlement rejection with no repository-level root cause"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unclear; likely provider entitlement/auth handling, not a repo code path identified by the evidence"
+    ],
+    "risks": [
+      "May be a server-side or account/entitlement issue outside the repository",
+      "Duplicate reports (#49579, #49438) suggest a mass regression already being tracked",
+      "Stack trace references minified app.asar chunks, not source files"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "No actionable reproduction against repository source is available; the reported failure occurs in a packaged desktop bundle and depends on server-side entitlement state"
+    ],
+    "unknowns": [
+      "Whether the failure originates in repository code or in the hosted Console backend",
+      "Whether an existing tracked issue/PR already covers the fix",
+      "What source file or mechanism enforces the 'within OpenCode' check"
+    ],
+    "why": "The issue reports a server-side rejection from the Console provider ('free tier can only be used from within OpenCode') with a stack trace only inside the packaged app.asar bundle. No source-level root cause, code anchor in the repository, or concrete fix is established; the evidence points to a backend entitlement/authentication check rather than a reproducible code defect in this repo."
+  },
   "504ec7d236c983011e949a8d6438427431f2bd28c9bbfe9c3dd5ae432279f743": {
     "confidence": 0.8,
     "contradictions": [
@@ -62340,6 +62372,41 @@
     ],
     "why": "Issue clearly identifies a missing error code in HARD_QUOTA_ERROR_CODES causing long retries; root cause and fix location are explicit."
   },
+  "8b9725ca117e974e98c5475d5a927c3719b6d129030342dad2e59b9e2d86749c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Open PR #12007 is flagged as semantic_overlap_requires_review with overlapping path Session.ts and distinctive token end_turn, but references_issue is false and direct_code_overlap is false, so duplicate coverage is unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/acp-integration/session/Session.ts: carry the final provider finish reason into ACP terminal stop-reason selection so an exhausted MAX_TOKENS recovery yields max_tokens instead of end_turn",
+      "packages/cli/src/acp-integration/session/Session.ts: disambiguate the reused max_tokens value from the session cumulative token-budget producer at the goal-pause and cron-stop consumers"
+    ],
+    "risks": [
+      "Reusing max_tokens without a discriminator would mislabel goal pauses as GOAL_PAUSE_REASON_SESSION_TOKEN_LIMIT and trigger #stopCronAfterTokenLimit on output-truncated turns",
+      "Reading the finish reason via AgentOutputMessageCapture is telemetry-gated and returns undefined when sensitive span attributes are disabled, so the carrier must not depend on telemetry",
+      "Headless -p and BaseJsonOutputAdapter drop the same signal; scope must be explicitly bounded to ACP"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test driving Session.prompt/#handleStopHookLoop with a stubbed stream whose final candidate carries finishReason MAX_TOKENS and assert stopReason max_tokens",
+      "Regression guards: final STOP yields end_turn; MAX_TOKENS followed by STOP yields end_turn",
+      "Run the issue's standalone stdio ACP reproduction against the patched build to confirm the length case returns max_tokens while the stop case still returns end_turn"
+    ],
+    "unknowns": [
+      "Whether maintainers accept max_tokens carrying both output-truncation and session-budget meanings, or require an internal discriminator",
+      "Whether PR #12007 already covers this root cause or is a distinct session-recovery fix"
+    ],
+    "why": "Issue provides a standalone, credential-free reproduction against published 0.24.0 and pins the missing terminal mapping to Session.ts #handleStopHookLoop defaulting to end_turn without consulting the provider finish reason; multiple collaborators independently reproduced at current main and located the same terminal-decision site. The remaining open question (whether reusing the protocol-legal max_tokens member overloads the existing session-budget meaning at four internal sites) is a normal design choice between two reasonable fixes, not a missing fact that blocks code work."
+  },
   "8b9923bb1590650217c32977350aa94792c07010a44ca43e9c406e60c5182c31": {
     "confidence": 0.85,
     "contradictions": [
@@ -67085,6 +67152,39 @@
       "Whether #518 fix will be merged first and how it interacts with this issue"
     ],
     "why": "Root cause is clearly identified in the comments: the SignaturePolicy::DowngradeToolCallsToText fallback emits call-shaped text that the model imitates, causing inert sessions. The owner has acknowledged the failure path and requested a design decision between forced native-call retry and surfaced provider error. No open PR exists, but the maintainer's explicit need for a decision and the presence of a related issue (#518) make this a WAIT_MAINTAINER situation."
+  },
+  "967d8eeefa7f42c33934ab6776626307350b6d9608b5fd88dc939108080bd7f0": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no /watsonx model resolution exists, while open PR #41470 titled 'resolve watsonx model_id so virtual-key model scope is enforced' appears to address exactly that path"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_utils.py: add /watsonx model_id candidate extraction in get_model_from_request/_extract_model_candidates_from_request",
+      "litellm/proxy/auth/user_api_key_auth.py: existing can_key_call_model enforcement then applies unchanged"
+    ],
+    "risks": [
+      "PR #41470 may already implement the same fix, making a new PR redundant",
+      "Broadening model extraction could affect other pass-through routes if the /watsonx branch is not narrowly scoped",
+      "No test files in the existing PR means regression coverage may still be missing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that posts a Watsonx-shaped body {\"model_id\": \"ibm/granite-3-8b-instruct\", ...} to /watsonx/... with a virtual key scoped to models=[\"cheap-model\"] and asserts 403",
+      "Control test: same out-of-scope model on a covered route is denied 403, and an in-scope model_id is allowed",
+      "Run targeted proxy auth unit tests and static checks for the touched modules"
+    ],
+    "unknowns": [
+      "Whether PR #41470 fully and correctly fixes the issue or leaves gaps (e.g., missing regression tests)",
+      "Whether maintainers consider the issue already covered by #41470"
+    ],
+    "why": "The issue gives a clear root cause (Watsonx pass-through body key model_id is never read by get_model_from_request, so can_key_call_model is skipped) and a concrete fix location, but the supplied duplicate assessment shows an open PR #41470 that directly references this issue, overlaps the same code path (litellm/proxy/auth/auth_utils.py), and matches the distinctive terms model_id and virtual_key. That unresolved coverage question determines whether independent code work is actionable, so the evidence is materially incomplete."
   },
   "967f118ac58cd696a5b5385d141ce15de766b77a24b8704c59d4c2ce98d12f1a": {
     "confidence": 0.7,
