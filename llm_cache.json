@@ -1799,6 +1799,30 @@
     ],
     "why": "Issue provides a self-contained, dependency-free reproduction of a ring-backend collective deadlock in mlx.distributed.all_sum/average_gradients, with measured ~3-4% per-collective failure rate, ruled-out variables (tree shape, chunking, skew, pre-barrier), and independent py-spy stack traces from a second reporter pinning both ranks inside all_sum. This is a concrete distributed-training invariant/algorithmic bug with a clear reference-vs-implementation validation path."
   },
+  "05086b538f559738bbc1ba029a26ef1c8b4f4d4cede741ca8f18f9f4061b1f9a": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [],
+    "risks": [
+      "Attempting a code fix would likely be misdirected since the rejection is server-side and may be resolved by the provider without any repository change.",
+      "Duplicate reports (#49579, #49533, #49438) suggest this is already tracked as a service incident."
+    ],
+    "root_cause_clarity": "low",
+    "score": 2,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "No repository-level reproduction is possible: the error originates from a remote Console provider entitlement check, not from local code paths."
+    ],
+    "unknowns": [
+      "Whether the Console provider entitlement check is implemented in this repository at all, or entirely server-side."
+    ],
+    "why": "The issue describes a server-side rejection of the free tier ('OpenCode's free tier can only be used from within OpenCode') from the built-in Console provider. The stack trace points into bundled app.asar chunks (postToApi23), not repository source, and the failure is a remote entitlement/authentication rejection rather than a reproducible code defect in this repo. No root-cause signal in code, no concrete fix target, and the report itself notes duplicate mass-regression reports (#49579, #49533, #49438), indicating this is a service-side incident rather than an actionable code contribution."
+  },
   "050b8940d1d5024fcdf2906032e6a02ac5d0527389b39369f452b81b84e44e7b": {
     "confidence": 0.9,
     "contradictions": [],
@@ -39681,6 +39705,41 @@
     ],
     "why": "Issue provides a concrete, code-anchored root cause: `_watch_backend_health_sweeps` in src/kiro_crew/apps/backend.py treats an exited Popen as terminal, demoting the record and scrubbing MCP without any respawn path. Reproduction steps and log output are supplied, and a maintainer-adjacent comment confirms the analysis against main. The fix is a bounded supervisor behavior with a clear validation path (kill backend, observe respawn, verify /health and MCP promotion)."
   },
+  "59f6c9a08a512b2ca933f5aa0c91707544d3ed319aa8f8c62064c45cecf5b4b5": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue claims no /watsonx model resolution exists, while open PR #41470 is titled as fixing exactly that resolution in auth_utils.py"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_utils.py: add model_id as a model candidate for /watsonx routes in get_model_from_request/_extract_model_candidates_from_request",
+      "litellm/proxy/pass_through_endpoints/llm_passthrough_endpoints.py: confirm watsonx_proxy_route relies on the resolved model for allowlist enforcement"
+    ],
+    "risks": [
+      "PR #41470 may already implement the same fix, making a second implementation redundant",
+      "Broadening model extraction to model_id could affect other routes if not scoped to /watsonx",
+      "No test files in the existing PR means regression coverage may still be missing"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that a virtual key with models=[\"cheap-model\"] is denied 403 on POST /watsonx/ml/v1/text/generation with body {\"model_id\": \"ibm/granite-3-8b-instruct\", ...}",
+      "Unit-test get_model_from_request directly with the native Watsonx body shape and assert it returns the model_id value",
+      "Control test: same out-of-list model on a covered route still returns 403"
+    ],
+    "unknowns": [
+      "Whether PR #41470 is a complete, mergeable fix or an incomplete stub",
+      "Whether maintainers consider the issue already covered by PR #41470",
+      "Whether the base_sha_changed and duplicate_changed pre-check failures affect the candidate's actionability"
+    ],
+    "why": "The issue gives a clear root cause (Watsonx pass-through body key model_id is never read by get_model_from_request, so can_key_call_model is skipped) and a concrete fix location, but the supplied evidence shows an open PR #41470 that directly references this issue, touches the same auth_utils.py path, and is titled as the same fix. That unresolved duplicate/coverage question determines whether independent code work is actionable, so it is a materially blocking unknown rather than normal review uncertainty."
+  },
   "59ff7620ea2ba4e2b2b7e46d9cca9ec5a87a700e050d8cd90bdeb8a36bc06e1d": {
     "confidence": 0.7,
     "contradictions": [
@@ -55765,6 +55824,36 @@
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a Wasm OCI image fetch failure for ai-statistics plugin, but the root cause is unclear: it may be a registry-side image format problem, a client-side parsing bug, or a configuration issue. The reproduction steps are placeholders, and no maintainer investigation or design confirmation is present. The repository requires assignment and AI disclosure, and the gate decision is HUMAN_REVIEW."
   },
+  "7c1fd61c2f9e7014948f56c96ce15c242f824b93171282394c66d7d860a9e302": {
+    "confidence": 0.7,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "langgraph_api/api/mcp/_handlers.py: stop asserting identical ToolAnnotations for every tool",
+      "Optionally add per-assistant annotations config in langgraph.json/MCP config"
+    ],
+    "risks": [
+      "Changing annotations may break clients relying on current values",
+      "Per-assistant config expands API surface and needs maintainer design approval"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Deploy two assistants (read-only and destructive) and call tools/list, asserting annotations differ or are omitted",
+      "Add a unit test around _get_tool() verifying annotations are not hardcoded identically"
+    ],
+    "unknowns": [
+      "No public reproduction or validation path supplied",
+      "Assignment required by repository policy",
+      "Maintainer preference among omit/neutral-default/per-assistant-config is unresolved"
+    ],
+    "why": "The issue identifies a concrete hardcoded annotations block in langgraph_api/api/mcp/_handlers.py, but the supplied evidence shows no public reproduction, no code-path plan, and an assignment-required policy; the actionable fix (omit field vs. neutral default vs. per-assistant config) is not determined by the evidence."
+  },
   "7c25fd8985de9c0ccd34b23f3137551c2d7f01dbee64cc0a86ea78dce32f10c3": {
     "confidence": 0.7,
     "contradictions": [],
@@ -65712,6 +65801,44 @@
     ],
     "why": "Issue provides a deterministic reproduction (gemini-2.5-flash-image with modalities:[\"image\"] and a text-only prompt yields finishReason NO_IMAGE with no content), exact curl commands for /v1/chat/completions, /v1/messages (stream and non-stream), and /v1/responses, and identifies the drop of candidates lacking content as the root cause. The fix surface is concrete: preserve the candidate, emit an empty assistant message, and map Gemini finishReason to OpenAI finish_reason, Anthropic stop_reason, and Responses incomplete_details. No open PR directly covers this issue; the only related PR (#40294) is merged and merely stopped the 500, leaving the missing reason unaddressed. The issue also correctly flags the overlapping MAX_TOKENS/no-content case (#36881, PRs #36870/#38301/#40252) as a dependency to build on rather than duplicate."
   },
+  "92e7c39ed01acd3637dd76ff1ddb4805d06ac3b53c14022d330e351f931eef77": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: _prune_and_reset must merge B@A into the frozen base weight and reinitialize A (Kaiming) / B (zeros) for a true ReLoRA restart, or the feature must be renamed and the docstring corrected to stop claiming paper/Axolotl conformance",
+      "src/soup_cli/utils/relora.py: replace strict `abs(t) > threshold` masking with deterministic exact-count index selection (e.g. stable topk) so prune_ratio<1 always retains the requested keep count and at least one entry per non-trivial factor",
+      "Optimizer-state pruning/reset must target optimizer moments rather than the learned adapter weights",
+      "Explicit support or loud compatibility rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A is partly a maintainer contract decision (implement real restarts vs rename feature); a partial fix doing half of the first option would be worse than either",
+      "Tie scenario is constructed; production frequency of Claim B is unmeasured, though a freshly-initialized all-zero lora_B is a natural tie worth checking",
+      "Quantized/distributed/streamed combinations may partially apply a restart without explicit rejection",
+      "Floating-point tolerance and seed must be fixed to distinguish numerical drift from the real discontinuity"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: with random non-zero LoRA factors, assert the effective linear map is preserved across the restart to numerical tolerance (merge-then-reset control MSE ~1e-13)",
+      "Regression test: constant-magnitude A and B with prune_ratio=0.9 must retain exactly the requested keep count (e.g. 4 of 32) and must not zero both factors",
+      "Assert gradient norms of lora_A and lora_B are non-zero after a restart with prune_ratio<1, proving the branch is not dead",
+      "Kernel-level test: ones(10) with prune_ratio=0.9 keeps 1 survivor; arange(1..10) keeps 1 survivor",
+      "Accumulation test: successive restarts accumulate low-rank updates in the base model"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers implementing true ReLoRA restarts or renaming the feature and correcting the docstring (owner states both are acceptable, with a preference for the former)",
+      "Whether the first relora_steps interval after initialization actually hits the all-zero lora_B tie in practice"
+    ],
+    "why": "Issue identifies two concrete, independently reproduced defects in ReLoRACallback._prune_and_reset: (A) adapter weights are magnitude-pruned without merging B@A into the base, so the effective linear map changes (MSE 142.12 vs 8.77e-13 for a merge-then-reset control) and the base weight is provably untouched (max|delta|=0); (B) strict `abs(t) > threshold` masking wipes constant-magnitude factors entirely (0 kept where 4 requested), zeroing both A and B and producing zero gradient norms, permanently killing the branch. Owner confirmed both halves with real peft LoRA runs and kernel-level checks. This is a concrete algorithm-conformance and numerical-correctness defect with a clear reference-vs-implementation validation path."
+  },
   "92edd48132e78d248045a73328a8cc9c03e76c5b7f36dff961ccd38cc575d5b1": {
     "confidence": 0.8,
     "contradictions": [],
@@ -75548,6 +75675,45 @@
       "Whether maintainers have a preferred behavior (forward vs raise) for drop_params on non-reasoning models"
     ],
     "why": "Issue describes a concrete user-visible bug with reproduction steps and code anchors, but the supplied evidence does not establish a confirmed root cause (root_cause_signal=false) and the open-PR assessment flags semantic overlap with PR #41222 that requires human comparison before any code work is actionable. The duplicate/coverage question is a materially blocking unknown."
+  },
+  "a93bbdbb65223f3cb69d243dce34257a0a6bbb0141d13aeb7e8f04825fadc3a5": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims the protocol layer blocks the feature, while triage and the independent collaborator show response-level _meta already exists and is live on this response"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/tools.ts: extend ToolConfirmationPayload/cancelMessage path for explicit denied outcome with reason",
+      "packages/core/src/core/coreToolScheduler.ts: thread rejection reason into model-visible functionResponse instead of bare 'User did not allow tool call'",
+      "packages/cli/src/acp-integration/session/permissionUtils.ts: read reason from ACP response _meta in resolvePermissionOutcome",
+      "packages/acp-bridge/src/bridgeClient.ts and bridgeTypes.ts: carry rejection reason in response _meta with graceful fallback",
+      "packages/cli/src/ui/opentui/dialogs-confirm.tsx and packages/vscode-ide-companion/src/services/acpConnection.ts: optional reason input on reject"
+    ],
+    "risks": [
+      "Protocol/extension key naming and whether to use SelectedPermissionOutcome._meta vs cancelled variant _meta needs maintainer design confirmation",
+      "Scope spans protocol, core, and two UIs; splitting into separate issues may be preferred",
+      "Changing Cancel semantics to distinguish explicit deny from Esc/abort/timeout could alter existing behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test asserting that a rejected tool call with a reason surfaces that reason in the model-visible functionResponse.response.error rather than the bare constant",
+      "Add a test for resolvePermissionOutcome mapping a response _meta rejection reason into the confirmation payload",
+      "Regression test that clients omitting the reason still fall back to the existing 'User did not allow tool call' message",
+      "Run targeted unit tests for packages/core, packages/cli, and packages/acp-bridge plus static checks"
+    ],
+    "unknowns": [
+      "Maintainer preference on _meta key naming and whether to split protocol/core/UI into separate issues"
+    ],
+    "why": "Issue requests reject-with-reason feedback to the model; triage and an independent collaborator verify the gap against source: cancelMessage plumbing exists (tools.ts:1062, coreToolScheduler.ts:4356-4360, 1982, 1996-2006) but no UI sets it, and ACP response _meta is already live on this exact response (bridgeClient.ts:578-593, bridgeTypes.ts:1093-1102, Session.ts:14275-14277). Concrete code anchors and a validation path are supplied, so the work is actionable; the remaining design choice (which _meta key / whether to split layers) is normal implementation uncertainty, not a blocker."
   },
   "a96aca75671a2168d87ca2566000f2cd05fb6d5d258293e52984f0c7e343eeca": {
     "confidence": 0.8,
@@ -97146,6 +97312,40 @@
     ],
     "why": "Issue provides a concrete, reproducible END_USER-vs-ACCOUNT asymmetry with SQL-level evidence, and the comment thread converges on a specific mechanism: FileAccessScope ContextVar grants are replayed from a frozen request-time snapshot at every node entry and are thread-local, so grants written in one graphon worker thread are invisible to the loader in another. This is a concrete, testable root cause with a clear validation path (scope-state logging at grant vs load sites, plus a regression test asserting #context_files# is populated for END_USER)."
   },
+  "d8e9f121324ca8e811f0b222d5f3cef48f58d08ff9186f102f8e6976c1714b7e": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Contributor comment says likely covered by PR #55671, while open_pr_assessment and duplicate status report no related open PR."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/warmup/kernel_warmup.py",
+      "vllm/distributed/device_communicators/shm_broadcast.py",
+      "flashinfer autotune cache write/broadcast path"
+    ],
+    "risks": [
+      "Fixing only vLLM-side warmup may not address flashinfer's per-rank cache write behavior.",
+      "AI disclosure policy conflict may block public submission.",
+      "Requires multi-GPU H100 environment to validate."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce multi-rank engine launch with a pre-populated rank-0-only autotune_config.json and confirm non-zero ranks miss the cache and block on the autotune all-reduce.",
+      "After fix, verify all ranks load the same config cache and engine launch completes without shm_broadcast timeout."
+    ],
+    "unknowns": [
+      "Whether PR #55671 actually fixes this rank-0-only cache deadlock or is a different autotune synchronization fix.",
+      "Whether the fix belongs in vLLM or upstream flashinfer."
+    ],
+    "why": "Issue describes a plausible rank-0-only autotune cache deadlock with logs and code anchors, but a contributor comment claims it is likely covered by PR #55671, and the supplied duplicate assessment reports no related PRs. This unresolved coverage contradiction determines whether independent code work is actionable."
+  },
   "d8fe1f2dee8fff039b5141099e4385475dd8b8715adec67c1149ef6b94b5a2f3": {
     "confidence": 0.8,
     "contradictions": [],
@@ -111142,6 +111342,39 @@
     ],
     "why": "The issue is a real user-facing bug with clear repro evidence, but the deterministic gate requires HUMAN_REVIEW and the maintainer bot explicitly states a product decision is needed on cross-channel delivery policy. Existing PRs are closed/unmerged and do not settle the design. A new PR would be premature without maintainer direction."
   },
+  "f66bec8086e5f3279b6ec2c1e59ceae70cecb92016c929dfdf9e4f3c1d946046": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "fastmcp/tools/base.py serialization of structured content (_serialize_to_jsonable / dump_python)",
+      "fastmcp/tools/base.py text content serialization (default_serializer / dump_json)",
+      "consistent handling of nan/inf between structured and text content and the published output schema"
+    ],
+    "risks": [
+      "Behavior change may affect clients relying on current null coercion",
+      "Choosing between preserving nan/inf vs erroring is a design decision that may need maintainer input",
+      "JSON spec does not support nan/inf literals, so any fix must pick a representation"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test using the issue MRE: tool returning float('nan') and a dict containing nan, assert current null/None behavior",
+      "After fix, assert nan/inf either survive in a documented form or the call fails with an error mentioning nan/inf",
+      "Regression test that structured content matches the tool's published output schema for scalar float returns",
+      "Run targeted unit tests for fastmcp/tools/base.py and static checks"
+    ],
+    "unknowns": [
+      "Maintainer preference between preserving nan/inf vs raising an explicit error",
+      "Whether the fix should be scoped to fastmcp/tools/base.py only or also affect client-side validation"
+    ],
+    "why": "Issue provides a concrete MRE, exact version (4.0.5, pydantic 2.13.5), observed vs expected behavior, and a specific root cause: pydantic's ser_json_inf_nan='null' default causes both _serialize_to_jsonable (dump_python mode='json') and default_serializer (dump_json) to drop nan/inf, producing null that mismatches the published output schema. Code anchors in fastmcp/tools/base.py are named. This is a real correctness bug with a clear validation path."
+  },
   "f67e8acb027ba558ba8acb00195a7fc52a9d8c9349ae67f29be8a12cdf75e5b6": {
     "confidence": 0.8,
     "contradictions": [
@@ -112891,6 +113124,46 @@
       "Exact provider supported tier list for OpenAI-compatible providers"
     ],
     "why": "Issue provides a clear root cause (clampReasoningEffort fallback includes 'max' and OpenAI-compatible path bypasses clamp), a concrete reproduction, and a preferred fix direction. Triage confirms the root cause and identifies an additional path (samplingParams early return) that must be covered. Multiple related PRs exist but none fully resolve the issue, so the contribution remains actionable."
+  },
+  "f9a38a2e26aa79bccc98bac0d9ce57c439a617ed5f252b4cd06163fceb6b2200": {
+    "confidence": 0.82,
+    "contradictions": [
+      "Original issue title/body claims declared and general-purpose subagents never inherit MCP tools; maintainer and reporter both retract this for the programmatic path and for general-purpose, narrowing the defect to the workspace tools.json + non-empty allowlist case",
+      "Issue body claims the allowlist cannot restrict the child; maintainer rejects this (strict filtering applies post-registration) and reporter concurs"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "HarnessAgentBuilderSupport: resolve effective parent ToolsConfig (override or workspace tools.json) before subagent factories are built and thread it into buildGeneralPurposeFactory/buildDeclaredFactory",
+      "childToolsConfig: empty allowlist becomes a non-null opt-out config; non-empty allowlist copies only parent MCP servers named in the allowlist",
+      "WARN on allowlist entries silently dropped while constructing the strict child config",
+      "Changelog/javadoc migration note for the intentional breaking change in declared-subagent MCP inheritance"
+    ],
+    "risks": [
+      "Empty-allowlist opt-out is a breaking behavior change for declared subagents that currently inherit parent MCP servers; needs changelog, WARN and javadoc migration note",
+      "MCP client/connection reuse is deliberately deferred to a follow-up PR with an explicit lifecycle contract (child close vs parent close, background child outliving parent)",
+      "Resolving tools.json once per entry point must not double-load or diverge from HarnessAgent.java:2763-2764 semantics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Harness subagent factory test: workspace tools.json + non-empty allowlist -> child receives the named MCP tools and the child's own tools.json is not silently re-consumed against the strict override",
+      "Negative case: empty allowlist -> no MCP inheritance in the child",
+      "Unknown allowlist entry -> WARN emitted",
+      "Regression: programmatic toolsConfig(...) MCP path still delivers allowlisted MCP tools to declared children"
+    ],
+    "unknowns": [
+      "Whether maintainers want a deprecation window for the empty-allowlist opt-out change (called out as an open decision in Spec v2)",
+      "Exact lifecycle contract for the deferred MCP connection-reuse follow-up PR"
+    ],
+    "why": "Maintainer and reporter converged on a concrete, code-anchored root cause: buildDeclaredFactory captures only b.toolsConfigOverride (HarnessAgentBuilderSupport.java:440), so when the parent's MCP servers come from workspace tools.json the strict child config built by childToolsConfig(null, allow) carries no mcpServers and also suppresses the child's own tools.json load. Spec v2 defines a localized fix (resolveEffectiveToolsConfig threaded through the four entry points, opt-in MCP inheritance, unknown-entry WARN) plus a regression test plan; the reporter's /revise items were applied and the retracted claims are explicitly out of scope."
   },
   "f9a49e2dace3f0b64e05377ff0015e010e2a0a1667c74cd1b1fcef16ead36edc": {
     "confidence": 0.8,
