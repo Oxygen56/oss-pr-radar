@@ -26441,6 +26441,39 @@
     ],
     "why": "Issue describes a concrete TypeError from missing positional args in ep_scatter_from_psum, but the supplied evidence shows an open PR #39399 that directly references this issue with COVERAGE relation and overlapping code path, plus PR #37211 with a test file. Duplicate/merged-fix coverage is unresolved (duplicateStatus=human_review_required), which materially determines whether independent code work is actionable."
   },
+  "3c01d67d5b530a8832c0297a27738540cd2260b1fe2faea6152769d8345cc21c": {
+    "confidence": 0.7,
+    "contradictions": [
+      "open_pr_assessment marks PR #41470 as direct code overlap with root_cause_coverage=false and no tests, while duplicateStatus is human_review_required rather than clearly covered or clearly independent"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_utils.py: add model_id candidate for /watsonx routes in get_model_from_request/_extract_model_candidates_from_request",
+      "regression test asserting can_key_call_model is invoked for Watsonx pass-through bodies"
+    ],
+    "risks": [
+      "Overlapping open PR #41470 may already implement the same fix, making a new PR redundant",
+      "Broadening model resolution could affect other pass-through routes if the /watsonx prefix match is too loose"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Unit test: get_model_from_request with body {\"model_id\": \"ibm/granite-3-8b-instruct\"} on /watsonx route returns the model",
+      "Integration test: virtual key with models=[\"cheap-model\"] POSTing /watsonx/ml/v1/text/generation with out-of-scope model_id is denied 403",
+      "Control: same key on /v1/chat/completions with out-of-scope model is denied 403"
+    ],
+    "unknowns": [
+      "Whether PR #41470's 10-line change already resolves the issue or is incomplete/incorrect",
+      "Whether maintainers consider the issue already covered by the open PR"
+    ],
+    "why": "Issue provides a clear root cause and concrete fix location, but an open PR #41470 already directly covers the same code path (auth_utils.py) with the same distinctive terms (model_id, virtual_key), and the duplicate status is human_review_required. Whether independent implementation space remains is unresolved, which materially determines actionability."
+  },
   "3c16064f1a321d98c08fac36bc38b14f3c86b52412e72e438a68670d932e9b3f": {
     "confidence": 0.7,
     "contradictions": [
@@ -59332,6 +59365,39 @@
     ],
     "why": "The issue reports an SM110 illegal memory access in Qwen GDN prefill warmup, and a commenter proposes a concrete root cause (SM110 missing from FUSED_GDN_DECODE_ARCHS in CMakeLists.txt) plus a workaround (VLLM_GDN_DECODE_KERNEL=triton). However, a contributor comment states the SM110 fused GDN build gap is already addressed by merged PR #53835 and that the traceback still points at the prefill warmup path, so it is worth keeping that investigation separate. This leaves unresolved duplicate/merged-fix coverage: it is unclear whether the reported prefill warmup failure is already fixed on main or is a distinct remaining bug. That materially determines whether code work is actionable."
   },
+  "80e7cbbd8a822baa700658ac5b237101303a4eaa386f2e6d27ef32b4efab7773": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "funasr/models/paraformer/model.py (or the vanilla Paraformer inference caller) to pass us_alphas=timestamp_alphas and us_peaks=timestamp_pre_peak_index explicitly by keyword",
+      "Regression tests validating tensor identity/content and actual timestamp boundaries rather than only shapes or segment counts"
+    ],
+    "risks": [
+      "E-Paraformer has a superficially similar reversed call but PifPredictor returns cif_peak=None, so a naive shared fix could break that path",
+      "Changing argument order may alter existing timestamp outputs for users relying on current (incorrect) behavior",
+      "Need to confirm the fix in #3716 is not already merged or superseded"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's deterministic reproduction script comparing current vs expected argument order and assert the expected boundaries [[90, 510], [510, 1080]]",
+      "Add a regression test that asserts the caller passes alphas as us_alphas and peaks as us_peaks, and that timestamp boundaries match the helper's contract",
+      "Run targeted Paraformer inference tests with timestamps enabled, including VAD offset and per-sample padding trimming cases"
+    ],
+    "unknowns": [
+      "Whether PR #3716 is still open, merged, or superseded at review time",
+      "Whether maintainers have a preferred implementation for the E-Paraformer PifPredictor path"
+    ],
+    "why": "Issue identifies a concrete argument-order defect in Paraformer.inference(): cif_peak and alphas are passed to ts_prediction_lfr6_standard in reverse order relative to the helper contract, silently producing structurally valid but incorrect timestamps. A deterministic reproduction using the real cif and ts_prediction_lfr6_standard functions is provided, with observed vs expected outputs, and a fix with regression tests is referenced in #3716."
+  },
   "8104d17ad6dcf3d4728bc247484b41165889229c90b5dda85e4c2900807f8668": {
     "confidence": 0.85,
     "contradictions": [],
@@ -72086,6 +72152,38 @@
     ],
     "why": "The issue reports a user-visible 404 ('App trigger not found') after publishing a Webhook Trigger, but a contributor's end-to-end simulation on current main could not reproduce it and showed the publish path creates the AppTrigger row and prunes stale webhook rows. The reporter has not supplied the self-hosted version/commit, DB state, or logs, so the root cause is unresolved and the fix is not yet actionable."
   },
+  "9bf2408c540b530a246d4953860b6eed8b38a21e1ed8b52a9faf535ae3af42b0": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "build_context URI resolution: try literal permalink lookup before normalized fallback",
+      "build_context error handling: return a loud error instead of empty success when resolution fails",
+      "regression test covering explicit permalink with underscore/mixed case via memory:// URI"
+    ],
+    "risks": [
+      "Fix must preserve #304 behavior (under-normalized memory:// input matching hyphenated stored permalink)",
+      "Changing empty-success to an error is a user-visible behavior change that may need maintainer alignment",
+      "Project-name prefix difference between the two lookup paths may indicate a broader resolution inconsistency"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's bm tool write-note + build-context commands and confirm memory:// returns primary_count 0 while plain permalink returns 1",
+      "Add a unit test asserting generate_permalink round-trip mismatch for 's/2026/09/ses_AbCdEfGhIj' and that build_context resolves it",
+      "Run targeted build_context/read_note tests and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer literal-first fallback versus error-only, or both, as the accepted fix shape"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: build_context normalizes memory:// URIs through generate_permalink() before lookup, so explicitly-set permalinks that are not fixed points of that function silently miss and return zero results. Expected/actual outputs, ordered repro steps, and the exact normalization behavior are supplied. No open PR or issue covers this; the three merged PRs only share the build_context keyword and do not address permalink normalization."
+  },
   "9bfeaa2fd76107cf6231cc53b5b9bb733f969fd202d8403d561dd02a12c82c38": {
     "confidence": 0.6,
     "contradictions": [
@@ -73018,6 +73116,44 @@
       "How the ai_disclosure_conflict policy affects eligibility to submit a fix"
     ],
     "why": "The issue presents a concrete, algorithm-level batch-invariance failure in Triton fused-MoE experts (online FP8 per-tensor dynamic scaling and per-token-count Triton config selection) with a reproducer and a dense control, which is a valid llm_algorithm target. However, supplied evidence contains materially blocking unknowns: the issue body is truncated mid-reproducer (writer_suffix cut off), the duplicate/overlap status is 'semantic_overlap_requires_review' with PR #50505 sharing batch_invariant/fused_moe semantics but no direct code overlap, and the policy status is ai_disclosure_conflict with a hard-disabled public action. These unresolved coverage and disclosure facts determine whether code work is actionable."
+  },
+  "9dc7ede032766fe7c3f95d245cda432e75a1a5c9d75dbd552f6698de10f49b29": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims webhook not registered after publish, but contributor simulation on current main shows the full chain works and the described error state does not arise",
+      "candidate.actionability_evidence reports root_cause_signal=false while the candidate summary implies a clear fixable bug"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/trigger/webhook_service.py",
+      "api/services/workflow_service.py",
+      "app_triggers / workflow_webhook_triggers relationship handling"
+    ],
+    "risks": [
+      "Fixing a non-reproducible path on current main may introduce unnecessary changes",
+      "The reported behavior may be version-specific or deployment-specific (publish event handler not running)",
+      "Repository AI disclosure policy conflict may block automated public submission"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on the reporter's exact self-hosted version/commit with the minimal Webhook Trigger -> Gmail app",
+      "Inspect app_triggers and workflow_webhook_triggers rows at 404 time and compare node_id values",
+      "Add a regression test covering publish-time sync_webhook_relationships(remove_stale=True) and AppTrigger creation via app_published_workflow_was_updated"
+    ],
+    "unknowns": [
+      "Exact self-hosted version/commit where the bug occurs",
+      "Whether an app_triggers row exists and matches node_id at 404 time",
+      "Whether the publish event handler ran (API logs/traceback)",
+      "Whether undo/redo or node re-adding was involved"
+    ],
+    "why": "The issue reports a user-visible 404 after publishing a Webhook Trigger, but a contributor's end-to-end simulation on current main could not reproduce it and the error state (webhook row present, app_triggers row missing) did not arise through the described paths. The reporter has not supplied the self-hosted version/commit, DB row state, or logs, so the root cause is unresolved and the fix is not yet actionable."
   },
   "9dd9ccc66e75b6ec5cae8a9ca7bbfe1091cc2ec066304766df8c89b92f0463b4": {
     "confidence": 0.85,
@@ -77355,6 +77491,43 @@
       "Exact set of providers whose schema validators reject lookarounds"
     ],
     "why": "Issue provides a concrete, reproducible root cause: Resend MCP (Zod 4.4.3) exports JSON Schema `pattern` values with negative lookaheads that the target provider rejects, blocking all chat before streaming. Exact tool paths and a locally tested normalization approach are supplied, and the fix is a bounded schema-compatibility change at the MCP-to-model boundary."
+  },
+  "a858846c98981bf8497fca96538fa9558e9ac4fb2042ba2e49f59537e68a5a64": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal is false while issue comments identify a specific missing call path",
+      "open_pr_assessment reports semantic overlap requiring review but no direct code overlap or issue reference"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/utils.py get_available_models_for_user narrowing by Team-member allowed_models",
+      "litellm/proxy/auth/model_checks.py model-list resolution",
+      "litellm/proxy/auth/auth_checks.py reuse of _check_team_member_model_access semantics"
+    ],
+    "risks": [
+      "PR #41620 may already implement or conflict with the same auth_checks.py path",
+      "Model access-group, wildcard, sentinel, and alias semantics must match request-time authorization to avoid over- or under-filtering",
+      "Changing discovery behavior could break clients relying on broad model lists"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test that creates a Team with models=all-proxy-models, a Team member with allowed_models=[standard,power], and a virtual key, then asserts GET /v1/models returns only standard/power models",
+      "Regression test asserting no member-level restriction preserves current broad listing",
+      "Test that GET /v1/models/{model_id} and /models endpoints apply the same narrowing"
+    ],
+    "unknowns": [
+      "Whether PR #41620 already fixes the Team-member allowed_models discovery gap",
+      "Whether maintainers consider the omission intentional or want discovery narrowed"
+    ],
+    "why": "Issue describes a concrete discovery-vs-inference mismatch for Team-member allowed_models, with code anchors in get_available_models_for_user, model_checks, and _check_team_member_model_access. However, the supplied evidence shows an open PR #41620 with semantic overlap on allowed_models and overlapping path litellm/proxy/auth/auth_checks.py, and the duplicate status is semantic_overlap_requires_review. Whether that PR already covers the root cause is unresolved, which materially determines whether new code work is actionable."
   },
   "a865ce32fd40a377c106a65022bb258971fe41641c9e9563c2c3191d8df752bb": {
     "confidence": 0.6,
@@ -93292,6 +93465,43 @@
     ],
     "why": "Issue provides a clear user-visible bug with reproduction steps and expected/actual behavior. Maintainer triage (static analysis) identifies a plausible root cause: OpenRouter is missing from the thinking-disable branch in the OpenAI-compatible pipeline, causing the classifier to fail closed. The fix direction is concrete: add an OpenRouter-aware branch emitting `reasoning: { enabled: false }` when baseUrl is openrouter.ai. This is actionable and testable."
   },
+  "caf63d0551d7cfaac5e811e4b1a141145af7c3d8807b640911fdb68f26fea612": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims the protocol layer blocks the feature, but triage and independent verification show the response-level _meta extension point is already live on this exact response"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/tools.ts: thread a user-supplied rejection reason into ToolConfirmationPayload.cancelMessage",
+      "packages/core/src/core/coreToolScheduler.ts: surface the reason as model-visible user feedback instead of the bare 'User did not allow tool call' constant",
+      "packages/cli/src/acp-integration/session/permissionUtils.ts: read a rejection reason from the ACP response _meta in resolvePermissionOutcome",
+      "packages/acp-bridge/src/bridgeClient.ts / bridgeTypes.ts: carry the reason on the existing _meta channel with graceful fallback",
+      "packages/cli/src/ui/opentui/dialogs-confirm.tsx and packages/vscode-ide-companion/src/services/acpConnection.ts: optional reason input on the permission prompt"
+    ],
+    "risks": [
+      "One design decision (protocol extension shape: response-level _meta vs. Qwen-specific extension) needs maintainer sign-off before implementation",
+      "Scope spans protocol/core/UI layers and may need splitting into separate issues",
+      "Changing the model-visible rejection signal could alter agent retry behavior in existing flows"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test asserting that a rejected tool call with a reason reaches the model as functionResponse.response.error containing that reason, not the bare constant",
+      "Add a test for resolvePermissionOutcome mapping a _meta rejection reason into the confirmation payload",
+      "Regression test that clients omitting the _meta reason still fall back to the existing bare-refusal behavior",
+      "Run targeted unit tests for packages/core, packages/cli, and packages/acp-bridge plus static checks"
+    ],
+    "unknowns": [
+      "Maintainer preference on the protocol extension shape and whether to split the three layers into separate issues"
+    ],
+    "why": "Issue requests reject-with-reason feedback to the model. Triage and an independent collaborator verification both anchor the gap in concrete code: ToolConfirmationPayload.cancelMessage exists (tools.ts:1062) but no UI sets it; coreToolScheduler.ts:4356-4360 falls back to 'User did not allow tool call'; resolvePermissionOutcome (permissionUtils.ts:230-235) collapses the ACP response to an enum with no reason. The ACP response-level _meta extension point is already live on this exact response (bridgeClient.ts:578-593, bridgeTypes.ts:1093-1102), so no upstream protocol change is required. This is a concrete, actionable code change with a clear validation path."
+  },
   "cb1abe1806220c0f2ad4f551d7a4ed9f9ff55af363b9fc43277e9ad9d2a97019": {
     "confidence": 0.8,
     "contradictions": [],
@@ -109016,6 +109226,41 @@
       "Whether the zero reasoning_tokens is generated by LiteLLM or reported by upstream"
     ],
     "why": "The issue documents a clear user-visible streaming/non-streaming discrepancy for reasoning_content on the alibabacloud DeepSeek alias, but it explicitly states the direct upstream provider response was not tested. The root cause is therefore unresolved: the loss could be in the upstream adapter, the provider's SSE field shape, or LiteLLM's stream normalizer. No code path or failing test is identified, and the candidate's own actionability evidence has root_cause_signal=false. This is a materially blocking unknown for an actionable code contribution."
+  },
+  "eb4151d2b59ac8eedb80497c7f28e59697ff73b8ccc14de51eb99bafb7a7346f": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue asks maintainers to choose between matching Python behavior and adopting revised normalization, while candidate metadata marks design_confirmation=false and needs_confirmation=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/tool.py",
+      "rust/sglang-server request rendering / Dynamo request types",
+      "shared tool-schema normalization contract"
+    ],
+    "risks": [
+      "Fixing Rust to match current Python behavior may preserve defaults that #29114/#29327 intend to remove",
+      "Key-ordering differences mean equal token counts do not prove equal token sequences",
+      "Scope may expand into a cross-frontend contract change rather than a minimal bug fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Differential regression comparing full rendered prompt strings and input token ID sequences between Python and Rust for identical POST /v1/chat/completions payloads",
+      "Cover omitted/null function.strict, tool.defer_loading, function.description, function.parameters, missing type/properties, named tool_choice with multiple tools, multi-part text content, continue_final_message, and reasoning_effort=none"
+    ],
+    "unknowns": [
+      "Which normalization contract maintainers want (current Python vs post-#29114/#29327 behavior)",
+      "Whether the referenced Python-side PRs will land and change the target behavior",
+      "Whether the offline rendering cases can be shared/reused for regression coverage"
+    ],
+    "why": "The issue documents a real Python-vs-Rust prompt rendering divergence with concrete token-count evidence, but the actionable target is unresolved: the reporter explicitly asks whether Rust should match current Python behavior or both should adopt revised normalization, and a commenter notes overlapping Python-side PRs (#29114, #29327, #39616) that intend to change the very defaults in question. Without an agreed preprocessing contract, a fix could be invalidated or conflict with in-flight work."
   },
   "eb43029ad987aae1a88b2daceb0f8a672bce9dd59e20ee3a3bd0a3d7702a4590": {
     "confidence": 0.85,
