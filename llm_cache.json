@@ -3026,6 +3026,44 @@
     ],
     "why": "Issue clearly identifies a missing fallback wrapper for anthropic_messages streaming, with a concrete root cause and reproduction. Existing PR #29205 is weak (no tests, stale), and a materially better PR is plausible by following the in-tree precedent of _aresponses_streaming_iterator."
   },
+  "071983aa2769fb0d55eb2f292b9501ec8a9c9978897fd71a6c2e7cac2722776f": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body frames root cause as update-only sync_api_key() and missing config.json fallback; comment shows clear_stale_api_key_cache() actively deletes the key file, which the body's workaround and suggested fixes do not address"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "integrations/claude-code-plugin/core/memory_core.py api_key() fallback to ~/.mem0/config.json",
+      "cli/python/src/mem0_cli/plugin_sync.py sync_api_key() bootstrap behavior",
+      "memory_core.py clear_stale_api_key_cache() deletion semantics",
+      "cli/python/src/mem0_cli/config.py surfacing sync_api_key() return value"
+    ],
+    "risks": [
+      "Fix scope ambiguous between plugin-side fallback and CLI-side bootstrap; comment suggests both plus cache-deletion change",
+      "PR #7282 semantic overlap may already cover part of the root cause",
+      "Repo ai_disclosure_conflict policy unresolved",
+      "Writing key into ~/.claude/settings.json risks committing live credentials for users who version-control that directory"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on clean install: no MEM0_API_KEY env, no settings.json entry, no shell rc export; run mem0 login; assert /mem0:status reports mem0_authentication PASS",
+      "Regression: after bridging key, trigger SessionStart in a different project and assert data_dir()/api-key is not deleted when ~/.mem0/config.json::platform.api_key exists",
+      "Unit test sync_api_key() returns non-empty list on first-time setup"
+    ],
+    "unknowns": [
+      "Whether PR #7282 or #7279 already fixes the plugin key resolution path",
+      "Whether maintainers prefer plugin-side fallback vs CLI-side bootstrap vs cache-deletion change",
+      "How the ai_disclosure_conflict policy affects contribution eligibility"
+    ],
+    "why": "Issue supplies a concrete reproduction and code anchors, but the follow-up comment materially changes the root cause: the plugin's api_key() never reads ~/.mem0/config.json AND clear_stale_api_key_cache() actively deletes data_dir()/api-key at SessionStart, so the proposed fixes (fallback read, bootstrap write) may be insufficient or wrong. The open PR #7282 is flagged as semantic overlap requiring review, and the repo has an unresolved ai_disclosure_conflict policy. These are materially blocking unknowns for choosing an actionable fix."
+  },
   "071cc772b86525081c574dcfcbf9b29e5079373611d8519630e5c4705b121ab6": {
     "confidence": 0.85,
     "contradictions": [],
@@ -22024,6 +22062,37 @@
     ],
     "why": "The issue describes a clear ACP contract violation where provider unreachability is reported as a successful end_turn, but the root cause is not pinpointed and the fix requires design decisions on the ACP protocol (new stopReason vs structured error). The deterministic gate is HUMAN_REVIEW, and there is a potential duplicate issue #10751 that needs triage. No maintainer approval or design confirmation exists, so work should wait for maintainer guidance."
   },
+  "332777f45663d9764ca3cb3cf9e3468d641e671706195ac437604f91dc3fcff6": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue asks maintainers to choose between matching current Python behavior and adopting revised normalization, while candidate metadata marks needs_confirmation/design_confirmation as false."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/tool.py",
+      "rust/sglang-server request rendering/normalization path"
+    ],
+    "risks": [
+      "Fixing Rust to match current Python behavior may conflict with #29114/#29327/#39616 which intend to change Python defaults.",
+      "Multiple divergences (strict, defer_loading, description null, parameters null, tool_choice, multi-part content, continue_final_message, reasoning_effort) may require a broader contract change than a minimal fix."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a differential regression test that renders the same POST /v1/chat/completions request through Python and Rust and compares full rendered prompt strings and input token ID sequences, not just token counts."
+    ],
+    "unknowns": [
+      "Which behavior is the agreed target: current Python output or post-#29114/#29327/#39616 normalization.",
+      "Whether the overlapping Python-side PRs will land and change the reference behavior before a Rust fix."
+    ],
+    "why": "The issue documents a real Python-vs-Rust prompt rendering divergence with concrete token-count evidence, but the actionable target is unresolved: the reporter explicitly asks whether Rust should match current Python behavior or both should adopt revised normalization, and a commenter identifies overlapping Python-side PRs (#29114, #29327, #39616) that intend to change the very defaults in question. Without a settled target contract, a fix could be invalidated or conflict with in-flight work."
+  },
   "336bfc2d18e1d7c713e7f84ea280c6777a5b4a677370b89b8a29cb2d05beae4e": {
     "confidence": 0.8,
     "contradictions": [
@@ -24206,6 +24275,38 @@
       "Whether #11761 or another open PR already resolves this specific layout-loop path"
     ],
     "why": "The issue describes a plausible commit-phase layout feedback loop in VirtualizedList, and the reporter supplies a deterministic unique-key regression that still fails after the duplicate-ID fix (#11743) and after the merged Ink-level mitigation (#11565). However, the supplied triage evidence explicitly identifies this as very likely the same defect as #11500, whose confirmed driver is duplicate history-item keys, and the reporter concedes the fixture is not a replay of the production notification/history pipeline. The open draft PR #11761 overlaps the same code paths and semantics but is unmerged and not linked to this issue, so duplicate/merged-fix coverage is unresolved."
+  },
+  "3809a47cdb2f64664f3488614f8d216ae003666bf06772262b7bcee692cbaae6": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims webhook returns 404 immediately after publish, but contributor reproduction on current main shows the full publish/sync/resolve chain works and the described error state does not arise."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/trigger/webhook_service.py",
+      "api/services/workflow_service.py"
+    ],
+    "risks": [
+      "Fixing a non-reproducible path could introduce regressions in webhook trigger registration.",
+      "The reported behavior may be version-specific or deployment-specific rather than a current-main bug."
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on the reporter's exact self-hosted version/commit with a minimal Webhook Trigger workflow, then inspect app_triggers and workflow_webhook_triggers rows after publish and POST to the generated URL."
+    ],
+    "unknowns": [
+      "Exact self-hosted version/commit used by the reporter.",
+      "Whether an app_triggers row exists for the app when the 404 occurs and whether its node_id matches the workflow_webhook_triggers row.",
+      "Whether undo/redo or node re-adding was involved before publishing."
+    ],
+    "why": "The issue reports a user-visible 404 after publishing a Webhook Trigger, but the only substantive comment from a contributor could not reproduce the failure on current main and showed the publish/sync path works end-to-end. The report lacks the self-hosted version/commit and DB state needed to confirm the root cause, so the evidence is contradictory and does not establish an actionable code defect."
   },
   "380e04e4fe479cbd013d95c86039d8cfeb6260267a4b11bbc8a773bce9554f6c": {
     "confidence": 0.8,
@@ -33834,6 +33935,43 @@
       "Whether maintainers require SM120 hardware validation before accepting the fix"
     ],
     "why": "Issue #430 provides a concrete SM120 kernel race root cause (missing tensormap drain in sm120_fp8_fp4_gemm_1d1d.cuh group-switch) with a validated fix and numerical regression path, but the supplied evidence shows an open PR #431 that directly references this issue and ports the same #343 drain to the same SM120 kernel, plus a potential duplicate issue #365. Coverage by an existing open PR is a materially blocking unknown for independent implementation space."
+  },
+  "4da31d77f23bf1a885a94b0c89d29e807bc9cad309591998d0c46a016e5fee62": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims the protocol layer blocks the feature, while triage and the collaborator comment show RequestPermissionResponse already carries an optional _meta extension point"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/tools.ts: wire a user-supplied rejection reason into ToolConfirmationPayload.cancelMessage",
+      "packages/core/src/core/coreToolScheduler.ts: surface the reason to the model instead of the bare fallback constant",
+      "packages/cli/src/ui/opentui/dialogs-confirm.tsx: optional reason input on the permission dialog",
+      "packages/vscode-ide-companion/src/services/acpConnection.ts: carry the reason through the permission response",
+      "packages/acp-bridge/src/bridgeClient.ts / bridgeTypes.ts: extend the existing _meta permission channel for the rejection reason"
+    ],
+    "risks": [
+      "Protocol/extension design choice (response-level _meta vs selected-variant _meta) may need maintainer preference",
+      "Scope spans protocol, core, and two UIs; splitting into separate issues may be preferred",
+      "Existing cancelMessage producers are machine-generated, so conflating explicit deny with Esc/abort/timeout must be handled"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test asserting that a rejection with a reason reaches the model as user feedback rather than 'User did not allow tool call'",
+      "Unit test resolvePermissionOutcome / permissionUtils.ts mapping a reason-bearing response into cancelMessage",
+      "Regression test that a bare deny still produces the existing fallback message and that clients ignoring _meta degrade gracefully"
+    ],
+    "unknowns": [
+      "Which _meta placement (response-level vs selected/cancelled variant) maintainers will accept",
+      "Whether maintainers want the three layers split into separate issues"
+    ],
+    "why": "Issue requests reject-with-reason feedback to the model; triage and an independent collaborator verify the exact gap: cancelMessage exists in ToolConfirmationPayload (tools.ts:1062) but no UI sets it, and coreToolScheduler.ts:4356-4360 falls back to the bare 'User did not allow tool call'. Concrete code anchors and a feasible _meta extension path are supplied, so the work is actionable."
   },
   "4db24b0a58c535a875ba487d3f0bde1cef65c69dcfbfc7c3a73b3d8c9f98b857": {
     "confidence": 0.85,
@@ -61823,6 +61961,42 @@
     ],
     "why": "Issue reports a high-impact performance bug with clear repro signals, but the deterministic gate is HUMAN_REVIEW and the open PR #21068 may partially address it. The root cause is not fully isolated, and maintainer confirmation is needed before starting work."
   },
+  "884d4b44d31d2ff6764b6b2cc519a1d95f7f8cfeadb333a6847a4cd3c8e00274": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue body provides code anchors and a repro, but actionability_evidence reports root_cause_signal=false",
+      "Open-PR assessment reports semantic overlap with PR #41515 while direct_code_overlap=false and root_cause_coverage=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/proxy/proxy_server.py audio_speech failure path",
+      "spend-log failure-row writing for /v1/audio/speech"
+    ],
+    "risks": [
+      "PR #41515 may already cover the same spend-logging path, making a new fix duplicative",
+      "Root cause is not yet established, so the fix location may be wrong",
+      "Changing failure-row behavior could affect other routes' spend logging"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the issue's curl commands against a proxy with Postgres spend logging and confirm no failure row appears",
+      "Add a regression test asserting a status='failure' SpendLogs row with metadata.error_information for a failed /v1/audio/speech call",
+      "Run targeted proxy spend-logging unit tests"
+    ],
+    "unknowns": [
+      "Actual root cause of the missing failure row",
+      "Whether PR #41515 or another open PR already fixes this exact failure-row gap",
+      "Whether maintainers consider this a duplicate of #33026 or #37015"
+    ],
+    "why": "Issue reports a concrete, reproducible proxy bug: failed /v1/audio/speech calls write no LiteLLM_SpendLogs failure row while success rows and other routes' failure rows are written. The reporter supplies an executable curl repro, SQL verification, and code anchors (audio_speech, post_call_failure_hook, DBSpendUpdateWriter.update_database). However, the supplied evidence explicitly marks root_cause_signal=false and the reporter states they could not find the cause; the open-PR assessment also flags semantic overlap with PR #41515 (Amazon Transcribe pass-through, litellm_spendlogs, proxy_server.py) that requires human comparison. The missing root-cause determination and unresolved duplicate/overlap coverage are materially blocking unknowns for deciding whether new code work is actionable."
+  },
   "8884cb4d331a16d38ae9ce7c984924aad75c4c3aa65bd9780deac1178878074d": {
     "confidence": 0.8,
     "contradictions": [],
@@ -70533,6 +70707,33 @@
     ],
     "why": "Issue reports a production data-integrity bug in DatabaseSessionService where sessions can be created without user_state rows, causing permanent failures on append_event. It includes reproduction steps, ruled-out causes, and a clear expected behavior. The track is agent_ai_infra, and the issue is actionable with a concrete validation path (reproduce and fix atomicity)."
   },
+  "9b3de16e03a5f761ff0f877af4d74678683a46d0f930cd5ed8e6d50658e382ce": {
+    "confidence": 0.9,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No independent code change is actionable while PR #39926 covers the same fix; at most a regression test could be added, but that is not a distinct contribution."
+    ],
+    "risks": [
+      "Duplicating PR #39926's fix would create conflicting or redundant changes.",
+      "The issue's upstream-main reproduction is source-inspection only, not a full runtime run."
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "If pursuing independently, add a regression test that exercises the fused FlashKDA prefill path with return_intermediate_states=False and asserts a tensor (not tuple) reaches gated RMSNorm."
+    ],
+    "unknowns": [
+      "Whether PR #39926 will be merged or superseded, which determines if any independent work remains."
+    ],
+    "why": "Issue describes a concrete return-type mismatch in FlashKDA prefill, but the supplied evidence shows an open PR #39926 that directly references this issue, overlaps the same code identifiers (glm_5_3_flash, prefill), and already implements the minimal fix. The remaining gap is only a missing regression test, which is not enough to establish independent implementation space."
+  },
   "9b57a66f55cd29e1f381b8d09098cb15f8a87849ed9b4d5e8515c456fb23a736": {
     "confidence": 0.85,
     "contradictions": [],
@@ -78421,6 +78622,38 @@
       "Whether maintainers prefer a different approach than the proposed regex change"
     ],
     "why": "Issue provides a clear root cause (regex in _PARTIAL_PARAM_RE introduced by PR #45877) and a concrete reproduction with expected vs actual output. The proposed fix is specific and testable. Although a related PR #53228 exists, it is open and not merged, so the issue remains actionable."
+  },
+  "aeaf1a7c3d948cf2d8a162b7829995a0b76a5b33fcbac229f18d7b360d1f6726": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reported statusCode 200 with an error response body conflicts with the GatewayResponseError parsing path expecting an error object.",
+      "Commenters blame OTel instrumentation while others attribute it to Cloudflare/Render TCP resets, leaving the root cause unresolved."
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "No concrete repository module or behavior can be identified from the supplied evidence; a fix target is not established."
+    ],
+    "risks": [
+      "Fixing the wrong layer (e.g., gateway error parsing) while the actual trigger is OTel instrumentation or edge network resets.",
+      "Environment-specific failures may not be reproducible in CI, making validation unreliable."
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "No reliable reference-vs-implementation or regression test can be specified until a deterministic reproduction is isolated from OTel/instrumentation and network-layer causes."
+    ],
+    "unknowns": [
+      "Whether the failure is caused by repository code, OTel instrumentation, or external network/edge behavior.",
+      "A deterministic minimal reproduction that isolates the repository defect.",
+      "Which source module in vercel/ai should be changed."
+    ],
+    "why": "Issue is a support-style bug report with a traceback but no confirmed root cause in the repository. Commenters attribute the failure to OTel instrumentation, Cloudflare/Render IP-level resets, and intermittent gateway errors, which are external or environment-specific rather than a clear code defect in vercel/ai. The supplied evidence marks root_cause_signal=false and reproduction_or_validation_missing, and the code anchors point at node_modules/distributed artifacts rather than source modules with a concrete failing test."
   },
   "aec3914e518f72f930560b4e67a2899354e12aa4996efb8f96366f5c1019aea4": {
     "confidence": 0.8,
@@ -111521,6 +111754,37 @@
     ],
     "wait_reason": null,
     "why": "Issue identifies a concrete bug in media-strip recovery: isImageFormatError only matches specific patterns, so generic 400 'Invalid request.' bypasses recovery and permanently bricks sessions. Root cause is clear with code anchors and a suggested minimal fix (attempt strip on any 400 when media present). No competing PR or issue found."
+  },
+  "f40e869f1616b05a03875749aa9c7a4b35f533a4c393c9325241753c9d967fac": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no /watsonx model resolution, while open PR #41470 titled 'resolve watsonx model_id so virtual-key model scope is enforced' appears to address the same defect"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_utils.py: resolve body model_id for /watsonx routes in get_model_from_request/_extract_model_candidates_from_request",
+      "litellm/proxy/auth/user_api_key_auth.py: allowlist enforcement then runs unchanged via can_key_call_model"
+    ],
+    "risks": [
+      "Existing open PR #41470 may already implement the same fix, making a new contribution redundant",
+      "Route-specific model_id extraction could affect other pass-through routes if not scoped to /watsonx"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that posts a Watsonx-shaped body with model_id outside the key's models[] scope to /watsonx/... and asserts 403",
+      "Add a control test that a covered route still denies out-of-list models and an in-scope model_id is allowed"
+    ],
+    "unknowns": [
+      "Whether PR #41470 fully and correctly covers the root cause or leaves independent implementation space",
+      "Whether maintainers consider the issue already covered by the open PR"
+    ],
+    "why": "The issue gives a clear root cause and a concrete fix path, but the supplied evidence shows an open PR (#41470) that directly references this issue and overlaps the same code path (auth_utils.py) with the same distinctive terms (model_id, virtual_key). The duplicate/coverage status is explicitly 'human_review_required', which is a materially blocking unknown: it is unresolved whether independent implementation space exists or whether the existing PR already covers the fix."
   },
   "f41fce619dd13be3f3fad732b73f52a5f7671a4c51f7fbf53f351c77f23f26d9": {
     "confidence": 0.8,
