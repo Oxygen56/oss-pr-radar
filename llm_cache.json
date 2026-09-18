@@ -12044,6 +12044,39 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly identifies a retry-accounting bug in StreamableHTTPClientTransport with a concrete root cause and repro. However, an open PR #2638 overlaps semantically and touches the same file, so a new PR risks duplication until the existing PR's scope is compared."
   },
+  "1bb30841d073503890b2c109df8e572913a4b45efb5eb54a21294d39ddc3cf81": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Candidate category is WAIT_MAINTAINER with gate HUMAN_REVIEW, but preTaskEvidence policy is needs_assignment and actionability evidence shows no maintainer approval or design confirmation"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "Responses stream event deserialization (make `created_at` optional or default it)",
+      "Streaming regression test covering a `response.created` payload without `created_at`"
+    ],
+    "risks": [
+      "Making `created_at` optional could mask genuinely malformed upstream events",
+      "Changing the event schema may affect downstream consumers relying on `created_at`"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a unit test that deserializes the exact `response.created` JSON from the issue (no `created_at`) and asserts it succeeds",
+      "Run the targeted package tests and static checks for the Responses stream decoder"
+    ],
+    "unknowns": [
+      "Which module/file owns the Responses stream event deserializer (no code surface identified)",
+      "Whether the historical merged `created_at` PRs already cover this decode path",
+      "Whether repository assignment is required before contribution"
+    ],
+    "why": "Issue reports a strict deserialization failure on the `response.created` event missing `created_at`, with a concrete payload and reproduction steps. However, the pre-task evidence marks assignment_required=true and no_code_surface=true, and the candidate's own actionability evidence has root_cause_signal=false and probe_ready=false. The three historical merged PRs only share the generic token `created_at` with no overlapping paths or direct code overlap, so duplicate/merged-fix coverage is unresolved. The missing code surface and unresolved duplicate coverage are materially blocking unknowns for whether code work is actionable."
+  },
   "1bb7b9dff3056da1417009a547d25c74a67b1f8d8d4726b6e16070ca6e54b2e9": {
     "confidence": 0.55,
     "contradictions": [
@@ -17297,6 +17330,36 @@
       "Whether the repository's AI disclosure policy permits the intended contribution workflow"
     ],
     "why": "The issue reports a concrete, reproducible greedy-equivalence failure (DFlash2 diverges at token 30, K=1, --enforce-eager, prefix cache off), and comments supply multiple candidate root causes (BF16 numerical path differences, GDN gate row misalignment #51812, kernel defects #54945/#54076/#55122). However, the supplied evidence does not resolve which mechanism applies to this BF16 TP=4 configuration, and the duplicate/overlap assessment is unresolved (PR #52487 semantic overlap, issue #56605 shared stack signature). The candidate's own preTaskEvidence flags policy_or_disclosure_uncertain (ai_disclosure_conflict) and duplicateStatus semantic_overlap_requires_review, which are materially blocking unknowns for actionable code work."
+  },
+  "2729c5a574e0b98c45eee28d07b9af3e2c33c36de952c1d233fe2d630ab28db3": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "SOPEngine state restoration logic to validate ordered step identity rather than only step count",
+      "SOPStepRunState/SOPRunState serialization to persist step identity for new states while tolerating legacy states without identities"
+    ],
+    "risks": [
+      "Backward-compatibility handling for legacy states without step identities could be implemented inconsistently",
+      "Fix may alter public constructor behavior for edited SOPs, requiring careful documentation alignment"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: persist run state for SOP ordered A,B, rebuild SOP as B,A, assert SOPEngine construction rejects or does not misassign stored state",
+      "Add backward-compatibility test: load a legacy stored state lacking step identities and assert it still loads",
+      "Run targeted SOPEngine unit tests and static checks on the affected package"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred identity scheme (e.g., step name vs. hash) for persisted step state"
+    ],
+    "why": "Issue provides a concrete root cause (SOPEngine restores SOPStepRunState by list index and only rejects runs when step count differs), an ordered reproduction (A,B -> B,A with same length), and expected behavior including backward compatibility for states lacking step identities. This is a well-scoped, testable bug in the agent runtime path. Open PR #2648 is directly related but has no root-cause coverage evidence and no maintainer recognition, so competition space remains."
   },
   "273e3333aef4f0d6181d99892022fde8c3d0cbeaeae7cad8135023a78e071063": {
     "confidence": 0.55,
@@ -26371,6 +26434,39 @@
       "No maintainer confirmation or assignment; but repository does not require assignment and issue is clear"
     ],
     "why": "Issue identifies a concrete bug: Step3p5ToolParser inherits supports_required_and_named=True, causing named/required tool_choice to bypass XML parsing and return raw XML as arguments. Root cause is clear and fix is minimal (set flag to False). No competing PR addresses this issue; existing PRs are unrelated or lack tests. Actionable and valuable."
+  },
+  "3bc05cbee9c9b0734a337cb67313fa0424df66caf1d8a6e43ec55dd1983bf1f1": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Candidate claims high actionability but actionability_evidence shows root_cause_signal=false, code_anchors=[], probe_ready=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "retry/backoff behavior in provider request path",
+      "error surfacing for upstream 503/unavailable endpoints"
+    ],
+    "risks": [
+      "Fixing retry cycles may mask underlying provider outage",
+      "Duplicate issue #49413 may already track the same 503 root cause"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with Union Alpha on v1.18.31 against a hard prompt and capture request/response logs",
+      "Add regression test simulating upstream 503 to verify bounded retry and surfaced error"
+    ],
+    "unknowns": [
+      "Whether #49413/#47610 already cover this failure and are being fixed",
+      "Actual root cause (provider outage vs client retry logic)",
+      "Which code path handles Union Alpha retries"
+    ],
+    "why": "Issue reports Union Alpha failing to produce full answers with retry cycles, but supplies no root-cause evidence, no code anchors, and no concrete reproduction beyond 'try something harder than hello'. The bot comment points to likely duplicates (#49413 same model/version 503, #47610 retry-cycle behavior), so duplicate/merged-fix coverage is unresolved and materially blocks actionability."
   },
   "3be3da1d9a3351ab84a48d2aa10bf11014e748987edde5a6dd7d39c81109868e": {
     "confidence": 0.8,
@@ -51843,6 +51939,39 @@
       "Whether maintainers have already started a fix or prefer a specific approach"
     ],
     "why": "The issue reports a server-side forwarding bug with strong reproduction evidence, but the root cause is not identified in the codebase and the fix path is unclear. The bot flags a possible duplicate (#41300), and there is no maintainer confirmation or design direction. The track is agent_ai_infra, not llm_algorithm, so algorithm evidence is not required, but the lack of a concrete code-level root cause and the duplicate flag make immediate action risky."
+  },
+  "6f56ac938918acaf1246d7c5f60af51249bdc67230e96f4455eeae06d01a09c1": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "docker-compose / bundled ParadeDB image pin upgrade to a pg_search version containing the upstream fix",
+      "migration or startup step to run ALTER EXTENSION pg_search UPDATE and REINDEX embeddings_search_idx",
+      "error surfacing for VECTORSTORE_WRITE_FAILED to distinguish index corruption from generic write failure"
+    ],
+    "risks": [
+      "Upgrading ParadeDB image may require data migration or extension compatibility checks for existing deployments",
+      "REINDEX on large embeddings_search_idx can be expensive and may need CONCURRENTLY handling",
+      "Root cause is in upstream ParadeDB, so the WeKnora-side fix is primarily version pinning plus recovery guidance rather than a code fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with bundled ParadeDB v0.22.2-pg17: ingest a large document, batch-delete files, run hybrid search / quick-answer agent, confirm item_pointer_is_valid(ctid) assertion",
+      "After upgrading image and running ALTER EXTENSION pg_search UPDATE + REINDEX, repeat the same batch-delete + hybrid search flow and confirm no assertion and successful document reprocessing",
+      "Add a regression test or CI check asserting the pinned ParadeDB image tag and pg_search extension version"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer image pin upgrade vs. runtime REINDEX automation vs. both",
+      "Whether existing deployments need a documented migration path for the extension upgrade"
+    ],
+    "why": "Issue reports a concrete, deterministic failure (BM25 index corruption causing VECTORSTORE_WRITE_FAILED and HTTP 500) with a clear reproduction path and a known upstream root cause (ParadeDB pg_search 0.22.2 stale CTID handling, fixed in ParadeDB #4338). A commenter independently reproduced the same assertion via batch deletion and validated a fix (upgrade to v0.25.9-pg17 + ALTER EXTENSION pg_search UPDATE + REINDEX). This is actionable code/config work in the bundled Docker deployment."
   },
   "6f58968e3d5dc65932cbcaf1b9f498d4883b257669c580c3f43971d86866f8d3": {
     "confidence": 0.85,
@@ -91996,6 +92125,42 @@
     ],
     "why": "Issue provides a concrete reproduction (n8n MCP client calling Dify Cloud MCP tools/call) and a specific error ('Can't operate on closed transaction inside context manager'). Supplied evidence identifies the root cause: api/controllers/mcp/mcp.py wraps request handling in sessionmaker().begin(), and downstream AppGenerateService.generate() performs an internal commit that closes the transaction prematurely, so later ORM operations fail. Code anchors and a fix shape (plain Session with explicit commit, mirroring merged PR #36392) are supplied. This is a concrete, testable bug in a key path, not a docs/CLI/plumbing issue."
   },
+  "c804842bcb5eb14bb40fce31389cf0491da4099dfe652c2b7fb082ffe32c5711": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: implement merge-then-reinitialize restart (merge B@A into base, reinit A Kaiming / B zeros, reset optimizer moments, re-warm LR) or rename feature and correct docstring",
+      "src/soup_cli/utils/relora.py: replace threshold comparison with exact-count deterministic topk/stable-order mask honoring prune_ratio and guaranteeing >=1 survivor per non-trivial factor",
+      "Add regression tests for effective-map preservation across restart and for tie handling / non-zero gradient after pruning"
+    ],
+    "risks": [
+      "Fix A is a maintainer contract decision (implement real restarts vs rename feature); a partial implementation could leave the feature in an inconsistent state",
+      "Quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume need explicit support or loud rejection to avoid partial restarts",
+      "Tie-case production frequency is unmeasured; the constructed case is deterministic but severity in real runs depends on whether freshly-initialized all-zero lora_B hits the first relora_steps interval",
+      "Numerical tolerance must be fixed with seed and hardware to distinguish real regressions from float noise"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: random non-zero LoRA factors, run _prune_and_reset, assert MSE(effective map before, after) <= numerical tolerance (control merge_and_unload ~1e-13)",
+      "Unit test: constant-magnitude A and B with prune_ratio=0.9, assert kept count equals requested keep count and both factors remain non-zero with non-zero gradient norm",
+      "Kernel-level test: ones(10) with prune_ratio=0.9 keeps exactly 1 entry; arange(1..10) keeps exactly 1 entry",
+      "Integration: successive restarts accumulate low-rank updates in base weight; optimizer-state reset targets moments, not adapter weights"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers full ReLoRA restart implementation or the smaller rename/docstring correction (owner states both are acceptable but prefers the former)",
+      "Whether the all-zero lora_B initialization actually triggers the tie bug on the first relora_steps interval in practice"
+    ],
+    "why": "Issue identifies two concrete, independently verified defects in ReLoRACallback._prune_and_reset: (A) adapter weights are pruned without merging B@A into the base weight, so the learned effective linear map is discarded (MSE 142.12 vs control 8.77e-13, base weight delta exactly 0), contradicting the module docstring's ReLoRA/Axolotl conformance claim; (B) strict `abs(t) > threshold` masking zeroes all entries on magnitude ties, and with both A and B zeroed the branch receives zero gradients (measured 0.0/0.0), permanently dead. Both are algorithm-level (PEFT restart semantics, pruning mask correctness) with deterministic reproductions and a clear reference-vs-implementation validation path."
+  },
   "c82fa2d14484be7dbb9706a972a537a21189940b80810b2ae2b69bf7724fb12a": {
     "confidence": 0.8,
     "contradictions": [
@@ -109891,6 +110056,41 @@
       "Whether any remaining root cause is distinct from #38346 and the related issues #32470/#39173/#34152/#38207"
     ],
     "why": "The issue's own reporter retracted the QSA kernel bounds root cause and re-characterized the crash as an overlap-scheduler race; a later commenter reports the crash persists with --disable-overlap-schedule and attributes it to merged PR #38346 (chunked-prefill last-chunk 1-3 tokens reading past token_k), which is already merged. Supplied evidence therefore contains contradictory root-cause claims and unresolved duplicate/merged-fix coverage, so it is not established that actionable code work remains."
+  },
+  "ebdb4c591e8afe2973e8646c32b454fd00d8bde0ac776ea712619b40b78910d8": {
+    "confidence": 0.7,
+    "contradictions": [
+      "open_pr_assessment lists PR #41808 as fixing /model/info allowed models for access-group grants while duplicate status remains semantic_overlap_requires_review"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/utils.py get_available_models_for_user narrowing by Team-member allowed_models",
+      "litellm/proxy/auth/model_checks.py model access-group expansion semantics",
+      "litellm/proxy/auth/auth_checks.py _check_team_member_model_access reuse"
+    ],
+    "risks": [
+      "PR #41808 may already fix the same discovery gap, making this duplicate work",
+      "Applying member allowed_models could unintentionally narrow key-level or Team-level scopes",
+      "Access-group/wildcard/sentinel/alias semantics must match request-time authorization exactly"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with Team models=all-proxy-models and member allowed_models=[standard,power]; assert GET /v1/models returns only expanded standard/power models",
+      "Regression: no member-level restriction preserves current full Team model list",
+      "Compare behavior of GET /v1/models/{model_id} and /model/info endpoints"
+    ],
+    "unknowns": [
+      "Whether PR #41808 or #41349 already resolves the Team-member allowed_models discovery gap",
+      "Maintainer confirmation that the omission is unintentional"
+    ],
+    "why": "Issue describes a concrete discovery-vs-inference mismatch for Team-member allowed_models, with code anchors and a reproduction path. However, supplied evidence shows an open PR (#41808) that fixes the same /v1/models allowed-models discovery gap for access-group grants, and duplicate status is 'semantic_overlap_requires_review' with best match PR #41349. Whether #41808 already covers this root cause is unresolved, which materially determines whether new code work is actionable."
   },
   "ebf2cc119eb75bf6a9e29743899881d0136b025eedc458773ddf076bb6e98718": {
     "confidence": 0.6,
