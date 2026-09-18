@@ -17080,6 +17080,44 @@
     ],
     "why": "Issue identifies two silent schema-generation bugs in pydantic-ai's AgentSpec with concrete root causes and downstream impact, but lacks a public minimal repro and maintainer confirmation; gate requires HUMAN_REVIEW."
   },
+  "27036bc6aadb1a95ffb95e030a9d18929a4aaf892924fd4fb2d3e5d3d333ac3d": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Issue claims the protocol layer is the blocker; triage and collaborator verification show _meta already exists on RequestPermissionResponse and is already used in the client->agent direction, so the protocol is not a hard blocker"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/tools.ts: wire cancelMessage from permission UI into ToolConfirmationPayload",
+      "packages/core/src/core/coreToolScheduler.ts: replace bare 'User did not allow tool call' fallback with user-supplied reason",
+      "packages/cli/src/acp-integration/session/permissionUtils.ts: read rejection reason from response _meta in resolvePermissionOutcome",
+      "packages/acp-bridge/src/bridgeTypes.ts / permission.ts: define qwen rejection-reason _meta key with graceful fallback",
+      "packages/cli/src/ui/opentui/dialogs-confirm.tsx and packages/vscode-ide-companion/src/services/acpConnection.ts: optional reason input on reject"
+    ],
+    "risks": [
+      "Protocol extension shape (response-level _meta vs outcome variant) may need maintainer design sign-off before implementation",
+      "Scope spans protocol/core/UI and may be split into separate issues, changing the actionable unit",
+      "Free-text reason fed to the model could be misused as prompt injection if not clearly delimited as user feedback"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: reject a tool call with a reason and assert the model-visible functionResponse.response.error contains the reason instead of the bare constant",
+      "Regression test: reject without a reason still yields the existing fallback message",
+      "Protocol test: client that ignores the _meta rejection-reason key still resolves to Cancel without error",
+      "Integration test: ACP permission response carrying qwen rejection reason in _meta propagates through resolvePermissionOutcome to coreToolScheduler"
+    ],
+    "unknowns": [
+      "Maintainer preference on protocol extension shape and whether to split protocol/core/UI into separate issues",
+      "Whether the free-text reason should be a closed enum extension or arbitrary user text"
+    ],
+    "why": "Issue is a concrete feature request with in-repo TODO anchor (tools.ts:1195-1198) and an existing end-to-end reason channel (ToolConfirmationPayload.cancelMessage -> coreToolScheduler fallback 'User did not allow tool call' -> functionResponse.response.error) that is never fed from a permission UI. Triage and an independent collaborator verification both confirm the gap and identify a small core change: thread the reason from resolvePermissionOutcome into cancelMessage at coreToolScheduler.ts:4358. Protocol extension is feasible via existing _meta plumbing (bridgeClient.ts:578-593 precedent), so no upstream ACP blocker. Remaining uncertainty is a maintainer design preference on protocol shape and scope split, which is normal review uncertainty, not a blocker."
+  },
   "27062147a1f5ce606d0b0bfa98a878325e92699790e1122d96e87c3711387262": {
     "confidence": 0.55,
     "contradictions": [
@@ -59803,6 +59841,39 @@
     ],
     "why": "Issue clearly identifies a real performance bug with a concrete root cause and reproduction, but maintainer has not confirmed design direction and the issue is labeled 'needs triage' with a request for minimal reproduction. The proposed fix is actionable but requires maintainer confirmation to avoid conflicting with intended query semantics."
   },
+  "82e43d952a1e6b4b2e6c1ae483c8109b43de57a878a5392cd755e18bf297d40f": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm MCP OAuth state cookie TTL handling (configurable via LITELLM_MCP_OAUTH_STATE_TTL_SECONDS)",
+      "ephemeral DCR client cache TTL decoupled from state cookie TTL",
+      "per-flow state cookie cleanup on OAuth error paths"
+    ],
+    "risks": [
+      "Root cause is a hypothesis; the cascade may instead stem from cookie name collisions or shared state across concurrent flows rather than TTL expiry",
+      "Increasing TTL/configurability changes security posture of OAuth state cookies and may need maintainer design sign-off",
+      "dcr_bridge short-circuit arm behavior with pre-registered client_id is not fully specified in the issue"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test simulating 3+ concurrent dcr_bridge OAuth flows with staggered completion beyond the current 600s TTL and assert all connectors authenticate",
+      "Unit test that _EPHEMERAL_DCR_CLIENT_CACHE TTL is independently configurable and does not expire mid-flow",
+      "Test that a failed OAuth flow clears its mcp_oauth_state_* cookie and does not corrupt subsequent flows"
+    ],
+    "unknowns": [
+      "Whether the failure is truly TTL expiry vs. cookie/state collision across simultaneous flows is unconfirmed",
+      "No maintainer confirmation of preferred fix approach (TTL bump vs. configurable vs. per-flow isolation)"
+    ],
+    "why": "Issue describes a concrete multi-connector OAuth cascade failure in the dcr_bridge path with ordered reproduction steps and named code anchors (_OAUTH_STATE_COOKIE_TTL_SECONDS=600, _EPHEMERAL_DCR_CLIENT_CACHE, mcp_oauth_state_* cookies). The proposed TTL/configurability and stale-cookie-cleanup fixes are actionable and testable, and no open PR or issue covers the same mechanism (best match #36818 is keyword-only, no code-path overlap). Root cause remains a hypothesis rather than confirmed, but a concrete validation path exists."
+  },
   "831a78955195a8fd88f5d2c19588100ce19dba210852a703533e4e7fe7567ccd": {
     "confidence": 0.85,
     "contradictions": [],
@@ -65237,6 +65308,39 @@
     "unknowns": [],
     "why": "The issue is a bot-generated per-run failure record for the repo's own gh-aw sweep workflow. The supplied evidence shows the observed behavior (120s read timeout, zero retries, auto-expiring issue) is the checked-in, documented design, so there is no code defect to fix. The only possible work is a maintainer-intent question about revising a deliberate timeout/no-retry trade-off, which is not an actionable code contribution."
   },
+  "8e3eb77a4fa6ff51e5507c4d2df4dffe8faa32822bb78848d4a1e379afc43826": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/buffer_utils.py: make is_uva_available() detect CC mode or run a write-after-map coherence check and disable UVA when stale",
+      "Fallback path so V2 runner uses explicit H2D copies instead of UVA views under CC",
+      "Optional loud warning/error when UVA is disabled due to CC"
+    ],
+    "risks": [
+      "CC hardware (H100 in CC mode inside TDX guest) may not be available in CI, limiting automated regression coverage",
+      "NVML-based CC detection may not be portable across drivers/versions; coherence-check fallback adds startup cost",
+      "Overlapping open PR #57415 may already address the same fix, risking duplicate effort"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's minimal UVA snippet inside a CC guest and assert the GPU view reflects host writes after mapping",
+      "End-to-end: serve Qwen2.5-0.5B-Instruct with default V2 runner under CC and assert non-garbage output matching the V1 runner baseline",
+      "Regression test on non-CC GPU to confirm UVA remains enabled and performance is unaffected"
+    ],
+    "unknowns": [
+      "Whether PR #57415's approach (disable UVA in CC) will be merged, which would make a competing fix redundant",
+      "Whether CI has access to a CC-mode GPU for the regression test"
+    ],
+    "why": "Issue provides a verified root cause (UVA zero-copy views of pinned host memory are stale under GPU Confidential Computing), a minimal standalone reproduction of the stale-view behavior, and an end-to-end reproduction showing garbage output with V2 runner vs correct output with V1. Concrete code anchors (buffer_utils.py, UvaBuffer, get_accelerator_view_from_cpu_tensor) and a suggested fix path (detect CC via NVML or run a coherence check in is_uva_available()) make this actionable. The related open PR #57415 covers the same issue but lacks root-cause coverage, so independent work that adds the coherence check and regression test is still valuable."
+  },
   "8e4bda3e0ceac07b7dff93c3a811be352d11e7c1d083a8f62d5836d828948140": {
     "confidence": 0.85,
     "contradictions": [
@@ -66004,6 +66108,43 @@
       "Which chunk contract maintainers prefer, if any, and whether it must cover all binary ingress routes"
     ],
     "why": "The issue's root cause is well documented and independently confirmed by a collaborator: a single unchunked POST to /session/:id/attachments is rejected by a reverse proxy's default 1 MiB body cap before the daemon's 8 MiB handler runs. However, the triage bot explicitly reclassified this from bug to enhancement and folded it into the deferred v0.16.x containerized/reverse-proxy deployment milestone (#3803), noting that proxied deployment is documented as out of scope for v0.16-alpha. The issue is also not attachments-specific: /file/upload (50 MiB), extension archive (10 MiB), and voice upload (10 MiB) are all unchunked POSTs equally unreachable behind a 1 MiB proxy, so a targeted attachments-only patch would be incoherent. This unresolved scope/design decision materially determines whether any code work is actionable, and the open PR #11913 has semantic overlap on the same path with changes requested."
+  },
+  "9011db6b1249e4c67b022d9d8729137e47de963906705ea10cdedd5e8088f334": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter says 404 reproduces on two apps, but contributor could not reproduce on current main and found the error state does not arise through normal paths"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/trigger/webhook_service.py",
+      "api/services/workflow_service.py",
+      "app_triggers / workflow_webhook_triggers relationship sync"
+    ],
+    "risks": [
+      "Issue may already be fixed on current main, making a fix redundant",
+      "Without the reporter's version, any patch may target non-existent behavior",
+      "Publish event handler failure could be deployment-specific rather than a code bug"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on the reporter's exact self-hosted version/commit",
+      "Inspect app_triggers and workflow_webhook_triggers rows at 404 time and compare node_id values",
+      "Add a regression test for publish-time AppTrigger creation and webhook resolution"
+    ],
+    "unknowns": [
+      "Exact self-hosted version/commit of the reporter",
+      "Whether app_triggers row exists and matches node_id at 404 time",
+      "Whether undo/redo or node re-adding was involved",
+      "Whether the publish event handler ran in the reporter's deployment"
+    ],
+    "why": "The issue reports a 404 'App trigger not found' after publishing, but a contributor's end-to-end simulation on current main could not reproduce it and found the error state (webhook row present, app_triggers row missing) does not arise through the normal draft-sync/publish paths. The reporter's exact version/commit is unknown, and the trigger subsystem was recently refactored, so the root cause is not established."
   },
   "90133600ab2458083b494a4eddaf482c6b14af58add9ea08910d4995b0805743": {
     "confidence": 0.7,
@@ -78541,6 +78682,40 @@
     ],
     "why": "Root cause is source-confirmed (hooks/toolsSettings/slashCommand in UNSUPPORTED_SPEC_KEYS at acp/kas_agents.py), but the actionable fix is materially blocked: the proposed on-disk KAS agent profile delivery path depends on a KAS bundle that honors disk-profile hooks, and the report verifies bundled KAS 0.63.3 ignores them. The stopgap warning reverses an explicit in-tree DEBUG-vs-WARNING decision, and whether KAS merges an on-disk profile with a wire-injected agent of the same name is unresolved. These are design/dependency rulings, not normal implementation uncertainty."
   },
+  "ad69c8139d2d059d27b21a319b6323cdafabd169c25d44ee4035cc309ad0090a": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue asks maintainers to choose between matching current Python behavior and adopting revised normalization, while the candidate is framed as a straightforward reproducible bugfix."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/tool.py",
+      "rust/sglang-server request rendering / tool normalization",
+      "differential prompt-rendering regression tests"
+    ],
+    "risks": [
+      "Fixing Rust to match current Python behavior may conflict with #29114/#29327/#39616 which intend to change Python defaults.",
+      "Key ordering differences mean equal token counts do not prove equal token sequences.",
+      "Scope may expand into a cross-frontend preprocessing contract rather than a minimal bugfix."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a differential test that renders the same POST /v1/chat/completions payload through Python and Rust and compares full rendered prompt strings and input token ID sequences, not just token counts."
+    ],
+    "unknowns": [
+      "Which target behavior (current Python vs revised normalization) maintainers want.",
+      "Whether #29114/#29327/#39616 will land and change the Python-side defaults.",
+      "Whether the Rust server path is the intended fix location versus the standalone renderer in #36718."
+    ],
+    "why": "The issue documents a real Python-vs-Rust prompt rendering divergence with concrete token-count evidence and a plausible root cause (independent API representations), but the actionable target behavior is explicitly unresolved: the reporter asks whether Rust should match current Python behavior or both should adopt revised normalization, and a commenter notes overlapping Python-side PRs (#29114, #29327, #39616) that intend to change the very defaults in question. Without a settled contract, a fix could be invalidated or conflict with in-flight work."
+  },
   "ad7f039d8739e08088a43eb8531db6d20f58955b20863c8bca14b55967697b33": {
     "confidence": 0.85,
     "contradictions": [
@@ -86892,6 +87067,43 @@
       "Maintainer preference on whether to add nlp extra or make the skip a hard failure."
     ],
     "why": "The issue provides a clear root cause: CI's dependency set omits the 'nlp' extra, causing spaCy-dependent tests to skip silently and allowing regressions in entity extraction and BM25 lemmatization to pass. The reporter includes a concrete reproduction, expected/actual behavior, and a suggested fix. The maintainer has not yet approved, but the issue is actionable and technically valuable."
+  },
+  "bfc200f216ceba34b437ecaf74679c3d4e231ca8ed5314d40b2d57c3a61ebf49": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue is open with a live traceback, but comment claims it is fixed on main by #56447",
+      "Duplicate assessment reports semantic overlap with open PRs while also flagging no direct code overlap"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py",
+      "vllm/model_executor/models/glm4_moe_lite_mtp.py",
+      "vllm/v1/worker/gpu/cudagraph_utils.py"
+    ],
+    "risks": [
+      "Fix may already be merged on main via #56447, making the issue stale",
+      "Overlapping open PRs #51966/#57319 may already cover the root cause",
+      "Repository AI-disclosure policy conflict blocks automated public action"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with vllm serve zai-org/GLM-OCR --speculative-config.method mtp --speculative-config.num_speculative_tokens 1 on A100/T4 and confirm the cudaErrorStreamCaptureUnsupported crash",
+      "After applying the claimed fix from #56447, verify speculator CUDA graph capture succeeds and add a regression test for MTP graph capture"
+    ],
+    "unknowns": [
+      "Whether PR #56447 is actually merged and fully resolves this crash",
+      "Whether open PRs #51966/#57319 already fix the same root cause",
+      "Whether the reported crash still reproduces on current main"
+    ],
+    "why": "Issue reports a concrete CUDA graph capture crash (cudaErrorStreamCaptureUnsupported) in MRV2 MTP speculative decoding with a full traceback and repro command, but a recent comment states it is already fixed on main by PR #56447, and the duplicate assessment flags overlapping open PRs (#51966 touching glm4_moe_lite_mtp.py, #57319). Whether any code work remains is unresolved."
   },
   "bfdc44c704aeecebe553ffdca4e7e808a712ba21776b34880bba048eae352682": {
     "confidence": 0.85,
@@ -97441,6 +97653,39 @@
     ],
     "wait_reason": "MISSING_EVIDENCE",
     "why": "Issue reports a plausible bug but a maintainer comment shows the generator on main already emits both flags, suggesting the bug may be fixed or version-specific. The issue lacks confirmation of the profiler image version and whether the AIC path reaches the relevant modifier, so root cause is unconfirmed. Existing PRs overlap semantically but do not directly address this issue, requiring maintainer guidance."
+  },
+  "d55ba2d1dc27a2b1f98eee6e6439537e13c173db72fa3d0fcc35284691e948cd": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue body asserts a concrete, reproducible root cause and fix, while open-PR assessment reports an existing directly-related PR #41470 with `root_cause_coverage: false` and no tests, leaving coverage status unresolved"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_utils.py: add `model_id` body candidate for `/watsonx` routes in `get_model_from_request`/`_extract_model_candidates_from_request`",
+      "litellm/proxy/auth/user_api_key_auth.py: existing `can_key_call_model` enforcement path exercised once model resolves"
+    ],
+    "risks": [
+      "Duplicate/overlapping PR #41470 may already cover the same fix, making a new implementation redundant",
+      "Broadening model resolution to `model_id` could affect other routes if not scoped to `/watsonx`",
+      "No maintainer design preference recorded for the resolver change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting `get_model_from_request` resolves `ibm/granite-3-8b-instruct` from a Watsonx-shaped body `{\"model_id\": ...}` on a `/watsonx/...` route",
+      "Add an enforcement test asserting a virtual key with `models=[\"cheap-model\"]` receives 403 on the Watsonx pass-through route",
+      "Control: same out-of-list model on a covered route still returns 403"
+    ],
+    "unknowns": [
+      "Whether PR #41470 already implements the same fix and whether it will be merged",
+      "Whether maintainers consider the Watsonx resolver change in scope for a new PR"
+    ],
+    "why": "The issue presents a clear, code-anchored root cause (Watsonx pass-through body key `model_id` is never read by `get_model_from_request`, so `can_key_call_model` is skipped) and a concrete suggested fix, but the supplied open-PR assessment reports an existing directly-related PR #41470 that references this issue, overlaps the same code path (`litellm/proxy/auth/auth_utils.py`) and distinctive terms (`model_id`, `virtual_key`), and is marked `human_review_required` with `root_cause_coverage: false` and no tests. Whether independent implementation space remains is unresolved, which materially determines whether new code work is actionable."
   },
   "d5619453a101ef3ef74b0a606cc1f4fc02c31d32ab3901f0b06a149cf972dd0c": {
     "confidence": 0.7,
@@ -117539,6 +117784,42 @@
       "Whether the maintainers consider this issue assigned or already under active investigation"
     ],
     "why": "The issue presents a concrete, code-anchored root-cause hypothesis (logical_topk_ready recorded inside the piecewise capture segment, then waited on after eager_break_during_capture ends capture) with a bisected regression bracket and a plausible fix direction, which is algorithmically substantive (kernel/cudagraph stream-event invariant). However, the supplied evidence contains a materially blocking contradiction: the pre-task policy status is ai_disclosure_conflict and the candidate risk explicitly states the repository requires public AI-use disclosure while automated public actions are hard-disabled, and the issue body itself discloses AI drafting assistance. This unresolved disclosure/policy conflict determines whether code work can be actioned at all, so it is not mere normal implementation uncertainty. Additionally, duplicate coverage is unresolved: PR #56686 and PR #56752 show semantic overlap on 'cuda'/'piecewise' and PR #56752 touches vllm/compilation/breakable_cudagraph.py, but neither references the issue and neither is confirmed to cover the root cause, so duplicate/merged-fix coverage remains an open question."
+  },
+  "fe0587e80ce90453f89804daa7f57fa4fa63062bfe46f39c9d55dbad95764d8b": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reporter attributes cause to @vercel/otel instrumentation, while another commenter attributes it to Cloudflare TCP resets from Render IPs, and the stack traces point to gateway error-response parsing"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ai-sdk/gateway error-response parsing (create-gateway-error.ts / as-gateway-error.ts)",
+      "provider-utils parseJsonEventStream stream-locking behavior",
+      "possibly telemetry/OTel interaction in generate-text/stream-text"
+    ],
+    "risks": [
+      "Root cause may be infrastructure (Cloudflare/Render IP blocking) rather than SDK code, making a code fix ineffective",
+      "OTel instrumentation interaction may be environment-specific and not reproducible in CI",
+      "Changing error-response handling could mask genuine gateway errors"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a minimal script using @ai-sdk/gateway against a mocked 200 response with empty body to trigger GatewayResponseError",
+      "Add regression test asserting a non-JSON/empty 200 error response yields a well-formed gateway error rather than a locked-stream TypeError",
+      "Run targeted gateway and provider-utils unit tests"
+    ],
+    "unknowns": [
+      "Whether the failure is reproducible without OTel instrumentation",
+      "Whether the empty 200 response body originates from the gateway or from a network/proxy layer",
+      "Which repository source file (not node_modules) is the correct fix location"
+    ],
+    "why": "Issue is a support-style bug report with multiple conflicting root-cause hypotheses: OTel instrumentation (registerOTel), Cloudflare/Render IP-level TCP resets, and gateway error-response parsing. No confirmed root cause in the SDK code, no minimal reproduction, and the candidate's own actionability evidence shows root_cause_signal=false, probe_ready=false, reproduction_or_validation_missing, and base_sha_changed. The code anchors are mostly node_modules/dist paths, not repository source, so a concrete reference-vs-implementation test cannot yet be defined."
   },
   "fe0c122b4882372030c50f5d8ca010355c527984f6825af8743f38287cad9755": {
     "confidence": 0.9,
