@@ -20093,6 +20093,40 @@
     ],
     "why": "Issue provides a precise root cause (initialValues missing env_json, stdio save defaults to {}) with code references and a runnable PoC. A second user independently confirms the bug and adds a second affected code path. No competing PR or issue exists, and the fix is a minimal UI change with a clear regression test."
   },
+  "2c91534b79fdb5a1fe13f1e90c54029dc65d9057ae05b48fb3cc772ff33d823e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Reporter attributes cause to @vercel/otel instrumentation, while another commenter attributes it to Cloudflare/Render TCP resets, and others report intermittent gateway internal errors — no single consistent root cause",
+      "Candidate claims high actionability while its own evidence records root_cause_signal=false and probe_ready=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Unknown until root cause is isolated; candidate code paths (examples/*/server.ts) are unrelated to the reported failure"
+    ],
+    "risks": [
+      "Fixing the wrong layer (e.g., error parsing) while the actual trigger is OTel instrumentation or edge-network resets",
+      "Chasing an intermittent infrastructure issue as a code bug",
+      "No maintainer-confirmed design direction"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Not actionable: no deterministic reproduction exists; the only reported workaround is disabling OTel instrumentation, which does not isolate a vercel/ai defect"
+    ],
+    "unknowns": [
+      "Whether the failure is reproducible without OTel instrumentation",
+      "Whether the empty error body originates in the gateway service or the SDK error-parsing path",
+      "Whether the locked-ReadableStream error is a cause or a downstream symptom",
+      "Whether any maintainer has confirmed a code-level defect in vercel/ai"
+    ],
+    "why": "Issue is a support-style bug report with no confirmed root cause. The reporter's own follow-up attributes the failure to @vercel/otel instrumentation, and other commenters report unrelated causes (Cloudflare/Render TCP resets, intermittent gateway internal errors). The traceback shows a locked ReadableStream and an empty error body, but no supplied evidence establishes a concrete defect in vercel/ai code or a deterministic reproduction. The candidate's own actionability evidence marks root_cause_signal=false, probe_ready=false, needs_confirmation=true, and the pre-review failed with reproduction_or_validation_missing."
+  },
   "2c9315de7c856ac6150015d327e9ee39a344e63094fbb7172426be36f6b0e229": {
     "confidence": 0.8,
     "contradictions": [
@@ -23749,6 +23783,43 @@
     ],
     "wait_reason": null,
     "why": "Issue provides a clear, reproducible bug with root cause analysis and a concrete fix direction. The triage confirms the clamp fallback is insufficient and identifies the OpenAI-compatible pipeline as the primary path needing a fix. No competing PR exists; the issue is labeled ready-for-agent and is actionable."
+  },
+  "36964b8b998713dff25929b0c062d29dc1fd464cb0c6c35e807d0447ea2a75b0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body claims the protocol layer is the blocker; triage and collaborator analysis show _meta already exists on RequestPermissionResponse and is already used for permissionCancelReason, so the protocol is not a hard blocker"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/tools.ts: ToolConfirmationPayload.cancelMessage plumbing and explicit-denied outcome",
+      "packages/core/src/core/coreToolScheduler.ts: replace bare 'User did not allow tool call' fallback with user-supplied reason",
+      "packages/cli/src/acp-integration/session/permissionUtils.ts: read reason from ACP response _meta",
+      "packages/acp-bridge/src/bridgeClient.ts / bridgeTypes.ts: extend _meta rejection-reason channel",
+      "packages/cli/src/ui/opentui/dialogs-confirm.tsx and vscode-ide-companion permission prompt: optional reason input"
+    ],
+    "risks": [
+      "Protocol extension via _meta may need maintainer sign-off on key naming and whether to split protocol/core/UI into separate issues",
+      "Cancel currently conflates explicit deny with Esc/abort/timeout; changing semantics could affect existing cancellation handling",
+      "Scope spans core, CLI, ACP bridge, and VS Code companion, so a single PR may be too broad"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: reject a tool call with a reason and assert the model-visible functionResponse.response.error contains the reason instead of the bare constant",
+      "Regression test: reject without a reason still yields the existing fallback message",
+      "ACP round-trip test: client sends _meta rejection reason, agent surfaces it; client ignoring _meta falls back gracefully"
+    ],
+    "unknowns": [
+      "Maintainer preference on _meta key naming and whether to split protocol/core/UI into separate issues",
+      "Whether the explicit-denied outcome should land independently of the free-text reason"
+    ],
+    "why": "Issue is a concrete feature request with in-repo TODO anchor (tools.ts:1195-1198) and a fully traced existing pipeline (cancelMessage -> coreToolScheduler fallback -> model-visible error). Triage and an independent collaborator both confirm the root cause: no UI feeds a rejection reason into cancelMessage, and ACP response carries no reason field. The fix path is small and well-scoped (thread reason from resolvePermissionOutcome into cancelMessage, plus optional _meta extension)."
   },
   "369df8d8a0bb56110c4a0afc1ed5811c0bd08ed502c96ed24bf5b336de86a96a": {
     "confidence": 0.55,
@@ -51004,6 +51075,39 @@
     "unknowns": [],
     "why": "Issue provides a concrete root cause: the clear guard compares original editor text against transformed displayText, so preprocessing-induced differences are misread as newer user input, plus an unordered debounced draft write race. It names the introducing commit, code anchors, and a concrete fix contract (edit version + clearIfUnchanged + serialized latest-wins draft writes) with explicit acceptance criteria and a rendered E2E validation path."
   },
+  "6dfaa79d09d3348123fe788e625105905595f3579b53f0d47404bc05a5643d6a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/mcp/oauth-provider.ts: carry registrationUrl from discoveredConfig in the WWW-Authenticate merge branch without clobbering a user-set oauth.registrationUrl",
+      "packages/core/src/mcp/oauth-provider.ts: tighten the DCR fallback to pass the full path-bearing authorization server URL instead of the origin-collapsed URL",
+      "packages/core/src/mcp/oauth-provider.test.ts: add regression coverage for the 401 + www-authenticate + path-scoped authorization server path"
+    ],
+    "risks": [
+      "The naive one-line fix (registrationUrl: discoveredConfig.registrationUrl) would overwrite a user-set oauth.registrationUrl with undefined, regressing the documented workaround",
+      "The scopes merge (discoveredConfig.scopes || config.scopes) overrides user-pinned oauth.scopes; noted as a separate concern and should not be bundled into this fix",
+      "Behavior change to the DCR fallback URL resolution could affect other path-scoped authorization servers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test mocking a 401 HEAD with a www-authenticate header pointing at path-scoped protected-resource metadata whose authorization server advertises registration_endpoint, with no clientId in config, and assert DCR is attempted at the discovered registration URL",
+      "Add a test asserting an explicit oauth.registrationUrl still survives discovery when metadata lacks registration_endpoint",
+      "Run the targeted packages/core MCP OAuth test suite and static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer the minimal field-copy fix or the broader merge/fallback tightening",
+      "Whether the scopes-override observation should be handled in the same change or a separate issue"
+    ],
+    "why": "Issue pinpoints a concrete dropped field: the WWW-Authenticate discovery branch in packages/core/src/mcp/oauth-provider.ts omits registrationUrl while the sibling branch copies it, and the origin-only DCR fallback strips the tenant path. Collaborator verification confirms the chain in source and notes the branch has zero test coverage. A minimal, well-scoped fix plus regression test is actionable."
+  },
   "6dfc471f4e2b749a397d415d6aefd7c5b3134a8105548e3c8180836cc3ba104d": {
     "confidence": 0.85,
     "contradictions": [],
@@ -60379,6 +60483,39 @@
       "Resolution of the repository ai_disclosure_conflict policy status"
     ],
     "why": "The issue is a launch-time CUDA 'invalid argument' failure in custom_all_reduce.cuh:164 on an RTX 5090/Blackwell (sm_120) setup with expandable_segments enabled. The supplied evidence does not establish a root cause: the traceback frame is truncated mid-log, no minimal reproduction is provided, and the environment is a heavily customized Qwen3.5/MTP/fp8/FlashInfer stack. The candidate's own 'why' text claims PEFT/LoRA adapter semantics, which contradicts the actual issue content (custom all-reduce kernel launch), so the semantic evidence is internally inconsistent. Additionally, PR #56193 ('Don't abort custom allreduce when expandable_segments is enabled') has strong distinctive overlap (cuda, workspace/csrc/custom_all_reduce.cuh) and may already cover the root cause, but the overlap is unresolved ('semantic_overlap_requires_review', direct_code_overlap=false, root_cause_coverage=false). The repository also has an unresolved ai_disclosure_conflict policy status. These are materially blocking unknowns, not normal implementation uncertainty."
+  },
+  "841348ad191adea8f95b21addf2e80e483634c041f297334d4463911eeb9c3d3": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims webhook is not registered after publish, but contributor reproduction on current main shows AppTrigger row is created and webhook resolves successfully."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/trigger/webhook_service.py",
+      "api/services/workflow_service.py"
+    ],
+    "risks": [
+      "Fixing a stale or already-resolved behavior could introduce regressions in the recently refactored trigger subsystem.",
+      "The reported error may stem from a deployment where the publish event handler did not run, not from a code defect."
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on the reporter's exact self-hosted version/commit with a minimal Webhook Trigger workflow, then inspect app_triggers and workflow_webhook_triggers rows and API logs around publish."
+    ],
+    "unknowns": [
+      "Exact self-hosted version/commit of the reporter",
+      "Whether an app_triggers row exists at failure time and whether its node_id matches the webhook row",
+      "Whether undo/redo or node re-adding was involved",
+      "API logs/traceback around the publish request"
+    ],
+    "why": "The issue reports a 404 'App trigger not found' after publishing, but a contributor's end-to-end reproduction on current main shows the full publish/sync chain works and the reported error state (webhook row present, app_triggers row missing) does not arise. The reporter's version/commit is unknown and the trigger subsystem was recently refactored, so the root cause is not established and the report may be stale or environment-specific."
   },
   "841871ae9fb9c3e69741fc459f04463c4eb77958cf3c72ad4736b667d24abfab": {
     "confidence": 0.85,
@@ -74933,6 +75070,41 @@
       "Whether maintainers prefer the exact fix shape in PR #41139 or a different delegation approach"
     ],
     "why": "Issue provides a concrete minimal reproduction, expected/actual pair, and a specific root cause: user_api_key_auth_websocket() unconditionally rejects a missing key before delegating to shared user_api_key_auth(), which already implements keyless behavior when master_key is None. This is a proxy auth-path bug with a clear reference-vs-implementation validation path. Open PR #41139 is directly related but lacks root-cause coverage evidence, so competition remains possible."
+  },
+  "a285a2bb32c6dc1fe09174e5c782f44836870d3017c65207756341d4b34d8045": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue is open and reports an active crash, but a comment claims it is fixed on main by #56447 and can be closed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py or cudagraph_utils.py capture path",
+      "vllm/model_executor/models/glm4_moe_lite_mtp.py / glm_ocr_mtp.py forward path"
+    ],
+    "risks": [
+      "Bug may already be fixed by #56447, making any new change redundant",
+      "Overlapping open PRs #51966/#57319 may already cover the root cause",
+      "AI disclosure policy conflict (ai_disclosure_conflict) may block automated submission"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with vllm serve zai-org/GLM-OCR --speculative-config.method mtp --speculative-config.num_speculative_tokens 1 and confirm whether the crash still occurs on current main after #56447",
+      "If still failing, add a regression test that captures the speculator CUDA graph for the MTP model and asserts no cudaErrorStreamCaptureUnsupported"
+    ],
+    "unknowns": [
+      "Whether #56447 is merged and actually resolves this exact crash on current main",
+      "Whether open PRs #51966/#57319 already cover the same root cause",
+      "Whether the AI disclosure policy conflict permits any submission"
+    ],
+    "why": "The issue reports a concrete CUDA graph capture crash (cudaErrorStreamCaptureUnsupported) in MRV2 MTP speculative decoding with a full traceback and repro command, and the algorithm track is satisfied by a kernel/CUDA-graph mechanism. However, a recent comment states the bug is already fixed on main by PR #56447 and can be closed, and the supplied duplicate assessment flags unresolved overlap with open PRs (#51966 touching glm4_moe_lite_mtp.py, #57319). This unresolved merged-fix/duplicate coverage is a materially blocking unknown: it is unclear whether any code work remains actionable."
   },
   "a2a0a797b0c66403c697818514176d1f490fa980a895cc2a523295fd626eb5d0": {
     "confidence": 0.7,
@@ -97720,6 +97892,37 @@
     ],
     "why": "The issue reports empirical observations about DBCache knobs on MiniMax-H3, but lacks a clear root cause for the inert default threshold and the quality gap. It is filed as a set of observations, not a concrete code fix. The open PR and related issue lookups timed out, so duplicate work cannot be excluded. The deterministic gate requires HUMAN_REVIEW."
   },
+  "d4cdaf32518a0045e1349f35097aa5f2ba257a5f74951f02e3772b44e8e54663": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/buffer_utils.py: gate UVA usage on a CC/coherence check or fall back to explicit H2D copies",
+      "UVA availability detection (is_uva_available) or V2 runner selection logic to avoid stale zero-copy views under CC"
+    ],
+    "risks": [
+      "CC-mode detection via NVML may not be available in all environments, requiring a runtime coherence probe",
+      "Disabling UVA may regress performance on non-CC GPUs if the check is too broad",
+      "Requires CC-capable hardware (H100 in CC mode) to validate the fix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's minimal pinned-memory UVA write-after-map snippet on a CC GPU and assert the GPU view reflects the host write",
+      "End-to-end: serve Qwen2.5-0.5B-Instruct with default V2 runner on CC GPU and assert non-garbage output matching the V1 runner baseline",
+      "Regression: verify UVA path still works on a non-CC GPU and that V1 fallback is selected when UVA is unavailable"
+    ],
+    "unknowns": [
+      "Whether PR #57415 will be merged and fully cover the root cause before independent work lands"
+    ],
+    "why": "Issue provides a verified root cause (UVA zero-copy views of pinned host memory are stale under GPU Confidential Computing), a minimal standalone reproduction of the stale-view behavior, and an end-to-end reproduction showing garbage output with the V2 runner and correct output with V1. Concrete code anchors (buffer_utils.py, UvaBuffer, get_accelerator_view_from_cpu_tensor) and a suggested detection/fallback fix make the work actionable. The open PR #57415 is a plausible competing fix but is not merged and lacks root-cause coverage, so it does not establish coverage that would make this low-value."
+  },
   "d4d4e289682a481af31dced2734b92bc1dec7f0b79a79330b4c2990355d1d6f1": {
     "confidence": 0.8,
     "contradictions": [],
@@ -109698,6 +109901,41 @@
     ],
     "why": "Issue provides a concrete, bisected root cause (logical_topk_ready recorded inside the piecewise capture segment, then waited on after eager_break_during_capture ends capture) with a clear reproduction and regression bracket, which is strong algorithm/kernel evidence. However, the supplied evidence contains a materially blocking unknown: open PR #56825 ('[Bugfix][SparseMLA] Fix piecewise cudagraph capture crash in index group') has high semantic overlap (21 distinctive terms including logical_topk_ready, eager_break_during_capture, piecewise) and touches the same index_group.py path, but its root_cause_coverage is false and it does not reference this issue, so it is unresolved whether the fix is already covered. Additionally, the repository policy status is ai_disclosure_conflict, which is a disclosure/authorization requirement that must be resolved before code work is actionable."
   },
+  "ecf4c67732a088063ebf483e1f9e27af4cd89dcd92bc481996c0199c8fb3ef70": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue asks maintainers to choose between matching Python or revising both, while candidate metadata marks needs_confirmation/design_confirmation false and no maintainer approval exists"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/tool.py",
+      "rust/sglang-server request rendering / Dynamo request types",
+      "tool-schema normalization contract shared by both frontends"
+    ],
+    "risks": [
+      "Fixing Rust to match current Python behavior may conflict with #29114/#29327/#39616 which remove implicit tool-schema defaults",
+      "Key-ordering differences mean equal token counts do not prove equal token sequences",
+      "Scope spans two frontends and a shared contract, risking broad API behavior change"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Differential regression comparing full rendered prompt strings and input token IDs for identical POST /v1/chat/completions payloads across Python and Rust frontends",
+      "Cover omitted/null function.strict, defer_loading, function.description, function.parameters, missing type/properties, named tool_choice with multiple tools, multi-part text content, continue_final_message, and reasoning_effort=none"
+    ],
+    "unknowns": [
+      "Which normalization contract maintainers want (current Python vs revised post-#29114/#29327/#39616 behavior)",
+      "Whether the overlapping Python-side PRs will land and change the reference behavior before a Rust fix"
+    ],
+    "why": "The issue documents a real Python-vs-Rust prompt rendering divergence with concrete token-count evidence, but the actionable target is unresolved: the reporter explicitly asks whether Rust should match current Python behavior or both should adopt revised normalization, and a commenter notes overlapping Python-side PRs (#29114, #29327, #39616) that intend to change the very defaults in question. Without a chosen contract, a fix could be invalidated by those in-flight changes."
+  },
   "ed024aeb07bbed6896fb86040e6090c1b04c2fe30bad2b9d9f848da5ad481a6f": {
     "confidence": 0.8,
     "contradictions": [
@@ -112578,6 +112816,38 @@
       "Whether maintainers intend the FFmpeg color defect to be fixed in Dynamo or deferred upstream"
     ],
     "why": "Issue reports two independent defects: (A) response_format=b64_json dropped in _engine_inputs_from_video(), and (B) bundled FFmpeg MMXEXT color corruption. Root cause A is concrete and code-anchored, but open PR #14844 ('pass response_format into video EngineInputs') semantically overlaps the same path and distinctive keyword 'base64' without referencing this issue, so duplicate/coverage status is unresolved. Root cause B is an upstream FFmpeg build-configuration issue, not a Dynamo code fix, and the issue itself calls MMXEXT disabling only a diagnostic workaround."
+  },
+  "f255f95edc2af3f8c4ebf61d4ad25f0f4e5446b380c2c6f475fa29b8b935984a": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Issue says a fix PR is linked below, but PR #14252 is not directly linked to the issue and its root_cause_coverage is false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "apps/cli/src/acp/session-updates.ts: map `usage` event to a `usage_update` session notification",
+      "apps/cli/src/acp/acpAgent.ts: include turn usage in the PromptResponse"
+    ],
+    "risks": [
+      "PR #14252 may already implement the same fix, making a new contribution duplicative",
+      "ACP `PromptResponse.usage` is marked experimental in the SDK, so API stability may be a concern"
+    ],
+    "root_cause_clarity": "high",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test asserting a `usage_update` notification is emitted after a prompt",
+      "Assert `session/prompt` result includes `usage` with used/size/cost",
+      "Run targeted CLI ACP unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether PR #14252 fully resolves the dropped usage event and PromptResponse.usage gap",
+      "Whether maintainers have a preferred implementation for the ACP usage mapping"
+    ],
+    "why": "Issue clearly identifies the dropped `usage` event in apps/cli/src/acp/session-updates.ts and the missing usage in AcpAgent.prompt(), but an open PR #14252 ('fix(acp): forward token usage and cost to ACP clients') already overlaps the same code paths and semantics, and the issue itself states 'A fix is up as a PR, linked below.' Whether that PR already covers the root cause is unresolved, which materially determines whether new code work is actionable."
   },
   "f275a7d5a039c5d2a19b7a068fa8184f08a6509d08dc6cb22bbc34172b97c70f": {
     "confidence": 0.6,
