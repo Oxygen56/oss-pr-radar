@@ -59446,6 +59446,41 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue describes a concrete LLM algorithm bug (int16 overflow at position 32768 in GDN/MTP speculative decoding) with a clear reproducer and metrics, but the supplied evidence flags a potential duplicate issue #37035 sharing stack signatures and an open PR #48792 with semantic overlap on gdn_attn.py. The deterministic gate is HUMAN_REVIEW, and the candidate's own assessment requires manual comparison before action. No maintainer approval or assignment is present, and the root cause is hypothesized but not confirmed."
   },
+  "804d9853dcbf87020a6e1468333f6e73fd7e908e8bf33d432979dfe5f26fd4d0": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Docker Compose / bundled ParadeDB image pin (paradedb/paradedb:v0.22.2-pg17 -> v0.25.9-pg17)",
+      "Postgres init/migration path to run ALTER EXTENSION pg_search UPDATE and REINDEX embeddings_search_idx",
+      "Error surfacing for VECTORSTORE_WRITE_FAILED to distinguish index corruption from generic write failure"
+    ],
+    "risks": [
+      "Upgrading the bundled ParadeDB image may affect other pg_search/vector behavior or require data migration",
+      "REINDEX on large embeddings_search_idx can be slow/locking in production",
+      "Root cause is inferred from a contributor comment and upstream ParadeDB issue, not confirmed by maintainers in this issue"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with bundled ParadeDB v0.22.2: ingest a large document (~10k chunks), batch-delete most files, run VACUUM, then trigger hybrid search / quick-answer agent and confirm item_pointer_is_valid(ctid) assertion",
+      "After applying image upgrade + extension update + REINDEX, repeat the same sequence and confirm indexing, hybrid search, and quick-answer succeed",
+      "Add a regression/integration test asserting the bundled image tag and that the pg_search extension version is >= the fixed release"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer an image bump vs. an in-app detection/recovery path",
+      "Whether the bundled image tag is centrally pinned in a file the PR can modify",
+      "Whether the fix should also cover the vector index (embeddings_embedding_idx_*) mentioned in the comment"
+    ],
+    "why": "Issue reports a concrete, deterministic failure (ParadeDB BM25 index corruption causing VECTORSTORE_WRITE_FAILED and HTTP 500) with a clear recovery path (REINDEX). A contributor comment supplies a plausible root cause (stale CTID after VACUUM truncation in pg_search 0.22.2, matching ParadeDB #4333/#4338) and a validated fix (upgrade to v0.25.9 + ALTER EXTENSION UPDATE + REINDEX). This is actionable infra work, not algorithm work, so track=agent_ai_infra is appropriate. No open PR directly covers the issue; the merged PRs only share the 'bm25' token and do not overlap paths."
+  },
   "8051dc1b2f6d994f34f39197502da2191080677782508897114fd7ea19497579": {
     "confidence": 0.9,
     "contradictions": [
@@ -82918,6 +82953,43 @@
       "Whether maintainers have a preferred fix approach or are already investigating"
     ],
     "why": "Issue reports a reproducible 400 error on Anthropic-route tool calls for Kimi models, with bisection isolating input_schema presence as trigger. However, open PR and related issue lookups timed out, so duplicate work cannot be excluded. The deterministic gate is HUMAN_REVIEW, and maintainer design preference is unknown."
+  },
+  "b4cd39d5e0c4a85ba5364f848530509b76e29211c6f4ea7136f2444dbbc91528": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with PR #41349 while also listing PR #41808 touching the adjacent allowed-models resolution path; neither is confirmed to cover this issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "litellm/proxy/utils.py get_available_models_for_user narrowing by team-member allowed_models",
+      "litellm/proxy/auth/model_checks.py model-list resolution",
+      "litellm/proxy/auth/auth_checks.py reuse of _check_team_member_model_access semantics"
+    ],
+    "risks": [
+      "Duplicate/overlapping open PR may already implement the same narrowing",
+      "Reusing request-time access-group/wildcard/sentinel semantics in the listing path could change existing discovery behavior",
+      "Team-context selection (key team vs requested team) needs explicit validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test: Team with models=all-proxy-models, member allowed_models=[standard,power], key scoped to that user/team; assert GET /v1/models returns only expanded standard/power models",
+      "Regression: no member-level allowed_models configured returns unchanged full team list",
+      "Cross-check GET /v1/models/{model_id} and /model/info endpoints for the same narrowing"
+    ],
+    "unknowns": [
+      "Whether PR #41349 or #41808 already resolves the Team-member allowed_models discovery gap",
+      "Whether maintainers consider the omission intentional",
+      "Exact endpoint set (v1/models vs /model/info) in scope for the fix"
+    ],
+    "why": "Issue describes a plausible discovery-vs-inference mismatch for Team-member allowed_models, with code anchors and a reproduction outline. However, the supplied duplicate assessment flags PR #41349 as semantic overlap requiring review, and PR #41808 already targets the adjacent /model/info allowed-models resolution path. Whether the root cause is already covered by an open PR is unresolved, which materially affects whether new code work is actionable."
   },
   "b4f21e67a17acea8194ee8997e6e276ed0e2ec573813c740de8389ba60e1d4fb": {
     "confidence": 0.6,
@@ -111272,6 +111344,43 @@
     ],
     "why": "Issue provides detailed measurements showing default residual_diff_threshold is inert for MiniMax-H3, but lacks root-cause isolation and open PR/issue lookup failed, so duplicate work cannot be excluded."
   },
+  "ee50fdc92833ab1daad4507ac7c1700f988f1a147289a5810f645341446fa1ae": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: _prune_and_reset must merge B@A into the frozen base weight and reinitialize A (Kaiming) / B (zeros) for a true ReLoRA restart, or the feature must be renamed and the docstring corrected to stop claiming paper/Axolotl conformance",
+      "src/soup_cli/utils/relora.py: replace 'abs(t) > threshold' kthvalue mask with deterministic exact-count selection (topk/stable-order) so prune_ratio<1 always retains the requested keep count and at least one entry per non-trivial factor",
+      "Optimizer-state handling: prune/reset optimizer moments rather than the learned adapter weights",
+      "Explicit support or loud rejection for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, and checkpoint/resume"
+    ],
+    "risks": [
+      "Claim A is a maintainer design decision (implement real restarts vs rename feature); a partial fix that only addresses ties would leave the silent, every-run conformance gap",
+      "Tie scenario is constructed, but a freshly-initialized lora_B is all zeros by PEFT convention, so the natural tie may fire on the first relora_steps interval after initialization",
+      "Numerical tolerance must be fixed with a pinned seed and CPU/single-GPU reference to distinguish math errors from float/random noise",
+      "Quantized bases, FSDP/DeepSpeed wrappers, and layer streaming may require explicit rejection paths rather than silent partial application"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reference-vs-implementation test: build a small peft LoRA model with fixed seed, capture the effective linear map before the callback, run _prune_and_reset, and assert MSE(before, after) is within numerical tolerance (merge-then-reset control should be ~1e-13)",
+      "Regression test: constant-magnitude lora_A/lora_B with prune_ratio=0.9 must retain exactly the requested keep count (e.g. 4 of 32) and must not zero both factors; assert grad-norm of A and B is non-zero after the callback",
+      "Kernel-level unit test on magnitude_prune_tensor: ones(10) with prune_ratio=0.9 must keep 1 entry, matching arange(1..10) behavior",
+      "Accumulation test: successive ReLoRA restarts must accumulate low-rank updates in the base model",
+      "Compatibility test: unsupported quantized/distributed/streamed configurations must fail clearly rather than partially applying a restart"
+    ],
+    "unknowns": [
+      "Whether the maintainer will choose the full ReLoRA restart implementation or the smaller rename/docstring correction, which determines the scope of the patch"
+    ],
+    "why": "Issue identifies two concrete, independently reproduced defects in ReLoRA's _prune_and_reset: (A) adapters are magnitude-pruned without merging B@A into the base, so the learned effective map is discarded (MSE 142.12 vs control 8.77e-13, base weight delta 0), and (B) strict '>' thresholding with kthvalue wipes all entries on ties, zeroing both factors and producing zero gradients. Maintainer confirmed both halves with real peft LoRA runs and a kernel-level repro (ones(10), prune_ratio=0.9 -> 0 kept vs expected 1). This is a concrete algorithm-conformance and numerical-correctness defect with a clear reference-vs-implementation validation path."
+  },
   "ee5d4991768fa4f38c71f914ad16feae2ce67c74d2a788cb57fe9ae71732af8d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -114927,6 +115036,39 @@
     ],
     "why": "The issue is a clear UI bug, but a maintainer explicitly requested a mockup before code, and an existing PR (#16105) has failed CI. The candidate lacks root cause analysis and design confirmation, making it premature to start work."
   },
+  "f6209f771a3fad69cea9afb7c8a989723b65641eb5b266133acc62956e71c320": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/user_api_key_auth.py: re-validate the final dispatched model against the key/team allowlist",
+      "litellm/proxy/proxy_server.py or ProxyBaseLLMRequestProcessing.base_process_llm_request: ensure query-string model cannot override the authorized body model on /v1/chat/completions",
+      "Regression test asserting 403 key_model_access_denied for ?model=denied-model with body allowed-model"
+    ],
+    "risks": [
+      "Fix must not break legitimate query-string model routing on /files, /batches, /vector_stores, /skills",
+      "Re-check placement must not introduce double-charging or alter fallback semantics (#39998 area)",
+      "Broadening the check to all routes could change documented API behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's config.yaml (mock_response models allowed-model/denied-model) and a virtual key scoped to allowed-model",
+      "Control: body model=denied-model returns 403 key_model_access_denied",
+      "Bypass: POST /v1/chat/completions?model=denied-model with body model=allowed-model must now return 403, not 200",
+      "Confirm /v1/messages and /v1/responses behavior is unchanged and allowed-model-only requests still return 200"
+    ],
+    "unknowns": [
+      "Exact maintainer-preferred location for the re-check (auth layer vs request-processing layer) is not specified, but both are reasonable and do not block implementation"
+    ],
+    "why": "Issue provides a concrete, reproducible access-control bypass on POST /v1/chat/completions: the ?model= query string overrides the body model after the key allowlist check (can_key_call_model in user_api_key_auth) has already passed, so a key scoped to allowed-model serves denied-model with HTTP 200. Root cause is anchored to named code paths (user_api_key_auth, can_key_call_model, base_process_llm_request setting self.data['model']), and the mock_response config gives an unambiguous reference-vs-implementation test. No duplicate or merged fix covers this route; the only overlapping PRs are keyword-only and unrelated."
+  },
   "f63868a81c7408d5636331a9b3db5a525b9fecc1951dbdddc9569dab00bcd67e": {
     "confidence": 0.55,
     "contradictions": [
@@ -117227,6 +117369,37 @@
       "Full error message from reproduction is missing; it would confirm whether the cause is a missing stub_servers entry or another identity gap."
     ],
     "why": "Issue describes a real user-visible bug with concrete reproduction steps and expected behavior. Maintainer comment falsifies the stated root cause but identifies the actual likely cause (missing identity channel) and confirms two genuine work items: worker-scoped authorization and empty-queue record operation. The issue is actionable with a clear validation path."
+  },
+  "f9fcff809b1f8b4bf5f7bf2b20b684c5b16fa2d14af8c7d5796369e20758f883": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "livekit-agents/livekit/agents/ipc/job_proc_lazy_main.py: move SIGINT/SIGTERM/SIGUSR1 handler installation from import-time guard into proc_main() so it runs in every job process regardless of start method"
+    ],
+    "risks": [
+      "Moving handler installation into proc_main() could change behavior for spawn-based processes if proc_main is invoked in contexts where signal installation is undesirable",
+      "SIGUSR1 handler must remain safe to install in the job process and not conflict with faulthandler workarounds users may have added",
+      "Historical merged PR #4501 touched SIGUSR1 handling but is not a direct duplicate of this forkserver import-time issue"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test that starts a job process under the forkserver context with the _preload preload list and asserts SIGUSR1 is _dump_stack_traces and SIGINT/SIGTERM are SIG_IGN",
+      "Run the same assertion under spawn to confirm no regression",
+      "Run targeted IPC unit tests for job_proc_lazy_main and SupervisedProc stack-dump behavior"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer installing handlers in proc_main() versus a dedicated runtime initialization hook",
+      "Whether any existing tests already cover forkserver signal behavior"
+    ],
+    "why": "Issue provides a concrete root cause: signal handlers are installed at module import guarded by current_process().name == 'job_proc', but under forkserver the module is imported in the forkserver (MainProcess) and inherited via sys.modules by forked job processes, so the guard never fires. It includes a minimal reproduction comparing spawn vs forkserver signal states and a concrete fix location (proc_main())."
   },
   "fa305ff418acef9c18d32e0df855b28371a6048a99bbfff1a0c4886a02f66414": {
     "confidence": 0.85,
