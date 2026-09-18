@@ -507,7 +507,19 @@ class ManagedAdapter:
         )
         return {"ok": True, "status": next_status, "eventCreated": event["created"]}
 
-    def record_dispatch_queue(self, queue: dict[str, Any]) -> dict[str, Any]:
+    def record_dispatch_queue(
+        self,
+        queue: dict[str, Any],
+        *,
+        allowed_opportunity_keys: set[str] | None = None,
+    ) -> dict[str, Any]:
+        """Project an authenticated queue, optionally holding selected keys.
+
+        The signature is always verified against the original queue bytes.
+        ``allowed_opportunity_keys`` only narrows which already-authenticated
+        intents may create managed lifecycle state in this cycle.
+        """
+
         ledger = self.ledger
         dispatch_key = os.environ.get("RADAR_DISPATCH_HMAC_KEY")
         queue_verified = False
@@ -521,6 +533,8 @@ class ManagedAdapter:
                 continue
             key = str(intent.get("key") or "")
             if not key:
+                continue
+            if allowed_opportunity_keys is not None and key not in allowed_opportunity_keys:
                 continue
             if not external_side_effect_allowed(intent):
                 raise PermissionError("silent exploration intent cannot enter dispatch")

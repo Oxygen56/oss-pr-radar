@@ -119,9 +119,16 @@ receiving their own worktrees.
   digest, permissions, repository origin, and managed path. It then rebuilds
   completed task, consumed publication records, and the exact digest of any
   clean result already represented by a published commit before accepting any
-  new intent. The local publication agent performs this recovery before result
-  ingestion and stops the whole cycle on any recovery or ingestion error. A
-  mismatch therefore fails closed before duplicate task creation or publication.
+  new intent. A mirror with no exact ledger binding is additionally checked
+  against the live GitHub issue identity before it can recreate any ledger row;
+  a proven missing issue is quarantined, while permission, rate-limit, server,
+  and network failures hold only that issue's incoming queue item for the
+  current cycle and defer recovery. Exact intent-bound ledger mirrors remain
+  recoverable offline even when a later intent reused the same thread or
+  worktree. The local publication agent performs this recovery
+  before result ingestion and stops the whole cycle on any recovery or
+  ingestion error. A mismatch therefore fails closed before duplicate task
+  creation or publication.
 - An expired or tampered intent is ignored locally.
 - An expired ordinary lease can be reclaimed only before task creation starts;
   a `CREATING` record remains exclusive until the exact asynchronous task is
@@ -368,7 +375,7 @@ preservation restore in an isolated clone, activate the pointer (which revokes
 any old operational authorization), **pause outbound publication and wait for
 the workflow to become idle**, generate and validate managed-counts evidence
 against the exact Stage 6 projection, issue the short-lived worker-staging
-authorization, stage the three worker plists unloaded, update the two automations,
+authorization, stage the four worker plists unloaded, update the two automations,
 generate the automation snapshot from the actual TOML files and staged plist bytes,
 run strict preflight, issue the operational authorization (which revokes only the
 staging permit), activate the workers, and finally run strict final acceptance. If any preflight fails,
@@ -382,7 +389,7 @@ python current-release/scripts/stage7_evidence.py worker-staging-authorization \
 python current-release/scripts/install_local_publication_workers.py \
   --runtime-root <runtime-root> --stage
 # Update both automations, then generate <automation-snapshot> from their actual
-# TOML files and the three staged plist files.
+# TOML files and the four staged plist files.
 python current-release/scripts/stage7_evidence.py operational-authorization \
   --runtime-root <runtime-root> \
   --managed-counts-evidence <managed-counts-evidence> \

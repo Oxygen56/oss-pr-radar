@@ -50,6 +50,7 @@ SPEC = importlib.util.spec_from_file_location("local_dispatch_bridge", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(MODULE)
+LIVE_IDENTITY_VERIFIER = MODULE._verify_orphan_task_context_live_identity
 
 V47_SUPERSEDED_REVISION = "oss_pr_radar_v47_semantic_evidence_only"
 V48_SUPERSEDED_REVISION = "oss_pr_radar_v48_semantic_evidence_only"
@@ -68,6 +69,11 @@ def hermetic_bridge_shared_root(monkeypatch, tmp_path):
     private_root = github_root / MODULE.TASK_PRIVATE_DIR
     private_root.mkdir(parents=True, exist_ok=True)
     private_root.chmod(0o700)
+    monkeypatch.setattr(
+        MODULE,
+        "_verify_orphan_task_context_live_identity",
+        lambda _context, _github: None,
+    )
 
 
 def _signed_dispatch_queue(
@@ -486,6 +492,167 @@ def test_sync_queue_superseded_revision_runs_independent_maintenance(monkeypatch
     assert result["prFollowup"]["status"] == "imported"
     assert result["prFollowup"]["managedRecorded"] == 0
     assert _intent_statuses(db) == {"current-pending": "PENDING"}
+
+
+@pytest.mark.parametrize("classification", ["identityDeferred", "identityRejected"])
+def test_sync_queue_holds_only_the_key_with_unresolved_context_identity(
+    monkeypatch, tmp_path, classification
+):
+    db = tmp_path / "ledger.sqlite3"
+    first = _signed_dispatch_queue(intent_id="held-intent", key="held/repo#1")
+    second = _signed_dispatch_queue(intent_id="safe-intent", key="safe/repo#2")
+    signer = MODULE.DispatchSigner(os.environ["RADAR_DISPATCH_HMAC_KEY"])
+    unsigned_queue = {key: value for key, value in first.items() if key != "signature"}
+    unsigned_queue.update(
+        {
+            "intentCount": 2,
+            "intents": [first["intents"][0], second["intents"][0]],
+        }
+    )
+    queue = signer.seal(unsigned_queue)
+    monkeypatch.setattr(MODULE, "fetch_cloud_queue", lambda: queue)
+    recovery = {
+        "verified": 0,
+        "restored": [],
+        "resultReceiptsRestored": 0,
+        "unavailable": [],
+        "quarantined": [],
+        "errors": [],
+        "privateErrors": [],
+        "collisions": [],
+        "identityDeferred": [],
+        "identityRejected": [],
+    }
+    recovery[classification] = [
+        {
+            "key": "held/repo#1",
+            "issueUrl": "https://github.com/held/repo/issues/1",
+        }
+    ]
+    monkeypatch.setattr(
+        MODULE,
+        "recover_shared_task_contexts",
+        lambda _store: recovery,
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "fetch_cloud_pr_followup",
+        lambda: {
+            "version": "pr_followup_v3",
+            "generatedAt": iso_z(datetime.now(UTC)),
+            "items": [],
+        },
+    )
+
+    result = MODULE.sync_queue(db)
+
+    assert result["ok"] is True
+    assert result["verified"] == 2
+    assert result["inserted"] == 1
+    assert result["contextHeldKeys"] == ["held/repo#1"]
+    assert _intent_statuses(db) == {"safe-intent": "PENDING"}
+    with sqlite3.connect(db) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_opportunities WHERE opportunity_key='held/repo#1'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM managed_opportunities WHERE opportunity_key='safe/repo#2'"
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_sync_queue_deferred_context_preserves_an_existing_same_intent(monkeypatch, tmp_path):
+    db = tmp_path / "ledger.sqlite3"
+    queue = _signed_dispatch_queue(intent_id="held-intent", key="held/repo#1")
+    store = RadarLedger(db)
+    assert store.enqueue(queue["intents"][0]) is True
+    monkeypatch.setattr(MODULE, "fetch_cloud_queue", lambda: queue)
+    monkeypatch.setattr(
+        MODULE,
+        "recover_shared_task_contexts",
+        lambda _store: {
+            "verified": 0,
+            "restored": [],
+            "resultReceiptsRestored": 0,
+            "unavailable": [],
+            "quarantined": [],
+            "errors": [],
+            "privateErrors": [],
+            "collisions": [],
+            "identityDeferred": [{"key": "held/repo#1"}],
+            "identityRejected": [],
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "fetch_cloud_pr_followup",
+        lambda: {
+            "version": "pr_followup_v3",
+            "generatedAt": iso_z(datetime.now(UTC)),
+            "items": [],
+        },
+    )
+
+    result = MODULE.sync_queue(db)
+
+    assert result["inserted"] == 0
+    assert result["superseded"] == 0
+    assert _intent_statuses(db) == {"held-intent": "PENDING"}
+
+
+@pytest.mark.parametrize("replacement", ["new", "absent"])
+def test_sync_queue_deferred_key_preserves_an_older_local_intent(
+    monkeypatch, tmp_path, replacement
+):
+    db = tmp_path / "ledger.sqlite3"
+    old_queue = _signed_dispatch_queue(intent_id="old-intent", key="held/repo#1")
+    store = RadarLedger(db)
+    assert store.enqueue(old_queue["intents"][0]) is True
+    queue = _signed_dispatch_queue(
+        intent_id="new-intent",
+        key="held/repo#1",
+        include_intent=replacement == "new",
+    )
+    monkeypatch.setattr(MODULE, "fetch_cloud_queue", lambda: queue)
+    monkeypatch.setattr(
+        MODULE,
+        "recover_shared_task_contexts",
+        lambda _store: {
+            "verified": 0,
+            "restored": [],
+            "resultReceiptsRestored": 0,
+            "unavailable": [],
+            "quarantined": [],
+            "errors": [],
+            "privateErrors": [],
+            "collisions": [],
+            "identityDeferred": [{"key": "held/repo#1"}],
+            "identityRejected": [],
+        },
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "fetch_cloud_pr_followup",
+        lambda: {
+            "version": "pr_followup_v3",
+            "generatedAt": iso_z(datetime.now(UTC)),
+            "items": [],
+        },
+    )
+
+    result = MODULE.sync_queue(db)
+
+    assert result["inserted"] == 0
+    assert result["superseded"] == 0
+    assert result["contextHeldKeys"] == ["held/repo#1"]
+    assert _intent_statuses(db) == {"old-intent": "PENDING"}
+    with sqlite3.connect(db) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM managed_opportunities").fetchone()[0] == 0
 
 
 def test_import_signed_queue_imports_current_revision(monkeypatch, tmp_path):
@@ -4513,6 +4680,276 @@ def test_shared_context_recovery_rebuilds_a_lost_local_ledger(monkeypatch, tmp_p
     assert re.fullmatch(r"\d{2}-\d{2} \d{2}:\d{2}", context["titleTime"])
 
 
+def test_orphan_context_recovery_checks_live_issue_once_before_restoring(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    calls = []
+
+    def verify(context, _github):
+        calls.append(context["issueUrl"])
+
+    monkeypatch.setattr(MODULE, "_verify_orphan_task_context_live_identity", verify)
+    recovered = RadarLedger(tmp_path / "recovered.sqlite3")
+
+    result = MODULE.recover_shared_task_contexts(recovered)
+
+    assert result["errors"] == []
+    assert result["verified"] == 1
+    assert calls == ["https://github.com/a/b/issues/1"]
+    assert recovered.task_context(issue_url="https://github.com/a/b/issues/1", thread_id="thread-1")
+
+
+def test_exact_ledger_binding_projects_the_context_intent_when_thread_and_worktree_are_reused():
+    context = {
+        "key": "a/b#1",
+        "issueUrl": "https://github.com/a/b/issues/1",
+        "intentId": "intent-older",
+        "threadId": "thread-reused",
+        "worktreePath": "/tmp/worktree-reused",
+    }
+    calls = []
+
+    class Store:
+        def task_context(self, **kwargs):
+            calls.append(kwargs)
+            return dict(context)
+
+    assert MODULE._task_context_has_exact_ledger_binding(Store(), context) is True
+    assert calls == [
+        {
+            "issue_url": context["issueUrl"],
+            "intent_id": context["intentId"],
+            "thread_id": context["threadId"],
+            "worktree_path": context["worktreePath"],
+        }
+    ]
+
+
+def test_orphan_context_missing_live_issue_is_quarantined_without_ledger_restore(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_verify_orphan_task_context_live_identity",
+        lambda *_args: (_ for _ in ()).throw(
+            MODULE.TaskContextLiveIdentityRejected("task context live GitHub issue does not exist")
+        ),
+    )
+    recovered = RadarLedger(tmp_path / "recovered.sqlite3")
+
+    first = MODULE.recover_shared_task_contexts(recovered)
+    second = MODULE.recover_shared_task_contexts(recovered)
+
+    assert first["verified"] == 0
+    assert first["errors"] == []
+    assert first["quarantined"][0]["reason"] == "SHARED_CONTEXT_LIVE_ISSUE_NOT_FOUND"
+    assert first["quarantined"][0]["new"] is True
+    assert second["quarantined"][0]["new"] is False
+    with recovered.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM intents").fetchone()[0] == 0
+
+
+def test_private_shared_collision_cannot_hide_a_proven_missing_issue(monkeypatch, tmp_path):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    foreign = json.loads(context_path.read_text(encoding="utf-8"))
+    foreign.update(
+        {
+            "intentId": "intent-foreign",
+            "threadId": "thread-foreign",
+            "worktreePath": str(tmp_path / "foreign-worktree"),
+        }
+    )
+    foreign["contextDigest"] = MODULE._task_context_digest(foreign, None)
+    shared_path = MODULE.shared_context_path(foreign["issueUrl"])
+    MODULE._atomic_json(shared_path, foreign)
+    monkeypatch.setattr(
+        MODULE,
+        "_verify_orphan_task_context_live_identity",
+        lambda *_args: (_ for _ in ()).throw(
+            MODULE.TaskContextLiveIdentityRejected("task context live GitHub issue does not exist")
+        ),
+    )
+    recovered = RadarLedger(tmp_path / "recovered.sqlite3")
+
+    result = MODULE.recover_shared_task_contexts(recovered)
+
+    assert result["verified"] == 0
+    assert result["errors"] == []
+    assert result["identityRejected"][0]["source"] == "private"
+    assert result["quarantined"][0]["reason"] == "SHARED_CONTEXT_LIVE_ISSUE_NOT_FOUND"
+    assert shared_path.exists()
+    assert json.loads(shared_path.read_text(encoding="utf-8"))["intentId"] == "intent-foreign"
+    with recovered.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM intents").fetchone()[0] == 0
+
+
+def test_private_shared_collision_transient_identity_failure_does_not_quarantine(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    store.record_stage("a/b#1", "FIX_READY", evidence={})
+    context_path = MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    foreign = json.loads(context_path.read_text(encoding="utf-8"))
+    foreign.update(
+        {
+            "intentId": "intent-foreign",
+            "threadId": "thread-foreign",
+            "worktreePath": str(tmp_path / "foreign-worktree"),
+        }
+    )
+    foreign["contextDigest"] = MODULE._task_context_digest(foreign, None)
+    shared_path = MODULE.shared_context_path(foreign["issueUrl"])
+    MODULE._atomic_json(shared_path, foreign)
+
+    def defer(context, _github):
+        raise MODULE.TaskContextLiveIdentityDeferred(context, RuntimeError("HTTP 503"))
+
+    monkeypatch.setattr(MODULE, "_verify_orphan_task_context_live_identity", defer)
+    recovered = RadarLedger(tmp_path / "recovered.sqlite3")
+
+    result = MODULE.recover_shared_task_contexts(recovered)
+
+    assert result["verified"] == 0
+    assert result["errors"] == []
+    assert result["identityDeferred"][0]["source"] == "private"
+    assert result["quarantined"] == []
+    assert shared_path.exists()
+    with recovered.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM intents").fetchone()[0] == 0
+
+
+def test_orphan_context_live_issue_lookup_transiently_defers_without_quarantine(
+    monkeypatch, tmp_path
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    worktree = MODULE.managed_worktree_path("intent-1", "a/b")
+    store, _ = registered_store(tmp_path / "original", worktree=worktree)
+    run_git(worktree, "remote", "add", "origin", "https://github.com/a/b.git")
+    MODULE.write_task_context(
+        store,
+        issue_url="https://github.com/a/b/issues/1",
+        thread_id="thread-1",
+        cwd=worktree,
+    )
+    calls = []
+
+    def defer(context, _github):
+        calls.append(context["issueUrl"])
+        raise MODULE.TaskContextLiveIdentityDeferred(context, RuntimeError("HTTP 503"))
+
+    monkeypatch.setattr(MODULE, "_verify_orphan_task_context_live_identity", defer)
+    recovered = RadarLedger(tmp_path / "recovered.sqlite3")
+
+    result = MODULE.recover_shared_task_contexts(recovered)
+
+    assert result["verified"] == 0
+    assert result["errors"] == []
+    assert result["quarantined"] == []
+    assert result["identityDeferred"][0]["reason"] == "TASK_CONTEXT_LIVE_IDENTITY_DEFERRED"
+    assert calls == ["https://github.com/a/b/issues/1"]
+    with recovered.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM intents").fetchone()[0] == 0
+
+
+def test_orphan_context_live_identity_requires_exact_github_issue_urls():
+    context = {"issueUrl": "https://github.com/Owner/Repo/issues/7"}
+
+    class GitHub:
+        def issue(self, repo, number):
+            assert (repo, number) == ("Owner/Repo", 7)
+            return {
+                "number": 7,
+                "html_url": "https://github.com/owner/repo/issues/7",
+                "url": "https://api.github.com/repos/owner/repo/issues/7",
+                "repository_url": "https://api.github.com/repos/owner/repo",
+            }
+
+    LIVE_IDENTITY_VERIFIER(context, GitHub())
+
+    class WrongGitHub:
+        def issue(self, _repo, _number):
+            return {
+                "number": 8,
+                "html_url": "https://github.com/owner/repo/issues/8",
+                "url": "https://api.github.com/repos/owner/repo/issues/8",
+                "repository_url": "https://api.github.com/repos/owner/repo",
+            }
+
+    with pytest.raises(MODULE.TaskContextLiveIdentityRejected, match="identity mismatches"):
+        LIVE_IDENTITY_VERIFIER(context, WrongGitHub())
+
+
+@pytest.mark.parametrize("message", ["HTTP 401", "HTTP 403", "HTTP 500", "unexpected EOF"])
+def test_orphan_context_live_identity_defers_non_missing_github_errors(message):
+    context = {"issueUrl": "https://github.com/a/b/issues/1"}
+
+    class GitHub:
+        def issue(self, _repo, _number):
+            raise MODULE.GitHubError(message)
+
+    with pytest.raises(MODULE.TaskContextLiveIdentityDeferred):
+        LIVE_IDENTITY_VERIFIER(context, GitHub())
+
+
+@pytest.mark.parametrize("message", ["HTTP 404", "HTTP 410", "issue not found"])
+def test_orphan_context_live_identity_rejects_only_proven_missing_issues(message):
+    context = {"issueUrl": "https://github.com/a/b/issues/1"}
+
+    class GitHub:
+        def issue(self, _repo, _number):
+            raise MODULE.GitHubError(message)
+
+    with pytest.raises(MODULE.TaskContextLiveIdentityRejected, match="does not exist"):
+        LIVE_IDENTITY_VERIFIER(context, GitHub())
+
+
 def test_shared_context_recovery_verifies_an_existing_dispatched_task(monkeypatch, tmp_path):
     project_root = tmp_path / "github"
     monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
@@ -4526,6 +4963,13 @@ def test_shared_context_recovery_verifies_an_existing_dispatched_task(monkeypatc
         cwd=worktree,
     )
 
+    monkeypatch.setattr(
+        MODULE,
+        "_verify_orphan_task_context_live_identity",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("exact ledger binding must recover offline")
+        ),
+    )
     verified = MODULE.recover_shared_task_contexts(store)
 
     assert verified["verified"] == 1
@@ -5704,6 +6148,61 @@ def test_shared_context_recovery_deduplicates_trusted_legacy_and_v2_contexts(mon
     repeated = MODULE.recover_shared_task_contexts(RadarLedger(tmp_path / "conflict.sqlite3"))
     assert repeated["errors"] == []
     assert [item["new"] for item in repeated["quarantined"]] == [False, False]
+
+
+@pytest.mark.parametrize("live_outcome", ["rejected", "deferred"])
+def test_layout_conflict_private_fallback_respects_live_identity_result(
+    monkeypatch, tmp_path, live_outcome
+):
+    project_root = tmp_path / "github"
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", project_root)
+    _store, _worktree, local_path, canonical = _context_digest_fixture(
+        tmp_path / "fixture", stage="FIX_READY"
+    )
+    context_root = MODULE.shared_context_root()
+    legacy = context_root / MODULE._legacy_shared_context_filename(
+        "https://github.com/a/b/issues/1"
+    )
+    private_value = json.loads(local_path.read_text(encoding="utf-8"))
+    for path, suffix in ((canonical, "canonical"), (legacy, "legacy")):
+        foreign = dict(private_value)
+        foreign.update(
+            {
+                "intentId": f"intent-{suffix}",
+                "threadId": f"thread-{suffix}",
+                "worktreePath": str(tmp_path / f"missing-{suffix}"),
+                "bootstrapContextPath": str(path),
+            }
+        )
+        foreign["contextDigest"] = MODULE._task_context_digest(foreign, None)
+        MODULE._atomic_json(path, foreign)
+
+    def verify(context, _github):
+        if live_outcome == "rejected":
+            raise MODULE.TaskContextLiveIdentityRejected(
+                "task context live GitHub issue does not exist"
+            )
+        raise MODULE.TaskContextLiveIdentityDeferred(context, RuntimeError("HTTP 503"))
+
+    monkeypatch.setattr(MODULE, "_verify_orphan_task_context_live_identity", verify)
+    recovered = RadarLedger(tmp_path / "recovered.sqlite3")
+
+    result = MODULE.recover_shared_task_contexts(recovered)
+
+    assert result["verified"] == 0
+    assert result["errors"] == []
+    if live_outcome == "rejected":
+        assert result["identityRejected"][0]["source"] == "private"
+        assert [item["reason"] for item in result["quarantined"]] == [
+            "SHARED_CONTEXT_LAYOUT_CONFLICT",
+            "SHARED_CONTEXT_LAYOUT_CONFLICT",
+        ]
+    else:
+        assert result["identityDeferred"][0]["source"] == "private"
+        assert result["quarantined"] == []
+    with recovered.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM intents").fetchone()[0] == 0
 
 
 def test_shared_context_layout_conflict_without_bindable_identity_fails_closed(

@@ -3056,10 +3056,16 @@ class RadarLedger:
                 rejected.append(str(row["intent_id"]))
         return rejected
 
-    def reconcile_pending(self, active_intent_ids: set[str]) -> list[str]:
+    def reconcile_pending(
+        self,
+        active_intent_ids: set[str],
+        *,
+        held_opportunity_keys: set[str] | None = None,
+    ) -> list[str]:
         """Supersede local, uncommitted work that the latest signed queue withdrew."""
         now = iso_z(datetime.now(UTC))
         superseded: list[str] = []
+        held_keys = held_opportunity_keys or set()
         with self.transaction() as connection:
             rows = connection.execute(
                 """SELECT intent_id,opportunity_key FROM intents
@@ -3067,7 +3073,7 @@ class RadarLedger:
             ).fetchall()
             for row in rows:
                 intent_id = str(row["intent_id"])
-                if intent_id in active_intent_ids:
+                if intent_id in active_intent_ids or str(row["opportunity_key"]) in held_keys:
                     continue
                 connection.execute(
                     """UPDATE intents SET status='SUPERSEDED',lease_owner=NULL,

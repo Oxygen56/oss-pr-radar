@@ -588,6 +588,18 @@ class TaskContextWorktreeUnavailable(RuntimeError):
         self.reason = reason
 
 
+class TaskContextLiveIdentityDeferred(RuntimeError):
+    """An orphan context could not be checked because GitHub is temporarily unavailable."""
+
+    def __init__(self, context: dict[str, Any], error: BaseException):
+        super().__init__(f"TASK_CONTEXT_LIVE_IDENTITY_DEFERRED:{str(error)[:240]}")
+        self.context = context
+
+
+class TaskContextLiveIdentityRejected(RuntimeError):
+    """An orphan context does not identify a currently real GitHub issue."""
+
+
 class PrFollowupSnapshotChanged(RuntimeError):
     """The live PR no longer matches the cloud snapshot being prepared."""
 
@@ -2822,6 +2834,59 @@ def _task_context_binding(context: dict[str, Any]) -> tuple[str, str, str, str] 
     return key, intent_id, thread_id, normalized_worktree
 
 
+def _task_context_has_exact_ledger_binding(
+    store: RadarLedger,
+    context: dict[str, Any],
+) -> bool:
+    expected_binding = _task_context_binding(context)
+    if expected_binding is None:
+        return False
+    current = store.task_context(
+        issue_url=str(context.get("issueUrl") or ""),
+        intent_id=str(context.get("intentId") or ""),
+        thread_id=str(context.get("threadId") or ""),
+        worktree_path=str(context.get("worktreePath") or ""),
+    )
+    return bool(current is not None and _task_context_binding(current) == expected_binding)
+
+
+def _verify_orphan_task_context_live_identity(
+    context: dict[str, Any],
+    github: GitHubClient,
+) -> None:
+    """Require an unbound recovery envelope to name one live, exact GitHub issue."""
+
+    issue_url = str(context.get("issueUrl") or "")
+    match = ISSUE_URL.fullmatch(issue_url)
+    if match is None:
+        raise TaskContextLiveIdentityRejected("task context live issue URL is invalid")
+    repo, number_text = match.groups()
+    number = int(number_text)
+    try:
+        issue = github.issue(repo, number)
+    except (GitHubError, OSError, subprocess.TimeoutExpired) as exc:
+        message = str(exc).casefold()
+        if (
+            "issue not found" in message
+            or re.search(r"\bhttp\s+(?:404|410)\b", message) is not None
+        ):
+            raise TaskContextLiveIdentityRejected(
+                "task context live GitHub issue does not exist"
+            ) from exc
+        raise TaskContextLiveIdentityDeferred(context, exc) from exc
+    expected_html_url = f"https://github.com/{repo}/issues/{number}".casefold()
+    expected_api_url = f"https://api.github.com/repos/{repo}/issues/{number}".casefold()
+    expected_repository_url = f"https://api.github.com/repos/{repo}".casefold()
+    if (
+        not isinstance(issue, dict)
+        or issue.get("number") != number
+        or str(issue.get("html_url") or "").rstrip("/").casefold() != expected_html_url
+        or str(issue.get("url") or "").rstrip("/").casefold() != expected_api_url
+        or str(issue.get("repository_url") or "").rstrip("/").casefold() != expected_repository_url
+    ):
+        raise TaskContextLiveIdentityRejected("task context live GitHub issue identity mismatches")
+
+
 def _verified_private_task_context(
     worktree_path: Path,
     raw: bytes,
@@ -2865,10 +2930,11 @@ def _private_context_matches_current_ledger(
 
     current = store.task_context(
         issue_url=str(context.get("issueUrl") or ""),
+        intent_id=str(context.get("intentId") or ""),
         thread_id=str(context.get("threadId") or ""),
         worktree_path=str(context.get("worktreePath") or ""),
     )
-    if current is None or _task_context_binding(current) != _task_context_binding(context):
+    if current is None or not _task_context_has_exact_ledger_binding(store, context):
         return False
     for field, value in current.items():
         observed = context.get(field)
@@ -3467,6 +3533,7 @@ def _recover_verified_task_context(
     source_updated_at: str,
     shared_source: bool,
     shared_cleanup_path: Path | None = None,
+    orphan_identity_verifier: Callable[[dict[str, Any]], None],
 ) -> tuple[dict[str, Any], bool]:
     """Restore one already-verified context and any authenticated result.
 
@@ -3476,6 +3543,7 @@ def _recover_verified_task_context(
     to the shared copy.
     """
 
+    orphan_identity_verifier(context)
     restored_context = store.restore_task_context(context, source_updated_at=source_updated_at)
     superseded_mirror = bool(
         restored_context.get("supersededContextMirror")
@@ -3608,7 +3676,37 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
     errors: list[dict[str, str]] = []
     private_errors: list[dict[str, str]] = []
     collisions: list[dict[str, Any]] = []
+    identity_deferred: list[dict[str, Any]] = []
+    identity_rejected: list[dict[str, Any]] = []
     result_receipts_restored = 0
+
+    live_identity_cache: dict[str, tuple[str, str]] = {}
+    live_identity_client: GitHubClient | None = None
+
+    def verify_orphan_identity(context: dict[str, Any]) -> None:
+        nonlocal live_identity_client
+        if _task_context_has_exact_ledger_binding(store, context):
+            return
+        issue_url = str(context.get("issueUrl") or "")
+        cached = live_identity_cache.get(issue_url)
+        if cached is not None:
+            outcome, message = cached
+            if outcome == "valid":
+                return
+            if outcome == "deferred":
+                raise TaskContextLiveIdentityDeferred(context, RuntimeError(message))
+            raise TaskContextLiveIdentityRejected(message)
+        if live_identity_client is None:
+            live_identity_client = GitHubClient()
+        try:
+            _verify_orphan_task_context_live_identity(context, live_identity_client)
+        except TaskContextLiveIdentityDeferred as exc:
+            live_identity_cache[issue_url] = ("deferred", str(exc))
+            raise
+        except TaskContextLiveIdentityRejected as exc:
+            live_identity_cache[issue_url] = ("rejected", str(exc))
+            raise
+        live_identity_cache[issue_url] = ("valid", "")
 
     private_entries, private_scan_errors = _list_managed_private_task_contexts()
     private_errors.extend(private_scan_errors)
@@ -3667,6 +3765,8 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
             "errors": errors,
             "privateErrors": private_errors,
             "collisions": [],
+            "identityDeferred": [],
+            "identityRejected": [],
         }
 
     def private_priority(item: dict[str, Any]) -> tuple[float, str, str]:
@@ -3786,41 +3886,86 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
 
     restored_private_keys: set[str] = set()
     suppressed_private_keys: set[str] = set()
+    private_restore_outcomes: dict[str, str] = {}
 
     def restore_private(
         key: str,
         *,
         shared_cleanup_path: Path | None = None,
-    ) -> bool:
+    ) -> str:
         nonlocal result_receipts_restored
-        if key in restored_private_keys or key in suppressed_private_keys:
-            return key in restored_private_keys
+        if key in restored_private_keys:
+            return "restored"
+        if key in suppressed_private_keys:
+            return private_restore_outcomes.get(key, "suppressed")
         private_item = select_private(key)
         if private_item is None:
             suppressed_private_keys.add(key)
-            return False
+            private_restore_outcomes[key] = "suppressed"
+            return "suppressed"
         context = private_item["context"]
+        source_updated_at = private_item["sourceUpdatedAt"]
+        outcome = "error"
         try:
+            verify_orphan_identity(context)
             if shared_cleanup_path is not None:
-                _clear_exact_missing_publication_receipt_quarantine(
+                cleared = _clear_exact_missing_publication_receipt_quarantine(
                     store,
                     path=shared_cleanup_path,
                     context=context,
                 )
+                if cleared:
+                    private_path = (
+                        private_item["worktreePath"] / TASK_PRIVATE_DIR / "task-context.json"
+                    )
+                    private_raw = private_path.read_bytes()
+                    context, source_updated_at = _verified_private_context_with_singleton_guard(
+                        store,
+                        private_item["worktreePath"],
+                        private_raw,
+                        private_path.stat(),
+                    )
             restored_context, receipt_restored = _recover_verified_task_context(
                 store,
                 context,
                 source_path=(private_item["worktreePath"] / TASK_PRIVATE_DIR / "task-context.json"),
-                source_updated_at=private_item["sourceUpdatedAt"],
+                source_updated_at=source_updated_at,
                 shared_source=False,
                 shared_cleanup_path=shared_cleanup_path,
+                orphan_identity_verifier=verify_orphan_identity,
             )
             if receipt_restored:
                 result_receipts_restored += 1
             restored.append(restored_context)
             restored_private_keys.add(key)
-            return True
+            private_restore_outcomes[key] = "restored"
+            return "restored"
+        except TaskContextLiveIdentityDeferred as exc:
+            outcome = "deferred"
+            identity_deferred.append(
+                {
+                    "path": str(private_item["worktreePath"]),
+                    "key": str(exc.context.get("key") or ""),
+                    "issueUrl": str(exc.context.get("issueUrl") or ""),
+                    "reason": "TASK_CONTEXT_LIVE_IDENTITY_DEFERRED",
+                    "error": str(exc)[:300],
+                    "source": "private",
+                }
+            )
+        except TaskContextLiveIdentityRejected as exc:
+            outcome = "rejected"
+            identity_rejected.append(
+                {
+                    "path": str(private_item["worktreePath"]),
+                    "key": str(context.get("key") or ""),
+                    "issueUrl": str(context.get("issueUrl") or ""),
+                    "reason": "TASK_CONTEXT_LIVE_ISSUE_INVALID",
+                    "error": str(exc)[:300],
+                    "source": "private",
+                }
+            )
         except TaskContextWorktreeUnavailable as exc:
+            outcome = "unavailable"
             receipt = exc.context.get("publicationReceipt")
             unavailable.append(
                 {
@@ -3836,6 +3981,7 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                 }
             )
         except (OSError, RuntimeError, ValueError, TypeError, sqlite3.Error) as exc:
+            outcome = "error"
             failure = {
                 "path": str(private_item["worktreePath"]),
                 "error": str(exc)[:300],
@@ -3843,11 +3989,11 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
             private_errors.append(failure)
             errors.append(failure | {"source": "private"})
         suppressed_private_keys.add(key)
-        return False
+        private_restore_outcomes[key] = outcome
+        return outcome
 
     private_keys = set(private_by_key)
     shared_observed_keys: set[str] = set()
-    private_fallback_keys: set[str] = set()
 
     try:
         context_fd, root, handles = _open_shared_context_directory(create=False)
@@ -3934,10 +4080,15 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                 # singleton path so its artifact/quarantine transaction can
                 # validate and clear atomically.
                 if repair_carrier:
-                    restore_private(str(key), shared_cleanup_path=item.source_path)
+                    private_outcome = restore_private(
+                        str(key), shared_cleanup_path=item.source_path
+                    )
+                    if private_outcome != "rejected":
+                        continue
                 else:
-                    private_fallback_keys.add(str(key))
-                continue
+                    private_outcome = restore_private(str(key))
+                    if private_outcome != "rejected":
+                        continue
             try:
                 quarantined_item = _quarantine_shared_context(
                     store,
@@ -4039,7 +4190,7 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                                 "privateBindings": sorted(private_bindings),
                             }
                         )
-                        restore_private(
+                        private_outcome = restore_private(
                             path_key,
                             # Cleanup receipts use the controller's lexical
                             # canonical path; descriptor discovery may report the
@@ -4052,28 +4203,45 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                                 else None
                             ),
                         )
+                        if private_outcome == "rejected":
+                            raise TaskContextLiveIdentityRejected(
+                                "task context live GitHub issue does not exist"
+                            )
                         continue
-            try:
-                preverified_context = json.loads(shared_raw)
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                preverified_context = None
-            if isinstance(preverified_context, dict):
-                _clear_exact_missing_publication_receipt_quarantine(
-                    store,
-                    path=secure_path,
-                    context=preverified_context,
-                )
             context, source_updated_at = _verified_shared_task_context(path)
+            verify_orphan_identity(context)
+            cleared = _clear_exact_missing_publication_receipt_quarantine(
+                store,
+                path=secure_path,
+                context=context,
+            )
+            if cleared:
+                context, source_updated_at = _verified_shared_task_context(path)
+                verify_orphan_identity(context)
             restored_context, receipt_restored = _recover_verified_task_context(
                 store,
                 context,
                 source_path=path,
                 source_updated_at=source_updated_at,
                 shared_source=True,
+                orphan_identity_verifier=verify_orphan_identity,
             )
             if receipt_restored:
                 result_receipts_restored += 1
             restored.append(restored_context)
+            if path_key is not None:
+                suppressed_private_keys.add(path_key)
+        except TaskContextLiveIdentityDeferred as exc:
+            identity_deferred.append(
+                {
+                    "path": str(path),
+                    "key": str(exc.context.get("key") or ""),
+                    "issueUrl": str(exc.context.get("issueUrl") or ""),
+                    "reason": "TASK_CONTEXT_LIVE_IDENTITY_DEFERRED",
+                    "error": str(exc)[:300],
+                    "source": "shared",
+                }
+            )
             if path_key is not None:
                 suppressed_private_keys.add(path_key)
         except TaskContextWorktreeUnavailable as exc:
@@ -4156,7 +4324,7 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
     # Private-only tasks and contexts masked by a different well-formed
     # singleton are recovered after shared validation has classified every
     # file.  At most one current private identity is selected per issue.
-    for key in sorted((private_keys - shared_observed_keys) | private_fallback_keys):
+    for key in sorted(private_keys - shared_observed_keys):
         restore_private(key)
 
     return {
@@ -4168,6 +4336,8 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
         "errors": errors,
         "privateErrors": private_errors,
         "collisions": collisions,
+        "identityDeferred": identity_deferred,
+        "identityRejected": identity_rejected,
     }
 
 
@@ -4200,8 +4370,6 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
             queue, stale_queue, path, import_scope="superseded_signed_queue_only"
         )
         intents = []
-    else:
-        ManagedAdapter(ROOT, path).record_dispatch_queue(queue)
     store = ledger(path)
     context_recovery = recover_shared_task_contexts(store)
     if context_recovery["errors"]:
@@ -4221,7 +4389,24 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
         for item in context_recovery.get("quarantined") or []
         if item.get("key")
     }
-    safe_intents = [item for item in intents if str(item.get("key") or "") not in quarantined_keys]
+    rejected_keys = {
+        str(item.get("key") or "")
+        for item in context_recovery.get("identityRejected") or []
+        if item.get("key")
+    }
+    deferred_keys = {
+        str(item.get("key") or "")
+        for item in context_recovery.get("identityDeferred") or []
+        if item.get("key")
+    }
+    blocked_keys = quarantined_keys | rejected_keys
+    held_keys = blocked_keys | deferred_keys
+    safe_intents = [item for item in intents if str(item.get("key") or "") not in held_keys]
+    if stale_queue is None:
+        ManagedAdapter(ROOT, path).record_dispatch_queue(
+            queue,
+            allowed_opportunity_keys={str(item.get("key") or "") for item in safe_intents},
+        )
     incoming_by_key = {str(item.get("key") or ""): item for item in safe_intents}
     workspace_superseded: list[dict[str, str]] = []
     for unavailable in context_recovery["unavailable"]:
@@ -4246,7 +4431,12 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
     stale_terminal = store.reconcile_terminal_intents()
     if stale_queue is None:
         superseded = store.reconcile_pending(
-            {str(item["intentId"]) for item in safe_intents if item.get("intentId")}
+            {
+                str(item["intentId"])
+                for item in intents
+                if item.get("intentId") and str(item.get("key") or "") not in blocked_keys
+            },
+            held_opportunity_keys=deferred_keys,
         )
         inserted = sum(store.enqueue(item) for item in safe_intents)
     else:
@@ -4305,6 +4495,7 @@ def sync_queue(path: Path = LEDGER_PATH) -> dict[str, Any]:
         "missingWorkspacesSuperseded": workspace_superseded,
         "taskContextRecovery": context_recovery,
         "quarantined": context_recovery.get("quarantined", []),
+        "contextHeldKeys": sorted(held_keys),
         "prFollowup": followup_import,
     }
 
@@ -6518,6 +6709,8 @@ def _atomic_shared_context_json(issue_url: str, value: dict[str, Any]) -> Path:
 
 
 def _shared_context_quarantine_reason(exc: BaseException) -> str:
+    if isinstance(exc, TaskContextLiveIdentityRejected):
+        return "SHARED_CONTEXT_LIVE_ISSUE_NOT_FOUND"
     message = str(exc)
     if "legacy and v2 context bytes conflict" in message:
         return "SHARED_CONTEXT_LAYOUT_CONFLICT"
