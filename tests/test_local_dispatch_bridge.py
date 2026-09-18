@@ -12261,7 +12261,7 @@ def test_ingestion_ignores_stale_result_after_published_context_moves_on(tmp_pat
     assert result["errors"] == []
 
 
-def test_ingestion_still_rejects_context_mismatch_for_active_task(tmp_path):
+def test_ingestion_quarantines_context_mismatch_for_active_task(tmp_path):
     store, worktree = registered_store(tmp_path)
     context_path = MODULE.write_task_context(
         store,
@@ -12288,9 +12288,13 @@ def test_ingestion_still_rejects_context_mismatch_for_active_task(tmp_path):
 
     result = MODULE.ingest_task_results(SimpleNamespace(ledger=tmp_path / "ledger.sqlite3"))
 
-    assert result["ok"] is False
+    assert result["ok"] is True
     assert result.get("ignored", []) == []
-    assert result["errors"] == [{"key": "a/b#1", "error": "task result context digest mismatch"}]
+    assert result["errors"] == []
+    assert result["quarantined"] == [
+        {"key": "a/b#1", "reason": MODULE.RESULT_CONTEXT_DIGEST_MISMATCH}
+    ]
+    assert store.active_task_quarantine("a/b#1")["reason"] == MODULE.RESULT_CONTEXT_DIGEST_MISMATCH
 
 
 def _audit_refresh_validation_result(tmp_path, *, omit_task_id=False):

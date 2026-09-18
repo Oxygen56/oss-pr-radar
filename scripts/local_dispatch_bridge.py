@@ -485,6 +485,7 @@ PUBLISHED_TASK_STAGES = {
     "CLOSED",
 }
 LEGACY_RESULT_REQUIRES_MIGRATION = "LEGACY_RESULT_REQUIRES_MIGRATION"
+RESULT_CONTEXT_DIGEST_MISMATCH = "RESULT_CONTEXT_DIGEST_MISMATCH"
 PR_FOLLOWUP_REBIND_REQUIRED = "PR_FOLLOWUP_REBIND_REQUIRED"
 PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID = "PUBLISHED_RESULT_CURRENT_PR_BINDING_INVALID"
 IMMEDIATE_RECOVERY_ERROR_CODES = {
@@ -21110,6 +21111,42 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     continue
                 else:
+                    if task_stage == "REPRODUCTION_REQUIRED" and not value.get("taskId"):
+                        # An unbound reproduction result has already failed
+                        # the identity boundary. Do not repeatedly turn that
+                        # stale local artifact into a failed worker cycle:
+                        # preserve the evidence, quarantine the task with
+                        # both digests, and keep it out of all publication
+                        # paths until an explicit recovery exists.
+                        event = managed_adapter.ledger.record_task_quarantine(
+                            opportunity_key=candidate["key"],
+                            task_id=str(candidate.get("intentId") or candidate["threadId"]),
+                            state=str(candidate.get("stage") or "DISPATCHED"),
+                            source="result-ingestion",
+                            reason=RESULT_CONTEXT_DIGEST_MISMATCH,
+                            dedupe_key=(
+                                f"result-context-digest-mismatch:{candidate['key']}:{initial_digest}"
+                            ),
+                            provenance={
+                                "contextDigest": context.get("contextDigest"),
+                                "resultContextDigest": value.get("contextDigest"),
+                                "threadId": str(candidate["threadId"]),
+                            },
+                            payload={
+                                "reason": RESULT_CONTEXT_DIGEST_MISMATCH,
+                                "resultStage": str(value.get("stage") or ""),
+                                "resultPath": str(Path(context.get("resultPath") or "")),
+                            },
+                        )
+                        entry = {
+                            "key": candidate["key"],
+                            "reason": RESULT_CONTEXT_DIGEST_MISMATCH,
+                        }
+                        if event.get("created") is False:
+                            quarantined_already_recorded.append(entry)
+                        else:
+                            quarantined.append(entry)
+                        continue
                     raise RuntimeError("task result context digest mismatch")
             stage = str(value.get("stage") or "")
             quality = value.get("quality")
