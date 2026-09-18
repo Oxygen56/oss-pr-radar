@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   freshness:
+    if: vars.RADAR_MAINTENANCE_PAUSED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:

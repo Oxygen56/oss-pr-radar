@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -35,6 +37,18 @@ SCHEMA = OUTBOUND_PAUSE_SCHEMA
 FILENAME = OUTBOUND_PAUSE_FILENAME
 DEFAULT_REPO = "Oxygen56/oss-pr-radar"
 DEFAULT_WORKFLOW = "radar.yml"
+MAINTENANCE_VARIABLE = "RADAR_MAINTENANCE_PAUSED"
+REMOTE_PAUSE_MODE = "repository_variable_v1"
+MAINTENANCE_GATED_JOBS = (
+    "watch",
+    "pr-followup",
+    "scan",
+    "build-state",
+    "persist-pending",
+    "notify",
+    "persist-receipt",
+    "full-chain-proof",
+)
 _OUTBOUND_LOCK_FD: int | None = None
 
 
@@ -68,6 +82,151 @@ def _set_workflow_enabled(repo: str, workflow: str, *, enabled: bool) -> None:
         raise RuntimeError(
             f"workflow {operation} failed: {(completed.stderr or completed.stdout)[:240]}"
         )
+
+
+def _repository_variable(repo: str, name: str) -> tuple[bool, str | None]:
+    completed = _run_gh(["api", f"repos/{repo}/actions/variables/{name}"])
+    if completed.returncode != 0:
+        error = (completed.stderr or completed.stdout).strip()
+        if "HTTP 404" in error or "Not Found" in error:
+            return False, None
+        raise RuntimeError(f"repository variable lookup failed: {error[:240]}")
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("repository variable lookup returned invalid JSON") from exc
+    if not isinstance(value, dict) or value.get("name") != name:
+        raise RuntimeError("repository variable lookup returned an invalid record")
+    return True, str(value.get("value") or "")
+
+
+def _set_repository_variable(repo: str, name: str, value: str) -> None:
+    exists, _current = _repository_variable(repo, name)
+    endpoint = f"repos/{repo}/actions/variables"
+    arguments = ["api", "--method", "PATCH", f"{endpoint}/{name}", "-f", f"value={value}"]
+    if not exists:
+        arguments = [
+            "api",
+            "--method",
+            "POST",
+            endpoint,
+            "-f",
+            f"name={name}",
+            "-f",
+            f"value={value}",
+        ]
+    completed = _run_gh(arguments)
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"repository variable update failed: {(completed.stderr or completed.stdout)[:240]}"
+        )
+
+
+def _delete_repository_variable(repo: str, name: str) -> None:
+    exists, _current = _repository_variable(repo, name)
+    if not exists:
+        return
+    completed = _run_gh(["api", "--method", "DELETE", f"repos/{repo}/actions/variables/{name}"])
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"repository variable deletion failed: {(completed.stderr or completed.stdout)[:240]}"
+        )
+
+
+def _restore_repository_variable(
+    repo: str,
+    name: str,
+    *,
+    existed: bool,
+    value: str | None,
+) -> None:
+    if existed:
+        _set_repository_variable(repo, name, str(value or ""))
+    else:
+        _delete_repository_variable(repo, name)
+
+
+def _maintenance_pause_active(repo: str, name: str) -> bool:
+    exists, value = _repository_variable(repo, name)
+    return bool(exists and str(value or "").casefold() == "true")
+
+
+def _repository_variable_matches(
+    repo: str,
+    name: str,
+    *,
+    existed: bool,
+    value: str | None,
+) -> bool:
+    current_exists, current_value = _repository_variable(repo, name)
+    if current_exists != existed:
+        return False
+    return not existed or current_value == str(value or "")
+
+
+def _job_level_if_expression(source: str, job: str) -> str | None:
+    matched = re.search(
+        rf"(?ms)^  {re.escape(job)}:\n(?P<section>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        source,
+    )
+    if matched is None:
+        return None
+    lines = matched.group("section").splitlines()
+    for index, line in enumerate(lines):
+        condition = re.match(r"^    if:\s*(?P<value>.*)$", line)
+        if condition is None:
+            continue
+        value = condition.group("value").strip()
+        if value not in {">", ">-", "|", "|-"}:
+            return value
+        continuation: list[str] = []
+        for extra in lines[index + 1 :]:
+            if extra.strip() and len(extra) - len(extra.lstrip()) <= 4:
+                break
+            if extra.strip():
+                continuation.append(extra.strip())
+        return " ".join(continuation)
+    return None
+
+
+def _normalized_expression(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _verified_remote_workflow_gate(repo: str, workflow: str) -> str:
+    if Path(workflow).name != workflow:
+        raise RuntimeError("maintenance pause requires a workflow filename")
+    completed = _run_gh(
+        [
+            "api",
+            "-H",
+            "Accept: application/vnd.github.raw+json",
+            f"repos/{repo}/contents/.github/workflows/{workflow}",
+        ]
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"remote workflow lookup failed: {(completed.stderr or completed.stdout)[:240]}"
+        )
+    source = completed.stdout
+    if not source.strip():
+        raise RuntimeError("remote workflow lookup returned empty content")
+    local_path = ROOT / ".github" / "workflows" / workflow
+    try:
+        local_source = local_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError("local release workflow could not be read") from exc
+    for job in MAINTENANCE_GATED_JOBS:
+        expression = _job_level_if_expression(source, job)
+        expected = _job_level_if_expression(local_source, job)
+        if (
+            expression is None
+            or expected is None
+            or "vars.RADAR_MAINTENANCE_PAUSED != 'true'" not in expected
+            or _normalized_expression(expression) != _normalized_expression(expected)
+        ):
+            raise RuntimeError(f"remote workflow maintenance gate is missing from {job}")
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
 def _active_workflow_runs(repo: str, workflow: str) -> list[dict[str, object]]:
@@ -161,10 +320,23 @@ def _restore_pause_after_failed_resume(
     """Restore the remote and local ACTIVE pause or report explicit uncertainty."""
 
     try:
-        _set_workflow_enabled(repo, workflow, enabled=False)
-        rollback_state = _workflow_state(repo, workflow)
-        if rollback_state == "active":
-            raise RuntimeError("workflow remained active after rollback")
+        if value.get("remotePauseMode") == REMOTE_PAUSE_MODE:
+            variable = str(value.get("remotePauseVariable") or MAINTENANCE_VARIABLE)
+            _set_repository_variable(repo, variable, "true")
+            if not _maintenance_pause_active(repo, variable):
+                raise RuntimeError("maintenance pause variable did not reactivate")
+            if _workflow_state(repo, workflow) != "active":
+                _set_workflow_enabled(repo, workflow, enabled=True)
+            rollback_state = _workflow_state(repo, workflow)
+            if rollback_state != "active":
+                raise RuntimeError("scheduled workflow did not remain active during rollback")
+            value["remotePauseActive"] = True
+        else:
+            # Backward compatibility for a pause created by an older release.
+            _set_workflow_enabled(repo, workflow, enabled=False)
+            rollback_state = _workflow_state(repo, workflow)
+            if rollback_state == "active":
+                raise RuntimeError("workflow remained active after rollback")
         _wait_workflow_idle(repo, workflow, wait_seconds=1800)
         value["pauseState"] = "ACTIVE"
         value["workflowStateAfterPause"] = rollback_state
@@ -197,11 +369,27 @@ def pause(
             previous = _read_raw_pause(path)
             release, manifest = active_release(runtime_root)
             state_before = _workflow_state(repo, workflow)
+            remote_gate_digest = _verified_remote_workflow_gate(repo, workflow)
             workflow_was_active = bool(
                 previous.get("workflowWasActive")
                 if previous is not None and "workflowWasActive" in previous
                 else state_before == "active"
             )
+            if previous is not None and previous.get("remotePauseMode") == REMOTE_PAUSE_MODE:
+                variable_existed_before = bool(previous.get("remotePauseVariableExistedBefore"))
+                variable_value_before = previous.get("remotePauseVariableValueBefore")
+            else:
+                variable_existed_before, variable_value_before = _repository_variable(
+                    repo, MAINTENANCE_VARIABLE
+                )
+                if (
+                    variable_existed_before
+                    and str(variable_value_before or "").casefold() == "true"
+                ):
+                    raise RuntimeError(
+                        "EXISTING_REMOTE_PAUSE: maintenance variable is already active without "
+                        "this release-bound pause record"
+                    )
             now = datetime.now(UTC)
             value: dict[str, object] = {
                 "schemaVersion": SCHEMA,
@@ -220,15 +408,29 @@ def pause(
                 ),
                 "workflowStateAfterPause": state_before,
                 "workflowIdleConfirmedAt": None,
+                "remotePauseMode": REMOTE_PAUSE_MODE,
+                "remotePauseVariable": MAINTENANCE_VARIABLE,
+                "remotePauseVariableExistedBefore": variable_existed_before,
+                "remotePauseVariableValueBefore": variable_value_before,
+                "remotePauseActive": False,
+                "remoteWorkflowGateSha256": remote_gate_digest,
             }
-            # Persist recovery intent before changing remote state.  If this process
+            # Persist recovery intent before changing remote state. If this process
             # dies later, local writers fail closed and a retry can finish the pause.
             _write_pause(path, value)
-            if state_before == "active":
-                _set_workflow_enabled(repo, workflow, enabled=False)
+            _set_repository_variable(repo, MAINTENANCE_VARIABLE, "true")
+            if not _maintenance_pause_active(repo, MAINTENANCE_VARIABLE):
+                raise RuntimeError("maintenance pause variable did not activate")
+            value["remotePauseActive"] = True
+            _write_pause(path, value)
+            # A legacy cutover may have left the workflow disabled. Reactivate it
+            # only after the remote maintenance gate is verifiably closed so the
+            # cron registration remains alive without admitting business jobs.
+            if state_before != "active":
+                _set_workflow_enabled(repo, workflow, enabled=True)
             state_after = _workflow_state(repo, workflow)
-            if state_after == "active":
-                raise RuntimeError("workflow remained active after pause request")
+            if state_after != "active":
+                raise RuntimeError("scheduled workflow did not remain active during pause")
             value["workflowStateAfterPause"] = state_after
             _write_pause(path, value)
             _wait_workflow_idle(repo, workflow, wait_seconds=wait_seconds)
@@ -272,29 +474,92 @@ def resume(runtime_root: Path) -> dict[str, object]:
             value["pauseState"] = "RESUMING"
             value["resumeStartedAt"] = iso_z(datetime.now(UTC))
             _write_pause(path, value)
-            enabled = False
-            if value.get("workflowWasActive") is True:
-                enable_attempted = False
-                try:
-                    enable_attempted = True
+            remote_resume_attempted = False
+            remote_resume_committed = False
+            remote_mode = value.get("remotePauseMode") == REMOTE_PAUSE_MODE
+            try:
+                if remote_mode:
+                    remote_resume_attempted = True
+                    variable = str(value.get("remotePauseVariable") or MAINTENANCE_VARIABLE)
+                    variable_existed_before = bool(value.get("remotePauseVariableExistedBefore"))
+                    variable_value_before = (
+                        str(value.get("remotePauseVariableValueBefore") or "")
+                        if variable_existed_before
+                        else None
+                    )
+                    if _workflow_state(repo, workflow) != "active":
+                        _set_workflow_enabled(repo, workflow, enabled=True)
+                    if _workflow_state(repo, workflow) != "active":
+                        raise RuntimeError("scheduled workflow is not active during resume")
+                    try:
+                        _restore_repository_variable(
+                            repo,
+                            variable,
+                            existed=variable_existed_before,
+                            value=variable_value_before,
+                        )
+                    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                        try:
+                            restored_despite_error = _repository_variable_matches(
+                                repo,
+                                variable,
+                                existed=variable_existed_before,
+                                value=variable_value_before,
+                            )
+                        except (OSError, RuntimeError, subprocess.SubprocessError) as verify_exc:
+                            raise RuntimeError(
+                                "REMOTE_STATE_UNCERTAIN: maintenance variable restore and "
+                                "verification both failed"
+                            ) from verify_exc
+                        if not restored_despite_error:
+                            raise exc
+                    if not _repository_variable_matches(
+                        repo,
+                        variable,
+                        existed=variable_existed_before,
+                        value=variable_value_before,
+                    ):
+                        raise RuntimeError("maintenance pause variable was not restored exactly")
+                    remote_resume_committed = True
+                    value["remotePauseActive"] = bool(
+                        variable_existed_before
+                        and str(variable_value_before or "").casefold() == "true"
+                    )
+                    value["resumeRemoteCommittedAt"] = iso_z(datetime.now(UTC))
+                    # A retry can converge from RESUMING after a process crash. Keep
+                    # local writers fail-closed until this remote restore checkpoint
+                    # is durable, then unlink the record to release them.
+                    _write_pause(path, value)
+                elif value.get("workflowWasActive") is True:
+                    # Backward compatibility for pre-variable pause records.
+                    remote_resume_attempted = True
                     _set_workflow_enabled(repo, workflow, enabled=True)
-                    enabled = True
                     if _workflow_state(repo, workflow) != "active":
                         raise RuntimeError("workflow did not become active during resume")
-                except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-                    if enable_attempted:
-                        _restore_pause_after_failed_resume(
-                            path=path,
-                            value=value,
-                            repo=repo,
-                            workflow=workflow,
-                            cause=exc,
-                        )
-                    raise
+            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                if remote_mode and remote_resume_committed:
+                    raise RuntimeError(
+                        "REMOTE_RESTORED_LOCAL_BLOCKED: remote maintenance gate was restored, but "
+                        "the local fail-closed resume checkpoint did not complete; retry resume"
+                    ) from exc
+                if remote_resume_attempted:
+                    _restore_pause_after_failed_resume(
+                        path=path,
+                        value=value,
+                        repo=repo,
+                        workflow=workflow,
+                        cause=exc,
+                    )
+                raise
             try:
                 path.unlink()
             except OSError as exc:
-                if enabled:
+                if remote_mode and remote_resume_committed:
+                    raise RuntimeError(
+                        "REMOTE_RESTORED_LOCAL_BLOCKED: remote maintenance gate is restored, but "
+                        "the local pause record remains; retry resume"
+                    ) from exc
+                if remote_resume_attempted:
                     _restore_pause_after_failed_resume(
                         path=path,
                         value=value,
@@ -314,9 +579,10 @@ def resume(runtime_root: Path) -> dict[str, object]:
                 finally:
                     os.close(directory)
             except OSError as exc:
-                # unlink is the resume linearization point.  A later fsync
-                # failure can only make a crash restore the fail-closed record;
-                # rolling the live remote state back here would be less safe.
+                # Removing the local record is the final resume step. A later
+                # fsync failure can only make a crash restore the fail-closed
+                # record; rolling the already-restored remote state back here
+                # would be less safe.
                 durability_confirmed = False
                 durability_warning = f"pause removal durability not confirmed: {str(exc)[:240]}"
         finally:
@@ -343,42 +609,96 @@ def _status_unlocked(runtime_root: Path) -> dict[str, object]:
     path = runtime_root / "state" / FILENAME
     value = active_outbound_pause(runtime_root)
     if value is None:
-        return {
-            "ok": True,
+        try:
+            variable_exists, variable_value = _repository_variable(
+                DEFAULT_REPO, MAINTENANCE_VARIABLE
+            )
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            return {
+                "ok": False,
+                "paused": False,
+                "globallyPaused": False,
+                "remoteStateVerified": False,
+                "orphanRemotePause": None,
+                "remotePauseActive": None,
+                "error": f"REMOTE_STATE_UNCERTAIN:{str(exc)[:240]}",
+                "path": str(path),
+            }
+        remote_pause_active = bool(
+            variable_exists and str(variable_value or "").casefold() == "true"
+        )
+        result: dict[str, object] = {
+            "ok": not remote_pause_active,
             "paused": False,
             "globallyPaused": False,
+            "remoteStateVerified": True,
+            "orphanRemotePause": remote_pause_active,
+            "remotePauseActive": remote_pause_active,
+            "remotePauseVariableCurrentValue": variable_value,
             "path": str(path),
         }
+        if remote_pause_active:
+            result["error"] = (
+                "ORPHAN_REMOTE_PAUSE: maintenance variable is active without a release-bound "
+                "local pause record; explicit recovery is required"
+            )
+        return result
     repo = str(value.get("workflowRepo") or DEFAULT_REPO)
     workflow = str(value.get("workflowFile") or DEFAULT_WORKFLOW)
     try:
         workflow_state = _workflow_state(repo, workflow)
         active_runs = _active_workflow_runs(repo, workflow)
+        remote_mode = value.get("remotePauseMode") == REMOTE_PAUSE_MODE
+        variable = str(value.get("remotePauseVariable") or MAINTENANCE_VARIABLE)
+        variable_exists, variable_value = (
+            _repository_variable(repo, variable) if remote_mode else (False, None)
+        )
+        current_gate_digest = (
+            _verified_remote_workflow_gate(repo, workflow) if remote_mode else None
+        )
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         return {
+            **value,
             "ok": False,
             "paused": True,
             "globallyPaused": False,
             "remoteStateVerified": False,
             "error": f"REMOTE_STATE_UNCERTAIN:{str(exc)[:240]}",
             "path": str(path),
-            **value,
         }
+    remote_pause_active = bool(variable_exists and str(variable_value or "").casefold() == "true")
+    resume_target_matches = bool(
+        remote_mode
+        and value.get("pauseState") == "RESUMING"
+        and variable_exists == bool(value.get("remotePauseVariableExistedBefore"))
+        and (
+            not variable_exists
+            or variable_value == str(value.get("remotePauseVariableValueBefore") or "")
+        )
+    )
     globally_paused = bool(
         value.get("pauseState") == "ACTIVE"
-        and workflow_state != "active"
+        and (
+            (remote_mode and workflow_state == "active" and remote_pause_active)
+            or (not remote_mode and workflow_state != "active")
+        )
         and not active_runs
         and value.get("workflowIdleConfirmedAt")
     )
     return {
+        **value,
         "ok": globally_paused,
         "paused": True,
         "globallyPaused": globally_paused,
         "remoteStateVerified": True,
         "workflowCurrentState": workflow_state,
+        "remotePauseActive": remote_pause_active if remote_mode else None,
+        "remotePauseVariableCurrentValue": variable_value if remote_mode else None,
+        "remoteWorkflowGateSha256Current": current_gate_digest,
+        "resumeRecoveryRequired": resume_target_matches,
+        "resumeRecoveryState": "REMOTE_RESTORED_LOCAL_BLOCKED" if resume_target_matches else None,
         "activeWorkflowRunIds": [str(item.get("id") or "") for item in active_runs],
         "path": str(path),
-        **value,
     }
 
 

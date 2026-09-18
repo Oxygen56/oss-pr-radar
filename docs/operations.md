@@ -412,6 +412,20 @@ automation snapshot while the same pause is active and repeat preflight through
 final acceptance. Never extend the ten-minute freshness limit or accept a changed
 PR projection as an append-only bookkeeping update.
 
+The pause helper keeps `radar.yml` enabled. It closes the repository-variable
+gate `RADAR_MAINTENANCE_PAUSED` before waiting for any already-running business
+chain to finish. Scheduled runs continue to record the lightweight natural
+schedule canary, while all business jobs and the health workflow stay skipped.
+Resume restores the variable to its exact previous state. Do not disable
+`radar.yml` for maintenance: disabling it can discard GitHub's server-side cron
+registration and delay the first natural run after recovery.
+The helper refuses to adopt an already-active variable without its matching
+release-bound local record. `--status` reports that condition as
+`ORPHAN_REMOTE_PAUSE` instead of treating the runtime as healthy. If a resume
+has restored the remote variable but cannot remove its local fail-closed record,
+it reports `REMOTE_RESTORED_LOCAL_BLOCKED`; rerunning `--resume` completes that
+idempotent local cleanup.
+
 `--status` is a runtime-bound read-only check. `--stage` requires the short-lived
 signed stage-only authorization; `--activate`, `--ensure`, and `--uninstall`
 require the active immutable release and full operational authorization before

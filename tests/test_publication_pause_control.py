@@ -37,6 +37,28 @@ def _runtime(monkeypatch, tmp_path):
             "usedFraction": 0.93,
         },
     )
+    variables = {}
+    monkeypatch.setattr(
+        MODULE,
+        "_repository_variable",
+        lambda _repo, name: (name in variables, variables.get(name)),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_set_repository_variable",
+        lambda _repo, name, value: variables.__setitem__(name, value),
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_delete_repository_variable",
+        lambda _repo, name: variables.pop(name, None),
+    )
+    monkeypatch.setattr(MODULE, "_test_variables", variables, raising=False)
+    monkeypatch.setattr(
+        MODULE,
+        "_verified_remote_workflow_gate",
+        lambda _repo, _workflow: "a" * 64,
+    )
     return release, state, ledger
 
 
@@ -65,6 +87,78 @@ def test_pause_record_write_is_durable_before_it_returns(monkeypatch, tmp_path):
     assert json.loads(path.read_text(encoding="utf-8"))["pauseState"] == "PAUSING"
 
 
+def test_remote_workflow_gate_verification_covers_every_business_job(monkeypatch):
+    source = (SCRIPT.parents[1] / ".github" / "workflows" / "radar.yml").read_text(encoding="utf-8")
+    monkeypatch.setattr(
+        MODULE,
+        "_run_gh",
+        lambda *_args, **_kwargs: MODULE.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=source, stderr=""
+        ),
+    )
+
+    digest = MODULE._verified_remote_workflow_gate(MODULE.DEFAULT_REPO, MODULE.DEFAULT_WORKFLOW)
+
+    assert len(digest) == 64
+
+
+def test_remote_workflow_gate_verification_rejects_one_unguarded_job(monkeypatch):
+    source = (SCRIPT.parents[1] / ".github" / "workflows" / "radar.yml").read_text(encoding="utf-8")
+    source = source.replace(
+        "  watch:\n    if: vars.RADAR_MAINTENANCE_PAUSED != 'true'\n",
+        "  watch:\n",
+        1,
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_run_gh",
+        lambda *_args, **_kwargs: MODULE.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=source, stderr=""
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="missing from watch"):
+        MODULE._verified_remote_workflow_gate(MODULE.DEFAULT_REPO, MODULE.DEFAULT_WORKFLOW)
+
+
+def test_remote_workflow_gate_verification_ignores_a_comment_that_mentions_the_gate(monkeypatch):
+    source = (SCRIPT.parents[1] / ".github" / "workflows" / "radar.yml").read_text(encoding="utf-8")
+    source = source.replace(
+        "  watch:\n    if: vars.RADAR_MAINTENANCE_PAUSED != 'true'\n",
+        "  watch:\n    # if: vars.RADAR_MAINTENANCE_PAUSED != 'true'\n",
+        1,
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_run_gh",
+        lambda *_args, **_kwargs: MODULE.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=source, stderr=""
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="missing from watch"):
+        MODULE._verified_remote_workflow_gate(MODULE.DEFAULT_REPO, MODULE.DEFAULT_WORKFLOW)
+
+
+def test_remote_workflow_gate_verification_rejects_a_bypassed_condition(monkeypatch):
+    source = (SCRIPT.parents[1] / ".github" / "workflows" / "radar.yml").read_text(encoding="utf-8")
+    source = source.replace(
+        "  watch:\n    if: vars.RADAR_MAINTENANCE_PAUSED != 'true'\n",
+        "  watch:\n    if: vars.RADAR_MAINTENANCE_PAUSED != 'true' || true\n",
+        1,
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_run_gh",
+        lambda *_args, **_kwargs: MODULE.subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=source, stderr=""
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="missing from watch"):
+        MODULE._verified_remote_workflow_gate(MODULE.DEFAULT_REPO, MODULE.DEFAULT_WORKFLOW)
+
+
 def test_pause_does_not_disable_remote_before_pausing_record_is_durable(monkeypatch, tmp_path):
     _release, _state, _ledger = _runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
@@ -87,6 +181,36 @@ def test_pause_does_not_disable_remote_before_pausing_record_is_durable(monkeypa
         MODULE.pause(tmp_path, minutes=30, reason="CUTOVER")
 
     assert actions == []
+
+
+def test_pause_refuses_remote_workflow_without_complete_maintenance_gate(monkeypatch, tmp_path):
+    _release, state, _ledger = _runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
+    monkeypatch.setattr(
+        MODULE,
+        "_verified_remote_workflow_gate",
+        lambda *_args: (_ for _ in ()).throw(
+            RuntimeError("remote workflow maintenance gate is missing from scan")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="maintenance gate is missing"):
+        MODULE.pause(tmp_path, minutes=30, reason="CUTOVER")
+
+    assert not (state / MODULE.FILENAME).exists()
+    assert MODULE._test_variables == {}
+
+
+def test_pause_refuses_to_adopt_an_unowned_remote_pause(monkeypatch, tmp_path):
+    _release, state, _ledger = _runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
+    MODULE._test_variables[MODULE.MAINTENANCE_VARIABLE] = "TRUE"
+
+    with pytest.raises(RuntimeError, match="EXISTING_REMOTE_PAUSE"):
+        MODULE.pause(tmp_path, minutes=30, reason="CUTOVER")
+
+    assert not (state / MODULE.FILENAME).exists()
+    assert MODULE._test_variables[MODULE.MAINTENANCE_VARIABLE] == "TRUE"
 
 
 def test_resume_does_not_enable_remote_before_resuming_record_is_durable(monkeypatch, tmp_path):
@@ -246,9 +370,9 @@ def test_resume_rollback_is_uncertain_if_active_record_is_not_durable(monkeypatc
     assert actions == [True, False]
 
 
-def test_pause_disables_remote_workflow_waits_for_idle_and_records_binding(monkeypatch, tmp_path):
+def test_pause_keeps_remote_workflow_active_and_gates_business_jobs(monkeypatch, tmp_path):
     release, state, _ledger = _runtime(monkeypatch, tmp_path)
-    states = iter(["active", "disabled_manually"])
+    states = iter(["active", "active"])
     actions = []
     monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: next(states))
     monkeypatch.setattr(
@@ -278,10 +402,13 @@ def test_pause_disables_remote_workflow_waits_for_idle_and_records_binding(monke
     assert record["releasePath"] == str(release)
     assert record["pauseState"] == "ACTIVE"
     assert record["workflowWasActive"] is True
-    assert record["workflowStateAfterPause"] == "disabled_manually"
+    assert record["workflowStateAfterPause"] == "active"
+    assert record["remotePauseMode"] == MODULE.REMOTE_PAUSE_MODE
+    assert record["remotePauseVariable"] == MODULE.MAINTENANCE_VARIABLE
+    assert record["remotePauseActive"] is True
+    assert MODULE._test_variables[MODULE.MAINTENANCE_VARIABLE] == "true"
     assert record_path.stat().st_mode & 0o777 == 0o600
     assert actions == [
-        (MODULE.DEFAULT_REPO, MODULE.DEFAULT_WORKFLOW, False),
         (MODULE.DEFAULT_REPO, MODULE.DEFAULT_WORKFLOW, "idle", 90),
     ]
 
@@ -302,7 +429,8 @@ def test_pause_carries_remote_restore_intent_across_release_cutover(monkeypatch,
         encoding="utf-8",
     )
     record_path.chmod(0o600)
-    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "disabled_manually")
+    states = iter(["disabled_manually", "active"])
+    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: next(states))
     monkeypatch.setattr(MODULE, "_set_workflow_enabled", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(MODULE, "_wait_workflow_idle", lambda *_args, **_kwargs: None)
 
@@ -316,8 +444,7 @@ def test_pause_carries_remote_restore_intent_across_release_cutover(monkeypatch,
 
 def test_pause_failure_keeps_a_durable_remote_restore_intent(monkeypatch, tmp_path):
     _release, state, _ledger = _runtime(monkeypatch, tmp_path)
-    states = iter(["active", "disabled_manually"])
-    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: next(states))
+    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
     monkeypatch.setattr(MODULE, "_set_workflow_enabled", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         MODULE,
@@ -331,17 +458,18 @@ def test_pause_failure_keeps_a_durable_remote_restore_intent(monkeypatch, tmp_pa
     record = json.loads((state / MODULE.FILENAME).read_text(encoding="utf-8"))
     assert record["paused"] is True
     assert record["workflowWasActive"] is True
-    assert record["workflowStateAfterPause"] == "disabled_manually"
+    assert record["workflowStateAfterPause"] == "active"
+    assert record["remotePauseActive"] is True
     assert record["pauseState"] == "PAUSING"
     assert record["workflowIdleConfirmedAt"] is None
 
 
-def test_pause_crash_before_remote_disable_is_explicitly_pausing(monkeypatch, tmp_path):
+def test_pause_crash_before_remote_gate_is_explicitly_pausing(monkeypatch, tmp_path):
     _release, state, _ledger = _runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
     monkeypatch.setattr(
         MODULE,
-        "_set_workflow_enabled",
+        "_set_repository_variable",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(SystemExit(77)),
     )
 
@@ -352,6 +480,114 @@ def test_pause_crash_before_remote_disable_is_explicitly_pausing(monkeypatch, tm
     record = json.loads((state / MODULE.FILENAME).read_text(encoding="utf-8"))
     assert record["pauseState"] == "PAUSING"
     assert record["workflowIdleConfirmedAt"] is None
+
+
+def test_resume_restores_missing_repository_variable_without_disabling_workflow(
+    monkeypatch, tmp_path
+):
+    _release, state, _ledger = _runtime(monkeypatch, tmp_path)
+    record_path = state / MODULE.FILENAME
+    record = {
+        "schemaVersion": MODULE.SCHEMA,
+        "paused": True,
+        "pauseState": "ACTIVE",
+        "workflowRepo": MODULE.DEFAULT_REPO,
+        "workflowFile": MODULE.DEFAULT_WORKFLOW,
+        "workflowWasActive": True,
+        "remotePauseMode": MODULE.REMOTE_PAUSE_MODE,
+        "remotePauseVariable": MODULE.MAINTENANCE_VARIABLE,
+        "remotePauseVariableExistedBefore": False,
+        "remotePauseVariableValueBefore": None,
+        "workflowIdleConfirmedAt": "2026-08-28T00:00:00Z",
+    }
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    record_path.chmod(0o600)
+    MODULE._test_variables[MODULE.MAINTENANCE_VARIABLE] = "true"
+    monkeypatch.setattr(MODULE, "active_outbound_pause", lambda _root: record)
+    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
+    workflow_actions = []
+    monkeypatch.setattr(
+        MODULE,
+        "_set_workflow_enabled",
+        lambda *_args, **_kwargs: workflow_actions.append("workflow-state-change"),
+    )
+
+    result = MODULE.resume(tmp_path)
+
+    assert result["removed"] is True
+    assert not record_path.exists()
+    assert MODULE.MAINTENANCE_VARIABLE not in MODULE._test_variables
+    assert workflow_actions == []
+
+
+def test_resume_restores_a_preexisting_true_variable_exactly(monkeypatch, tmp_path):
+    _release, state, _ledger = _runtime(monkeypatch, tmp_path)
+    record_path = state / MODULE.FILENAME
+    record = {
+        "schemaVersion": MODULE.SCHEMA,
+        "paused": True,
+        "pauseState": "ACTIVE",
+        "workflowRepo": MODULE.DEFAULT_REPO,
+        "workflowFile": MODULE.DEFAULT_WORKFLOW,
+        "workflowWasActive": True,
+        "remotePauseMode": MODULE.REMOTE_PAUSE_MODE,
+        "remotePauseVariable": MODULE.MAINTENANCE_VARIABLE,
+        "remotePauseVariableExistedBefore": True,
+        "remotePauseVariableValueBefore": "true",
+        "workflowIdleConfirmedAt": "2026-08-28T00:00:00Z",
+    }
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    record_path.chmod(0o600)
+    MODULE._test_variables[MODULE.MAINTENANCE_VARIABLE] = "true"
+    monkeypatch.setattr(MODULE, "active_outbound_pause", lambda _root: record)
+    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
+
+    result = MODULE.resume(tmp_path)
+
+    assert result["removed"] is True
+    assert not record_path.exists()
+    assert MODULE._test_variables[MODULE.MAINTENANCE_VARIABLE] == "true"
+
+
+def test_resume_unlink_failure_reports_remote_restored_local_blocked(monkeypatch, tmp_path):
+    _release, state, _ledger = _runtime(monkeypatch, tmp_path)
+    record_path = state / MODULE.FILENAME
+    record = {
+        "schemaVersion": MODULE.SCHEMA,
+        "paused": True,
+        "pauseState": "ACTIVE",
+        "workflowRepo": MODULE.DEFAULT_REPO,
+        "workflowFile": MODULE.DEFAULT_WORKFLOW,
+        "workflowWasActive": True,
+        "remotePauseMode": MODULE.REMOTE_PAUSE_MODE,
+        "remotePauseVariable": MODULE.MAINTENANCE_VARIABLE,
+        "remotePauseVariableExistedBefore": False,
+        "remotePauseVariableValueBefore": None,
+        "workflowIdleConfirmedAt": "2026-08-28T00:00:00Z",
+    }
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    record_path.chmod(0o600)
+    MODULE._test_variables[MODULE.MAINTENANCE_VARIABLE] = "true"
+    monkeypatch.setattr(MODULE, "active_outbound_pause", lambda _root: record)
+    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
+    monkeypatch.setattr(MODULE, "_wait_workflow_idle", lambda *_args, **_kwargs: None)
+    original_unlink = Path.unlink
+
+    def fail_record_unlink(path, *args, **kwargs):
+        if path == record_path:
+            raise OSError("simulated unlink failure")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_record_unlink)
+
+    with pytest.raises(RuntimeError, match="REMOTE_RESTORED_LOCAL_BLOCKED"):
+        MODULE.resume(tmp_path)
+
+    remaining = json.loads(record_path.read_text(encoding="utf-8"))
+    assert remaining["pauseState"] == "RESUMING"
+    assert remaining["remotePauseActive"] is False
+    assert remaining["resumeRemoteCommittedAt"]
+    assert MODULE.MAINTENANCE_VARIABLE not in MODULE._test_variables
 
 
 def test_resume_reenables_only_a_workflow_that_pause_disabled(monkeypatch, tmp_path):
@@ -593,6 +829,100 @@ def test_status_never_calls_an_intermediate_state_globally_paused(
 
     assert result["ok"] is False
     assert result["globallyPaused"] is False
+
+
+def test_status_calls_active_variable_gate_globally_paused(monkeypatch, tmp_path):
+    _release, _state, _ledger = _runtime(monkeypatch, tmp_path)
+    record = {
+        "paused": True,
+        "pauseState": "ACTIVE",
+        "workflowIdleConfirmedAt": "2026-08-28T00:00:00Z",
+        "remotePauseMode": MODULE.REMOTE_PAUSE_MODE,
+        "remotePauseVariable": MODULE.MAINTENANCE_VARIABLE,
+    }
+    MODULE._test_variables[MODULE.MAINTENANCE_VARIABLE] = "true"
+    monkeypatch.setattr(MODULE, "active_outbound_pause", lambda _root: record)
+    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
+    monkeypatch.setattr(MODULE, "_active_workflow_runs", lambda *_args: [])
+
+    result = MODULE.status(tmp_path)
+
+    assert result["ok"] is True
+    assert result["globallyPaused"] is True
+    assert result["workflowCurrentState"] == "active"
+    assert result["remotePauseActive"] is True
+
+
+def test_status_uses_live_variable_state_instead_of_stored_pause_snapshot(monkeypatch, tmp_path):
+    _release, _state, _ledger = _runtime(monkeypatch, tmp_path)
+    record = {
+        "paused": True,
+        "pauseState": "ACTIVE",
+        "workflowIdleConfirmedAt": "2026-08-28T00:00:00Z",
+        "remotePauseMode": MODULE.REMOTE_PAUSE_MODE,
+        "remotePauseVariable": MODULE.MAINTENANCE_VARIABLE,
+        "remotePauseActive": True,
+    }
+    monkeypatch.setattr(MODULE, "active_outbound_pause", lambda _root: record)
+    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
+    monkeypatch.setattr(MODULE, "_active_workflow_runs", lambda *_args: [])
+
+    result = MODULE.status(tmp_path)
+
+    assert result["ok"] is False
+    assert result["globallyPaused"] is False
+    assert result["remotePauseActive"] is False
+    assert result["remotePauseVariableCurrentValue"] is None
+
+
+def test_status_exposes_a_retryable_remote_restored_local_blocked_resume(monkeypatch, tmp_path):
+    _release, _state, _ledger = _runtime(monkeypatch, tmp_path)
+    record = {
+        "paused": True,
+        "pauseState": "RESUMING",
+        "workflowIdleConfirmedAt": "2026-08-28T00:00:00Z",
+        "remotePauseMode": MODULE.REMOTE_PAUSE_MODE,
+        "remotePauseVariable": MODULE.MAINTENANCE_VARIABLE,
+        "remotePauseVariableExistedBefore": False,
+        "remotePauseVariableValueBefore": None,
+        "remotePauseActive": True,
+    }
+    monkeypatch.setattr(MODULE, "active_outbound_pause", lambda _root: record)
+    monkeypatch.setattr(MODULE, "_workflow_state", lambda *_args: "active")
+    monkeypatch.setattr(MODULE, "_active_workflow_runs", lambda *_args: [])
+
+    result = MODULE.status(tmp_path)
+
+    assert result["ok"] is False
+    assert result["remotePauseActive"] is False
+    assert result["resumeRecoveryRequired"] is True
+    assert result["resumeRecoveryState"] == "REMOTE_RESTORED_LOCAL_BLOCKED"
+
+
+def test_status_reports_an_orphan_remote_pause_without_a_local_record(monkeypatch, tmp_path):
+    _release, _state, _ledger = _runtime(monkeypatch, tmp_path)
+    MODULE._test_variables[MODULE.MAINTENANCE_VARIABLE] = "TRUE"
+    monkeypatch.setattr(MODULE, "active_outbound_pause", lambda _root: None)
+
+    result = MODULE.status(tmp_path)
+
+    assert result["ok"] is False
+    assert result["paused"] is False
+    assert result["orphanRemotePause"] is True
+    assert result["remotePauseActive"] is True
+    assert "explicit recovery" in result["error"]
+
+
+def test_status_without_local_or_remote_pause_is_healthy(monkeypatch, tmp_path):
+    _release, _state, _ledger = _runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(MODULE, "active_outbound_pause", lambda _root: None)
+
+    result = MODULE.status(tmp_path)
+
+    assert result["ok"] is True
+    assert result["paused"] is False
+    assert result["orphanRemotePause"] is False
+    assert result["remotePauseActive"] is False
 
 
 def test_status_holds_the_outbound_lock_for_its_complete_remote_snapshot(monkeypatch, tmp_path):

@@ -27,6 +27,7 @@ jobs:
         run: echo "Natural schedule canary observed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   watch:
+    if: vars.RADAR_MAINTENANCE_PAUSED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -70,6 +71,7 @@ jobs:
           retention-days: 14
 
   pr-followup:
+    if: vars.RADAR_MAINTENANCE_PAUSED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -128,6 +130,7 @@ jobs:
 
   scan:
     needs: watch
+    if: vars.RADAR_MAINTENANCE_PAUSED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -217,7 +220,8 @@ jobs:
   build-state:
     needs: [scan, pr-followup]
     if: >-
-      always() && needs.scan.result == 'success' &&
+      always() && vars.RADAR_MAINTENANCE_PAUSED != 'true' &&
+      needs.scan.result == 'success' &&
       (needs.pr-followup.result == 'success' || needs.pr-followup.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -289,7 +293,9 @@ jobs:
 
   persist-pending:
     needs: build-state
-    if: always() && needs.build-state.result == 'success'
+    if: >-
+      always() && vars.RADAR_MAINTENANCE_PAUSED != 'true' &&
+      needs.build-state.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -311,7 +317,9 @@ jobs:
 
   notify:
     needs: persist-pending
-    if: always() && needs.persist-pending.result == 'success'
+    if: >-
+      always() && vars.RADAR_MAINTENANCE_PAUSED != 'true' &&
+      needs.persist-pending.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -357,7 +365,7 @@ jobs:
   persist-receipt:
     needs: notify
     if: >-
-      always() &&
+      always() && vars.RADAR_MAINTENANCE_PAUSED != 'true' &&
       (needs.notify.result == 'success' || needs.notify.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -412,7 +420,7 @@ jobs:
   full-chain-proof:
     needs:
       [watch, pr-followup, scan, build-state, persist-pending, notify, persist-receipt]
-    if: always()
+    if: always() && vars.RADAR_MAINTENANCE_PAUSED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions: {}

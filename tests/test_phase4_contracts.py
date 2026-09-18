@@ -56,7 +56,9 @@ def test_natural_schedule_runs_full_chain_and_terminal_proof_is_fail_closed():
             )
         ]
         end = min(position for position in next_positions if position >= 0)
-        assert "github.event_name == 'workflow_dispatch'" not in workflow[start:end]
+        section = workflow[start:end]
+        assert "github.event_name == 'workflow_dispatch'" not in section
+        assert "vars.RADAR_MAINTENANCE_PAUSED != 'true'" in section
 
     proof = workflow.split("\n  full-chain-proof:\n", 1)[1]
     assert "needs:" in proof
@@ -71,6 +73,7 @@ def test_natural_schedule_runs_full_chain_and_terminal_proof_is_fail_closed():
     ):
         assert job in proof
     assert "if: always()" in proof
+    assert "vars.RADAR_MAINTENANCE_PAUSED != 'true'" in proof
     assert 'test "$result" = success' in proof
 
 
@@ -111,6 +114,7 @@ def test_health_workflow_is_read_only_and_cannot_repair_or_notify():
     assert "FEISHU_APP_ID" not in workflow
     assert "FEISHU_APP_SECRET" not in workflow
     assert "actions: read" in workflow
+    assert "if: vars.RADAR_MAINTENANCE_PAUSED != 'true'" in workflow
 
 
 def test_radar_scan_exports_authenticated_state_with_the_managed_key():
@@ -146,10 +150,12 @@ def test_partial_failures_are_visible_without_skipping_durable_state():
     persist_pending_header = workflow.split("\n  persist-pending:\n", 1)[1].split(
         "\n    runs-on:", 1
     )[0]
-    assert "always() && needs.build-state.result == 'success'" in persist_pending_header
+    assert "always()" in persist_pending_header
+    assert "needs.build-state.result == 'success'" in persist_pending_header
 
     notify_header = workflow.split("\n  notify:\n", 1)[1].split("\n    runs-on:", 1)[0]
-    assert "always() && needs.persist-pending.result == 'success'" in notify_header
+    assert "always()" in notify_header
+    assert "needs.persist-pending.result == 'success'" in notify_header
 
     receipt_header = workflow.split("\n  persist-receipt:\n", 1)[1].split("\n    runs-on:", 1)[0]
     assert "always()" in receipt_header
