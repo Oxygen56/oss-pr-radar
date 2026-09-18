@@ -14841,6 +14841,40 @@
     ],
     "why": "Issue provides a concrete, executable reproduction with expected-vs-actual numeric pairs showing returned scores match x/(1+|x|) instead of the documented raw loss; code anchors point to cosine metric implementations. Root cause is not yet pinned to a specific line, but the transformation is identifiable and the validation path is concrete."
   },
+  "22423e025009c9a83e324624eb7af75f6ce7e3f735ed04e31f57390b25be995b": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims the protocol layer blocks the feature, while triage and the independent verification show RequestPermissionResponse already has an optional _meta extension point and qwen-code already uses it on this response"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/cli/src/acp-integration/session/permissionUtils.ts: thread rejection reason from ACP response into ToolConfirmationOutcome/cancelMessage",
+      "packages/core/src/core/coreToolScheduler.ts: use supplied reason instead of the bare 'User did not allow tool call' fallback",
+      "packages/acp-bridge/src/bridgeClient.ts and bridgeTypes.ts: carry the reason via response _meta with graceful fallback",
+      "packages/cli/src/ui/opentui/dialogs-confirm.tsx and packages/vscode-ide-companion/src/services/acpConnection.ts: optional reason input on reject"
+    ],
+    "risks": [
+      "Protocol/UI split may need maintainer preference on _meta key naming and whether to land layer 1 separately",
+      "Scope spans protocol, core, CLI, and VS Code companion, so partial landing could leave inconsistent behavior"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: resolvePermissionOutcome with a rejection reason in _meta yields a cancelMessage carrying that reason",
+      "Regression test: coreToolScheduler rejection path surfaces the reason in functionResponse.response.error instead of the bare constant",
+      "Fallback test: client that omits the reason still produces the existing default message"
+    ],
+    "unknowns": [
+      "Maintainer preference on the _meta key name and whether to split protocol/core/UI into separate issues"
+    ],
+    "why": "Issue requests reject-with-reason feedback to the model; triage and an independent collaborator verify the exact gap: resolvePermissionOutcome collapses the ACP response to a ToolConfirmationOutcome enum with no reason, and coreToolScheduler.ts:4356-4360 falls back to the bare 'User did not allow tool call'. The existing cancelMessage plumbing (tools.ts:1062, coreToolScheduler.ts:1982/1996-2006) already carries a reason to the model but no UI feeds it, and _meta is an established extension point on RequestPermissionResponse, so the fix is concrete and testable."
+  },
   "2250c3cc8847d7db25a93a48b9e4ac396cc3e49ccca977d9617b7831d61e1e4a": {
     "confidence": 0.8,
     "contradictions": [
@@ -18774,6 +18808,43 @@
     ],
     "why": "The issue reports a reproducible host memory exhaustion during vLLM startup with a specific model and flags, with evidence of excessive cicc/nvcc compilation processes consuming all RAM. The root cause is likely an unintended compilation or caching behavior in the vLLM 0.28.0+ code path, possibly related to model loading or kernel autotuning. The report includes a clear regression from 0.27.1 and a concrete reproduction command, enabling a targeted fix and regression test."
   },
+  "2a92556a3ecc23476742920f9b53ba5b8a19b3ce7af64fc77d7516c86c8b1279": {
+    "confidence": 0.55,
+    "contradictions": [
+      "candidate.actionability_evidence.root_cause_signal=false while issue body asserts a specific root cause (fp16 downcast of magnitude vector)"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "SFTTrainer mixed-precision setup / PEFT adapter dtype handling",
+      "DoRA lora_magnitude_vector dtype preservation",
+      "parameter-level regression test for magnitude vector updates"
+    ],
+    "risks": [
+      "Distinguishing true numerical no-op from expected small updates under bf16",
+      "Hardware/quantization dependency (bitsandbytes, L4 GPU) may limit CI reproducibility",
+      "Fix location may be in PEFT rather than TRL, affecting ownership"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with a small model + QDoRA under fp16/bf16, compare lora_magnitude_vector values before/after optimizer steps",
+      "Add a regression test asserting magnitude vector changes after a training step when QDoRA is enabled",
+      "Compare DoRA (fp32 magnitude) vs QDoRA (downcast) vs QDoRA+fp32-restored magnitude"
+    ],
+    "unknowns": [
+      "Exact TRL code path performing the downcast is not anchored",
+      "Whether the fix belongs in TRL or PEFT",
+      "Independent verification of the Colab reproduction outside the reporter's environment"
+    ],
+    "why": "The issue describes a plausible QDoRA/QLoRA fp16 downcast of the lora_magnitude_vector causing silent no-op updates, with a Colab reproduction and code anchors. However, the supplied evidence lacks a confirmed root-cause signal (root_cause_signal=false), no code path plan, and no probe-ready confirmation. The reproduction is external (Colab) and not independently verified in the supplied evidence, and the exact TRL code location responsible for the downcast is not anchored. This is a materially blocking unknown for actionable code work."
+  },
   "2a9e81d925c77fd7c61c6af79882c098a6930e133e4bee8e53318524d877e180": {
     "confidence": 0.9,
     "contradictions": [],
@@ -19220,6 +19291,44 @@
       "Whether maintainers have already investigated or have design preferences"
     ],
     "why": "Issue reports a user-visible bug where code-explorer subagent hangs and fails, with a concrete repro prompt and environment. No competing PR or issue found, and the gate allows work. However, root cause is unknown and no maintainer confirmation exists, so confidence is moderate."
+  },
+  "2b3e97e3b7737f8dab05028e8c8dad3801e40ed5b871eb309a3ba5cf59357a04": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims webhook is not registered after publish, but contributor reproduction on current main shows AppTrigger is created and webhook resolves successfully",
+      "Reported error 'App trigger not found' implies missing app_triggers row, while contributor's node-id-churn test produced 'Webhook not found' instead"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/trigger/webhook_service.py",
+      "api/services/workflow_service.py",
+      "app_triggers / workflow_webhook_triggers relationship handling"
+    ],
+    "risks": [
+      "Root cause may be deployment/version-specific rather than a current-main bug",
+      "Fixing without confirming the missing app_triggers row could change publish/trigger semantics unnecessarily",
+      "Repository has an AI disclosure conflict policy affecting public contribution workflow"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on the reporter's exact self-hosted version/commit",
+      "Inspect app_triggers and workflow_webhook_triggers rows for the failing webhook ID and compare node_id values",
+      "Run the publish event handler path (app_published_workflow_was_updated -> update_app_triggers_when_app_published_workflow_updated) against the reported deployment"
+    ],
+    "unknowns": [
+      "Exact self-hosted version/commit used by the reporter",
+      "Whether an app_triggers row exists for the failing app and whether its node_id matches the webhook row",
+      "Whether undo/redo or node re-adding was involved",
+      "API logs/traceback around the publish request"
+    ],
+    "why": "The issue reports a user-visible 404 after publishing a Webhook Trigger, but the only substantive contributor comment (xiaodu55) could not reproduce it on current main and traced the full draft-sync/publish/AppTrigger path as working. The report lacks the self-hosted version/commit and DB state needed to confirm the root cause, so the evidence is contradictory and does not establish an actionable code defect."
   },
   "2b3f203708d6367ac25102825423932b7e6280b7e9075e85ad1ffbb145fe2fa0": {
     "confidence": 0.85,
@@ -36563,6 +36672,41 @@
       "Whether PR #35936 already fully addresses the issue; requires manual comparison."
     ],
     "why": "Issue provides a clear root cause (regression from revert #34160), a concrete reproduction with commands, and a verified minimal fix. The proposed changes are actionable and testable."
+  },
+  "52a9233ce2a1843c4796f845eea1899629665f61f705cb399c246515f4a2a63a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.algorithm_evidence claims post_training_objective/model_architecture mechanisms, but the issue is a memory-coherence/runtime bug with no training objective or model-architecture change"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/buffer_utils.py: gate UVA usage on a CC/coherence check",
+      "is_uva_available() or equivalent: add write-after-map coherence probe or NVML CC detection",
+      "V2 model runner selection/fallback to explicit H2D copies when UVA is unavailable"
+    ],
+    "risks": [
+      "CC hardware/guest environment may be unavailable to the contributor, limiting direct reproduction",
+      "NVML-based CC detection may not cover all driver/GPU combinations; coherence-probe approach adds startup cost",
+      "Overlapping open PR #57415 already proposes disabling UVA in CC mode, so the contribution must add distinct value (e.g., coherence probe or fallback rather than blanket disable)"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's minimal pinned-memory snippet inside a CC guest and assert the GPU view reflects host writes after mapping",
+      "End-to-end: serve Qwen2.5-0.5B-Instruct with default V2 runner under CC and assert non-garbage output; compare against VLLM_USE_V2_MODEL_RUNNER=0",
+      "Regression: verify UVA remains enabled and correct on non-CC GPUs"
+    ],
+    "unknowns": [
+      "Whether the contributor has access to a CC-capable GPU/TDX guest to validate the fix",
+      "Whether maintainers prefer NVML CC detection or a runtime coherence probe over the blanket UVA disable in PR #57415"
+    ],
+    "why": "Issue provides a verified root cause (UVA views of pinned host memory are stale under GPU Confidential Computing), a minimal standalone reproduction of the stale-view behavior, and an end-to-end reproduction showing garbage output with the V2 runner vs correct output with VLLM_USE_V2_MODEL_RUNNER=0. Concrete code anchors (buffer_utils.py UvaBuffer, get_accelerator_view_from_cpu_tensor, torch.ops._C.get_cuda_view_from_cpu_tensor) and a suggested fix path (detect CC via NVML or run a write-after-map coherence check in is_uva_available()) make the work actionable. This is a runtime/memory-coherence bug rather than an algorithm change, but the supplied evidence establishes a clear root cause and validation path."
   },
   "52d11d8d2b5efeb3f3140d87c5b71907a0668902c84add7b88f646be47828f89": {
     "confidence": 0.85,
@@ -78570,6 +78714,37 @@
     ],
     "why": "The issue gives a precise root cause (snapshot assigns fresh ids to re-factored tool-call messages, breaking the client's id-keyed merge and causing ordering displacement) and proposes a concrete fix. However, maintainer triage is required: the gate says HUMAN_REVIEW, there are overlapping open PRs (#7423, #7479) that touch AG-UI snapshot/support paths, and a potential duplicate issue #7490 with shared behavior signals. The fix may also involve design choices about message identity that need maintainer confirmation."
   },
+  "ae5f58fcba33dd7a75eae04bb0fdc53512c207bb1c9c37d3ad09a5a8d096690a": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no fix exists, while open PR #41470 directly references the issue and touches the same auth_utils.py path"
+    ],
+    "evidence_ids": [
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_utils.py: resolve body model_id for /watsonx routes so can_key_call_model runs",
+      "litellm/proxy/pass_through_endpoints/llm_passthrough_endpoints.py: confirm watsonx_proxy_route relays only after model-scope enforcement"
+    ],
+    "risks": [
+      "PR #41470 may already cover the fix, making a second implementation redundant",
+      "Changing model resolution for /watsonx could affect other pass-through routes if the fallback is not scoped narrowly"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test that a virtual key with models=[\"cheap-model\"] is denied 403 on POST /watsonx/ml/v1/text/generation with body {\"model_id\": \"ibm/granite-3-8b-instruct\"}",
+      "Run the existing proxy auth unit tests around get_model_from_request and _enforce_key_and_fallback_model_access"
+    ],
+    "unknowns": [
+      "Whether PR #41470 fully resolves the issue or is incomplete/abandoned",
+      "Whether maintainers consider the issue already covered by that PR"
+    ],
+    "why": "The issue gives a clear root cause and a concrete fix path, but the supplied evidence shows an open PR #41470 that directly references this issue, overlaps the same code path (litellm/proxy/auth/auth_utils.py), and matches the distinctive terms model_id and virtual_key. That is unresolved duplicate/coverage evidence, which materially determines whether independent code work is actionable."
+  },
   "ae7a7874f1d66a3796a5df33e2beb9c52fc5d2e57c7ed1efb1112aebd7b02141": {
     "confidence": 0.55,
     "contradictions": [
@@ -95341,6 +95516,38 @@
     ],
     "why": "Issue reports a concrete, reproducible greedy-equivalence failure (DFlash2 vs target-only diverging at token 30, K=1, no prefix cache, --enforce-eager), and comments propose several competing root causes (BF16 numerical path differences, GDN gate row misalignment fixed by #51812, kernel defects #54945/#54948/#54076/#55122, batch-shape non-invariance). The supplied evidence does not resolve which mechanism applies to this BF16 TP=4 configuration, and the duplicate/overlap assessment flags PR #56431 as semantic overlap requiring human comparison. This unresolved duplicate coverage plus contradictory root-cause evidence makes the actionable code work uncertain."
   },
+  "d26e4855f118370f870d934c9da00ae8739f58a90c997a6d59fb729f3b9b7ea1": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "megatron/core/tensor_parallel/cross_entropy.py: use global vocabulary size in the smoothing coefficient and saved backward metadata",
+      "Compute the uniform log-probability term over the global vocabulary via an all-reduce of shifted logits, gated on nonzero label smoothing"
+    ],
+    "risks": [
+      "Distinguishing the mathematical vocabulary-size error from ordinary FP32/random variation requires fixed seed, tolerance, and hardware",
+      "The added all-reduce must be correctly gated to avoid overhead or deadlock when smoothing is zero",
+      "Backward metadata must be updated consistently with the forward change"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Build fixed synthetic logits for a global vocab of 8 and fixed labels; run vocab_parallel_cross_entropy forward/backward with TP1 and TP2 at label_smoothing=0.1 and compare gathered full gradients",
+      "Compare loss and gradient against an independent float64 reference within FP32 tolerance",
+      "Confirm label_smoothing=0 remains unchanged and that the extra all-reduce is skipped when smoothing is zero"
+    ],
+    "unknowns": [
+      "Whether PR #7431 or another open PR already implements this exact fix, since the supplied assessment reports no direct code overlap or issue reference"
+    ],
+    "why": "Issue identifies a concrete numerical/algorithmic defect in vocab_parallel_cross_entropy: local vocab_size used in the label-smoothing coefficient and local mean log-probability, with ctx.vocab_size propagating the error to backward. It supplies a TP1-vs-TP2 reproduction, a float64 reference comparison, and a specific proposed global-vocabulary formulation, matching the llm_algorithm requirement for a distributed-training invariant and numerical regression path."
+  },
   "d2716be961b905e068dfdba81df5ee361261fde254b67ae85d58da9bbc070d71": {
     "confidence": 0.85,
     "contradictions": [
@@ -97164,6 +97371,40 @@
       "Whether collapsed-by-default or a user setting is preferred"
     ],
     "why": "The issue is an open UX design discussion with explicit instructions not to begin implementation until it reaches Ready on the Goose Issues board, and the submission policy requires assignment. The supplied evidence shows no assignee, no maintainer approval, and no reproduction/validation path; the only implementation sketch is from a non-collaborator and leaves open design questions (thinking blocks, density, collapsed-by-default behavior). This is a materially blocking unknown for actionable code work."
+  },
+  "d5836dbb510222dd0f1b5ddef771f546e84bc652be4cd545974d71332df0dfa0": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/harness/src/agent/internal/run-prompt.ts: populate toolsContext instead of empty object and forward context: toolsContext[toolName] in maybeExecuteHostTool",
+      "packages/harness/src/agent/harness-agent.ts: expose a toolsContext setting or prepareCall-returned context",
+      "contextSchema validation on the harness host-tool execution path"
+    ],
+    "risks": [
+      "Open draft PR #21076 already reproduces the same path and may overlap with the fix",
+      "API surface choice (HarnessAgentSettings.toolsContext vs prepareCall hook) may need maintainer preference",
+      "Related issue #20948 suggests a broader tool-context plumbing inconsistency that could expand scope"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test where a host tool declares contextSchema and asserts execute receives the bound context under HarnessAgent",
+      "Assert the same tool receives identical context under streamText + toolsContext to lock parity",
+      "Assert invalid context produces a context validation error rather than a TypeError inside execute"
+    ],
+    "unknowns": [
+      "Whether PR #21076 will be extended from reproduction to a fix, which would change the competitive landscape"
+    ],
+    "why": "Issue provides a concrete, reproduced bug with exact code anchors: run-prompt.ts hardcodes an empty toolsContext and passes context: undefined to executeTool, while the non-harness path resolves and validates per-tool context. Reproduction was independently confirmed via PR #21076, and the fix path (forward toolsContext[toolName] with existing contextSchema validation) is concrete and testable."
   },
   "d59694b5518e0d93c32e4ab833892d10568ae3bbbf5923979411ac7af2b8e27a": {
     "confidence": 0.85,
@@ -115899,6 +116140,38 @@
       "Whether maintainers prefer literal-first fallback versus error-on-miss, or both, as the accepted design"
     ],
     "why": "Issue provides a concrete, reproducible bug: build_context normalizes memory:// URIs through generate_permalink(), which rewrites explicitly-set permalinks (underscores/camelCase) and silently returns zero results, while the literal path works. Root cause is clearly localized to the URI resolution path in build_context, with a stated minimal fix (literal-first with normalized fallback) and a clear validation path (both query forms must resolve the note)."
+  },
+  "fbaa83b577f8cb28904d88551d14e447976b8e655d6b83019a2cb91420f6ee6c": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue asks maintainers to choose between matching Python or adopting revised normalization, while candidate metadata marks design_confirmation false and needs_confirmation false."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/tool.py",
+      "rust/sglang-server request rendering / Dynamo request types",
+      "differential prompt/token-ID regression test"
+    ],
+    "risks": [
+      "Fixing Rust to match current Python behavior may conflict with #29114/#29327/#39616 which intend to change Python defaults.",
+      "Key-ordering differences mean equal token counts do not prove equal sequences, so a count-only fix would mask the bug."
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a differential test that renders identical POST /v1/chat/completions payloads through Python and Rust and compares full rendered prompt strings and input token ID sequences, not just token counts."
+    ],
+    "unknowns": [
+      "Which normalization contract is authoritative (current Python vs post-#29114/#29327/#39616 behavior).",
+      "Whether the referenced Python-side PRs are merged, open, or superseded, which determines the correct target semantics."
+    ],
+    "why": "The issue documents a real Python-vs-Rust prompt rendering divergence with concrete token deltas, but the actionable target behavior is explicitly unresolved: the reporter asks whether Rust should match current Python behavior or both should adopt revised normalization, and a commenter notes overlapping Python-side PRs (#29114, #29327, #39616) that intend to change the very defaults at issue. Without an agreed contract, a fix could be invalidated or conflict with in-flight work."
   },
   "fbae8339bae5fb837265e3fa612c71d28c7405cb2e51ddef6594c02630580ea5": {
     "confidence": 0.6,
