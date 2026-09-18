@@ -30982,6 +30982,44 @@
     "wait_reason": "ASSIGNMENT",
     "why": "The issue provides a clear design for request-local message isolation with a concrete regression test plan and maintainer approval. However, the repository requires assignment before implementation, and the submission policy mandates AI disclosure confirmation, which are not yet satisfied."
   },
+  "476123fdb5663a31a43ad9b36bb55f820eda51e990571671ea39a26b7b547f8e": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue reports an active crash while a comment claims it is fixed on main by #56447",
+      "Duplicate assessment flags semantic overlap with open PRs but no direct code overlap or issue linkage"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/glm4_moe_lite_mtp.py",
+      "vllm/model_executor/models/glm_ocr_mtp.py",
+      "vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py"
+    ],
+    "risks": [
+      "Fix may already be merged via #56447, making the task redundant",
+      "Overlap with open PRs #51966/#57319 could duplicate in-flight work",
+      "Requires specific GPU/CUDA environment to reproduce"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with the reported serve command on GLM-OCR + MTP spec decode and confirm the cudaErrorStreamCaptureUnsupported crash on the base SHA",
+      "If reproducing, add a regression test that captures the speculator CUDA graph and asserts no stream-capture error"
+    ],
+    "unknowns": [
+      "Whether PR #56447 is actually merged and covers this exact root cause",
+      "Whether the open overlapping PRs already resolve the crash",
+      "Whether the reported crash still reproduces on current main"
+    ],
+    "why": "The issue reports a concrete CUDA graph capture crash (cudaErrorStreamCaptureUnsupported) in MRV2 MTP speculative decoding with a full traceback and executable serve command, and the algorithm evidence points at real code paths (glm_ocr_mtp.py, glm4_moe_lite_mtp.py, speculator.py). However, a recent comment states the bug is already fixed on main by PR #56447, and the duplicate assessment flags semantic overlap with open PRs (#51966, #57319) plus a potential duplicate issue #44185. Whether the root cause is already covered by a merged fix is a materially blocking unknown that determines whether new code work is actionable."
+  },
   "477dc03a7b3a67b3c04962c25431fb23ed294c621ee5072c9de53286f237f2c5": {
     "confidence": 0.8,
     "contradictions": [],
@@ -46763,6 +46801,39 @@
     ],
     "why": "Issue identifies two concrete, separable defects in ReLoRACallback._prune_and_reset: (A) adapter weights are magnitude-pruned without merging B@A into the base, contradicting the module docstring's ReLoRA conformance claim; (B) strict `abs(t) > threshold` masking can zero both factors under ties, killing gradients. Maintainer confirmed both with real peft LoRA runs, including base-weight delta of 0 and MSE 142.12 vs merge-control 8.77e-13, and zeroed A/B with zero gradient norms. This is a genuine algorithm-conformance and numerical-correctness issue with a clear reference-vs-implementation validation path."
   },
+  "67f8ad2858d0264f83620aa573666c5b417d19df58a9be6af35f6814eeed5ec0": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports a reproducible 404 on two apps, but a contributor's end-to-end simulation on current main could not reproduce it and found the described error state does not arise."
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/trigger/webhook_service.py",
+      "api/services/workflow_service.py"
+    ],
+    "risks": [
+      "Fixing a non-reproducible path on current main could introduce unnecessary behavior changes.",
+      "The real cause may be deployment-specific (publish event handler not running) rather than a code defect."
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on the reporter's exact self-hosted commit with a minimal Webhook Trigger app; inspect app_triggers and workflow_webhook_triggers rows after publish; POST to the generated URL and confirm whether 404 is 'App trigger not found' or 'Webhook not found'."
+    ],
+    "unknowns": [
+      "Exact self-hosted version/commit used by the reporter.",
+      "Whether an app_triggers row exists for the app when the 404 occurs, and whether its node_id matches the workflow_webhook_triggers row.",
+      "Whether undo/redo or re-adding the Webhook Trigger node preceded publishing.",
+      "API logs around the publish request showing whether the publish event handler ran."
+    ],
+    "why": "The issue reports a user-visible 404, but a contributor's end-to-end simulation on current main could not reproduce it and showed the error state (webhook row present, app_triggers row missing) does not arise through the normal draft-sync/publish paths. The reporter's version/commit is unknown, and the contributor explicitly asks for the self-hosted version, app_triggers row state, and whether undo/redo or node re-adding occurred. Without that, the root cause is not established and the fix is not actionable."
+  },
   "683299118fcf08738596f524968be4862b417d9fa3cfa212733d7f7d043f4607": {
     "confidence": 0.7,
     "contradictions": [],
@@ -48572,6 +48643,39 @@
       "Whether #11500 is the canonical tracking issue for this report"
     ],
     "why": "The issue reports a real, user-visible React #185 recursive-update crash with a dev-mode stack and a deterministic regression test, and the triage comment confirms the measure→heights→offsets→window→anchor cycle exists in source. However, the supplied triage evidence states this is very likely the same defect as #11500, whose confirmed driver (duplicate history-item ids/keys) already has an open, unmerged fix PR #11743 touching the same useHistoryManager.ts path. The issue's repro commit predates that fix, so the evidence does not separate a new root cause from the already-covered one. This unresolved duplicate/merged-fix coverage is a materially blocking unknown for deciding whether new code work is actionable."
+  },
+  "6b1031b6036c84568a596d226421f34f072b7b76db202323ceed4f1f086b8659": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/http/service/openai.rs: stop selecting only response.data.first() for raw WAV speech responses",
+      "lib/llm/src/protocols/openai/audios/aggregator.rs: concatenate complete waveform payloads / preserve all chunks",
+      "Backport or document the #12100 speech-streaming changes for the 1.4.x line"
+    ],
+    "risks": [
+      "Backport may conflict with unrelated refactors (#11551) in two files",
+      "Changing aggregation behavior could affect other audio response formats or streaming paths",
+      "Scope creep into API behavior changes beyond the reported bug"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test with multiple audio chunks where the first chunk is silent, asserting the full non-silent utterance is returned with valid WAV framing",
+      "Replay the issue's curl request against the patched 1.4.2 images and verify output.wav is not the 3,884-byte silent chunk",
+      "Frontend/worker compatibility test using matched images rather than replacing only one side"
+    ],
+    "unknowns": [
+      "Maintainer decision on whether to backport #12100 to 1.4.x or document 1.5.0+ as the required release"
+    ],
+    "why": "Issue provides a concrete, reproducible 1.4.2 bug: frontend folds the audio stream and selects only response.data.first(), so only the initial 0.08s silent WAV chunk reaches the caller while worker logs show three chunks. Root cause is anchored to openai.rs and audios/aggregator.rs, and the merged PR #12100 is explicitly not an ancestor of tag v1.4.2, so the fix is a backport/versioned support-boundary change rather than a duplicate of current main."
   },
   "6b149b11d9d2a1ad94d537bd1502573710d82c134b258d4a8226819d2ae4e46b": {
     "confidence": 0.85,
@@ -94501,6 +94605,41 @@
     ],
     "why": "Issue reports a concrete, reproducible greedy-divergence at token 30 for Qwen3.8-27B + DFlash2 spec decode (K=1, no prefix cache, --enforce-eager), which is a legitimate algorithm-level correctness signal. However, supplied evidence contains materially conflicting root-cause attributions: commenters point to BF16 numerical path differences, GDN gate row misalignment fixed by #51812, NVFP4/MoE finalize nondeterminism, mamba/GDN block-size seeding on prefix-cache resume, and persistent_topk instability. The candidate's own duplicate assessment flags PR #56431 (DFlash context-key normalization) as semantic overlap requiring review, and related issue #57016 shares stack signatures. The pre-task evidence also records policy_or_disclosure_uncertain / ai_disclosure_conflict and base_sha_changed, which are unresolved repository-level blockers. These unresolved duplicate coverage and disclosure facts determine whether code work is actionable, so RETRY rather than NO_OBJECTION."
   },
+  "d08b5b8a8031004aa3ca6975dedbeffa024e498c4bb8437d33766f780e4895ed": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue asks maintainers to choose between matching Python or revising both, while candidate metadata marks design_confirmation=false and needs_confirmation=false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/tool.py",
+      "rust/sglang-server request rendering / Dynamo request types",
+      "differential prompt/token-ID parity test"
+    ],
+    "risks": [
+      "Fixing Rust to match current Python may conflict with #29114/#29327/#39616 which remove or reorder those defaults",
+      "Key-ordering differences mean equal token counts do not prove equal sequences",
+      "Scope spans HTTP validation, grammar, and inference paths beyond the offline rendering checks"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the reported 177 vs 167 token gap with the same Qwen3-0.6B-4bit template and tokenizer",
+      "Add a differential test comparing full rendered prompt strings and input token ID sequences for the listed cases (strict/defer_loading defaults, null description/parameters, missing type/properties, named tool_choice, multi text parts, continue_final_message, reasoning_effort)"
+    ],
+    "unknowns": [
+      "Which normalization contract maintainers want (current Python vs post-#29114/#29327/#39616 behavior)",
+      "Whether #39564 or #36718 already covers the differential parity test",
+      "Whether the overlapping Python PRs will land before or after a Rust fix"
+    ],
+    "why": "The issue documents a real Python-vs-Rust prompt rendering divergence with concrete token deltas, but the actionable target is unresolved: the reporter explicitly asks whether Rust should match current Python behavior or both should adopt revised normalization, and a commenter notes overlapping Python PRs (#29114, #29327, #39616) that intend to change the very defaults in question. Without a chosen contract, a fix could be invalidated or conflict with in-flight work."
+  },
   "d09416668eb347da78a336d1304414061c809e9813de15ba1be688bf24a7df38": {
     "confidence": 0.85,
     "contradictions": [],
@@ -98090,6 +98229,44 @@
       "Whether maintainers prefer the scoping fix or the defensive refusal; whether PR #50514's failed CI is related and will be fixed."
     ],
     "why": "Issue reports a deterministic deadlock in fastsafetensors ParallelLoader when loading draft models under pipeline parallelism, with a clear root cause (hard-coded WORLD group) and a suggested fix. However, the deterministic gate is HUMAN_REVIEW, and there is an existing PR (#50514) with failed CI that may already address the area. Maintainer has acknowledged the issue but no design confirmation or assignment yet."
+  },
+  "d748da94fd299c89a883f3acf8646bf09021a3356f0ea7048a0d9ebb9a03c9e3": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment reports PR #57415 as technically_complete=true with no material competition gaps, yet rootCauseCoverage=false and the summary says evidence is incomplete",
+      "candidate.why claims verifiable LLM algorithm mechanisms (post_training_objective, model_architecture) while the issue is a UVA/memory-coherence runtime bug, not a training-objective or model-architecture problem"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/buffer_utils.py: gate UVA views on CC-mode detection or a write-after-map coherence probe",
+      "is_uva_available() / model-runner selection: fall back to explicit H2D copies or V1 runner under CC",
+      "startup warning/error when UVA is stale instead of silent garbage output"
+    ],
+    "risks": [
+      "CC-mode detection via NVML may not be available on all driver/toolkit combinations, so a probe-based fallback needs a safe default",
+      "Disabling UVA globally could regress performance on non-CC systems if the gate is too broad",
+      "The existing open PR #57415 may already cover the fix, making a competing change redundant"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's minimal UVA repro inside a CC guest: pin a CPU tensor, map a CUDA view, overwrite the host tensor, and assert the view reflects the new values",
+      "End-to-end: serve Qwen2.5-0.5B-Instruct with the V2 runner under CC and assert non-garbage output; compare against VLLM_USE_V2_MODEL_RUNNER=0",
+      "Regression: verify UVA remains enabled and coherent on a non-CC GPU"
+    ],
+    "unknowns": [
+      "Whether PR #57415 already implements the CC-mode UVA gate and would make a new fix redundant",
+      "How the repository's ai_disclosure_conflict policy affects eligibility to submit a public fix",
+      "Whether the required CC-mode H100/TDX hardware is available for validating the fix"
+    ],
+    "why": "The issue describes a concrete, reproducible UVA staleness bug under Confidential Computing with a minimal repro and a verified root cause, but the supplied evidence is contradictory about coverage: PR #57415 is an open, technically complete fix that references this issue, while the duplicate assessment simultaneously reports rootCauseCoverage=false and no material competition gaps. The pre-task policy also flags an ai_disclosure_conflict, which is a repository-level disclosure requirement that materially determines whether public code work is actionable."
   },
   "d74e0fbfed67527de43d7b5ed1a1a0f9f1f51017da785d4ccbecb4318e2bf046": {
     "confidence": 0.6,
@@ -102741,6 +102918,40 @@
       "Current base SHA after base_sha_changed"
     ],
     "why": "Issue describes a concrete user-visible defect with reproduction steps and code anchors, but the supplied evidence contains a materially blocking unknown: an open PR (#40732) with semantic overlap on reasoning_effort/gpt-4o and no direct issue reference, so it is unresolved whether that PR already covers the root cause. The candidate's own duplicate status is 'semantic_overlap_requires_review', and the pre-review gate failed with base_sha_changed, so actionability cannot be confirmed from the supplied evidence alone."
+  },
+  "e0e0e72ced9aeb364201d647430a0a58f4a0c178f9a5493b8bc3ede6e4f1f0a8": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.related_issue_assessment",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/llms/bedrock/files/transformation.py: implement transform_retrieve_file_request/response as ranged S3 GetObject returning OpenAIFileObject (bytes from Content-Range, created_at from Last-Modified)",
+      "enterprise/litellm_enterprise/proxy/hooks/managed_files.py: ensure Case 3 provider-retrieve path surfaces 404 for missing objects rather than 500",
+      "enterprise/litellm_enterprise/proxy/common_utils/check_batch_cost.py: optionally persist minimal metadata for output files to avoid the provider round-trip"
+    ],
+    "risks": [
+      "S3 ranged GetObject semantics (Content-Range parsing, missing Last-Modified) may vary across object stores",
+      "Changing Case 3 error mapping could alter error codes for other providers",
+      "Potential overlap with issue #41753 (batch output files invisible to GET /v1/files) may indicate a shared managed-files fix rather than two independent patches"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing regression test that calls GET /v1/files/{output_file_id} for a Bedrock batch output file and asserts 200 with bytes/purpose/status/created_at, not 500",
+      "Unit-test BedrockFilesConfig.transform_retrieve_file_request/response against a mocked S3 GetObject (including Content-Range and Last-Modified headers)",
+      "Add a negative test asserting a nonexistent file ID returns 404 rather than 500"
+    ],
+    "unknowns": [
+      "Whether #41753 and this issue should be fixed by one shared managed-files change or two separate PRs",
+      "Whether maintainers prefer persisting output-file metadata at poll time over an S3 retrieve implementation"
+    ],
+    "why": "Issue pins the root cause to bare NotImplementedError stubs in BedrockFilesConfig.transform_retrieve_file_request/response (litellm/llms/bedrock/files/transformation.py:1169/1177), reached via managed_files.py Case 3 because check_batch_cost.py:742 stores output files with file_object=None. Concrete code anchors, a working sibling precedent (transform_file_content_request), and a clear expected behavior (OpenAIFileObject with real bytes/created_at from S3) make this actionable. Track is agent_ai_infra, not llm_algorithm, so the algorithm-evidence gate does not apply."
   },
   "e0edf25a86ce5e6ecc5454c4789fd4418f598e652db461da93374e83682d103b": {
     "confidence": 0.85,
@@ -109847,6 +110058,42 @@
       "Whether maintainers require assignment before PR per the triage bot notice"
     ],
     "why": "Issue pinpoints the exact guard in ArrayFormatHandler.processPartialChunk (output-format-handlers.ts:458) that drops primitive elements, provides an inline end-to-end reproduction with expected/actual contrast, and a secondary validation flaw; no duplicate or open PR covers it."
+  },
+  "eeb26e12413423c7b6065520d1d26f8c07c124381bcd14ec9a5620e31acf518a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims protocol layer is blocked; triage and collaborator show RequestPermissionResponse already carries an optional _meta extension point, so the blocker is a design choice rather than a hard dependency"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/tools.ts: add optional rejection reason to ToolConfirmationPayload",
+      "packages/core/src/core/coreToolScheduler.ts: thread reason into cancelMessage instead of bare constant",
+      "packages/cli/src/acp-integration/session/permissionUtils.ts: read reason from ACP response _meta",
+      "packages/acp-bridge/src/bridgeClient.ts and bridgeTypes.ts: carry qwen rejection-reason key",
+      "packages/cli/src/ui/opentui/dialogs-confirm.tsx and vscode-ide-companion permission prompt: optional reason input"
+    ],
+    "risks": [
+      "Protocol extension key naming/placement needs maintainer design decision",
+      "Scope spans protocol, core, and two UIs; may need splitting into separate issues",
+      "Cancel currently conflates explicit deny with Esc/abort/timeout, so reason semantics must be disambiguated"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: resolvePermissionOutcome with a _meta rejection reason yields a ToolConfirmationOutcome carrying that reason",
+      "Regression test: coreToolScheduler rejection with reason renders '[Operation Cancelled] Reason: <reason>' and delivers it in functionResponse.response.error",
+      "Fallback test: client omitting _meta still produces the existing bare 'User did not allow tool call' behavior"
+    ],
+    "unknowns": [
+      "Maintainer preference on _meta key naming and whether to split protocol/core/UI into separate issues"
+    ],
+    "why": "Issue requests reject-with-reason feedback to the model; triage and an independent collaborator verify the gap against source: resolvePermissionOutcome collapses ACP response to a bare Cancel enum, and coreToolScheduler falls back to 'User did not allow tool call'. The existing cancelMessage plumbing (tools.ts:1062, coreToolScheduler.ts:4356-4360, 1982, 1996-2006) is never fed from a UI, and _meta extension precedent exists, so the change is concrete and testable."
   },
   "eeb331e4d04c4a62b4c7a6a861339e28da8237f83f6c57e2e2c84f98fca527a7": {
     "confidence": 0.85,
