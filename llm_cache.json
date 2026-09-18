@@ -15845,6 +15845,36 @@
     ],
     "why": "Issue reports a concrete TypeError from a missing-argument call site in ep_scatter_from_psum, but the supplied evidence shows an open PR (#39399) that directly covers the same code path and issue, plus a second overlapping PR (#37211) with a test. Duplicate/merged-fix coverage is unresolved (duplicateStatus=human_review_required), which materially determines whether independent code work is actionable."
   },
+  "23e2f2bb86060b06c000fdd841563b8ad6ea6b22b12a31c910707af8ad3b855b": {
+    "confidence": 0.82,
+    "contradictions": [
+      "open_pr_assessment lists PR #5631 root_cause_coverage=false, while issue comments state the PR gates data/state filtering on node.is_visible is False, indicating root-cause coverage"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "browser_use/dom/serializer/html_serializer.py: gate data/state id-substring filtering on node.is_visible is False"
+    ],
+    "risks": [
+      "Duplicating the already-open PR #5631 fix and its regression tests",
+      "Over-broad removal of the data/state filter could regress removal of genuinely hidden application-state blocks"
+    ],
+    "root_cause_clarity": "high",
+    "score": 3,
+    "semanticSignal": "FILTER",
+    "test_plan": [
+      "Run the issue's parameterized tests for id='user-data' and id='workflow-state' plus the unrelated-id control to confirm visible code is preserved through HTMLSerializer.serialize and convert_html_to_markdown",
+      "Add regression cases for genuinely hidden code elements and bpr-guid state blocks to confirm they remain filtered"
+    ],
+    "unknowns": [
+      "Whether PR #5631 will be merged or superseded, which determines if any independent contribution remains"
+    ],
+    "why": "Issue #5629 has a clear, deterministic root cause (HTMLSerializer drops visible <code> elements whose id contains 'data'/'state' without checking node.is_visible) and a concrete reproduction, but the opportunity is already covered: open PR #5631 explicitly references the issue and, per the issue comments, gates the data/state ID filtering on node.is_visible is False while preserving hidden state blocks and bpr-guid filtering. Closed PR #5783 also had root-cause coverage. A new competing implementation would duplicate existing work rather than add distinct value."
+  },
   "23ecd531dc907c9cc912b58904062eb683c09ed1b541088c13d5cd947b31174d": {
     "confidence": 0.7,
     "contradictions": [],
@@ -35500,6 +35530,43 @@
     ],
     "why": "Issue reports poor video/audio quality with Minimax H3 but lacks root cause analysis, minimal repro, or maintainer confirmation. The only follow-up comment suggests workarounds (more steps, no lora) without identifying a code defect. No open PR or related issue exists, and the track is agent_ai_infra, not llm_algorithm, so algorithm evidence is absent. Actionability is blocked by unclear root cause and missing maintainer direction."
   },
+  "4fe0ecbc2b383579d278620560e96c191a8b0b81f1b1b1c4db714bdbbec88cd5": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: merge B@A into base weight and reinitialize A/B for canonical ReLoRA restart, or rename feature and correct docstring",
+      "src/soup_cli/utils/relora.py: replace strict '>' kthvalue mask with deterministic exact-count topk/stable-order selection so requested keep count is honored under ties",
+      "Optimizer-state reset should target optimizer moments rather than learned adapter weights",
+      "Explicit rejection or support for quantized bases, FSDP/DeepSpeed wrappers, layer streaming, checkpoint/resume"
+    ],
+    "risks": [
+      "Tie scenario production frequency is constructed; owner notes freshly-initialized lora_B is all zeros by PEFT convention, which may make it a natural tie worth verifying",
+      "Claim A fix is a maintainer contract decision (implement real restarts vs rename feature); doing half of the first would be worse than either",
+      "Quantized/distributed/streamed combinations need explicit handling to avoid partial restarts",
+      "Floating-point tolerance must be fixed in tests to distinguish numerical noise from semantic errors"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: constant-magnitude lora_A/lora_B with prune_ratio=0.9 must retain exactly the requested keep count (e.g. 4 of 32) and leave nonzero entries in both factors",
+      "Regression test: after callback, gradient norms of lora_A and lora_B must be nonzero for prune_ratio<1",
+      "Reference test: merge-then-reset control must preserve effective linear map to numerical tolerance (MSE ~1e-13), while current implementation shows large MSE",
+      "Kernel-level test: ones(10) with prune_ratio=0.9 must yield 1 nonzero, matching arange(1..10) behavior"
+    ],
+    "unknowns": [
+      "Whether maintainer prefers full ReLoRA restart implementation or feature rename/docstring correction (owner states both are acceptable but prefers the first)",
+      "Whether the tie case fires in practice on the first relora_steps interval after initialization with zero-initialized lora_B"
+    ],
+    "why": "Issue identifies two concrete, independently reproduced defects in ReLoRACallback._prune_and_reset: (A) adapter weights are pruned without merging B@A into the base, so the effective linear map changes (MSE 142.12 vs 8.77e-13 for merge-then-reset control) while base weight delta is exactly 0; (B) strict '>' thresholding with kthvalue wipes all entries on ties, zeroing both lora_A and lora_B and producing zero gradient norms, killing the branch. Owner confirmed both halves with kernel-level and model-level reproductions. Root cause is localized to src/soup_cli/utils/relora.py and a concrete validation path exists (reference merge-then-reset vs implementation, exact-count mask regression)."
+  },
   "4fe546c268dd6a331756c1dd6061ec14320e0f3c61d4a6608c2120af719c3407": {
     "confidence": 0.8,
     "contradictions": [
@@ -48047,6 +48114,38 @@
     ],
     "why": "Issue provides a concrete root cause (removal of num_tokens==0 early return in Qwen3VL deepstack path), a human-verified accuracy regression with statistical significance, and a clear validation path (restore guard or use torch.cond). Recent comments confirm the mechanism and propose a targeted fix, while PR #53529 adds regression coverage without claiming a fix. The contribution is actionable and technically valuable."
   },
+  "69708199ad97abfb886c413d681892150d0caf1895e5b779057564b73edbc264": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/litellm_pre_call_utils.py: team-level metadata merge must not overwrite key-level opted_out_global_guardrails with an empty list",
+      "litellm/integrations/custom_guardrail.py: _get_admin_metadata/should_run_guardrail precedence between key and team metadata for opted_out_global_guardrails"
+    ],
+    "risks": [
+      "Exact runtime merge order is unconfirmed; the fix may need to be in the merge precedence rather than the assignment site",
+      "Changing precedence could alter intended team-level override semantics for other metadata fields",
+      "Maintainer may have a preferred precedence design not yet stated"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test creating a key with metadata.opted_out_global_guardrails and a team whose metadata has opted_out_global_guardrails: [], then assert should_run_guardrail returns False for a default_on guardrail",
+      "Add a control test with the same key-level opt-out and no team to confirm existing behavior is preserved",
+      "Run targeted proxy guardrail unit tests and static checks on the touched modules"
+    ],
+    "unknowns": [
+      "Runtime confirmation of the exact merge order between key-level and team-level metadata for opted_out_global_guardrails",
+      "Maintainer-intended precedence between key-level and team-level opt-out settings"
+    ],
+    "why": "Issue provides a controlled 4-key reproduction isolating team membership as the variable, plus concrete code anchors in litellm_pre_call_utils.py and custom_guardrail.py. The suspected root cause (team-level empty-list overwrite of key-level opted_out_global_guardrails) is a plausible, testable hypothesis, though the reporter explicitly labels it unconfirmed at runtime. No duplicate or merged fix covers this path; open PRs only share the keyword 'key_level' with no overlapping code paths. This is a concrete proxy guardrail-precedence bug with a clear reference-vs-implementation validation path, not installation/CLI/docs plumbing."
+  },
   "6972e959f11748a22ee6adc77aebeae78f7b4914636384986bd3b64195b4f9a1": {
     "confidence": 0.7,
     "contradictions": [
@@ -57494,6 +57593,39 @@
       "Whether the issue is reproducible on upstream main is unknown"
     ],
     "why": "The issue describes a reproducible hang in a specific LLM serving configuration (DSA attention, EAGLE speculative decoding, PD-disaggregation) with a clear stack trace pointing to a lazy Triton kernel load inside cuModuleLoadData. However, the root cause is not definitively identified; it could be a missing warmup or a CUDA driver deadlock. The issue is from an internal fork, and the open PR and related issue lookups timed out, so duplicate work cannot be excluded. The track is llm_algorithm, but the proposed fix (warmup or driver workaround) is operational rather than a new algorithm, and the evidence does not clearly support a reference-vs-implementation test."
+  },
+  "7c28587f95c19387cd3403b566644288ca2fa67f41b4bcbd22812de34d6254d2": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Bundled ParadeDB image/version pin in docker-compose (upgrade past 0.22.2)",
+      "pg_search extension upgrade + BM25 index rebuild migration/startup step",
+      "Diagnostic surfacing of index-corruption errors instead of generic VECTORSTORE_WRITE_FAILED"
+    ],
+    "risks": [
+      "Upgrading the bundled ParadeDB image may affect other pg_search/vector behavior or require data migration",
+      "Root cause is in an upstream dependency, so the in-repo fix is version pinning + recovery tooling rather than a code-level algorithm fix",
+      "REINDEX on large indexes can be slow/locking if not CONCURRENTLY"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce: ingest large document (~10k chunks) or batch-delete files, run VACUUM, then hybrid search; assert item_pointer_is_valid(ctid) failure on 0.22.2",
+      "Regression: after image/extension upgrade + REINDEX, rerun the same ingestion, batch-delete, VACUUM, and hybrid-search flow and assert success",
+      "Add a targeted test asserting the vector-store write path returns a diagnostic error (not generic VECTORSTORE_WRITE_FAILED) when the BM25 index is invalid"
+    ],
+    "unknowns": [
+      "Whether maintainers prefer image upgrade vs. in-app detection/recovery tooling",
+      "Exact upstream ParadeDB version that fully resolves the stale-CTID path for this deployment"
+    ],
+    "why": "Issue documents a deterministic ParadeDB BM25 index corruption (item_pointer_is_valid(ctid) assertion) with a concrete reproduction (large ingestion / batch delete + VACUUM + hybrid search) and a validated recovery path (REINDEX). A commenter traces the root cause to pg_search 0.22.2 stale-CTID handling in the heap_filter path, matching upstream ParadeDB #4333/#4338, and confirms a fix via image upgrade + ALTER EXTENSION + REINDEX. This is an actionable infra/RAG retrieval fix with a clear reference-vs-implementation validation path."
   },
   "7c34b86feea61ae1f6b54e8a1d1b25c88aa23c08995aeed07d2f491552c1e004": {
     "confidence": 0.85,
@@ -76092,6 +76224,37 @@
     ],
     "why": "The issue itself is technically strong: it identifies a concrete root cause (Quack 0.6.5 removed quack.activation.sub_packed_f32x2, while the vendored MSA revision 087c161 still calls it), gives a controlled A/B regression boundary, a minimal reproduction, and a known upstream fix (MSA #12, revision f355c37). However, the supplied evidence shows the fix is already proposed by open PR #56545, which updates fmha_sm100.cmake from 087c161 to the fixed MSA revision. The duplicate assessment explicitly says semantic_overlap_requires_review and forbids automatic duplicate task creation. Whether any code work remains actionable depends on comparing #56545's actual diff against the issue's root cause, which is a materially blocking unknown. Additionally, the repository policy status is ai_disclosure_conflict, which is a disclosure requirement that must be resolved before any public contribution."
   },
+  "a4dce4399322ce56b8fa8b71eda5fe290043b04de39c5042c67824689ee486fe": {
+    "confidence": 0.82,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body"
+    ],
+    "expected_changes": [
+      "litellm/llms/openai/openai.py: add project parameter to OpenAIBatchesAPI/OpenAIFilesAPI get_openai_client and pass to OpenAI/AsyncOpenAI",
+      "litellm/batches/main.py: resolve project from optional_params, litellm.project, OPENAI_PROJECT/OPENAI_PROJECT_ID, and extra_headers['OpenAI-Project']",
+      "litellm/proxy/batches_endpoints/endpoints.py: forward OpenAI-Project header/project field into batch and file calls"
+    ],
+    "risks": [
+      "Scope creep into unrelated proxy endpoints listed in codePathsPlan",
+      "Behavior change if project resolution precedence is ambiguous across body/header/credentials/env",
+      "No maintainer pre-approval on precedence design"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test asserting get_openai_client passes project=proj_A to the OpenAI/AsyncOpenAI constructor",
+      "Add a proxy-level test posting /v1/batches with OpenAI-Project header and asserting the underlying client receives project",
+      "Run targeted tests for litellm/batches and litellm/llms/openai plus static checks"
+    ],
+    "unknowns": [
+      "Exact precedence order maintainers want among body, header, router credentials, and env vars"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: get_openai_client in litellm/llms/openai/openai.py omits the project parameter, and batch/file handling in litellm/batches/main.py never resolves project/OpenAI-Project. Reproduction steps and expected behavior are explicit, and the fix is a bounded parameter-plumbing change with a clear validation path."
+  },
   "a505962edddb1d425d18f2e725cd4ad18015695a11bb312f62db24baed43c342": {
     "confidence": 0.6,
     "contradictions": [
@@ -86708,6 +86871,42 @@
       "Maintainer confirmation of root cause and desired fix"
     ],
     "why": "The issue reports a concrete FP8 tensor-parallel weight_loader assertion, but the root cause is not fully diagnosed; an existing PR #47023 directly targets the same code path but is stale and lacks maintainer approval, and a merged PR #49805 may already address related weight_loader logic. The deterministic gate requires HUMAN_REVIEW, and the AI disclosure conflict blocks automated action."
+  },
+  "bd5a8023197ce2107b6195fa9757f2bbd4e784b849390248f77d412467d6c481": {
+    "confidence": 0.55,
+    "contradictions": [
+      "open_pr_assessment reports semantic_overlap_requires_review with best_score 46 for PR #41349, while preTaskEvidence duplicateStatus is also semantic_overlap_requires_review; neither confirms whether the PR actually fixes this issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/utils.py: apply Team-member allowed_models narrowing in get_available_models_for_user",
+      "litellm/proxy/auth/model_checks.py: reuse access-group/wildcard/sentinel semantics for discovery filtering",
+      "litellm/proxy/auth/auth_checks.py: align discovery filter with _check_team_member_model_access semantics"
+    ],
+    "risks": [
+      "Existing PR #41349 may already cover the same root cause, making a new contribution duplicative",
+      "Broadening discovery filtering could change API behavior for deployments relying on current listing semantics",
+      "Access-group/wildcard/alias expansion must match request-time authorization exactly to avoid new mismatches"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a failing test reproducing a Team with models=all-proxy-models and a member with allowed_models=[standard,power], asserting GET /v1/models returns only permitted models",
+      "Regression test asserting no behavior change when no member-level allowed_models is configured",
+      "Verify inference rejection for out-of-scope model remains consistent with discovery output"
+    ],
+    "unknowns": [
+      "Whether PR #41349 already implements the Team-member allowed_models narrowing for /v1/models",
+      "Whether maintainers consider the omission intentional or a bug",
+      "Whether the issue's suggested approach matches maintainer design preference"
+    ],
+    "why": "Issue describes a concrete discovery-vs-inference mismatch for Team-member allowed_models, with code anchors in proxy/utils.py, model_checks.py, and auth_checks.py. However, the supplied duplicate assessment flags PR #41349 as semantic overlap requiring review, and the pre-task evidence explicitly records duplicateStatus=semantic_overlap_requires_review with best_score 46. That unresolved duplicate/overlap coverage is a materially blocking unknown: it is unclear whether the existing PR already covers the root cause or leaves a distinct gap, so code work cannot be confirmed as actionable without human comparison."
   },
   "bd5f5d0e36b8e7ad48f0e8e0ce418a7b89321c19dc73810d335b20291c570a83": {
     "confidence": 0.85,
@@ -105113,6 +105312,40 @@
       "Related issue status unknown due to timeout"
     ],
     "why": "Issue identifies a clear shallow-update bug in get_config causing recursive config override failure, with a concrete reproduction. However, open PR and related issue lookups timed out, so duplicate implementation cannot be excluded. Maintainer design confirmation is needed before starting work."
+  },
+  "e3239def4fcc53678346586034b10978c01824bce476b838243e9a121ca7a27e": {
+    "confidence": 0.72,
+    "contradictions": [
+      "open_pr_assessment marks PR #2648 as technically_complete with tests and CI, yet root_cause_coverage is false and gaps list missing root-cause coverage"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "SOPEngine state restoration: validate stored step identity/order before applying persisted SOPStepRunState",
+      "SOPStepRunState/SOPRunState serialization: persist step identity for new states while keeping legacy states loadable",
+      "Rejection path for reordered or mismatched step sequences"
+    ],
+    "risks": [
+      "Backward compatibility for legacy states without step identities must be preserved",
+      "Fix must not broaden API behavior beyond rejecting mismatched ordered step sequences",
+      "Existing PR #2648 may already cover part of the fix; compare before implementing to avoid duplicate work"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing regression test: build SOP with steps A,B, persist run state with progress on A, rebuild SOP as B,A, construct SOPEngine(reordered_sop, stored_state) and assert rejection or correct non-mapping",
+      "Add a backward-compatibility test: load a legacy stored state without step identities and assert it still loads",
+      "Run targeted SOPEngine unit tests and static checks for the affected package"
+    ],
+    "unknowns": [
+      "Whether PR #2648 already implements the same identity-based validation, which would make independent implementation redundant"
+    ],
+    "why": "Issue gives a concrete, code-anchored root cause: SOPEngine restores SOPStepRunState by list index and only rejects stored runs when step counts differ, so same-length reorders silently mis-map persisted progress. Reproduction steps are explicit (A,B -> B,A with stored state) and expected behavior is well-defined, including backward compatibility for states lacking step identities. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific rejection rule does not apply. The open PR #2648 is a coverage signal but is assessed as weak competition with missing root-cause coverage, so it does not by itself make the issue non-actionable."
   },
   "e32b22dcb2fbf5fd8f5d02a9e7aebb02f4ae929c672084f644246ac8147870fc": {
     "confidence": 0.6,
