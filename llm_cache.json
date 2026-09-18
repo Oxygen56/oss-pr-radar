@@ -17188,6 +17188,39 @@
     ],
     "why": "The comment establishes a clear root cause and a concrete proposed fix, but the issue's own quoted documentation states the current validation behavior is intended, making this a maintainer behavior decision rather than a plain bug fix. The contributor explicitly asks for maintainer direction before implementing, so actionability is gated on an unresolved design decision."
   },
+  "2798e9e31fb5b1d33ce83237ce5dbe3ca607ecd55589d08b07bd4cb53867b3a8": {
+    "confidence": 0.72,
+    "contradictions": [
+      "actionability_evidence.root_cause_signal=false while issue body supplies a concrete root cause and reproduction"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.algorithm_evidence",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Trainer mixed-precision/downcast logic in TRL SFTTrainer setup so DoRA lora_magnitude_vector is excluded from fp16/bf16 downcast",
+      "PEFT adapter parameter dtype handling for QDoRA magnitude vector"
+    ],
+    "risks": [
+      "Distinguishing true numerical no-op from ordinary floating-point/random variation requires fixed seed, tolerance, and hardware",
+      "Fix may belong in PEFT rather than TRL, affecting where the change lands",
+      "bf16 vs fp16 path differences may make reproduction hardware-dependent"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Small-model, fixed-seed regression: initialize QDoRA SFTTrainer, record lora_magnitude_vector dtype and values, run one optimizer step, assert dtype stays FP32 and values change beyond tolerance",
+      "Contrast test: DoRA (FP32 magnitude) updates normally; QDoRA without fix shows unchanged magnitude values; QDoRA with FP32 restore shows updates"
+    ],
+    "unknowns": [
+      "Exact TRL code location performing the downcast is not pinned in supplied evidence",
+      "Whether maintainers consider the fix in-scope for TRL vs PEFT"
+    ],
+    "why": "Issue describes a concrete numerical mechanism: QLoRA fp16/bf16 downcast applied to DoRA lora_magnitude_vector, causing optimizer updates below bf16 representable precision and silent no-op; restoring FP32 restores updates. This is a real quantization/numerical PEFT mechanism with a supplied Colab reproduction and a clear reference-vs-implementation validation path (DoRA FP32 vs QDoRA bf16 vs QDoRA+FP32 magnitude)."
+  },
   "27ec4110829a9597c29194bc3d72dd421e5c7a6b0a31ae534fd6ce321b54df63": {
     "confidence": 0.7,
     "contradictions": [],
@@ -17862,6 +17895,47 @@
       "Whether PR #18641 already fixes this issue or only partially overlaps."
     ],
     "why": "Issue provides a clear root cause (PostgreSQL upgrade path creates tenant_*_id columns as INTEGER instead of VARCHAR(32)), a verified SQL workaround, and a concrete reproduction path. The bug is user-visible and affects core RAG functionality. The evidence includes code anchors and a detailed analysis from Dosu confirming the migration gap."
+  },
+  "28eb96538d405f6b74e7829b877355908b4ed76cc7498c755d3401991def8c04": {
+    "confidence": 0.55,
+    "contradictions": [
+      "algorithm_evidence.qualified=true and formula/experiment signals present, but actionability_evidence.root_cause_signal=false and reproduction_or_validation_missing",
+      "open_pr_assessment reports semantic_overlap_requires_review on gpt_model.py while direct_code_overlap=false and root_cause_coverage=false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "megatron/core/tensor_parallel/cross_entropy.py label-smoothing reduction over TP group",
+      "megatron/core/models/gpt/gpt_model.py padding_mask scatter group",
+      "megatron/core/transformer/multi_token_prediction.py per-token loss normalization",
+      "megatron/core/transformer/dot_product_attention.py softmax_offset tensor_model_parallel flag"
+    ],
+    "risks": [
+      "Issue is a 13-finding bundle; picking one fix without maintainer scoping may be low-value or duplicate",
+      "Open PR #5088 touches the same gpt_model.py path and may already cover finding 5",
+      "Some findings depend on explicit pg_collection differing from global TP, which may be a narrow configuration",
+      "Distinguishing genuine numerical bugs from float/seed noise requires fixed baselines"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied CPU/Gloo reproductions for findings 1-3 and 8 to confirm observed vs reference values",
+      "Add a numerical regression test with fixed seed and tolerance comparing sharded vs reference loss/gradient",
+      "Compare against open PR #5088 to determine whether the padding_mask scatter root cause is already covered"
+    ],
+    "unknowns": [
+      "Which single finding the maintainers want addressed first",
+      "Whether open PR #5088 already fixes finding 5's padding_mask scatter",
+      "Whether the explicit-pg_collection-differs-from-global-TP configuration is considered in-scope by maintainers"
+    ],
+    "why": "The issue bundles 13 distinct findings, several of which are concrete algorithm-level numerical bugs (label smoothing over local vocab shard, gathered logits fed to vocab-parallel CE, MTP per-token loss local ratios, CP-local loss means, learnable attention sink grad-norm exclusion). These have code anchors, formulas, and CPU/Gloo reproductions, so the track fits llm_algorithm. However, the candidate's own actionability evidence reports reproduction_or_validation_missing and probe_ready=false, and the duplicate assessment flags PR #5088 as semantic_overlap_requires_review with direct_code_overlap=false and root_cause_coverage=false. The issue is a multi-bug report rather than a single actionable fix, and the overlap with an open PR on the same code path (gpt_model.py padding_mask scatter) is unresolved. These are materially blocking unknowns for choosing a single concrete contribution."
   },
   "28efce9ffad17f04e861f43afc50476ea5eedad4cf19e4493f565f0d3af3e1ca": {
     "confidence": 0.7,
@@ -24059,6 +24133,43 @@
       "Whether the two incidents share a single root cause"
     ],
     "why": "The issue reports two intermittent, non-deterministic CUDA runtime failures (cudaErrorInvalidValue in cuDNN SM90 DSA backward, cudaErrorUnknown in packed-THD build_attention_indices) with no small deterministic reproducer; both incidents succeeded on exact retries, and CUDA_LAUNCH_BLOCKING was off so the reported call may not be the originating kernel. Root cause is explicitly unknown and the two failures may not share one. Multiple open PRs (#6848, #6910, #6939, #7169) already overlap the failing code paths, and the maintainer comment only suggests padding flags plus an untested community PR, so duplicate/merged-fix coverage is unresolved."
+  },
+  "37e2b9794a640987e4e4e5da1cdd0732db774c98f9ff7e2ad3d739083fd4dc51": {
+    "confidence": 0.7,
+    "contradictions": [
+      "candidate.open_pr_assessment reports status none, while issue_data.recent_comments states PRs #1925 and #1926 already implement the escaping fix"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "packages/server/src/server/streamableHttp.ts writeSSEEvent escaping of U+2028/U+2029",
+      "packages/server-legacy/src/sse/sse.ts SSE data-line escaping",
+      "src/server/sse.ts and src/server/webStandardStreamableHttp.ts on v1.x"
+    ],
+    "risks": [
+      "Fix may duplicate already-open PRs #1925/#1926",
+      "Escaping changes wire bytes and could affect clients that expect literal separators",
+      "Issue is unassigned and repository policy requires assignment"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the supplied repro.ts against current main and assert the SSE data line contains no raw U+2028/U+2029 bytes",
+      "Add a regression test that splits the SSE body with a naive U+2028/U+2029-aware splitter and asserts JSON.parse succeeds",
+      "Verify the same behavior on the v1.x branch paths"
+    ],
+    "unknowns": [
+      "Whether #1925/#1926 are still open and cover the exact code paths",
+      "Whether the Claude.AI timeout is solely SSE framing or also a client fail-fast issue",
+      "Whether assignment is required before work can proceed"
+    ],
+    "why": "The issue describes a real, reproducible transport-framing bug (raw U+2028/U+2029 emitted inside SSE data lines), and a bot comment supplies a concrete repro and code anchors. However, the supplied evidence also states that two open PRs (#1925 for main, #1926 for v1.x) already implement the escaping fix with regression tests and passing CI, and the candidate's own duplicate assessment only surfaced an unrelated merged PR. That unresolved coverage question directly determines whether new code work is actionable, so this is RETRY rather than NO_OBJECTION."
   },
   "37fbb7cb507eb7b82c5b6d59094bcefdfed273295f6ac8bca1b5d5395027785d": {
     "confidence": 0.55,
@@ -42197,6 +42308,39 @@
     ],
     "why": "Issue provides a concrete, reproducible failure (recipient_resolution_failed across 4 attempts and a fresh session) plus a source-level root cause: _PROFILE_MESSAGE_TARGET_JS scopes its DOM search to the first <section> child of <main>, requiring exactly one visible <h1> and at most one active compose anchor. A maintainer-requested DevTools probe confirmed h1Count=0 and composeHrefs=[] inside that section while 4 compose links exist elsewhere on the page, validating the narrow-scoping hypothesis. Maintainer then proposed a candidate resolution (locating the card via main h1 instead of main.children), giving a concrete validation path. No duplicate/merged fix covers this; the three open PRs only share the send_message keyword and have no direct code-path overlap."
   },
+  "5f11441d8de829aa2bf13251f29750ffb3172227604699d1a9dff6c894c571d7": {
+    "confidence": 0.7,
+    "contradictions": [
+      "actionability_evidence lists code_anchors 'Node.js' and 'function normally.' which are not code symbols",
+      "preTaskEvidence codePathsPlan targets webview node.tsx files unrelated to the sidecar runtime error"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "code-sidecar runtime host selection / hub runtime resolution",
+      "desktop sidecar startup path"
+    ],
+    "risks": [
+      "Root cause may be in build/packaging of the Bun binary rather than source, making a source-level fix non-actionable",
+      "Supplied code anchors and codePathsPlan appear unrelated to the crash, risking a wrong-area fix"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce by running code-sidecar.exe from the 0.0.31 installer on Windows 11 and confirm the 'No compatible hub runtime is available' crash",
+      "Regression: verify sidecar boots and emits the ready endpoint JSON as in v0.0.27"
+    ],
+    "unknowns": [
+      "Which source module emits 'No compatible hub runtime is available' and how the hub runtime is selected",
+      "Whether the regression is in source code or in the Bun bundling/packaging step",
+      "Whether a maintainer has already identified or is fixing this regression"
+    ],
+    "why": "Issue reports a fatal startup crash in code-sidecar.exe with a clear stack trace and reproduction steps, but no root cause is identified and the code anchors supplied ('Node.js', 'function normally.') are not real code locations. The failure is in a bundled Bun-compiled binary ('No compatible hub runtime is available'), and the supplied codePathsPlan points to unrelated webview node.tsx files, so the actionable code path is unknown."
+  },
   "5f225779e17c986d138bc4d049860f192656ad81c161a597de915b541fa4c3f6": {
     "confidence": 0.8,
     "contradictions": [],
@@ -51325,6 +51469,42 @@
       "Whether the repository requires assignment or maintainer approval for new features"
     ],
     "why": "The issue precisely identifies a missing zero-tool-call guard in fc_agent_runner.py, with clear code references and a concrete detection signal. However, the proposed fix requires design decisions (retry vs error, per-tool vs per-agent flag, error surface) that need maintainer input, and the repository's AI disclosure policy conflicts with automated public contribution. The issue is an enhancement request without maintainer approval or help-wanted label, and the candidate is categorized as LOCAL_FIX_ONLY with ALLOW_PRIVATE_WORK, indicating private work is permitted but public PR submission is blocked."
+  },
+  "70c134a9473c44ab1aea06943304828b22350f3ec36357c7431190f15d83f24a": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims the protocol layer blocks the feature; triage and collaborator verification show RequestPermissionResponse already carries an optional _meta extension point, so the blocker is overstated"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/tools.ts: allow a user-supplied rejection reason to populate cancelMessage",
+      "packages/core/src/core/coreToolScheduler.ts: thread the reason into the model-visible cancellation response instead of the bare constant",
+      "packages/cli/src/acp-integration/session/permissionUtils.ts: read an optional reason from the permission response",
+      "packages/cli/src/ui/opentui/dialogs-confirm.tsx and packages/vscode-ide-companion/src/services/acpConnection.ts: optional reason input on reject"
+    ],
+    "risks": [
+      "Protocol/extension shape (which _meta key, selected vs cancelled variant) is a design choice a maintainer may want to settle first",
+      "Scope spans protocol, core, and two UIs; splitting into separate issues/PRs may be preferred",
+      "Cancel currently conflates explicit deny with Esc/abort/timeout, so reason plumbing may need the explicit-denied outcome to be meaningful"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: reject a tool call with a reason and assert the model-visible functionResponse.response.error contains the reason rather than 'User did not allow tool call'",
+      "Regression test: reject without a reason still yields the existing fallback message",
+      "ACP round-trip test: response _meta reason is parsed by resolvePermissionOutcome and ignored gracefully by clients that omit it"
+    ],
+    "unknowns": [
+      "Maintainer preference on the _meta key/variant and whether to land the explicit-denied outcome separately",
+      "Whether the three layers should be split into separate issues before implementation"
+    ],
+    "why": "Issue requests reject-with-reason for tool-permission prompts; triage and an independent collaborator verification both anchor the gap in concrete code: ToolConfirmationPayload.cancelMessage exists (tools.ts:1062) but no UI sets it, and coreToolScheduler.ts:4356-4360 falls back to the bare 'User did not allow tool call'. The pipeline to the model already exists (coreToolScheduler.ts:1982, 1996-2006), so the core change is small and testable. Protocol layer is not a hard blocker: RequestPermissionResponse carries an optional _meta bag and qwen-code already rides _meta on this exact response (bridgeClient.ts:578-593, bridgeTypes.ts:1093-1102)."
   },
   "70c556ca987c6cbc3e3a9e61bac75a15d66cb1b3d7794cebf9d80dba00e0aa13": {
     "confidence": 0.85,
@@ -78417,6 +78597,38 @@
     ],
     "why": "Issue reports a clear false-success bug in /abort_request with a concrete repro and root cause (missing is_single attribute on GenerateReqInput). However, the deterministic gate is HUMAN_REVIEW, and open PR/related issue lookups timed out, so duplicate work cannot be excluded. Maintainer design preference is unconfirmed."
   },
+  "aed8c5248128d54547d0775d45eb7db09785eb97eaf167d4a914364231956e60": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      ".github/scripts/ci/main-failure-signature.mjs: add a workflow-scoped bridging marker to searchMarkers in both the per-test and per-commit arms within MAX_SEARCH_MARKERS",
+      ".github/scripts/ci/main-failure-signature.mjs: emit the bridging marker in both renderPerCommitBody and the per-test body so either arm's issue is discoverable by the other arm's dedupe search"
+    ],
+    "risks": [
+      "Changing marker emission could affect existing dedupe behavior for issues already filed under the old marker scheme",
+      "Reserving a searchMarkers slot may reduce per-test marker coverage if MAX_SEARCH_MARKERS is not adjusted carefully",
+      "The fix is explicitly non-blocking for PR #12117, so it may be deprioritized"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit-test the plan/searchMarkers output for both the per-test and per-commit branches and assert the bridging marker is present and the marker count stays within MAX_SEARCH_MARKERS",
+      "Simulate the dedupe loop against a per-commit stub body and a per-test body to confirm each search now matches the other arm's issue",
+      "Run the existing main-failure-signature test suite and workflow lint/static checks"
+    ],
+    "unknowns": [
+      "Whether maintainers want this deferred finding handled as a separate issue/PR or folded into PR #12117"
+    ],
+    "why": "The issue is a deferred follow-up from PR #12117 with a source-verified root cause: the plan command selects exactly one marker class, and the per-commit and per-test marker sets are disjoint, so restoring the job-log download re-activates a dedupe gap that can file duplicate issues. The comment independently re-derives the marker constants, line anchors, and a concrete bridging-marker fix, giving a clear implementation target and validation path."
+  },
   "aedbbb29480d6f7121ee775bdc9382d8e0ec5606b94fc275553da3eaa0f0c471": {
     "confidence": 0.72,
     "contradictions": [
@@ -105225,6 +105437,38 @@
       "Maintainer design preference for cookie handling; whether a PR would be accepted."
     ],
     "why": "Issue reports a clear bug: Azure Functions adds Domain attribute to __Host- cookie, causing browser rejection and 403. Root cause is well understood and reproducible. However, the deterministic gate says HUMAN_REVIEW, and there is no maintainer approval or help-wanted signal. The fix may involve design choices about cookie handling, so maintainer confirmation is needed."
+  },
+  "e710f087f437041886af5f25d26899f595e6a251ee224d52b392aa05a8b23c14": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims no /watsonx path pattern exists, while open PR #41470 titled 'resolve watsonx model_id so virtual-key model scope is enforced' targets the same auth_utils.py path, suggesting the fix may already be in flight"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/proxy/auth/auth_utils.py: add /watsonx model_id candidate extraction in get_model_from_request/_extract_model_candidates_from_request",
+      "litellm/proxy/pass_through_endpoints/llm_passthrough_endpoints.py: verify watsonx_proxy_route path reaches the enforcement check"
+    ],
+    "risks": [
+      "Overlapping open PR #41470 may already implement the same fix, making a duplicate contribution low value",
+      "Broadening model resolution for /watsonx could affect other pass-through route behavior if not scoped to the route prefix"
+    ],
+    "root_cause_clarity": "high",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Add a regression test asserting get_model_from_request resolves model_id for a /watsonx body",
+      "Add an enforcement test that a virtual key with models=[\"cheap-model\"] is denied 403 on POST /watsonx/ml/v1/text/generation with body model_id=ibm/granite-3-8b-instruct",
+      "Control test: same out-of-list model on a covered route still returns 403"
+    ],
+    "unknowns": [
+      "Whether PR #41470 fully covers the Watsonx model_id resolution described in the issue",
+      "Whether maintainers consider the issue already addressed by that PR"
+    ],
+    "why": "The issue gives a clear root cause (Watsonx pass-through body key model_id is never read by get_model_from_request, so can_key_call_model is skipped) and a concrete fix location, but the supplied duplicate assessment reports an open PR #41470 that directly references this issue and touches the same auth_utils.py path with the same model_id/virtual_key semantics. Whether that PR already covers the fix is unresolved, which materially determines whether independent code work is actionable."
   },
   "e721c91f3925ea293686889f4f24ae4b2bf09f556d77d204ba2e670ffe9d75f9": {
     "confidence": 0.85,
