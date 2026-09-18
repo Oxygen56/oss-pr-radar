@@ -21111,13 +21111,19 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     continue
                 else:
-                    if task_stage == "REPRODUCTION_REQUIRED" and not value.get("taskId"):
-                        # An unbound reproduction result has already failed
-                        # the identity boundary. Do not repeatedly turn that
-                        # stale local artifact into a failed worker cycle:
-                        # preserve the evidence, quarantine the task with
-                        # both digests, and keep it out of all publication
-                        # paths until an explicit recovery exists.
+                    if (
+                        task_stage == "REPRODUCTION_REQUIRED"
+                        and not value.get("taskId")
+                        and value.get("stage") == "AUDIT_NO_GO"
+                        and value.get("reason") == "REPRODUCTION_ENVIRONMENT_BLOCKED"
+                    ):
+                        # Only the obsolete, unbound environment-blocked
+                        # reproduction receipt is known to be safely stale.
+                        # Other digest mismatches (including legacy or
+                        # tampered receipts) remain hard failures.
+                        # Preserve this stale evidence, quarantine the task
+                        # with both digests, and keep it out of every
+                        # publication path until explicit recovery exists.
                         event = managed_adapter.ledger.record_task_quarantine(
                             opportunity_key=candidate["key"],
                             task_id=str(candidate.get("intentId") or candidate["threadId"]),

@@ -12280,7 +12280,7 @@ def test_ingestion_quarantines_context_mismatch_for_active_task(tmp_path):
                 "threadId": "thread-1",
                 "worktreePath": str(worktree.resolve()),
                 "stage": "AUDIT_NO_GO",
-                "reason": "STRONG_EXISTING_PR",
+                "reason": "REPRODUCTION_ENVIRONMENT_BLOCKED",
             }
         ),
         encoding="utf-8",
