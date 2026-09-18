@@ -10323,6 +10323,39 @@
     ],
     "why": "Issue reports a concrete, user-visible bug: AppImage-injected PYTHONHOME/PYTHONPATH (and later LD_LIBRARY_PATH) leak into spawned stdio MCP servers, breaking external Python interpreters. Reporter supplies executable minimal repro, /proc environ evidence, and a live diagnosis rebutting the triage bot's static 'no Python in AppImage' claim by locating the format string in the AppRun.wrapped ELF. Code anchors (mcp-client.ts, sanitize-child-env.ts, shared-env-keys.ts) point to the spawn env construction, and the suggested fix (strip/reset these vars for MCP children) is a bounded, testable change. No open PR or duplicate issue covers it. Remaining uncertainty is normal implementation choice (which vars to scrub, whether to scope to MCP only), not a blocking unknown."
   },
+  "17de2b9787d5d56f5b387c30d4777e2bc8dccd5ace9aaba5c711133db9aa255a": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "mlx/distributed/ring backend socket exchange / all_sum collective",
+      "chunking or rendezvous logic in ring all_reduce path"
+    ],
+    "risks": [
+      "Deadlock is probabilistic, so a fix may be hard to confirm without many iterations",
+      "Distinguishing a ring-backend race from Metal watchdog behavior requires multi-host hardware",
+      "Fixing one stream path may not cover the other"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run cpu_stream_loop_repro.py at >=3 ranks in a loop to reproduce the ~3-4% deadlock",
+      "Add a regression test that repeats a large-payload all_sum across >=3 ranks and asserts completion within a timeout",
+      "Verify GPU-stream watchdog behavior with gpu_stream_repro.py under injected skew"
+    ],
+    "unknowns": [
+      "Exact root cause inside the ring socket exchange is not yet pinpointed",
+      "Whether GPU-stream watchdog kill and CPU-stream deadlock share one underlying cause"
+    ],
+    "why": "Issue reports a reproducible probabilistic deadlock (~3-4%/collective) in the ring backend's socket-level all_sum exchange for large payloads, with two self-contained repro scripts, ruled-out variables, and independent py-spy stack traces confirming both ranks blocked inside all_sum. This is a concrete distributed-training invariant failure with a clear reference-vs-implementation validation path."
+  },
   "18146f9ef472bf8569511c6523e88b247b63834c17d1afe53a973654b49d802f": {
     "confidence": 0.8,
     "contradictions": [
@@ -14915,6 +14948,40 @@
       "Resolution of open design questions (thinking blocks, reply density, expanded-state scope)"
     ],
     "why": "The issue is a UX/rendering design proposal, not a concrete bug with a root cause. It explicitly states implementation must not begin until the issue reaches Ready on the Goose Issues board, and the submission policy is needs_assignment with assignmentRequired=true. The design questions (collapsed-by-default vs setting, compact form content, thinking blocks, reply density) are explicitly left open for design discussion. A collaborator agreed in principle but only asked a clarifying question; no design decision or assignment exists. The supplied sketch is a third-party local commit, not an approved plan."
+  },
+  "227e658c017fbab5d37a962513520d02ba4793795b0cf1a13ea8700ced0b5915": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "litellm/router_utils/pattern_match_deployments.py: make add_pattern replace-per-model-id or call remove_deployment before append",
+      "litellm/router.py: call pattern_router.remove_deployment(model_id) in delete_deployment/_delete_deployment and on upsert/reload",
+      "litellm/proxy/management_endpoints/model_management_endpoints.py: ensure clear_cache/reload reconciles wildcard pool"
+    ],
+    "risks": [
+      "Open PR #30367 touches model_management_endpoints.py with semantic overlap; must compare implementation boundaries before duplicating work",
+      "Open PR #31763 reportedly covers only the delete path, not the pause/update staleness",
+      "Behavior change to routing pool lifecycle could affect team_pattern_routers if refactor is too broad"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add regression test: create wildcard deployment, PATCH blocked=true, assert /v1/chat/completions returns 403 PermissionDeniedError without restart",
+      "Add regression test: delete wildcard deployment, assert subsequent requests no longer route to it",
+      "Add test asserting repeated reload/upsert does not accumulate duplicate pattern entries for the same model_id",
+      "Run targeted router/pattern_match unit tests and lint"
+    ],
+    "unknowns": [
+      "Whether PR #30367 already fixes the wildcard reconcile gap or only the exact-index cache path",
+      "Whether maintainers have a preferred design for pattern pool reconciliation"
+    ],
+    "why": "Issue provides a concrete, code-anchored root cause: PatternMatchRouter pool is append-only and never reconciled on update/delete, so blocked/deleted wildcard deployments keep serving until restart. Reproduction steps, contrast with exact-name path, and a concrete fix (remove_deployment before append; call on delete) are supplied. Track is agent_ai_infra, not llm_algorithm, so the algorithm-specific rejection rule does not apply."
   },
   "228418a6bc6a47f4c73ce50e7c162d9a5e2e3a253280056d8e23b24d5d86d65c": {
     "confidence": 0.55,
@@ -25776,6 +25843,40 @@
     ],
     "why": "Issue provides detailed production evidence of cache busts after tool-calls, with SQL queries for reproduction and a clear root cause linked to existing issue #24841. The evidence is actionable for a code fix in the prompt loop serialization path."
   },
+  "3add60460825bf38befc150b1722bc749991d18cd153e51567aae5e330134c54": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Reporter says commenting out registerOTel fixes it; another commenter attributes failure to Cloudflare TCP resets from Render IPs",
+      "Maintainer classifies as bug with medium confidence while root cause remains unconfirmed"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "ai-sdk/gateway error parsing (create-gateway-error.ts)",
+      "provider-utils parseJsonEventStream stream-locking handling"
+    ],
+    "risks": [
+      "Root cause may be external (OTel instrumentation or Cloudflare/Render network policy), making an SDK code fix ineffective",
+      "Changing gateway error parsing could mask real gateway errors"
+    ],
+    "root_cause_clarity": "low",
+    "score": 3,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce GatewayResponseError with a mocked 200 response containing an empty body and assert graceful error handling",
+      "Add regression test for ReadableStream locked state in parseJsonEventStream"
+    ],
+    "unknowns": [
+      "Whether the failure originates in SDK code or external infrastructure",
+      "A minimal reproducible example that isolates the SDK behavior",
+      "Which specific code path should be changed to fix the reported error"
+    ],
+    "why": "Issue is a support-style bug report with contradictory root-cause evidence: reporter attributes it to @vercel/otel instrumentation, another commenter attributes it to Cloudflare/Render IP-level TCP resets, and the maintainer classifies it only as a medium-confidence bug. No confirmed root cause in the SDK code, no minimal reproduction, and no concrete validation path for a code change."
+  },
   "3ae6732ca5522d2a998665eec25b27348f6cdb0b607982034131174f1571a30c": {
     "confidence": 0.7,
     "contradictions": [
@@ -29292,6 +29393,43 @@
       "Exact mechanism not identified"
     ],
     "why": "Issue reports a nondeterminism bug in VLLM_BATCH_INVARIANT=1 with detailed reproduction and ruled-out factors, but root cause is unknown and maintainer investigation/design confirmation is needed. Open PR and related issue lookups failed, so duplicate work cannot be excluded."
+  },
+  "431aff0f6c18e1129888f8605d921d19d7f0fe68cff3191df8d138c8b028e33a": {
+    "confidence": 0.55,
+    "contradictions": [
+      "Issue claims prompt_cache_key is confirmed identical and effective grouping, yet reports 0% hits, leaving whether the defect is SDK-side or provider-side unresolved",
+      "Candidate labels root_cause_signal=true while its own reproduction_evidence is empty and needs_confirmation=true"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/agents/agent.py (Agent.as_tool session/prompt_cache_key propagation)",
+      "session/run-grouping path (resolve_run_grouping, SessionABC wrapper handling)",
+      "model provider request construction for nested runs"
+    ],
+    "risks": [
+      "Root cause may be server-side prompt-cache behavior rather than an SDK defect, making the issue non-actionable as code work",
+      "Custom read-only SessionABC semantics (no-op add_items/pop_item/clear_session) may be the actual cause, which would make this a user-implementation issue rather than an SDK bug",
+      "Fixing cache-key/grouping propagation could alter public API behavior for nested runs"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Build a minimal failing test: parent Agent with a subagent attached via as_tool(session=read_only_session_view), stable session_id, two consecutive calls with byte-identical instructions/tools/prompt_cache_key, assert cached_tokens > 0 on the second call",
+      "Compare against a non-nested Runner.run() control with the same session to isolate whether nesting or the custom SessionABC is the cause",
+      "Run targeted unit tests for the agent/session modules plus static checks"
+    ],
+    "unknowns": [
+      "Whether the 0% cache rate reproduces without the custom read-only SessionABC wrapper",
+      "Whether the failure is in SDK request construction or in the upstream model provider's cache",
+      "Whether any maintainer has confirmed this as an SDK defect versus expected behavior"
+    ],
+    "why": "Issue reports 0% prompt-cache hits for nested Agent.as_tool() subagent runs, but the supplied evidence contains no reproduction artifact, no confirmed root cause, and no code anchor tying the failure to a specific SDK mechanism; the issue itself is phrased as an open question ('is there a known limitation... or is there something about a custom SessionABC subclass'). The candidate's own actionability evidence marks public_repro_signals=0, reproduction_evidence=[], needs_confirmation=true, design_confirmation=false, and maintainer_approved=false, so the root cause is asserted rather than established."
   },
   "432076606d9bd12b48cd02aafd799a46250906ec773a4b3c9e64002e86ddb213": {
     "confidence": 0.85,
@@ -61446,6 +61584,43 @@
     ],
     "why": "The issue identifies a concrete bug in the gemma4 tool parser: tool_choice='required' is not enforced, leading to prose-only responses with finish_reason='tool_calls' and empty tool_calls. Root cause is partially identified (finish_reason mislabeling) and the enforcement gap is clearly described. The issue provides a reproduction script and evidence of failure rates under load, enabling a concrete validation path. Although the exact trigger is content-dependent and not fully reproducible on idle servers, the root cause and expected behavior are clear, and the fix is actionable."
   },
+  "865ba08ae462591ebbf78184301068ffd87651e4448382981c4ac98c53fae117": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims protocol layer is the blocker; triage and collaborator verification show _meta extension point already exists and is live, so protocol is not a hard blocker"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/tools/tools.ts: add explicit denied outcome / reason field",
+      "packages/core/src/core/coreToolScheduler.ts: thread reason into cancelMessage instead of bare constant",
+      "packages/cli/src/acp-integration/session/permissionUtils.ts: read reason from ACP response",
+      "packages/acp-bridge/src/bridgeClient.ts and bridgeTypes.ts: carry rejection reason via _meta",
+      "packages/cli/src/ui/opentui/dialogs-confirm.tsx and vscode-ide-companion: optional reason input"
+    ],
+    "risks": [
+      "Scope spans protocol/core/UI; maintainer may prefer splitting into separate issues",
+      "Changing Cancel semantics to distinguish explicit deny from abort/timeout could affect existing behavior",
+      "ACP _meta key naming/extension needs maintainer design agreement"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: reject a tool call with a reason and assert the model-visible functionResponse.response.error contains the reason",
+      "Regression test: bare deny still yields existing fallback message",
+      "ACP round-trip test: response _meta reason is parsed and forwarded, with graceful fallback when absent"
+    ],
+    "unknowns": [
+      "Maintainer preference on splitting protocol/core/UI into separate issues",
+      "Preferred ACP _meta key naming and whether to extend the cancelled variant vs SelectedPermissionOutcome"
+    ],
+    "why": "Issue is a concrete feature request with in-repo TODO anchor (tools.ts:1195-1198) and a fully traced existing pipeline (cancelMessage -> coreToolScheduler fallback -> model-visible error). Triage and an independent collaborator verification both confirm the root cause: permission UIs never populate cancelMessage, and ACP response lacks a reason channel. Concrete code anchors and a validation path exist."
+  },
   "865bde0fc20efb354fbaa0d22faf3a295e48f2e5fe158cca79f0c983937bc6bd": {
     "confidence": 0.7,
     "contradictions": [
@@ -65934,6 +66109,40 @@
     ],
     "why": "The issue is a release-qualification report for stock 1.4.2 images, and the reporter explicitly states the fix (PR #12100, commit a97afd2d) is already merged on main but not an ancestor of tag v1.4.2. The remaining work is a backport/support-boundary decision, not a new code contribution on main; the supplied evidence does not establish that a code change against the default branch is actionable."
   },
+  "8f6d7add606a52f3e871059f82f974e44710455009f503a41d41a3b794e9954e": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment"
+    ],
+    "expected_changes": [
+      "internal/application/service/wiki_ingest_taxonomy.go: route folder and item embedding through BatchEmbedWithPool (or equivalent batching) instead of direct BatchEmbed",
+      "internal/models/embedding/batch.go: confirm BatchEmbedWithPool semantics and error propagation for reuse",
+      "Regression test asserting provider request input count never exceeds effective batch size while preserving vector count and order"
+    ],
+    "risks": [
+      "Maintainer may prefer a different batching abstraction or signature than the proposed BatchEmbedWithPool reuse",
+      "Changing the call path could subtly alter error/fallback behavior in the folder and item branches",
+      "Test must avoid conflating this input-count batching bug with RPM/TPM rate limiting issues #2533/#2953"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test with a mock OpenAI-compatible embedding endpoint rejecting >20 inputs, BATCH_EMBED_SIZE unset (default 5), and 80 distinct folder paths to exercise selectRelevantFolders past wikiTaxonomyFeedAllMaxFolders=60",
+      "Separately cover the item path with >20 items after ensuring the folder request succeeds",
+      "Assert per-request input count <= effective batch size, output vector count and ordering match inputs, and existing fallback behavior when the provider still fails",
+      "Run targeted package unit tests and static checks for internal/application/service and internal/models/embedding"
+    ],
+    "unknowns": [
+      "Whether maintainers have an existing design preference for the batching helper signature in this call path"
+    ],
+    "why": "Issue pinpoints a concrete source-level bug: wiki_ingest_taxonomy.go calls embedder.BatchEmbed directly, bypassing BatchEmbedWithPool/BATCH_EMBED_SIZE, so provider input-count limits can be exceeded. Code anchors, ordered reproduction steps, and a concrete validation path (mock provider asserting per-request input count, output count/order, folder and item paths) are supplied; no duplicate or merged-fix coverage is reported."
+  },
   "8f7046b6e90b49bf680a1ab4fd6120eb84210219a558c08e6a495b21ab825b0a": {
     "confidence": 0.85,
     "contradictions": [
@@ -68378,6 +68587,40 @@
     ],
     "why": "The issue describes a concrete self-feedback loop in Observational Memory where the Working Memory state signal is included in observer input, leading to silent memory overwrites. It provides a clear reproduction, expected vs actual behavior, and a suggested fix with regression test steps. This is a user-visible bug in a critical agent memory path, making it a valuable and actionable contribution."
   },
+  "950760265a65982d02e6a7508113e7b5a94511206828101a56da00908c980896": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue asks maintainers to choose between matching Python or adopting revised normalization, while candidate metadata marks design_confirmation false and needs_confirmation false"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "python/sglang/srt/entrypoints/tool.py",
+      "rust/sglang-server request rendering / tool normalization",
+      "differential prompt/token-ID regression test"
+    ],
+    "risks": [
+      "Fixing Rust to match current Python behavior may conflict with #29114/#29327/#39616 which remove implicit tool-schema defaults",
+      "Tool-definition key ordering differences mean equal token counts do not prove equal token sequences",
+      "Scope may expand into a cross-frontend preprocessing contract rather than a minimal bug fix"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the 177-vs-167 token gap with the reported Qwen3-0.6B-4bit + qwen25 tool parser request",
+      "Add a differential test comparing full rendered prompt strings and input token ID sequences between Python and Rust frontends"
+    ],
+    "unknowns": [
+      "Which normalization contract maintainers want (current Python vs post-#29114/#29327/#39616 behavior)",
+      "Whether the overlapping Python-side PRs will land and change the reference behavior before a Rust fix"
+    ],
+    "why": "The issue documents a real Python-vs-Rust prompt rendering divergence with concrete token-count evidence, but the actionable target is explicitly unresolved: the reporter asks whether Rust should match current Python behavior or both should adopt revised normalization, and a commenter notes overlapping Python-side PRs (#29114, #29327, #39616) that intend to change the very defaults at issue. Without a settled contract, a fix could be invalidated or conflict with in-flight work."
+  },
   "950767d16a33ddc2d3c32a7d0d73be82e292eeed1696fa487b78cda1a3e8ff39": {
     "confidence": 0.7,
     "contradictions": [
@@ -70533,6 +70776,41 @@
     ],
     "why": "Issue provides a clear, reproducible bug with ordered steps and evidence that Edit/Write tools return success without writing to disk. Root cause is not identified but the reproduction is concrete and actionable for a fix."
   },
+  "9a30c991e3396c252cb9d6e6ef9ea03c785bb87775fe070d40855c3dfaca44a5": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Comment asserts the issue is fixed on main by #56447 and can be closed, while the issue remains open and the duplicate assessment still flags overlapping open PR #51966 on the same file"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "vllm/model_executor/models/glm4_moe_lite_mtp.py",
+      "vllm/model_executor/models/glm_ocr_mtp.py",
+      "vllm/v1/worker/gpu/spec_decode/autoregressive/speculator.py"
+    ],
+    "risks": [
+      "Claimed fix #56447 may already cover the root cause, making new code work redundant",
+      "Open PR #51966 touches the same MTP file and may conflict or supersede",
+      "CUDA graph capture behavior is hardware/driver dependent (A100 vs T4 sm75 reports)"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce with `vllm serve zai-org/GLM-OCR --speculative-config.method mtp --speculative-config.num_speculative_tokens 1` on A100 and confirm the cudaErrorStreamCaptureUnsupported traceback; then verify the same command succeeds on a build containing the claimed fix (#56447) and add a CUDA-graph-capture regression test for the MTP speculator path."
+    ],
+    "unknowns": [
+      "Whether PR #56447 is merged and actually resolves this exact crash on the reported configuration",
+      "Whether open PR #51966 already covers the same root cause",
+      "Whether the reported failure still reproduces on current main"
+    ],
+    "why": "The issue reports a concrete CUDA graph capture crash (cudaErrorStreamCaptureUnsupported) in MRV2 MTP speculative decoding with a full traceback and reproduction command, and code anchors point at glm_ocr_mtp.py / glm4_moe_lite_mtp.py. However, a supplied comment states the bug is already fixed on main by PR #56447 and can be closed, and the duplicate assessment flags semantic overlap with open PR #51966 ('Fix CUDA graph capture in GLM4-MoE-Lite MTP layer') touching the same file. Whether any code work remains actionable is therefore unresolved."
+  },
   "9a3b5453ca0f11fca9d3d9705c1d7d4088692c3970aff38c36f6540a4d51405c": {
     "confidence": 0.7,
     "contradictions": [
@@ -71634,6 +71912,42 @@
       "Maintainer design preferences or existing plans for the wake mechanism."
     ],
     "why": "The issue provides a detailed, evidence-backed performance bug with clear root cause (missing event-driven wake) and concrete reproduction steps. It identifies specific code anchors and suggests actionable fixes (event-driven wake, server-side wait primitive, compact kanban_show mode). The track is agent_ai_infra, which is appropriate for infrastructure-level improvements."
+  },
+  "9bebe47865b5c79cb42d0eeac8eb1ae7d9d1a737d3a484322379ff1a02df1375": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue reports 404 after publish, but contributor simulation on current main shows the publish path creates the AppTrigger row and resolves the webhook successfully"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "api/services/trigger/webhook_service.py",
+      "api/services/workflow_service.py",
+      "app_triggers / workflow_webhook_triggers relationship handling"
+    ],
+    "risks": [
+      "Fixing a non-reproducible state could mask a deployment/version-specific issue",
+      "Changing publish-time trigger sync could regress stale-webhook pruning"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce on the reporter's exact self-hosted version/commit with a minimal Webhook Trigger workflow",
+      "Inspect app_triggers and workflow_webhook_triggers rows for the webhook ID after publish",
+      "Add a regression test that publishes a webhook-trigger workflow and asserts WebhookService.get_webhook_trigger_and_workflow resolves it"
+    ],
+    "unknowns": [
+      "Exact self-hosted version/commit",
+      "Whether app_triggers row exists and matches node_id when the 404 occurs",
+      "Whether undo/redo or node re-adding was involved",
+      "API logs/traceback around the publish request"
+    ],
+    "why": "The issue reports a user-visible 404 ('App trigger not found') after publishing a Webhook Trigger, but a contributor's end-to-end simulation on current main could not reproduce it and showed the publish path creates the AppTrigger row and prunes stale webhook rows. The reporter has not supplied the self-hosted version/commit, DB state, or logs, so the root cause is unresolved and the fix is not yet actionable."
   },
   "9bfeaa2fd76107cf6231cc53b5b9bb733f969fd202d8403d561dd02a12c82c38": {
     "confidence": 0.6,
@@ -116785,6 +117099,40 @@
       "Whether maintainers plan to merge or revise PR #25387; whether backfill of existing NULL budget_id is required."
     ],
     "why": "Issue clearly identifies a real bug with root cause and reproduction, but an existing PR (#25387) directly targets the same fix and is closed with CI failures and no tests. The deterministic gate requires HUMAN_REVIEW, and the PR's status and maintainer intent are unresolved."
+  },
+  "fbf859f85f26941bca8c6e8f8373d613b3bad3a8dc6f2f3084de06d758c09336": {
+    "confidence": 0.8,
+    "contradictions": [
+      "candidate.algorithm_evidence claims post_training_objective/model_architecture mechanisms, but the issue is a runtime memory-coherence bug, not an algorithm/training-objective change"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "vllm/v1/worker/gpu/buffer_utils.py: gate UVA usage on a CC/coherence check",
+      "is_uva_available() or equivalent capability detection to disable UVA when the mapped view is stale",
+      "V2 model runner selection/fallback to explicit H2D copies when UVA is unavailable"
+    ],
+    "risks": [
+      "CC-mode hardware (H100 in CC/TDX guest) may be unavailable for validation",
+      "Over-broad UVA disabling could regress performance on non-CC systems",
+      "Existing open PR #57415 may already cover the fix, reducing incremental value"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's minimal UVA snippet inside a CC guest and assert the GPU view reflects host writes after mapping",
+      "Run the end-to-end vllm serve reproduction with default V2 runner and assert non-garbage output",
+      "Regression: confirm non-CC GPUs still use UVA and produce correct output"
+    ],
+    "unknowns": [
+      "Whether PR #57415 fully resolves the root cause or leaves gaps that a competing contribution could fill"
+    ],
+    "why": "Issue provides a verified root cause (UVA views of pinned host memory are stale under GPU Confidential Computing), a minimal standalone reproduction of the stale-view behavior, and an end-to-end reproduction showing garbage output with the V2 runner vs correct output with VLLM_USE_V2_MODEL_RUNNER=0. Concrete code anchors (buffer_utils.py, UvaBuffer, get_accelerator_view_from_cpu_tensor) and a suggested fix path (detect CC via NVML or run a write-after-map coherence check in is_uva_available()) make the work actionable."
   },
   "fc017264c8660b8f6ff21b0423f41a3d3826292125ce4f386e2602955e6bd784": {
     "confidence": 0.85,
