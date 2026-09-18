@@ -2523,6 +2523,31 @@ def _exhaust_with_worker_binding_error(worker, lane: EventLane, event_id: str, k
         )
 
 
+def _exhaust_with_desktop_writer_collision(worker, lane: EventLane, event_id: str, key: str) -> None:
+    lane.reserve_handler_turn(key, event_id, f"client:{event_id}")
+    assert lane.release_handler_reservation(
+        event_id,
+        {
+            "error": "RuntimeError:DESKTOP_ACTIVE_WRITER:thread central already has an active writer",
+            "eventId": event_id,
+            "eventKey": key,
+            "model": "gpt-6-astra",
+            "ok": False,
+            "retryable": True,
+            "terminalReason": "handler_start_retryable",
+            "turnId": None,
+            "turnStarted": False,
+            "workerPid": 123,
+        },
+        reason="handler_start_retryable",
+    )
+    with lane.writer() as db:
+        db.execute(
+            "UPDATE event_lane_events SET status='needs_reconcile',attempts=? WHERE event_id=?",
+            (lane.max_attempts, event_id),
+        )
+
+
 def test_worker_binding_auth_gap_repair_requeues_root_and_coalesces_recovery(tmp_path, monkeypatch):
     worker = _event_worker_module()
     lane = EventLane(tmp_path / "events.db")
@@ -2589,6 +2614,80 @@ def test_worker_binding_auth_gap_repair_requeues_root_and_coalesces_recovery(tmp
         ).fetchone()
     assert dict(revived) == {"status": "pending", "attempts": 0}
     assert lane.handler_turn(recovery_id) is None
+
+
+def test_prestart_desktop_writer_collision_requeues_only_proved_root_and_coalesces_recovery(
+    tmp_path, monkeypatch
+):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    key = "agentscope-ai/agentscope#2044"
+    root_id = "github:agentscope-ai/agentscope:2044:issue_update:collision"
+    recovery_id = worker._outcome_recovery_event_id(root_id)
+    assert lane.append({"eventId": root_id, "eventKey": key, "kind": "issue_update"})
+    assert lane.append(
+        {
+            "eventId": recovery_id,
+            "eventKey": key,
+            "kind": "outcome_reconcile",
+            "rootEventId": root_id,
+            "payload": {"eventId": root_id, "rootEventId": root_id, "publicKey": key},
+        },
+        priority=250,
+    )
+    _exhaust_with_desktop_writer_collision(worker, lane, root_id, key)
+    _exhaust_with_desktop_writer_collision(worker, lane, recovery_id, key)
+    monkeypatch.setattr(
+        worker, "require_operational_authorization", lambda _root: _active_authorization()
+    )
+
+    assert worker._repair_exhausted_worker_binding_failures(tmp_path, lane) == {
+        "status": "applied",
+        "requeued": 1,
+        "coalesced": 1,
+    }
+    with lane.connect() as db:
+        root_row = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id=?", (root_id,)
+        ).fetchone()
+        recovery_row = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id=?", (recovery_id,)
+        ).fetchone()
+    assert dict(root_row) == {"status": "pending", "attempts": 0}
+    assert dict(recovery_row) == {"status": "coalesced", "attempts": 3}
+
+
+def test_prestart_desktop_writer_collision_repair_rejects_mismatched_event_binding(tmp_path, monkeypatch):
+    worker = _event_worker_module()
+    lane = EventLane(tmp_path / "events.db")
+    key = "agentscope-ai/agentscope#2044"
+    event_id = "collision-with-mismatched-receipt"
+    assert lane.append({"eventId": event_id, "eventKey": key, "kind": "issue_update"})
+    _exhaust_with_desktop_writer_collision(worker, lane, event_id, key)
+    with lane.writer() as db:
+        row = db.execute(
+            "SELECT receipt_json FROM event_lane_turns WHERE event_id=?", (event_id,)
+        ).fetchone()
+        receipt = json.loads(row["receipt_json"])
+        receipt["eventId"] = "different-event"
+        db.execute(
+            "UPDATE event_lane_turns SET receipt_json=? WHERE event_id=?",
+            (json.dumps(receipt, sort_keys=True), event_id),
+        )
+    monkeypatch.setattr(
+        worker, "require_operational_authorization", lambda _root: _active_authorization()
+    )
+
+    assert worker._repair_exhausted_worker_binding_failures(tmp_path, lane) == {
+        "status": "applied",
+        "requeued": 0,
+        "coalesced": 0,
+    }
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts FROM event_lane_events WHERE event_id=?", (event_id,)
+        ).fetchone()
+    assert dict(row) == {"status": "needs_reconcile", "attempts": 3}
 
 
 def test_worker_binding_auth_gap_repair_retries_after_exhausted_lease_expires(

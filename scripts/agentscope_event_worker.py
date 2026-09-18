@@ -200,6 +200,46 @@ def _is_exact_exhausted_worker_binding_receipt(value: object) -> bool:
     )
 
 
+def _is_exact_exhausted_desktop_writer_receipt(
+    value: object, *, event_id: str, event_key: str
+) -> bool:
+    """Match only an exhausted pre-turn desktop-writer collision.
+
+    A collision is safe to retry only when the bridge proves that no turn was
+    started.  Keep this deliberately narrower than a generic retryable error:
+    the receipt must be the worker's complete, known envelope and must still
+    be bound to the same lane event.
+    """
+    if not isinstance(value, dict) or set(value) != {
+        "error",
+        "eventId",
+        "eventKey",
+        "model",
+        "ok",
+        "retryable",
+        "terminalReason",
+        "turnId",
+        "turnStarted",
+        "workerPid",
+    }:
+        return False
+    return bool(
+        value.get("ok") is False
+        and value.get("retryable") is True
+        and value.get("turnStarted") is False
+        and value.get("turnId") is None
+        and value.get("terminalReason") == "handler_start_retryable"
+        and value.get("eventId") == event_id
+        and value.get("eventKey") == event_key
+        and isinstance(value.get("model"), str)
+        and value.get("model")
+        and isinstance(value.get("workerPid"), int)
+        and value.get("workerPid") > 0
+        and isinstance(value.get("error"), str)
+        and value["error"].startswith("RuntimeError:DESKTOP_ACTIVE_WRITER:")
+    )
+
+
 def _recovery_source_event_id(event: dict) -> str:
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
     return str(
@@ -293,7 +333,14 @@ def _repair_exhausted_worker_binding_failures(root: Path, lane: EventLane) -> di
                 and str(row["turn_status"] or "") == "needs_reconcile"
                 and not str(row["thread_id"] or "")
                 and not str(row["turn_id"] or "")
-                and _is_exact_exhausted_worker_binding_receipt(receipt)
+                and (
+                    _is_exact_exhausted_worker_binding_receipt(receipt)
+                    or _is_exact_exhausted_desktop_writer_receipt(
+                        receipt,
+                        event_id=event_id,
+                        event_key=str(event.get("eventKey") or ""),
+                    )
+                )
             )
             records[event_id] = {
                 "row": row,
