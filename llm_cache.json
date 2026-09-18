@@ -10390,6 +10390,41 @@
     ],
     "why": "Issue reports a reproducible probabilistic deadlock (~3-4%/collective) in the ring backend's socket-level all_sum exchange for large payloads, with two self-contained repro scripts, ruled-out variables, and independent py-spy stack traces confirming both ranks blocked inside all_sum. This is a concrete distributed-training invariant failure with a clear reference-vs-implementation validation path."
   },
+  "17edebe2db9b8f7d122490300d67409747506addd30d0ea70ac17bec14de1b00": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "CPU bf16 MatMul/GEMM kernel or weight-reorder path for AVX512-BF16 (non-AMX) in the oneDNN integration",
+      "Fallback behavior when no native bf16 GEMM is available (AVX2 error vs AVX512_CORE_BF16 garbage)",
+      "bf16 Constant.get_data() readback dtype/decoding (secondary readout quirk)"
+    ],
+    "risks": [
+      "Hardware-specific: requires AMD AVX512-BF16 (non-AMX) CPU; may not reproduce on Intel AMX or AVX2-only machines",
+      "Distinguishing genuine kernel/reorder bug from test harness or ml_dtypes conversion error",
+      "Repository AI-disclosure policy conflict may restrict automated public submission actions"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Run the issue's minimal opset-API bf16 MatMul repro (O=1024,K=512, seed 11) and assert cos vs f32 numpy reference ~0.999 with magnitude ratio ~1.0",
+      "Add regression test comparing bf16 vs f32 MatMul across sizes (e.g. 3072x1024) and both 'bf16 in->bf16 out' and 'f32 in->cast bf16' paths",
+      "Verify f16 and f32 controls remain correct and that AVX2 path either falls back correctly or errors explicitly",
+      "Optionally reproduce on Qwen3-Reranker-0.6B bf16 vs f32 reference (cos ~0.999 expected)"
+    ],
+    "unknowns": [
+      "Exact code location of the bf16 GEMM/reorder defect (kernel vs oneDNN integration) not yet identified",
+      "Whether the bug is in OpenVINO's own code or in the bundled oneDNN version, affecting where a fix would land"
+    ],
+    "why": "Issue provides a self-contained, dependency-light bf16 MatMul reproduction with f16/f32 controls, a real-model confirmation on Qwen3-Reranker-0.6B, and explicit ruled-out causes, isolating the corruption to the OpenVINO CPU bf16 GEMM path (AVX512-BF16, non-AMX). This is a concrete numerical/kernel-algorithm defect with a clear reference-vs-implementation validation path, matching the llm_algorithm track. Root cause is narrowed to the bf16 GEMM/reorder data path but not yet pinpointed to a specific line, which is normal implementation uncertainty rather than a blocker."
+  },
   "18146f9ef472bf8569511c6523e88b247b63834c17d1afe53a973654b49d802f": {
     "confidence": 0.8,
     "contradictions": [
@@ -21391,6 +21426,44 @@
       "Whether maintainers consider the import-identity change the desired fix versus relying on the Bun upgrade"
     ],
     "why": "Issue reports a concrete local-embedding failure with a plausible root cause (duplicate ONNX module identities from OMP's reload-tagged import) and a candidate fix, but the only recent comment claims the problem is resolved by upgrading Bun to 1.4.2, which contradicts the proposed code fix and leaves unresolved whether any code change is still needed."
+  },
+  "3028641768aa78de7e3cae2dd0093fb4c66d63c7e75bca93043ff2110f813a0d": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Candidate claims root_cause_signal true while open_pr_assessment marks rootCauseCoverage false",
+      "Candidate category WAIT_MAINTAINER with gate HUMAN_REVIEW but no maintainer activity or wait reasons are supplied"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/kimi_cli/tools/file/read.py",
+      "src/kimi_cli/notifications/wire.py",
+      "loop-detection/hard-stop logic in the agent turn loop"
+    ],
+    "risks": [
+      "Duplicate implementation of open PR #2651",
+      "Hard-stop threshold may break legitimate repeated reads (e.g., re-read before consecutive same-file edits)",
+      "Root cause may be model-side rather than harness-side, making a harness fix ineffective"
+    ],
+    "root_cause_clarity": "low",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Obtain the wire.jsonl session log or a deterministic replay fixture that reproduces the repeated identical Read calls",
+      "Add a regression test asserting the turn hard-stops after N identical consecutive tool calls",
+      "Run targeted unit tests for the read tool and turn-loop modules plus static checks"
+    ],
+    "unknowns": [
+      "No reproduction evidence or wire.jsonl log",
+      "Whether PR #2651 already covers the intended fix",
+      "Whether the loop originates in the model or the harness",
+      "Maintainer preference on hard-stop vs advisory loop detection"
+    ],
+    "why": "Issue reports a real user-visible agent loop bug with code anchors (Read/Edit/Bash, wire.jsonl) and a plausible harness-side hard-stop fix, but the reporter explicitly states it is not reliably reproducible on demand and offers the wire log only on request; no reproduction evidence is supplied. An open PR #2651 already references the issue with a test file and passing checks, though root-cause coverage is marked false. Without a reproduction or the wire log, it is not determinable whether a new code contribution is actionable or would duplicate #2651."
   },
   "3036c190a1a0df58cabc19118a2d1f54be523fc627987a48efc82bff94b376d0": {
     "confidence": 0.55,
@@ -70977,6 +71050,40 @@
     "wait_reason": "DESIGN_CONFIRMATION",
     "why": "The design is technically sound and addresses a real bug in local-docker upgrade version metadata persistence. It includes concrete mechanisms (strict version read, re-read stored Profile, narrow write) and a detailed verification plan. However, the maintainer explicitly requested revisions and approval before implementation starts; the latest update claims revisions but the maintainer has not yet re-reviewed. The gate decision is HUMAN_REVIEW, and the submission policy requires assignment and AI disclosure confirmation, which are not yet satisfied."
   },
+  "99864e26e9a7974851dde8a2697b7de63ffa1d6c5d5a8ab2ffca646a8853dec7": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "lib/llm/src/http/service/openai.rs speech handler: stop selecting only response.data.first() and deliver all aggregated audio chunks",
+      "lib/llm/src/protocols/openai/audios/aggregator.rs: concatenate complete waveform payloads rather than only extending the data list",
+      "Release/support-boundary documentation for the 1.4.2 audio example"
+    ],
+    "risks": [
+      "Backporting #12100 may introduce conflicts from unrelated refactors (#11551) in the two affected files",
+      "Scope creep into broader streaming/API behavior changes beyond the minimal fix",
+      "Maintainer may prefer documenting the 1.5.0+ support boundary instead of backporting"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test with multiple audio chunks where the first chunk is silent, asserting the full non-silent utterance is returned and WAV framing is valid",
+      "Replay the issue's request.json against a patched 1.4.2 image and verify output.wav is no longer 3,884 bytes / 0.08s silent",
+      "Frontend/worker compatibility test rather than replacing only one side"
+    ],
+    "unknowns": [
+      "Whether maintainers will accept a 1.4.x backport versus documenting the 1.5.0+ requirement",
+      "Exact conflict resolution needed in the two files touched by #12100"
+    ],
+    "why": "Issue provides a concrete, reproducible 1.4.2 failure: frontend folds the stream and selects response.data.first(), so only the initial 0.08s silent WAV chunk reaches the HTTP caller while worker logs show three chunks. Root cause is anchored to openai.rs and audios/aggregator.rs, and the merged PR #12100 (not an ancestor of v1.4.2) is identified as the fix. A contributor already confirmed the backport applies cleanly with only two minor conflicts, giving a concrete actionable path (backport or document the support boundary)."
+  },
   "998d7820e343513a57cb7f733c314a96fcb2dc0a7624d1c51f11ac178c51b05a": {
     "confidence": 0.85,
     "contradictions": [
@@ -108607,6 +108714,41 @@
       "Whether the maintainer has already assigned or preferred a specific implementation approach."
     ],
     "why": "Issue provides a clear root cause (missing wait after reload before clicking toggle) and a concrete validation path (E2E scenario reproduction). The proposed fix is actionable and scoped."
+  },
+  "e8e0aa4d1f7adc23bfae46bf66baddb71debe88d77c472ca04fcbcd4d9c10b08": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "src/soup_cli/utils/relora.py: _prune_and_reset merge-then-reinitialize contract (or rename + docstring correction)",
+      "src/soup_cli/utils/relora.py: magnitude_prune_tensor exact-count mask via deterministic topk/stable order instead of strict '>' threshold",
+      "Optimizer-state reset targeting optimizer moments rather than learned adapter weights",
+      "Explicit rejection or support for quantized/FSDP/DeepSpeed/streamed bases"
+    ],
+    "risks": [
+      "Claim A is a maintainer design decision (implement real restarts vs rename feature); a partial fix doing half of the merge path would be worse than either",
+      "Tie case is constructed; production frequency depends on whether freshly-initialized all-zero lora_B hits the first relora_steps interval",
+      "Quantized/distributed/streamed bases need explicit compatibility handling to avoid partially applied restarts"
+    ],
+    "root_cause_clarity": "high",
+    "score": 9,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test: merge-then-reset control preserves the effective linear map to numerical tolerance (MSE ~1e-13) while current kernel changes it",
+      "Unit test: constant-magnitude tensor with prune_ratio=0.9 keeps exactly the requested count and leaves at least one nonzero entry in each factor",
+      "Regression test: after callback, lora_A/lora_B gradient norms are non-zero for prune_ratio < 1",
+      "Integration test: successive restarts accumulate low-rank updates in the base weight"
+    ],
+    "unknowns": [
+      "Which of the two separable claims (A or B) the contributor will take, per the maintainer's request to declare scope before opening a PR"
+    ],
+    "why": "Issue identifies two concrete, code-anchored defects in ReLoRACallback._prune_and_reset: (A) adapter weights are magnitude-pruned without merging B@A into the frozen base, contradicting the module docstring's ReLoRA/Axolotl conformance claim, and (B) strict '>' thresholding against kthvalue wipes all entries on ties, zeroing both factors and killing the branch's gradients. Maintainer independently reproduced both halves on 2edc063 with measured MSE (142.12 vs 8.77e-13 control) and zero gradient norms, and explicitly labelled the issue bug + help wanted, unclaimed, with a documented claim/PR protocol."
   },
   "e8e5b4b3df9d3bedf0ab764fd9669a3605e8257e9169436f16ac2f72d8efc9dd": {
     "confidence": 0.7,
