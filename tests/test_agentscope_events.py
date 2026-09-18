@@ -2390,6 +2390,12 @@ def test_transient_model_classifier_accepts_server_overloaded_code():
     )
     assert worker._transient_model_error({"code": "serverOverloaded"})
     assert worker._transient_model_error("stream disconnected before completion")
+    assert worker._transient_model_error(
+        {
+            "codexErrorInfo": "usageLimitExceeded",
+            "message": "You've hit your usage limit. Try again later.",
+        }
+    )
 
 
 def test_operational_authorization_gap_refunds_attempt_without_reconcile(tmp_path, monkeypatch):

@@ -197,6 +197,54 @@ def test_unmarked_transient_recovery_migrates_once_to_astra(tmp_path: Path) -> N
     assert after_second == before_second
 
 
+def test_usage_limit_recovery_migrates_to_bounded_model_fallback(tmp_path: Path) -> None:
+    lane, _key, _root_id, recovery_id = _seed_exhausted(
+        tmp_path, namespace="agentscope", repo="agentscope-ai/agentscope", number=19
+    )
+    with lane.writer() as db:
+        row = db.execute(
+            "SELECT payload_json FROM event_lane_events WHERE event_id=?", (recovery_id,)
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+        payload["terminalError"] = {
+            "codexErrorInfo": "usageLimitExceeded",
+            "message": "You've hit your usage limit. Try again later.",
+        }
+        db.execute(
+            "UPDATE event_lane_events SET payload_json=? WHERE event_id=?",
+            (json.dumps(payload, sort_keys=True), recovery_id),
+        )
+        turn = db.execute(
+            "SELECT receipt_json FROM event_lane_turns WHERE event_id=?", (recovery_id,)
+        ).fetchone()
+        receipt = json.loads(turn["receipt_json"])
+        receipt["terminalError"] = payload["terminalError"]
+        db.execute(
+            "UPDATE event_lane_turns SET receipt_json=? WHERE event_id=?",
+            (json.dumps(receipt, sort_keys=True), recovery_id),
+        )
+
+    result = migrate_unmarked_transient_model_recoveries(
+        lane, namespace="agentscope", now=1_700_000_000
+    )
+
+    assert result == {"candidates": 1, "migrated": 1, "skipped": 0}
+    with lane.connect() as db:
+        row = db.execute(
+            "SELECT status,attempts,payload_json FROM event_lane_events WHERE event_id=?",
+            (recovery_id,),
+        ).fetchone()
+    payload = json.loads(row["payload_json"])
+    assert (row["status"], row["attempts"]) == ("pending", 2)
+    assert payload["modelFallback"] == {
+        "schemaVersion": "oss_pr_radar_event_model_fallback_v1",
+        "candidates": ["gpt-6-astra", "gpt-5.6-terra", "gpt-5.6-luna"],
+        "nextIndex": 0,
+        "history": [],
+        "state": "pending",
+    }
+
+
 def test_unmarked_transient_migration_preserves_prior_non_model_attempts(
     tmp_path: Path,
 ) -> None:

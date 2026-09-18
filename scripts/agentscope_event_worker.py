@@ -108,6 +108,8 @@ def _transient_model_error(value: object) -> bool:
         "selected model is at capacity" in folded
         or "model is at capacity" in folded
         or "model is not supported when using codex with a chatgpt account" in folded
+        or "usagelimitexceeded" in folded
+        or "you've hit your usage limit" in folded
         or "serveroverloaded" in folded
         or "stream disconnected before completion" in folded
     )

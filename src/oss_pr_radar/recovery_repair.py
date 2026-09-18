@@ -255,6 +255,8 @@ def _transient_model_failure(value: object) -> bool:
             "selected model is at capacity",
             "model is at capacity",
             "model is not supported when using codex with a chatgpt account",
+            "usagelimitexceeded",
+            "you've hit your usage limit",
             "serveroverloaded",
             "stream disconnected before completion",
         )
