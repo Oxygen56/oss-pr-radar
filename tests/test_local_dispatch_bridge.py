@@ -12278,6 +12278,8 @@ def test_ingestion_quarantines_context_mismatch_for_active_task(tmp_path):
                 "key": "a/b#1",
                 "issueUrl": "https://github.com/a/b/issues/1",
                 "threadId": "thread-1",
+                "taskId": context["intentId"],
+                "reproductionReceipt": {"expiresAt": "2000-01-01T00:00:00Z"},
                 "worktreePath": str(worktree.resolve()),
                 "stage": "AUDIT_NO_GO",
                 "reason": "REPRODUCTION_ENVIRONMENT_BLOCKED",

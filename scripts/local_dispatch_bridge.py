@@ -21111,19 +21111,30 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     continue
                 else:
-                    if (
+                    stale_bound_task = (
+                        isinstance(context.get("intentId"), str)
+                        and value.get("taskId") == context["intentId"]
+                    )
+                    bound_receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+                    if stale_bound_task:
+                        try:
+                            stale_bound_task = isinstance(bound_receipt, dict) and parse_time(
+                                str(bound_receipt.get("expiresAt") or "")
+                            ) < datetime.now(UTC)
+                        except (TypeError, ValueError):
+                            stale_bound_task = False
+                    stale_unbound_reproduction = (
                         task_stage == "REPRODUCTION_REQUIRED"
                         and not value.get("taskId")
                         and value.get("stage") == "AUDIT_NO_GO"
                         and value.get("reason") == "REPRODUCTION_ENVIRONMENT_BLOCKED"
-                    ):
-                        # Only the obsolete, unbound environment-blocked
-                        # reproduction receipt is known to be safely stale.
-                        # Other digest mismatches (including legacy or
-                        # tampered receipts) remain hard failures.
-                        # Preserve this stale evidence, quarantine the task
-                        # with both digests, and keep it out of every
-                        # publication path until explicit recovery exists.
+                    )
+                    if stale_bound_task or stale_unbound_reproduction:
+                        # An expired receipt bound to this exact task, or the
+                        # one obsolete unbound environment-blocked receipt,
+                        # can be safely retained as stale evidence. Never
+                        # accept it: quarantine with both digests instead.
+                        # Legacy and tampered mismatches remain hard errors.
                         event = managed_adapter.ledger.record_task_quarantine(
                             opportunity_key=candidate["key"],
                             task_id=str(candidate.get("intentId") or candidate["threadId"]),
