@@ -12780,7 +12780,12 @@ class RadarLedger:
             )
             if cleared != 1:
                 raise LedgerError("exact task quarantine member was not cleared")
-            if active_quarantine(connection, opportunity_key=key) is None:
+            if active_quarantine(connection, opportunity_key=key) is None and not (
+                reason == "SHARED_CONTEXT_INVALID"
+                and evidence.get("repair") == "RETIRED_LATEST_TARGET_RECEIPT_REPROJECTED"
+            ):
+                # Reprojecting the new-base task preserves its old requests.
+                # A completed implementation must create its own fresh request.
                 _reopen_active_publication_requests_after_quarantine_clear(
                     connection,
                     opportunity_key=key,
@@ -13587,12 +13592,14 @@ class RadarLedger:
         with self.connect() as connection:
             rows = connection.execute(
                 """SELECT * FROM publication_requests WHERE opportunity_key=?
-                   AND status='BLOCKED' AND thread_id=? AND commit_sha=? AND branch=?""",
+                   AND status='BLOCKED' AND thread_id=? AND commit_sha=? AND branch=?
+                   AND created_at=?""",
                 (
                     context["key"],
                     context["threadId"],
                     publication.get("commitSha"),
                     publication.get("branch"),
+                    publication.get("requestedAt"),
                 ),
             ).fetchall()
             if len(rows) != 1:

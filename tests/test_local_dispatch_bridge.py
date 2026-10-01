@@ -16817,6 +16817,43 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
     assert len(initial["publicationRequests"]) == 1
     request_id = initial["publicationRequests"][0]["requestId"]
     request = store.publication_request(request_id)["request"]
+    other_blocked = None
+    if upstream_fixed is False:
+        # Preserve another real failed publication attempt for this same
+        # thread/head/branch. Its immutable input is authentic; the native
+        # request writer blocks the caller that omits its required probe.
+        other_value = json.loads(result_path.read_text())
+        other_raw = json.dumps(other_value, sort_keys=True, indent=1).encode()
+        other_blocked = store.create_publication_request(
+            issue_url=other_value["issueUrl"],
+            thread_id=other_value["threadId"],
+            intent_id="intent-1",
+            commit_sha=other_value["commitSha"],
+            branch=other_value["branch"],
+            worktree_path=str(worktree),
+            evidence_digest=hashlib.sha256(other_raw).hexdigest(),
+            evidence_path=str(result_path),
+            evidence_raw_base64=base64.b64encode(other_raw).decode(),
+            publication=MODULE._publication_payload_from_evidence(
+                other_value, other_value["issueUrl"]
+            ),
+            result_digest=other_value["resultDigest"],
+            head_sha=other_value["headSha"],
+            selected_base_sha=other_value["selectedBaseSha"],
+            code_paths=other_value["codePaths"],
+            target_base=other_value["targetBase"],
+            target_base_bound=True,
+        )
+        assert other_blocked["status"] == "BLOCKED"
+        assert other_blocked["reason"] == "BLOCKED_REPRODUCTION_REQUIRED"
+        other_blocked = store.publication_request(other_blocked["request_id"])
+    if other_blocked is not None:
+        assert other_blocked["request_id"] != request_id
+        assert other_blocked["created_at"] != store.publication_request(request_id)["created_at"]
+        assert all(
+            other_blocked["request"][field] == request[field]
+            for field in ("threadId", "commitSha", "branch", "worktreePath")
+        )
     source_bytes = result_path.read_bytes()
     old_base = request["selectedBaseSha"]
     old_head = request["commitSha"]
@@ -17087,6 +17124,28 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
     assert base64.b64decode(artifact["originalBytesBase64"]) == historical_raw
     source_request_json = store.publication_request(request_id)["request"]
     failed_result_raw = result_path.read_bytes()
+    assert other_blocked is not None
+    assert (
+        historical["publicationReceipt"]["requestedAt"]
+        == store.publication_request(request_id)["created_at"]
+    )
+    assert (
+        store.retired_latest_target_receipt(
+            historical
+            | {"publicationReceipt": historical["publicationReceipt"] | {"requestedAt": None}}
+        )
+        is None
+    )
+    assert (
+        store.retired_latest_target_receipt(
+            historical
+            | {
+                "publicationReceipt": historical["publicationReceipt"]
+                | {"requestedAt": other_blocked["created_at"]}
+            }
+        )
+        is None
+    )
     synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
     assert synced["ok"] and synced["errors"] == [], synced
     recovered = MODULE.recover_shared_task_contexts(store)
@@ -17096,6 +17155,7 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
     assert result_path.read_bytes() == failed_result_raw
     assert store.publication_request(request_id)["status"] == "BLOCKED"
     assert store.publication_request(request_id)["request"] == source_request_json
+    assert store.publication_request(other_blocked["request_id"]) == other_blocked
     assert store.publication_work_items() == []
     implementation = store.implementation_followup_candidates()[0]
     assert implementation["intentId"] == "intent-1"
@@ -17223,6 +17283,7 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
         assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
     assert len(actual_checks) == 1
     assert store.publication_request(request_id)["status"] == "BLOCKED"
+    assert store.publication_request(other_blocked["request_id"]) == other_blocked
     with store.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
         events = connection.execute(
