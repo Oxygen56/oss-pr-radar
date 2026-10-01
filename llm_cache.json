@@ -38242,6 +38242,43 @@
     ],
     "why": "Issue reports GPU memory not freed after vLLM crash or normal exit, possibly related to CPU offloading and driver versions. Existing PR #42074 is draft, closed, lacks tests, and has failed checks, so not a strong competing implementation. However, root cause is unclear and may be driver-related, requiring maintainer investigation."
   },
+  "5447931077469d9c2db8358d9ca81a2a4abac6eb3c32ceb4617c8329a690d3de": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims a clean reproduction and local patch passing, while open PR #43935 is marked technically_complete but root_cause_coverage false"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "OpenAI GPT-5/6 family detection in OpenAIGPT5Config.is_model_gpt_5_model",
+      "Chat Completions reasoning_effort mapping for none/minimal",
+      "Responses API reasoning.effort mapping for none/minimal"
+    ],
+    "risks": [
+      "Duplicating open PR #43935 without adding root-cause or key-path coverage",
+      "Broadening API behavior beyond the reported model contract",
+      "CI failure on proxy-behavior may indicate incomplete validation"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's test_gpt61sol.py against v1.100.0 to confirm the five failing assertions",
+      "Add regression tests for drop_params=True removing none/minimal on both Chat Completions and Responses",
+      "Verify 400 rejection path when drop_params is disabled"
+    ],
+    "unknowns": [
+      "Whether PR #43935 already resolves the exact failing assertions in the issue",
+      "Whether maintainers consider the issue covered by #43935 or want an independent fix",
+      "Whether the proxy-behavior CI failure reflects a real gap in the existing PR"
+    ],
+    "why": "Issue provides a concrete reproduction and root-cause hypothesis, but an open PR (#43935) already directly covers the same fix with tests, and the supplied evidence marks root-cause coverage as missing and duplicate status as weak_pr_competition_possible. The actionable gap versus the existing PR is not established."
+  },
   "544f0c1fcae8975b6564d2ed46c736d09c88b900230e3db93170372d89db96e1": {
     "confidence": 0.9,
     "contradictions": [
