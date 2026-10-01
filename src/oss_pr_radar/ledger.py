@@ -1133,6 +1133,11 @@ def _retired_latest_target_publication(
             (request["request_id"],),
         ).fetchone()
         or connection.execute(
+            """SELECT 1 FROM sqlite_master
+               WHERE type='table' AND name='managed_publication_reservations'"""
+        ).fetchone()
+        is None
+        or connection.execute(
             """SELECT 1 FROM managed_publication_reservations
                WHERE request_id=? AND state<>'RELEASED' LIMIT 1""",
             (request["request_id"],),

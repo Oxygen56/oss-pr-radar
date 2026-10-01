@@ -15443,7 +15443,8 @@ def _completed_validation_input_task_id(
         return None
     managed_task = managed_ledger.read_task(task_id)
     historical = (
-        None if validation_context_digest is not None
+        None
+        if validation_context_digest is not None
         else managed_ledger.latest_authenticated_fix_ready_result_for_task(
             task_id, issue_url=str(candidate["issueUrl"])
         )
@@ -15470,15 +15471,19 @@ def _completed_validation_input_task_id(
     ):
         return None
     with store.connect() as connection:
-        if validation_context_digest is not None and connection.execute(
-            """SELECT 1 FROM publication_requests request
+        if (
+            validation_context_digest is not None
+            and connection.execute(
+                """SELECT 1 FROM publication_requests request
                JOIN publication_permits permit ON permit.request_id=request.request_id
                JOIN publication_effects effect ON effect.permit_id=permit.permit_id
                WHERE request.opportunity_key=? AND request.thread_id=?
                  AND request.worktree_path=?
                  AND json_extract(request.request_json,'$.intentId')=? LIMIT 1""",
-            (candidate["key"], binding["threadId"], binding["worktreePath"], task_id),
-        ).fetchone() is not None:
+                (candidate["key"], binding["threadId"], binding["worktreePath"], task_id),
+            ).fetchone()
+            is not None
+        ):
             return None
         rows = connection.execute(
             """SELECT id,event_type,payload_json FROM events
@@ -15581,10 +15586,7 @@ def _completed_validation_input_task_id(
     if (
         snapshot != projected
         or source.get("taskId") != task_id
-        or (
-            source.get("contextDigest") != expected_context_digest
-            and expired_publication is None
-        )
+        or (source.get("contextDigest") != expected_context_digest and expired_publication is None)
         or source.get("commitSha") != historical["head_sha"]
         or source.get("headSha") != historical["head_sha"]
         or any(
@@ -22321,6 +22323,17 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                 and initial_quality.get("policy_verified") is not True
                 and candidate["stage"] == "FIX_READY"
             )
+            initial_policy_followup_exhausted = bool(
+                value.get("stage") == "FIX_READY"
+                and isinstance(initial_quality, dict)
+                and candidate["stage"] == "VALIDATION_PENDING"
+                and set(assess_submit_ready(initial_quality).missing) == {"policy_verified"}
+                and store.validation_followup_was_sent(
+                    key=candidate["key"],
+                    thread_id=candidate["threadId"],
+                    **_ledger_binding_kwargs(candidate),
+                )
+            )
             if (
                 digest_seen
                 and (
@@ -22335,6 +22348,7 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                     )
                 )
                 and not possible_policy_recovery
+                and not initial_policy_followup_exhausted
                 and not initial_review_recoverable
                 and not published_managed_backfill_required
             ):
@@ -23103,7 +23117,8 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         {
                             "key": candidate["key"],
                             **{
-                                key: item for key, item in validation_context_rebind.items()
+                                key: item
+                                for key, item in validation_context_rebind.items()
                                 if key != "sourceResultBytesBase64"
                             },
                         }
