@@ -4054,6 +4054,10 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                     path=shared_cleanup_path,
                     context=context,
                 )
+                if not cleared:
+                    cleared = _clear_exact_retired_latest_target_receipt_quarantine(
+                        store, path=shared_cleanup_path, context=context
+                    )
                 if cleared:
                     private_path = (
                         private_item["worktreePath"] / TASK_PRIVATE_DIR / "task-context.json"
@@ -4355,6 +4359,10 @@ def recover_shared_task_contexts(store: RadarLedger) -> dict[str, Any]:
                 path=secure_path,
                 context=context,
             )
+            if not cleared:
+                cleared = _clear_exact_retired_latest_target_receipt_quarantine(
+                    store, path=secure_path, context=context
+                )
             if cleared:
                 context, source_updated_at = _verified_shared_task_context(path)
                 verify_orphan_identity(context)
@@ -7815,6 +7823,219 @@ def _clear_exact_published_validation_auth_quarantines(
         except (sqlite3.Error, RuntimeError, ValueError, TypeError):
             return 0
         return len(verified_gates)
+
+
+def _clear_exact_retired_latest_target_receipt_quarantine(
+    store: RadarLedger,
+    *,
+    path: Path,
+    context: dict[str, Any],
+) -> int:
+    """Clear the observed active-context defect only after native context-sync repairs it.
+
+    The source bytes stay in the existing quarantine artifact. This does not
+    repair arbitrary mirrors or relax active-context restoration: the current
+    private mirror must already be the authenticated native projection, without
+    the retired unpublished receipt, and the new-base reproduction must be real.
+    The shared mirror may retain exactly the artifact's original bytes until
+    this existing two-mirror protocol copies the verified private projection.
+    """
+
+    reason = "SHARED_CONTEXT_INVALID"
+    error = "active task context has an unexpected publication receipt"
+    issue_url = str(context.get("issueUrl") or "")
+    match = ISSUE_URL.fullmatch(issue_url)
+    key = str(context.get("key") or "")
+    if (
+        match is None
+        or key != f"{match.group(1)}#{match.group(2)}"
+        or context.get("publicationReceipt") is not None
+        or context.get("stage") != "DISPATCHED"
+        or context.get("taskStage") != "IMPLEMENTATION_READY"
+        or _active_task_turn_for_result(context) is not None
+    ):
+        return 0
+    shared_path = shared_context_path(issue_url)
+    worktree = _lexical_absolute(Path(str(context.get("worktreePath") or "")))
+    local_path = worktree / TASK_PRIVATE_DIR / "task-context.json"
+    if _lexical_absolute(Path(path)) not in {shared_path, local_path}:
+        return 0
+    with opportunity_action_guard(ledger_action_guard_root(store.path), key):
+        if _active_task_turn_for_result(context) is not None:
+            return 0
+        gates = [
+            gate
+            for gate in store.active_task_quarantines(key)
+            if gate.get("reason") == reason
+            and isinstance(gate.get("payload"), dict)
+            and gate["payload"].get("error") == error
+        ]
+        if len(gates) != 1:
+            return 0
+        gate = gates[0]
+        payload = gate["payload"]
+        digest = str(payload.get("originalBytesSha256") or "")
+        dedupe = hashlib.sha256(
+            f"shared-context|{shared_path}|{digest}|{reason}".encode("utf-8")
+        ).hexdigest()
+        artifact_identity = sha256_json(
+            {
+                "key": key,
+                "reason": reason,
+                "originalPath": str(shared_path),
+                "originalBytesSha256": digest,
+            }
+        )
+        artifact_path = shared_context_quarantine_root() / f"q-{artifact_identity}.json"
+        if (
+            set(payload)
+            != {"issueUrl", "originalPath", "originalBytesSha256", "artifactPath", "error"}
+            or payload.get("issueUrl") != issue_url
+            or payload.get("originalPath") != str(shared_path)
+            or payload.get("artifactPath") != str(artifact_path)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            or gate.get("payloadDigest") != sha256_json(payload)
+            or gate.get("dedupeKey") != dedupe
+        ):
+            return 0
+        try:
+            descriptor, _root, handles = _open_shared_context_quarantine_directory(create=False)
+        except (OSError, RuntimeError):
+            return 0
+        try:
+            artifact, _raw = _read_context_quarantine_artifact_at(descriptor, artifact_path)
+        except (OSError, RuntimeError, ValueError, TypeError):
+            return 0
+        finally:
+            for descriptor in reversed(handles):
+                os.close(descriptor)
+        expected_artifact = {
+            "schemaVersion": "shared-context-quarantine-v1",
+            "key": key,
+            "issueUrl": issue_url,
+            "reason": reason,
+            "error": error,
+            "originalPath": str(shared_path),
+            "originalMode": 0o600,
+            "originalBytesSha256": digest,
+            "observedAt": gate.get("createdAt"),
+        }
+        if set(artifact) != set(expected_artifact) | {"originalBytesBase64"} or any(
+            artifact.get(name) != value for name, value in expected_artifact.items()
+        ):
+            return 0
+        try:
+            historical_raw = base64.b64decode(artifact["originalBytesBase64"], validate=True)
+            if hashlib.sha256(historical_raw).hexdigest() != digest:
+                return 0
+            shared_raw, shared_stat, secure_path = _read_shared_context_file(shared_path)
+            with _task_worktree_private_descriptor({"worktreePath": str(worktree)}) as opened:
+                local_raw = _read_task_context_bytes_from_private(opened)
+                if (
+                    _normalized_system_path(secure_path) != _normalized_system_path(shared_path)
+                    or opened.private_dir / "task-context.json" != local_path
+                    or shared_raw not in {historical_raw, local_raw}
+                ):
+                    return 0
+                current, source_updated_at = _verified_shared_task_context_from_raw(
+                    shared_path,
+                    local_raw,
+                    shared_stat,
+                    require_matching_private_mirror=False,
+                )
+                historical, _ = _verified_shared_task_context_from_raw(
+                    shared_path,
+                    historical_raw,
+                    shared_stat,
+                    require_matching_private_mirror=False,
+                )
+                refresh = store.retired_latest_target_receipt(historical)
+                projected = store.task_context(
+                    issue_url=issue_url,
+                    thread_id=str(context.get("threadId") or ""),
+                    intent_id=str(context.get("intentId") or ""),
+                    worktree_path=str(worktree),
+                )
+                immutable_fields = (
+                    "key",
+                    "issueUrl",
+                    "intentId",
+                    "threadId",
+                    "worktreePath",
+                    "titleTime",
+                    "stage",
+                    "intentStatus",
+                    "taskStage",
+                    "selectedBaseSha",
+                    "targetBase",
+                    "headSha",
+                    "commitSha",
+                    "resultDigest",
+                    "codePaths",
+                    "reproductionReceipt",
+                    "probeReceiptDigest",
+                )
+                if (
+                    refresh is None
+                    or current != context
+                    or not isinstance(projected, dict)
+                    or current.get("publicationReceipt") is not None
+                    or projected.get("publicationReceipt") is not None
+                    or current.get("childMayEditFiles") is not True
+                    or historical.get("childMayEditFiles") is not True
+                    or any(current.get(name) != historical.get(name) for name in immutable_fields)
+                    or any(current.get(name) != projected.get(name) for name in immutable_fields)
+                    or current.get("liveAudit") != projected.get("liveAudit")
+                    or current.get("contextDigest") != _task_context_digest(current, None)
+                ):
+                    return 0
+                restored = store.restore_task_context(current, source_updated_at=source_updated_at)
+                if restored.get("supersededContextMirror") or restored.get(
+                    "supersededActiveMirror"
+                ):
+                    return 0
+                if shared_raw != local_raw:
+                    shared_fd, parent, shared_handles = _open_shared_context_parent(
+                        issue_url, create=False
+                    )
+                    try:
+                        if parent / shared_path.name != shared_path:
+                            return 0
+                        _atomic_private_bytes(
+                            Path(shared_path.name), local_raw, directory_fd=shared_fd
+                        )
+                    finally:
+                        for descriptor in reversed(shared_handles):
+                            os.close(descriptor)
+                # Keep the proof tied to the bytes checked above through the clear.
+                final_shared, _stat, _path = _read_shared_context_file(shared_path)
+                if (
+                    final_shared != local_raw
+                    or _read_task_context_bytes_from_private(opened) != local_raw
+                ):
+                    return 0
+                store.clear_task_quarantine_member_exact(
+                    key,
+                    reason=reason,
+                    dedupe_key=dedupe,
+                    payload_digest=str(gate["payloadDigest"]),
+                    evidence={
+                        "revalidated": True,
+                        "repair": "RETIRED_LATEST_TARGET_RECEIPT_REPROJECTED",
+                        "requestId": refresh["requestId"],
+                        "intentId": current["intentId"],
+                        "threadId": current["threadId"],
+                        "selectedBaseSha": current["selectedBaseSha"],
+                        "resultDigest": current["resultDigest"],
+                        "probeReceiptDigest": current["probeReceiptDigest"],
+                        "contextDigest": current["contextDigest"],
+                        "originalBytesSha256": digest,
+                        "repairedBytesSha256": hashlib.sha256(local_raw).hexdigest(),
+                    },
+                )
+        except (OSError, RuntimeError, ValueError, TypeError, sqlite3.Error):
+            return 0
+        return 1
 
 
 def _clear_exact_missing_publication_receipt_quarantine(

@@ -16971,6 +16971,40 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
         return
     assert ingested["ingested"] == [{"key": "a/b#1", "stage": "IMPLEMENTATION_READY"}]
     assert _intent_statuses(store.path)["intent-1"] == "DISPATCHED"
+    # Recreate the already-observed legacy projection through the real writer,
+    # then let native recovery preserve its bytes and produce the exact gate.
+    import oss_pr_radar.ledger as ledger_module
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(
+            ledger_module, "_retired_latest_target_publication", lambda *_args: None, raising=False
+        )
+        legacy_sync = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+        assert legacy_sync["ok"], legacy_sync
+        historical_raw = (result_path.parent / "task-context.json").read_bytes()
+        historical = json.loads(historical_raw)
+        assert historical["publicationReceipt"]["commitSha"] == old_head
+        rejected = MODULE.recover_shared_task_contexts(store)
+        assert len(rejected["quarantined"]) == 1, rejected
+        assert rejected["quarantined"][0]["reason"] == "SHARED_CONTEXT_INVALID"
+    gate = store.active_task_quarantine("a/b#1")
+    assert gate["payload"]["error"] == "active task context has an unexpected publication receipt"
+    artifact_path = Path(gate["payload"]["artifactPath"])
+    artifact_raw = artifact_path.read_bytes()
+    artifact = json.loads(artifact_raw)
+    assert base64.b64decode(artifact["originalBytesBase64"]) == historical_raw
+    source_request_json = store.publication_request(request_id)["request"]
+    failed_result_raw = result_path.read_bytes()
+    synced = MODULE.sync_task_contexts(SimpleNamespace(ledger=store.path))
+    assert synced["ok"] and synced["errors"] == [], synced
+    recovered = MODULE.recover_shared_task_contexts(store)
+    assert recovered["errors"] == [] and recovered["quarantined"] == [], recovered
+    assert store.active_task_quarantine("a/b#1") is None
+    assert artifact_path.read_bytes() == artifact_raw
+    assert result_path.read_bytes() == failed_result_raw
+    assert store.publication_request(request_id)["status"] == "BLOCKED"
+    assert store.publication_request(request_id)["request"] == source_request_json
+    assert store.publication_work_items() == []
     implementation = store.implementation_followup_candidates()[0]
     assert implementation["intentId"] == "intent-1"
     assert implementation["threadId"] == "thread-1"
@@ -16994,8 +17028,122 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
     assert implementation_authorized["intentId"] == "intent-1"
     current = json.loads((result_path.parent / "task-context.json").read_text())
     assert current["stage"] == "DISPATCHED" and current["childMayEditFiles"] is True
+    assert current["publicationReceipt"] is None
     assert current["reproductionReceipt"]["baseSha"] == live_base
     assert run_git(worktree, "rev-parse", old_branch) == old_head
+
+    # Use the normal delivery and owner/completion producer, substituting only
+    # the app-server transport; the bound worktree really executes the check.
+    rollout = tmp_path / "latest-target-implementation-rollout.jsonl"
+    rollout.write_text(json.dumps({"type": "session_meta", "payload": {"id": "thread-1"}}) + "\n")
+    thread_db = tmp_path / "latest-target-implementation-threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,rollout_path TEXT,git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?)",
+            (
+                "thread-1",
+                str(MODULE.GITHUB_ROOT),
+                0,
+                MODULE.issue_prompt(fresh["issueUrl"]),
+                str(rollout),
+                "https://github.com/a/b.git",
+            ),
+        )
+    process = _FakeTaskTurnProcess()
+    original_popen = subprocess.Popen
+    turn_id = "native-latest-target-implementation"
+    actual_checks = []
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        return buffer, {"result": {"thread": {"id": "thread-1"}}} if response_id == 1 else {
+            "result": {"turn": {"id": turn_id}}
+        }
+
+    def execute_implementation(*_args, **_kwargs):
+        actual = subprocess.run(
+            [sys.executable, "-B", "-c", "from runtime import value; assert value == 1"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+        )
+        actual_checks.append(actual)
+        assert actual.returncode == 0
+        assert run_git(worktree, "rev-parse", "HEAD") == live_base
+        assert run_git(worktree, "rev-parse", old_branch) == old_head
+        assert store.publication_request(request_id)["status"] == "BLOCKED"
+        with rollout.open("a") as journal:
+            journal.write(
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete",
+                            "turn_id": turn_id,
+                        },
+                    }
+                )
+                + "\n"
+            )
+        return {"turnId": turn_id, "status": "completed"}
+
+    def launch_worker(argv, **kwargs):
+        if "task-turn-worker" not in argv:
+            return original_popen(argv, **kwargs)
+        completed = MODULE.task_turn_worker_entry(
+            SimpleNamespace(
+                ledger=store.path,
+                delivery_kind="implementation-followup",
+                thread_id="thread-1",
+                delivery_token=implementation["resultDigest"],
+                delivery_attempt_digest=resumed["implementationFollowupAttemptDigest"],
+                intent_id="intent-1",
+                worktree_path=str(worktree),
+                receipt=argv[argv.index("--receipt") + 1],
+            )
+        )
+        assert completed["ok"] and completed["turnStatus"] == "completed", completed
+        return SimpleNamespace(pid=os.getpid())
+
+    with monkeypatch.context() as delivery:
+        delivery.setattr(MODULE, "THREAD_DB", thread_db)
+        delivery.setattr(MODULE, "_app_server_action_session", action_session)
+        delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+        delivery.setattr(MODULE, "_read_app_server_response", read_response)
+        delivery.setattr(MODULE, "_wait_for_app_server_terminal_turn", execute_implementation)
+        delivery.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+        delivery.setattr(MODULE.subprocess, "Popen", launch_worker)
+        delivered = MODULE.implementation_followup_deliver(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-1",
+                result_digest=implementation["resultDigest"],
+                intent_id="intent-1",
+                worktree_path=str(worktree),
+            )
+        )
+        assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
+    assert len(actual_checks) == 1
+    assert store.publication_request(request_id)["status"] == "BLOCKED"
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+        events = connection.execute(
+            "SELECT event_type,payload_json FROM events WHERE opportunity_key='a/b#1'"
+        ).fetchall()
+    assert any(row["event_type"] == "PUBLICATION_TARGET_BASE_REFRESHED" for row in events)
+    assert any(
+        row["event_type"] == "TASK_QUARANTINE_CLEARED"
+        and json.loads(row["payload_json"]).get("repair")
+        == "RETIRED_LATEST_TARGET_RECEIPT_REPROJECTED"
+        for row in events
+    )
+    assert any(row["event_type"] == "IMPLEMENTATION_FOLLOWUP_SENT" for row in events)
 
 
 def _bind_published_pr_authority_fixture(

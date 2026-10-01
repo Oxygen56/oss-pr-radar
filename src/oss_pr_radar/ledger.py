@@ -1099,6 +1099,75 @@ def _publication_request_intent_is_active(
     )
 
 
+def _retired_latest_target_publication(
+    connection: sqlite3.Connection, request: sqlite3.Row
+) -> dict[str, Any] | None:
+    """Identify only the immutable unpublished source of a native base refresh."""
+
+    try:
+        value = json.loads(request["request_json"])
+        binding, _ = _resolve_publication_request_binding(connection, request)
+    except (LedgerError, TypeError, ValueError):
+        return None
+    if (
+        binding is None
+        or not isinstance(value, dict)
+        or value.get("publicationKind") != "PR_CREATE"
+        or request["status"] != "BLOCKED"
+        or value.get("requestId") != request["request_id"]
+        or value.get("commitSha") != request["commit_sha"]
+        or value.get("branch") != request["branch"]
+        or _publication_has_irreversible_terminal_evidence(
+            connection,
+            request_id=str(request["request_id"]),
+            opportunity_key=str(request["opportunity_key"]),
+        )
+        or connection.execute(
+            """SELECT 1 FROM publication_effects effect JOIN publication_permits permit
+               ON permit.permit_id=effect.permit_id WHERE permit.request_id=? LIMIT 1""",
+            (request["request_id"],),
+        ).fetchone()
+        or connection.execute(
+            """SELECT 1 FROM publication_permits WHERE request_id=?
+               AND status IN ('ACTIVE','CONSUMED') LIMIT 1""",
+            (request["request_id"],),
+        ).fetchone()
+        or connection.execute(
+            """SELECT 1 FROM managed_publication_reservations
+               WHERE request_id=? AND state<>'RELEASED' LIMIT 1""",
+            (request["request_id"],),
+        ).fetchone()
+    ):
+        return None
+    event = connection.execute(
+        """SELECT payload_json FROM events WHERE opportunity_key=?
+           AND event_type='PUBLICATION_TARGET_BASE_REFRESHED'
+           AND json_extract(payload_json,'$.requestId')=?
+           ORDER BY id DESC LIMIT 1""",
+        (request["opportunity_key"], request["request_id"]),
+    ).fetchone()
+    if event is None:
+        return None
+    refresh = json.loads(event[0])
+    if (
+        refresh.get("intentId") != binding["intent_id"]
+        or refresh.get("threadId") != binding["thread_id"]
+        or not _resolved_path_equal(
+            str(refresh.get("worktreePath") or ""), str(binding["worktree_path"])
+        )
+        or refresh.get("sourceRawDigest") != request["evidence_digest"]
+        or refresh.get("sourceResultDigest") != value.get("resultDigest")
+        or refresh.get("previousBaseSha") != value.get("selectedBaseSha")
+        or refresh.get("previousCommitSha") != request["commit_sha"]
+        or refresh.get("previousBranch") != request["branch"]
+        or not isinstance(refresh.get("targetBase"), dict)
+        or refresh["targetBase"].get("sha") == refresh.get("previousBaseSha")
+        or re.fullmatch(r"[0-9a-f]{40}", str(refresh["targetBase"].get("sha") or "")) is None
+    ):
+        return None
+    return {name: item for name, item in refresh.items() if name != "history"}
+
+
 def _reopen_active_publication_requests_after_quarantine_clear(
     connection: sqlite3.Connection,
     *,
@@ -1114,6 +1183,8 @@ def _reopen_active_publication_requests_after_quarantine_clear(
         (opportunity_key,),
     ).fetchall()
     for row in rows:
+        if _retired_latest_target_publication(connection, row) is not None:
+            continue
         if _publication_request_intent_is_active(
             connection,
             request_id=str(row["request_id"]),
@@ -9099,7 +9170,7 @@ class RadarLedger:
             request_identity_expr = f"COALESCE({request_intent_expr},{request_task_expr})"
             publication_row = (
                 connection.execute(
-                    f"""SELECT r.status AS request_status,r.commit_sha,r.branch,
+                    f"""SELECT r.request_id,r.status AS request_status,r.commit_sha,r.branch,
                               r.created_at AS requested_at,r.updated_at AS request_updated_at,
                               p.status AS permit_status,p.pr_url,
                               p.updated_at AS permit_updated_at
@@ -9194,6 +9265,18 @@ class RadarLedger:
                 if row is not None
                 else None
             )
+            retired_publication = None
+            if row is not None and row["stage"] == "DISPATCHED" and publication_row is not None:
+                source_request = connection.execute(
+                    "SELECT * FROM publication_requests WHERE request_id=?",
+                    (publication_row["request_id"],),
+                ).fetchone()
+                retired_publication = _retired_latest_target_publication(connection, source_request)
+                if retired_publication is not None and (
+                    json.loads(row["payload_json"]).get("selectedBaseSha")
+                    != retired_publication["targetBase"]["sha"]
+                ):
+                    retired_publication = None
             followup_row = (
                 connection.execute(
                     """SELECT * FROM pr_followups
@@ -9905,7 +9988,7 @@ class RadarLedger:
             else ["read_issue", "read_repo", "edit_files", "run_tests", "write_structured_result"]
         )
         publication_receipt = None
-        if publication_row is not None:
+        if publication_row is not None and retired_publication is None:
             pr_url = publication_row["pr_url"]
             if pr_url:
                 receipt_status = row["stage"] if row["stage"] in {"MERGED", "CLOSED"} else "PR_OPEN"
@@ -13479,6 +13562,84 @@ class RadarLedger:
         ) or current_payload.get("selectedBaseSha") != value.get("targetBase", {}).get("sha"):
             return None
         return {key: item for key, item in value.items() if key != "history"}
+
+    def retired_latest_target_receipt(self, context: dict[str, Any]) -> dict[str, Any] | None:
+        """Prove the retired source after the native new-base reproduction transition."""
+
+        receipt = context.get("reproductionReceipt")
+        publication = context.get("publicationReceipt")
+        if (
+            context.get("stage") != "DISPATCHED"
+            or context.get("intentStatus") != "DISPATCHED"
+            or context.get("taskStage") != "IMPLEMENTATION_READY"
+            or context.get("childMayEditFiles") is not True
+            or not isinstance(receipt, dict)
+            or not isinstance(publication, dict)
+            or publication.get("status") != "BLOCKED"
+            or publication.get("prUrl") is not None
+        ):
+            return None
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM publication_requests WHERE opportunity_key=?
+                   AND status='BLOCKED' AND thread_id=? AND commit_sha=? AND branch=?""",
+                (
+                    context["key"],
+                    context["threadId"],
+                    publication.get("commitSha"),
+                    publication.get("branch"),
+                ),
+            ).fetchall()
+            if len(rows) != 1:
+                return None
+            source = rows[0]
+            refresh = _retired_latest_target_publication(connection, source)
+            if (
+                refresh is None
+                or refresh["intentId"] != context.get("intentId")
+                or not _resolved_path_equal(refresh["worktreePath"], context["worktreePath"])
+                or publication.get("requestedAt") != source["created_at"]
+                or refresh["targetBase"]["sha"] != context.get("selectedBaseSha")
+                # Authenticate the historical transition without renewing its
+                # receipt. Freshness stays enforced at live execution/publication.
+                or not verify_probe_receipt(
+                    receipt,
+                    repo=str(context["key"]).split("#", 1)[0],
+                    base_sha=str(context.get("selectedBaseSha") or ""),
+                    code_paths=sorted(context.get("codePaths") or []),
+                    required_level=REPRODUCED_VALIDATED,
+                    issue_url=str(context.get("issueUrl") or ""),
+                    task_id=str(context.get("intentId") or ""),
+                    thread_id=str(context.get("threadId") or ""),
+                    head_sha=str(context.get("headSha") or ""),
+                    commit_sha=str(context.get("commitSha") or ""),
+                    result_digest=str(context.get("resultDigest") or ""),
+                    enforce_freshness=False,
+                )
+            ):
+                return None
+            confirmation = connection.execute(
+                """SELECT payload_json FROM events WHERE opportunity_key=?
+                   AND event_type='DISPATCHED'
+                   AND json_extract(payload_json,'$.reason')='LATEST_TARGET_REPRODUCTION_CONFIRMED'
+                   AND json_extract(payload_json,'$.requestId')=?
+                   AND json_extract(payload_json,'$.resultDigest')=?
+                   AND json_extract(payload_json,'$.intentId')=?
+                   AND json_extract(payload_json,'$.threadId')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (
+                    context["key"],
+                    source["request_id"],
+                    context["resultDigest"],
+                    context["intentId"],
+                    context["threadId"],
+                ),
+            ).fetchone()
+        if confirmation is None or not _resolved_path_equal(
+            str(json.loads(confirmation[0]).get("worktreePath") or ""), context["worktreePath"]
+        ):
+            return None
+        return refresh
 
     def block_publication_request(
         self,
