@@ -6214,6 +6214,38 @@
     ],
     "why": "Issue describes a plausible substring-based auth classifier (Smt/QXu) and a resume-time refresh failure, but the reporter explicitly states they could not prove the refresh failure raised the banner, and the banner text is not found in the extension. The candidate's own actionability evidence shows root_cause_signal=false, probe_ready=false, and no code paths plan, so the actionable code surface is not established."
   },
+  "0e7d037540f8576726bd7dee90e74acbbe6bbd44d316cca325ca779615462974": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Workspace selection persistence: validate/prune non-existent paths from the workspaces array and reset lastWorkspace when stale",
+      "Workspace switcher UI: optionally add a remove/dismiss affordance for recent entries"
+    ],
+    "risks": [
+      "Pruning at launch vs. on dropdown open may differ in UX; maintainer preference unknown but not blocking",
+      "Cross-platform path handling (Windows drive letters, case sensitivity) could cause false pruning",
+      "Removing entries must not wipe unrelated persisted preferences"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Unit test the workspace-selection store: seed a workspaces array containing a deleted path, load/refresh, assert the dead path is pruned and lastWorkspace falls back to a live entry",
+      "Regression test that a valid lastWorkspace is preserved when its path still exists",
+      "Manual repro: open folder, delete it from disk, reopen switcher, confirm entry is gone or removable"
+    ],
+    "unknowns": [
+      "Exact source module owning the workspace-selection store is not pinned in the supplied evidence"
+    ],
+    "why": "Issue provides ordered reproduction steps, a concrete persisted-state root cause (workspaces array under cline.code.workspace-selection.v2 never validated against the filesystem), and a clear expected behavior (prune dead paths and/or add removal UI). No open PR or duplicate issue covers it, and no maintainer design conflict is recorded. The suggested Python pruner is only an illustration; the actionable work is in the desktop workspace-selection persistence/UI path."
+  },
   "0e89f93dab2a8a6ea0b4473d48ff41053059e857143366fc62e9c9f4be1ac9d4": {
     "confidence": 0.82,
     "contradictions": [
@@ -16657,6 +16689,38 @@
     ],
     "why": "The issue provides a detailed root cause in middleware.py, a concrete reproduction, and a proposed 13-line fix. However, the fix has not been tested against a live multi-round session, and the maintainer has not confirmed the design direction. The related issue #24758 is closed but may indicate prior maintainer preferences. The candidate is actionable but requires maintainer confirmation before implementation."
   },
+  "250e5a8a05c0edcdc78455d09ea43f8395b8a906e3c95d54104cf39deeac8a08": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "hub daemon session lifecycle: stop session runtime and dispose MCP servers on session clear/detach or idle timeout",
+      "CLI hub client stopSession/stopRuntimeSession/dispose should trigger a hub-side session stop rather than only session.detach",
+      "add idle-session reaper in hub daemon"
+    ],
+    "risks": [
+      "Changing detach semantics could prematurely stop sessions that still have other attached clients; must only stop when the last client detaches",
+      "Idle reaper timeout must be conservative to avoid killing long-running but active sessions",
+      "MCP server shutdown may need graceful termination and cleanup of child language servers"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Configure a stdio MCP server (e.g. mcp-server-time) in cline_mcp_settings.json, start interactive hub-mode cline, send a prompt, run /clear, send another prompt, and assert pgrep shows only one MCP server process per active session",
+      "Quit and restart the TUI, then assert previous session MCP processes are terminated while the hub daemon remains alive",
+      "Add a regression test that session.detach or client disconnect triggers runtime shutdown and MCP disposal for the detached session"
+    ],
+    "unknowns": [
+      "Exact intended hub-side API/command for stopping a session (e.g. session.stop) is not specified by maintainers",
+      "Whether an idle reaper is desired versus only last-client-detach cleanup"
+    ],
+    "why": "Issue provides a detailed, code-anchored root cause: in hub mode, session runtime shutdown is only triggered by session.delete, failed session, non-interactive finalize, or hub stop; interactive turns end in completeInteractiveTurn and session.detach only removes the participant, so per-session stdio MCP servers leak until the hub daemon exits. Reproduction steps are concrete and provider-independent, and the fix path (stop/reap session runtime on clear/detach/idle) is actionable."
+  },
   "251e3eed1aeadeb6a0b6f460e13f77600f44a015a32e5d74835883d21f55bce0": {
     "confidence": 0.55,
     "contradictions": [
@@ -17334,6 +17398,39 @@
     ],
     "why": "The issue presents a well-evidenced root cause (per-connection permission queue keyed on AgentSideConnection, unbounded default timeout) and a concrete proposed regression test, but the supplied evidence contains a materially blocking unknown: open PR #9921 overlaps the same code paths and semantics (ask_user_question, Session.ts, Session.test.ts) and is explicitly flagged as 'semantic_overlap_requires_review' with '已有 changes requested'. Whether that PR already covers or conflicts with the proposed fix determines whether new code work is actionable, so this cannot be resolved to NO_OBJECTION."
   },
+  "26bbab2a9044704a722221e64adbbd1a019f707c3a02077f047e5c472aca5256": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue body and comments describe a clear root cause, but candidate.actionability_evidence reports root_cause_signal=false and no code anchors"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Hub daemon lifecycle/reaping on sidecar exit",
+      "Sidecar hub discovery/connection validation (liveness/instance/version check before reuse of port 25463)"
+    ],
+    "risks": [
+      "Fix may require changes to process supervision and port ownership semantics with platform-specific behavior on Windows",
+      "Without code anchors, the minimal fix location is unverified and could expand into broader runtime changes"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce by launching app, quitting, leaving orphan hub on port 25463, relaunching, and asserting a fresh hub is spawned or the stale one is rejected",
+      "Regression test that a listening-but-stale hub is not reused and prompts do not fail with code=1006"
+    ],
+    "unknowns": [
+      "Which module owns hub daemon spawn/reuse and port probing",
+      "Whether an existing liveness/version handshake exists that could be extended",
+      "Whether maintainers have a preferred design for orphan reaping vs. staleness rejection"
+    ],
+    "why": "Issue provides a strong reproduction narrative and a plausible root cause (orphaned hub daemon reused without liveness/version validation), but the supplied actionability evidence explicitly marks root_cause_signal=false, code_anchors=[], and probe_ready=false, and the pre-review gate failed with no_code_surface and reproduction_or_validation_missing. No concrete code path, module, or validation harness is identified, so the code work is not yet actionable."
+  },
   "26c9c73034ccd28569193ae393d4649e128510d71932d82b3cfa66056c5411cd": {
     "confidence": 0.7,
     "contradictions": [
@@ -17701,6 +17798,36 @@
       "Whether maintainers have a preferred identity scheme (e.g., step name vs. hash) for persisted step state"
     ],
     "why": "Issue provides a concrete root cause (SOPEngine restores SOPStepRunState by list index and only rejects runs when step count differs), an ordered reproduction (A,B -> B,A with same length), and expected behavior including backward compatibility for states lacking step identities. This is a well-scoped, testable bug in the agent runtime path. Open PR #2648 is directly related but has no root-cause coverage evidence and no maintainer recognition, so competition space remains."
+  },
+  "272be48620122dc08e01677068b58084cd64a7d3b885df2aa95352cdbfb81ec8": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "litellm/llms/custom_httpx/llm_http_handler.py: change model repair guard to startswith(provider/)",
+      "litellm/litellm_core_utils/chat_completion_agentic_loop.py: same provider-keyed repair",
+      "maybe_run_chat_completion_agentic_loop: stop swallowing follow-up failures into returning the original tool-call response"
+    ],
+    "risks": [
+      "Changing the dispatcher except behavior could alter error propagation for other agentic hooks",
+      "Open draft PR #44053 touches the same file and may overlap"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a regression test with a hosted_vllm deployment whose model id is zai-org/GLM-5.3-Flash and websearch_interception enabled, asserting the follow-up model is hosted_vllm/zai-org/GLM-5.3-Flash",
+      "Assert no dangling litellm_web_search function_call is returned to the client when the follow-up fails",
+      "Run targeted unit tests for chat_completion_agentic_loop and llm_http_handler"
+    ],
+    "unknowns": [
+      "Whether PR #44053 actually addresses this root cause or is unrelated logging work"
+    ],
+    "why": "Issue provides a concrete root cause: the provider-prefix repair guard in both copies of _execute_chat_completion_agentic_plan keys on slash presence, so org-style engine ids like zai-org/GLM-5.3-Flash never get hosted_vllm/ re-attached, causing BadRequestError that is swallowed into an unbounded retry and a dangling litellm_web_search call. The suggested provider-keyed fix is specific and testable."
   },
   "273e3333aef4f0d6181d99892022fde8c3d0cbeaeae7cad8135023a78e071063": {
     "confidence": 0.55,
@@ -22621,6 +22748,38 @@
       "Whether an explicit thinking-mode parameter is required for streaming on this provider"
     ],
     "why": "Issue documents a clear streaming-vs-non-streaming discrepancy for reasoning_content on Alibaba Cloud DeepSeek V4.1 Flash, but the supplied evidence explicitly lacks a root-cause signal (root_cause_signal: false) and the reporter states the upstream provider response was never tested independently. It is unresolved whether the loss occurs in the upstream adapter, the stream normalizer, or the provider itself, so the concrete code change is not yet determined."
+  },
+  "3269a7237bc484d4863fa0f5bf425fbbb098a7a7be2e9e7eb31bd7e927bf8a52": {
+    "confidence": 0.8,
+    "contradictions": [
+      "open_pr_assessment marks duplicate status human_review_required while also listing PR #50543 as direct code overlap referencing the issue"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "plugin module resolver: resolve scoped @opencode/* imports from project/config directory rather than the plugin file's own directory",
+      "regression test covering local plugin loading with a bare @opencode/plugin import"
+    ],
+    "risks": [
+      "Overlapping open PR #50543 may already cover the fix, making a new contribution redundant",
+      "Resolver change could alter module resolution semantics for node_modules or unscoped bare imports"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create .opencode/plugins/probe.js with `import { Plugin } from \"@opencode/plugin\"` and `export default Plugin.define({id, setup})`, run `opencode run --print-logs \"hi\"`, and assert no ResolveMessage and that the plugin appears active via /api/plugin",
+      "Add a unit test for the resolver that loads a loose plugin file with a scoped bare import and asserts successful resolution"
+    ],
+    "unknowns": [
+      "Whether PR #50543 already implements the same fix and will merge, leaving no independent implementation space",
+      "Whether maintainers have a preferred resolver design for scoped/subpath imports"
+    ],
+    "why": "Issue is a concrete, reproducible plugin module-resolution defect with clear expected/actual behavior and multiple independent reproductions, but the supplied evidence shows an open, directly-overlapping PR #50543 (same title, same code path, references this issue) plus a closed duplicate #50466, and the duplicate status is explicitly 'human_review_required'. Whether independent implementation space exists is unresolved, which materially determines actionability."
   },
   "327d60df6a481cee8f2f654b78741acfed9149641d4562b2bb1b57fadbe6b7f8": {
     "confidence": 0.85,
@@ -29372,6 +29531,41 @@
       "Whether PR #7261 will be reopened or merged"
     ],
     "why": "Issue clearly identifies a concrete bug in OTel GenAI message role mapping with a minimal reproduction and root cause in code. However, the track is llm_algorithm and the issue is about telemetry semantics, not an algorithm. The existing PR #7261 is closed and has CI failures, and the issue explicitly requests maintainer direction on approach. The deterministic gate is HUMAN_REVIEW, so we must wait for maintainer confirmation."
+  },
+  "415e6ffb0c73f467df5982deec49c739351599e29a29bb1c16d208a592cf8b83": {
+    "confidence": 0.72,
+    "contradictions": [
+      "Second reporter's failure could be a request-body/payload ceiling (~3.6 MB, 1.66 MB base64) rather than the token ceiling described in the primary issue"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "provider model catalog limit for opencode-go routes (context/output) reconciled with gateway's real accept ceiling",
+      "error classification so provider HTTP 400 context-overflow responses trigger one-shot compact-and-retry",
+      "persist and surface provider 400 response body in logs and session message"
+    ],
+    "risks": [
+      "The true gateway ceiling is only bounded (146,430 to ~148,500 tokens), not exactly known, so the catalog limit fix may need a conservative value",
+      "Second reporter's failure may be a payload-size 400 rather than a token-ceiling 400, which would require a different fix path",
+      "Changing error classification could affect other provider 400 handling"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing test that simulates a provider 400 with an over-limit prompt and asserts compact-and-retry engages",
+      "Regression test asserting catalog limit for opencode-go models matches the gateway's documented accept ceiling",
+      "Test that provider 400 response body is persisted to log and session message"
+    ],
+    "unknowns": [
+      "Exact gateway accept ceiling for opencode-go routes",
+      "Whether the two reported failures share the same root cause (token ceiling vs payload size)"
+    ],
+    "why": "Issue reports a deterministic, reproducible failure: opencode-go gateway rejects prompts around 148k tokens while catalog advertises 1M context, so preflight compaction never fires and the 400 is not classified as context overflow, permanently bricking the session. Two independent confirmations (qwen3.8-flash and deepseek-v4.1-flash) with concrete token numbers, log evidence, and a session ID. Code paths for provider limit handling, error classification, and log persistence are identified. No open PR or duplicate issue covers it."
   },
   "417e5535a8a9b0ece6acc208bf6dcc11dd6efa45dd1f40b418b92e423ddd8841": {
     "confidence": 0.8,
@@ -44028,6 +44222,41 @@
     ],
     "why": "Issue reports a fatal startup crash in code-sidecar.exe with a clear stack trace and reproduction steps, but no root cause is identified and the code anchors supplied ('Node.js', 'function normally.') are not real code locations. The failure is in a bundled Bun-compiled binary ('No compatible hub runtime is available'), and the supplied codePathsPlan points to unrelated webview node.tsx files, so the actionable code path is unknown."
   },
+  "5f1bd12b3c0cad5638503abb2ab1a00bec72288d9d9fa98ee1aa500b2cfb36de": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "packages/core/src/shell.ts",
+      "packages/plugin/src/shell.ts",
+      "packages/opencode/src/tool/shell.ts",
+      "permission evaluation path for config-defined deny rules",
+      "free-tier validation path that misreports permission denial"
+    ],
+    "risks": [
+      "Root cause is a hypothesis; the actual coupling between permission denial and free-tier validation is unconfirmed",
+      "Fix may need to distinguish config-defined deny from builtin system-level deny",
+      "Behavior change could affect permission enforcement semantics"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing regression test: define an agent with shell:deny (and action:* deny) and assert session starts and shell is blocked",
+      "Run targeted unit tests for the shell/permission packages",
+      "Verify the misleading free-tier error no longer appears when shell is denied"
+    ],
+    "unknowns": [
+      "Whether paid models are affected (usage cap blocked testing)",
+      "Exact code path where permission denial surfaces as the free-tier error"
+    ],
+    "why": "Issue provides a concrete, reproducible expected/actual pair: config-defined shell deny (or action:* deny) on a custom agent causes session creation to fail with a misleading free-tier error, while removing the rule fixes it. A corroborating comment with bisect evidence narrows the trigger to config-defined deny rules, and code anchors (shell, permissions) plus planned code paths give an actionable starting point. Root cause is hypothesized rather than proven, but the reproduction and validation path are concrete enough for code work."
+  },
   "5f225779e17c986d138bc4d049860f192656ad81c161a597de915b541fa4c3f6": {
     "confidence": 0.8,
     "contradictions": [],
@@ -50063,6 +50292,41 @@
       "Whether PR #36549 already fixes the root cause; whether issue #36830 is truly duplicate"
     ],
     "why": "Issue provides a concrete root cause (index-K cache sized per-rank but accessed with virtual locs under DCP), a validated diff, and a clear reproduction path with quality comparison. It targets a real LLM algorithm mechanism (distributed training, kernel algorithm) and is actionable despite potential overlap with PR #36549 and duplicate issue #36830, which require manual review but do not block actionability."
+  },
+  "6b3bc78f7e6c4d19ba1f1ea5f66bf71376571d3ee32b3b8905b2044e9c085186": {
+    "confidence": 0.72,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "MCP OAuth discovery/fallback logic: attempt device authorization grant when authorization-server discovery 404s and protected-resource metadata advertises device_authorization_endpoint",
+      "Error classification: distinguish device-flow-capable-but-discovery-failed from generic DCR incompatibility",
+      "Possibly annotate/remove bundled github marketplace entry until connectable"
+    ],
+    "risks": [
+      "Changing OAuth fallback ordering could affect other MCP servers relying on discovery-first behavior",
+      "Device flow requires a registered OAuth client ID, which may not be available in CI",
+      "Maintainer may prefer error-message-only fix over behavioral fallback"
+    ],
+    "root_cause_clarity": "high",
+    "score": 7,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Reproduce with the issue's mcpServers config against api.githubcopilot.com/mcp/ and assert the current DCR error",
+      "Add a regression test where discovery returns 404 but protected-resource metadata advertises device_authorization_endpoint, asserting device flow is attempted",
+      "Run the device-flow client from the issue comment against api.githubcopilot.com/mcp/ to confirm the fallback yields a usable bearer token",
+      "Run targeted MCP OAuth unit tests and static checks"
+    ],
+    "unknowns": [
+      "Whether Cline's MCP OAuth layer can be exercised in tests without live GitHub endpoints or a registered client ID",
+      "Whether maintainers consider the prior #5191 'not a bug' conclusion still applicable"
+    ],
+    "why": "Issue provides a concrete, reproducible root cause: GitHub's authorization-server discovery endpoint returns 404, so Cline aborts before reaching its already-implemented device-code grant. Endpoint checks and a minimal device-flow client are supplied, giving a clear reference-vs-implementation validation path. No open PR covers this; the two merged PRs are unrelated (promotion messaging, search approval crash)."
   },
   "6b445e13e83e7af99ae318ad1001d1fd1934ebe866390534f7c9571dd4924d6c": {
     "confidence": 0.55,
@@ -57484,6 +57748,39 @@
     ],
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "Issue clearly identifies a bug in Azure provider adapter selection with a concrete root cause and reproduction steps. However, an existing PR (#29775) directly addresses the same routing problem but was closed unmerged, and the issue itself references it. The candidate's value depends on whether the maintainers intend to reopen or supersede that PR, requiring maintainer review."
+  },
+  "79ee2217c907961fa6a5ca5751a5937a7a46a27bb24349e9fe91714d85c57bfa": {
+    "confidence": 0.85,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "sdk/packages/core/src/services/providers/model-source.ts: accept apiKey/headers and attach Authorization/custom headers to the model-list fetch",
+      "sdk/packages/core/src/services/providers/local-provider-service.ts: thread resolved apiKey and normalized headers into fetchModelIdsFromSource",
+      "sdk/packages/core/src/services/llms/provider-defaults.ts: preserve keyless behavior for built-in public catalogs"
+    ],
+    "risks": [
+      "Accidentally sending credentials to keyless public catalog endpoints if the conditional is wrong",
+      "Header normalization mismatch between custom headers and Authorization",
+      "Scope creep into broader provider API behavior changes"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a failing unit test for fetchModelIdsFromSource asserting Authorization: Bearer <key> is sent when apiKey is provided",
+      "Add a regression test that keyless calls (Ollama/LM Studio style) still send no Authorization header",
+      "Run targeted unit tests and static checks for the sdk/packages/core providers package"
+    ],
+    "unknowns": [
+      "Whether maintainers have a preferred design for threading credentials (e.g., passing a headers object vs apiKey string)"
+    ],
+    "why": "Issue provides a precise root cause: fetchModelIdsFromSource in sdk/packages/core/src/services/providers/model-source.ts sends no Authorization header, and callers (local-provider-service.ts, provider-defaults.ts) never thread credentials, while the same add/update flow already reads apiKey and normalized headers. Reproduction is concrete (curl 401 vs Bearer success, ordered UI steps), and the fix is a minimal, well-scoped change to attach credentials only when configured so keyless public catalogs keep working."
   },
   "79f7d725369f786cba86a0ef9493786b500be7bfaf95f044d3edc704734aec75": {
     "confidence": 0.85,
@@ -82746,6 +83043,43 @@
       "Whether the AI disclosure conflict permits any public contribution path"
     ],
     "why": "Issue describes a concrete user-visible bug (BLOB tool outputs stringified, attachments missing from Agents logs) with reproduction steps and a candidate fix, but the supplied evidence shows an open PR #42126 that already references this issue with 10 changed files, 3 test files, and 521 additions, while root_cause_coverage is false and semantic_overlap is false. The duplicate/coverage status is unresolved: it is unclear whether #42126 already covers the same fix or leaves a genuine gap, which materially determines whether independent code work is actionable."
+  },
+  "b11e2bea05a5606153bef9199ee89c2e37cf58f27a22d7697bc540564008665d": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Open PR #43935 is described as technically_complete with tests and directly references the issue, but root_cause_coverage is false and no material competition gaps are listed",
+      "Candidate category is WAIT_MAINTAINER with HUMAN_REVIEW while duplicate status is weak_pr_competition_possible"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "OpenAIGPT5Config.is_model_gpt_5_model family detection for gpt-6.1-sol",
+      "Chat Completions reasoning_effort mapping to drop/reject none and minimal",
+      "Responses reasoning.effort mapping to drop/reject none and minimal and remove empty reasoning object"
+    ],
+    "risks": [
+      "Duplicating or conflicting with open PR #43935 which already references the issue",
+      "Model-specific guard may conflict with maintainer preference for a generic supports_none_reasoning_effort gate tracked in #40472",
+      "Cost-map lag for new model release may make model-specific behavior brittle"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's test_gpt61sol.py against current main to confirm all five assertions fail",
+      "Add regression tests for drop_params=True removing none/minimal on both Chat Completions and Responses",
+      "Add regression test for drop_params=False returning a local 400 instead of forwarding unsupported effort"
+    ],
+    "unknowns": [
+      "Whether PR #43935 already fully covers the Chat Completions and Responses paths described in the issue",
+      "Whether maintainers prefer a model-specific guard or the generic supports_none_reasoning_effort gate from #40472",
+      "Whether the cost map already marks none/minimal unsupported for gpt-6.1-sol in current main"
+    ],
+    "why": "Issue provides a concrete reproduction and root-cause hypothesis for gpt-6.1-sol forwarding unsupported none/minimal reasoning effort, but an open PR #43935 already directly references the issue and claims to fix both Chat Completions and Responses surfaces. The supplied evidence marks that PR as technically complete with tests, yet root_cause_coverage=false and no material competition gaps are identified, leaving unresolved duplicate/coverage uncertainty that determines whether independent code work is actionable."
   },
   "b1318133216fb102c7f4f670025f31230a8502660a12c3784a0c5193fc160834": {
     "confidence": 0.85,
