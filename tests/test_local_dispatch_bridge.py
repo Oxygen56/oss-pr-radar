@@ -20650,6 +20650,417 @@ def test_published_validation_rebinds_exact_expired_source_receipt(monkeypatch, 
     assert restored["publicationReceipt"]["prUrl"] == pr_url
 
 
+@pytest.mark.parametrize("task_id_present", [False, True])
+def test_native_expired_pr_create_requires_real_completed_validation(
+    monkeypatch, tmp_path, task_id_present
+):
+    import oss_pr_radar.ledger as ledger_module
+    import oss_pr_radar.repo_probe as repo_probe
+    from oss_pr_radar import publication
+    from oss_pr_radar.evidence import EvidenceBundle
+
+    monkeypatch.setattr(MODULE, "GITHUB_ROOT", tmp_path / "github")
+    store, worktree, result_path = _controller_commit_result(
+        tmp_path,
+        controller_policy_complete=True,
+        worktree=MODULE.managed_worktree_path("intent-1", "a/b"),
+    )
+    bind_validation_runtime(monkeypatch, tmp_path)
+    initial = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert initial["ok"] and len(initial["publicationRequests"]) == 1, initial
+    request_id = initial["publicationRequests"][0]["requestId"]
+    old_request = store.publication_request(request_id)["request"]
+    old_raw = result_path.read_bytes()
+    old_head = run_git(worktree, "rev-parse", "HEAD")
+    source = json.loads(old_raw)
+    later = parse_time(source["reproductionReceipt"]["expiresAt"]) + timedelta(seconds=8)
+
+    class ExpiredDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return later
+
+    monkeypatch.setattr(repo_probe, "datetime", ExpiredDateTime)
+    monkeypatch.setattr(ledger_module, "datetime", ExpiredDateTime)
+    monkeypatch.setattr(MODULE, "datetime", ExpiredDateTime)
+    deferred = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert deferred["ok"] and deferred["validationDeferred"] == [
+        {
+            "key": "a/b#1",
+            "reason": "PUBLICATION_REPRODUCTION_RECEIPT_EXPIRED",
+            "missing": ["fresh_state_verified"],
+        }
+    ], deferred
+    assert store.publication_request(request_id)["status"] == "BLOCKED"
+    assert result_path.read_bytes() == old_raw
+    assert store.publication_request(request_id)["request"] == old_request
+    assert run_git(worktree, "rev-parse", "HEAD") == old_head
+    waiting = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert (
+        waiting["ok"] and waiting["publicationRequests"] == [] and waiting["validationDeferred"]
+    ), waiting
+    assert result_path.read_bytes() == old_raw
+    listed = MODULE.validation_followup_list(SimpleNamespace(ledger=store.path, min_age_minutes=90))
+    assert listed["ok"] and len(listed["candidates"]) == 1, listed
+    candidate = listed["candidates"][0]
+    reserved = MODULE.validation_followup_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            result_digest=candidate["resultDigest"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    assert reserved["ok"] and not reserved.get("blocked"), reserved
+    assert "复现凭证已到期" in reserved["prompt"]
+    assert "真实基线复现和核心回归" in reserved["prompt"]
+    candidate = store.unresolved_validation_followups()[0]
+    assert candidate["expiredPublication"]["requestId"] == request_id
+    reservation = reserved["reservationDigest"]
+    snapshot = MODULE._ensure_validation_snapshot(candidate, reservation_digest=reservation)
+    binding = {
+        "reservationDigest": reservation,
+        **snapshot,
+        **MODULE._validation_worktree_input_binding(
+            candidate=candidate,
+            reservation_digest=reservation,
+            snapshot_digest=snapshot["snapshotDigest"],
+        ),
+    }
+    store.authorize_task_turn_delivery(
+        delivery_kind="validation-followup",
+        thread_id="thread-1",
+        delivery_token=candidate["resultDigest"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+        reservation_digest=reservation,
+        snapshot_id=binding["snapshotId"],
+        snapshot_path=binding["snapshotPath"],
+        snapshot_digest=binding["snapshotDigest"],
+        worktree_input_path=binding["worktreeInputPath"],
+        worktree_input_digest=binding["worktreeInputDigest"],
+    )
+    MODULE._ensure_validation_worktree_input(
+        candidate=candidate,
+        reservation_digest=reservation,
+        snapshot_id=binding["snapshotId"],
+        snapshot_path=binding["snapshotPath"],
+        snapshot_digest=binding["snapshotDigest"],
+        worktree_input_path=binding["worktreeInputPath"],
+        worktree_input_digest=binding["worktreeInputDigest"],
+    )
+    assert (worktree / binding["worktreeInputPath"]).read_bytes() == old_raw
+    assert "复现凭证已到期" in MODULE._validation_followup_prompt(candidate | binding)
+    # Execute the unchanged regression against the real selected base and current commit.
+    baseline = tmp_path / "expiry-baseline"
+    run_git(worktree, "worktree", "add", "--detach", str(baseline), source["selectedBaseSha"])
+    argv = [sys.executable, "-B", "-c", "from runtime import value; assert value == 2"]
+    before_check = subprocess.run(argv, cwd=baseline, capture_output=True, text=True)
+    after_check = subprocess.run(argv, cwd=worktree, capture_output=True, text=True)
+    assert before_check.returncode == 1 and "AssertionError" in before_check.stderr
+    assert after_check.returncode == 0, after_check.stderr
+    run_git(worktree, "worktree", "remove", "--force", str(baseline))
+    test_file = tmp_path / "test_current_runtime.py"
+    test_file.write_text(
+        "import runpy\ndef test_runtime():\n    assert runpy.run_path("
+        + repr(str(worktree / "runtime.py"))
+        + ')["value"] == 2\n'
+    )
+    formal_argv = [
+        sys.executable,
+        "-B",
+        "-m",
+        "pytest",
+        "-q",
+        str(test_file),
+        "-p",
+        "no:cacheprovider",
+    ]
+    formal = subprocess.run(formal_argv, cwd=worktree, capture_output=True, text=True)
+    assert formal.returncode == 0 and "1 passed" in formal.stdout, formal.stderr
+    context = json.loads((result_path.parent / "task-context.json").read_text())
+    value = dict(source, contextDigest=context["contextDigest"])
+    for field in (
+        "taskId",
+        "reproductionReceipt",
+        "probeReceipt",
+        "resultDigest",
+        "independentReview",
+    ):
+        value.pop(field, None)
+    value["tests"] = [
+        {
+            "command": " ".join(argv),
+            "phase": "before_fix",
+            "exitCode": before_check.returncode,
+            "result": before_check.stderr,
+        },
+        {
+            "command": " ".join(argv),
+            "phase": "after_fix",
+            "exitCode": after_check.returncode,
+            "result": "actual runtime assertion passed",
+        },
+        {
+            "command": " ".join(formal_argv),
+            "exitCode": formal.returncode,
+            "result": formal.stdout.splitlines()[-1].split(" in ")[0],
+        },
+    ]
+    value["validationPolicyRevision"] = MODULE.VALIDATION_POLICY_REVISION
+    if task_id_present:
+        value["taskId"] = "intent-1"
+    result_path.write_text(json.dumps(value))
+    new_raw = result_path.read_bytes()
+    not_completed = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert (
+        not_completed["ok"]
+        and not_completed["workBlocked"][0]["reason"]
+        == "EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID"
+    ), not_completed
+    assert result_path.read_bytes() == new_raw
+    blocked_key = MODULE._task_result_evidence_block_key(
+        candidate, new_raw, (result_path.parent / "task-context.json").read_bytes()
+    )
+    # Restore the exact source until the native worker starts; no completed receipt is hand-written.
+    result_path.write_bytes(old_raw)
+    thread_db = tmp_path / "expiry-threads.sqlite3"
+    rollout = tmp_path / "expiry-rollout.jsonl"
+    rollout.write_text("")
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT, cwd TEXT, archived INTEGER, first_user_message TEXT, rollout_path TEXT, git_origin_url TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?)",
+            (
+                "thread-1",
+                str(worktree),
+                0,
+                MODULE.issue_prompt("https://github.com/a/b/issues/1"),
+                str(rollout),
+                "https://github.com/a/b.git",
+            ),
+        )
+    process = _FakeTaskTurnProcess()
+    original_popen = subprocess.Popen
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": "thread-1"}}}
+        return buffer, {"result": {"turn": {"id": "native-expiry-validation-turn"}}}
+
+    def execute_current_checks(*_args, **_kwargs):
+        run_git(worktree, "worktree", "add", "--detach", str(baseline), source["selectedBaseSha"])
+        actual_before = subprocess.run(argv, cwd=baseline, capture_output=True, text=True)
+        actual_after = subprocess.run(argv, cwd=worktree, capture_output=True, text=True)
+        actual_formal = subprocess.run(formal_argv, cwd=worktree, capture_output=True, text=True)
+        assert (
+            actual_before.returncode == 1
+            and actual_after.returncode == actual_formal.returncode == 0
+        )
+        run_git(worktree, "worktree", "remove", "--force", str(baseline))
+        output = dict(
+            value,
+            tests=[
+                {
+                    "command": " ".join(argv),
+                    "phase": "before_fix",
+                    "exitCode": actual_before.returncode,
+                    "result": actual_before.stderr,
+                },
+                {
+                    "command": " ".join(argv),
+                    "phase": "after_fix",
+                    "exitCode": actual_after.returncode,
+                    "result": "actual runtime assertion passed",
+                },
+                {
+                    "command": " ".join(formal_argv),
+                    "exitCode": actual_formal.returncode,
+                    "result": actual_formal.stdout.splitlines()[-1].split(" in ")[0],
+                },
+            ],
+        )
+        result_path.write_text(json.dumps(output))
+        return {"turnId": "native-expiry-validation-turn", "status": "completed"}
+
+    def launch_worker(argv, **kwargs):
+        if "task-turn-worker" not in argv:
+            return original_popen(argv, **kwargs)
+        worker_args = SimpleNamespace(
+            ledger=store.path,
+            delivery_kind="validation-followup",
+            thread_id="thread-1",
+            delivery_token=candidate["resultDigest"],
+            delivery_attempt_digest=None,
+            intent_id=None,
+            worktree_path=None,
+            **{
+                name.replace("-", "_"): argv[argv.index("--" + name) + 1]
+                for name in (
+                    "reservation-digest",
+                    "snapshot-id",
+                    "snapshot-path",
+                    "snapshot-digest",
+                    "worktree-input-path",
+                    "worktree-input-digest",
+                    "receipt",
+                )
+            },
+        )
+        completed = MODULE.task_turn_worker_entry(worker_args)
+        assert completed["ok"] and completed["turnStatus"] == "completed", completed
+        return SimpleNamespace(pid=os.getpid())
+
+    with monkeypatch.context() as delivery:
+        delivery.setattr(MODULE, "THREAD_DB", thread_db)
+        delivery.setattr(MODULE, "ledger", lambda _path: store)
+        delivery.setattr(MODULE, "_app_server_action_session", action_session)
+        delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+        delivery.setattr(MODULE, "_read_app_server_response", read_response)
+        delivery.setattr(MODULE, "_wait_for_app_server_terminal_turn", execute_current_checks)
+        delivery.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+        delivery.setattr(MODULE.subprocess, "Popen", launch_worker)
+        delivered = MODULE.validation_followup_deliver(
+            SimpleNamespace(
+                ledger=store.path, thread_id="thread-1", result_digest=candidate["resultDigest"]
+            )
+        )
+    assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
+    assert result_path.read_bytes() == new_raw
+    assert (
+        MODULE._task_result_evidence_block_key(
+            candidate, new_raw, (result_path.parent / "task-context.json").read_bytes()
+        )
+        == blocked_key
+    )
+    turns = [item for item in _task_turn_messages(process) if item.get("method") == "turn/start"]
+    assert len(turns) == 1 and "复现凭证已到期" in turns[0]["params"]["input"][0]["text"]
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert ingested["ok"] and ingested.get("workBlocked", []) == [] and ingested["errors"] == [], (
+        ingested
+    )
+    assert ingested["validationDeferred"] and ingested["publicationRequests"] == [], ingested
+    assert run_git(worktree, "rev-parse", "HEAD") == old_head
+    normalized = json.loads(result_path.read_text())
+    assert (
+        normalized["taskId"] == "intent-1"
+        and normalized["quality"]["independent_review_passed"] is False
+    )
+    assert (
+        normalized["reproductionReceipt"]["receiptDigest"]
+        != source["reproductionReceipt"]["receiptDigest"]
+    )
+    assert (worktree / binding["worktreeInputPath"]).read_bytes() == old_raw
+    assert store.publication_request(request_id)["request"] == old_request
+    schema = tmp_path / "schemas" / "independent_review.schema.json"
+    schema.parent.mkdir()
+    shutil.copyfile(SCRIPT.parent.parent / "schemas" / schema.name, schema)
+    native_review = MODULE.review_once
+
+    def reviewer(review_worktree, _schema, _prompt, _timeout):
+        checked = subprocess.run(argv, cwd=review_worktree, capture_output=True, text=True)
+        assert checked.returncode == 0
+        assert (
+            run_git(review_worktree, "diff", "--name-only", source["selectedBaseSha"] + "..HEAD")
+            == "runtime.py"
+        )
+        return {
+            "verdict": "PASS",
+            "summary": "Reviewed the retained commit and newly executed real checks.",
+            "findings": [],
+            "evidence": [formal.stdout, "actual runtime exit 0"],
+        }
+
+    monkeypatch.setattr(
+        MODULE, "review_once", lambda *a, **kw: native_review(*a, reviewer=reviewer, **kw)
+    )
+    reviewed = MODULE.independent_review_run(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert reviewed["ok"] and reviewed["updated"][0]["verdict"] == "PASS", reviewed
+    final = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path, key="a/b#1"))
+    assert final["ok"] and final["ingested"] == [{"key": "a/b#1", "stage": "FIX_READY"}], final
+    assert (
+        len(final["publicationRequests"]) == 1
+        and final["publicationRequests"][0]["requestId"] != request_id
+    ), final
+    assert store.publication_request(request_id)["status"] == "BLOCKED"
+    fresh_request_id = final["publicationRequests"][0]["requestId"]
+    remote = tmp_path / "expiry-upstream.git"
+    subprocess.run(
+        ["git", "clone", "--bare", str(worktree), str(remote)],
+        check=True,
+        capture_output=True,
+    )
+
+    class Client:
+        def repository(self, _repo):
+            return {"default_branch": "main"}
+
+        def branch(self, _repo, _branch):
+            return {"commit": {"sha": source["selectedBaseSha"]}}
+
+        def compare(self, _repo, base, head):
+            return {
+                "status": "ahead",
+                "merge_base_commit": {"sha": run_git(worktree, "merge-base", base, head)},
+            }
+
+        def repository_tree(self, _repo, ref):
+            return [
+                {"path": path, "type": "blob"}
+                for path in run_git(worktree, "ls-tree", "-r", "--name-only", ref).splitlines()
+            ]
+
+        def related_open_prs(self, *_args, **_kwargs):
+            return []
+
+    evidence = EvidenceBundle(
+        repo="a/b",
+        issue_number=1,
+        complete=True,
+        completeness={"repositoryPolicy": "COMPLETE"},
+        issue={"number": 1, "state": "open", "title": "Runtime returns the wrong value"},
+        comments=(),
+        timeline=(),
+        claims=(),
+        maintainer_approvals=(),
+        policy={"status": "NORMAL", "digest": "d" * 64, "dco": False},
+        pull_relations=(),
+        hardware={"compatible": True},
+        digest="c" * 64,
+    )
+    monkeypatch.setattr(publication, "collect_evidence", lambda *_args, **_kwargs: evidence)
+    monkeypatch.setattr(
+        publication,
+        "authorize",
+        lambda _candidate, bundle: AuthorizationDecision(
+            "ALLOW", "LIVE_EVIDENCE_PASSED", {}, bundle.digest
+        ),
+    )
+    monkeypatch.setattr(publication, "CONTROL_ROOT", tmp_path)
+    monkeypatch.setattr(
+        publication,
+        "_github_git_command",
+        lambda argv, *, cwd, timeout: publication.command(
+            ["git", "-c", f"url.{remote}.insteadOf=https://github.com/a/b.git", *argv[1:]],
+            cwd=cwd,
+            timeout=timeout,
+        ),
+    )
+    audited = publication.audit_publication_request(store, fresh_request_id, client=Client())
+    assert audited.status == "ALLOW", audited
+    assert run_git(worktree, "rev-parse", "refs/remotes/origin/main") == source["selectedBaseSha"]
+    assert run_git(worktree, "rev-parse", "HEAD") == old_head
+    with store.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+
+
 @pytest.mark.parametrize(
     "tamper",
     ["top_result_digest", "task_id", "commit", "validation_input"],

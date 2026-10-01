@@ -7444,6 +7444,7 @@ class RadarLedger:
         progress_marker: str | None = None,
         intent_id: str | None = None,
         worktree_path: str | None = None,
+        expired_publication: dict[str, Any] | None = None,
     ) -> None:
         """Record a substantive result that needs validation, not task recovery."""
 
@@ -7466,6 +7467,24 @@ class RadarLedger:
             }
             if progress_marker:
                 payload["progressMarker"] = progress_marker
+            if expired_publication is not None:
+                source = self._expired_publication_validation_source(connection, binding)
+                if (
+                    source is None
+                    or source != expired_publication
+                    or result_digest != source["resultDigest"]
+                ):
+                    raise LedgerError("expired publication validation source changed")
+                payload["expiredPublication"] = {
+                    name: source[name]
+                    for name in (
+                        "requestId",
+                        "resultDigest",
+                        "evidenceDigest",
+                        "receiptDigest",
+                        "commitSha",
+                    )
+                }
             self._event(
                 connection,
                 key,
@@ -7485,6 +7504,123 @@ class RadarLedger:
                 intent_id=str(binding["intent_id"]),
                 worktree_path=str(binding["worktree_path"]),
             )
+
+    def _expired_publication_validation_source(
+        self, connection: sqlite3.Connection, binding: sqlite3.Row
+    ) -> dict[str, Any] | None:
+        """Read an exact unpublished request whose sole credential failure is expiry."""
+        rows = connection.execute(
+            """SELECT r.* FROM publication_requests r
+               WHERE opportunity_key=? AND thread_id=? AND worktree_path=?
+                 AND json_extract(request_json,'$.intentId')=?
+               ORDER BY rowid DESC""",
+            (
+                binding["opportunity_key"],
+                binding["thread_id"],
+                binding["worktree_path"],
+                binding["intent_id"],
+            ),
+        ).fetchall()
+        if not rows:
+            return None
+        row = rows[0]
+        request = json.loads(row["request_json"])
+        if (
+            row["status"] != "BLOCKED"
+            or row["reason"] != "BLOCKED_REPRODUCTION_REQUIRED"
+            or request.get("publicationKind") != "PR_CREATE"
+            or not _publication_request_intent_is_active(
+                connection,
+                request_id=row["request_id"],
+                opportunity_key=row["opportunity_key"],
+                request_row=row,
+            )
+            or _publication_has_irreversible_terminal_evidence(
+                connection, request_id=row["request_id"], opportunity_key=row["opportunity_key"]
+            )
+            or connection.execute(
+                """SELECT 1 FROM publication_effects e JOIN publication_permits p ON p.permit_id=e.permit_id
+                   WHERE p.request_id=? LIMIT 1""",
+                (row["request_id"],),
+            ).fetchone()
+            is not None
+        ):
+            return None
+        try:
+            raw = base64.b64decode(request["evidenceRawBase64"], validate=True)
+            value = json.loads(raw)
+            receipt = value.get("reproductionReceipt") or value.get("probeReceipt")
+            identity = {
+                "requestId": row["request_id"],
+                "opportunityKey": row["opportunity_key"],
+                "threadId": row["thread_id"],
+                "worktreePath": row["worktree_path"],
+                "intentId": binding["intent_id"],
+                "commitSha": row["commit_sha"],
+                "branch": row["branch"],
+                "evidenceDigest": row["evidence_digest"],
+            }
+            if any(request.get(k) != v for k, v in identity.items()):
+                return None
+            if hashlib.sha256(raw).hexdigest() != row["evidence_digest"] or not isinstance(
+                receipt, dict
+            ):
+                return None
+            for field in (
+                "issueUrl",
+                "threadId",
+                "worktreePath",
+                "commitSha",
+                "branch",
+                "headSha",
+                "selectedBaseSha",
+                "codePaths",
+                "resultDigest",
+            ):
+                if value.get(field) != request.get(field):
+                    return None
+            if value.get("taskId") != binding["intent_id"] or receipt != request.get(
+                "probeReceipt"
+            ):
+                return None
+            match = ISSUE_URL_RE.fullmatch(str(request.get("issueUrl") or ""))
+            if match is None or parse_time(str(receipt.get("expiresAt") or "")) >= datetime.now(
+                UTC
+            ):
+                return None
+            if not verify_probe_receipt(
+                receipt,
+                repo=match.group(1),
+                base_sha=request["selectedBaseSha"],
+                code_paths=request["codePaths"],
+                required_level=REPRODUCED_VALIDATED,
+                issue_url=request["issueUrl"],
+                task_id=binding["intent_id"],
+                thread_id=binding["thread_id"],
+                head_sha=request["headSha"],
+                commit_sha=request["commitSha"],
+                result_digest=request["resultDigest"],
+                enforce_freshness=False,
+            ):
+                return None
+        except (KeyError, TypeError, ValueError):
+            return None
+        return request | {"receiptDigest": receipt["receiptDigest"]}
+
+    def expired_publication_validation_source(
+        self, candidate: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            binding = _resolve_exact_intent_binding(
+                connection,
+                opportunity_key=candidate["key"],
+                intent_id=candidate.get("intentId"),
+                thread_id=candidate.get("threadId"),
+                worktree_path=candidate.get("worktreePath"),
+            )
+            if binding is None or candidate.get("stage") not in {"FIX_READY", "VALIDATION_PENDING"}:
+                return None
+            return self._expired_publication_validation_source(connection, binding)
 
     def record_validation_prefetch_blocked(
         self,
@@ -8010,6 +8146,11 @@ class RadarLedger:
                     "resultDigest": payload.get("resultDigest"),
                     "missing": list(payload.get("missing") or []),
                     "deferredAt": row["created_at"],
+                    **(
+                        {"expiredPublication": payload["expiredPublication"]}
+                        if isinstance(payload.get("expiredPublication"), dict)
+                        else {}
+                    ),
                 }
             )
             refresh = self.publication_target_base_refresh(candidates[-1])
@@ -8258,6 +8399,11 @@ class RadarLedger:
                     "missing": candidate["missing"],
                     "attempt": attempt,
                     "reservationDigest": reservation_digest,
+                    **(
+                        {"expiredPublication": candidate["expiredPublication"]}
+                        if isinstance(candidate.get("expiredPublication"), dict)
+                        else {}
+                    ),
                 },
                 now,
             )
@@ -8437,6 +8583,11 @@ class RadarLedger:
                 or row["dedupe_key"],
                 "missing": list(json.loads(row["payload_json"]).get("missing") or []),
                 "reservedAt": row["created_at"],
+                **(
+                    {"expiredPublication": json.loads(row["payload_json"])["expiredPublication"]}
+                    if isinstance(json.loads(row["payload_json"]).get("expiredPublication"), dict)
+                    else {}
+                ),
             }
             for row in rows
         ]

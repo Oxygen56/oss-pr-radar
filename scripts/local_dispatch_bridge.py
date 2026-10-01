@@ -15079,13 +15079,52 @@ def _validation_result_omitted_task_id(
 ) -> str | None:
     """Recover an omitted controller identity from the exact completed validation input."""
 
+    if "taskId" in value:
+        return None
+    return _completed_validation_input_task_id(
+        store,
+        managed_ledger,
+        candidate=candidate,
+        context=context,
+        value=value,
+        result_access=result_access,
+        context_raw=context_raw,
+    )
+
+
+def _expired_publication_context_is_unpublished(
+    context: dict[str, Any], source: dict[str, Any] | None
+) -> bool:
+    receipt = context.get("publicationReceipt")
+    return receipt is None or (
+        source is not None
+        and isinstance(receipt, dict)
+        and receipt.get("status") == "BLOCKED"
+        and receipt.get("prUrl") is None
+        and receipt.get("commitSha") == source["commitSha"]
+        and receipt.get("branch") == source["branch"]
+    )
+
+
+def _completed_validation_input_task_id(
+    store: RadarLedger,
+    managed_ledger: ManagedLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    result_access: _ValidationWorktreeDirectory,
+    context_raw: bytes,
+    expired_publication: dict[str, Any] | None = None,
+) -> str | None:
+    """Prove a completed validation against its controller-owned immutable input."""
+
     if (
-        "taskId" in value
-        or candidate.get("stage") != "VALIDATION_PENDING"
+        candidate.get("stage") != "VALIDATION_PENDING"
         or context.get("stage") != "VALIDATION_PENDING"
         or context.get("taskStage") != "IMPLEMENTATION_READY"
         or context.get("prFollowup") is not None
-        or context.get("publicationReceipt") is not None
+        or not _expired_publication_context_is_unpublished(context, expired_publication)
         or value.get("stage") != "FIX_READY"
         or value.get("handoffMode")
         not in {"controller_commit_complete", "controller_commit_required"}
@@ -15103,6 +15142,8 @@ def _validation_result_omitted_task_id(
         if context.get(name) != candidate.get(name) or value.get(name) != context.get(name):
             return None
     task_id = str(binding["intentId"])
+    if "taskId" in value and value["taskId"] != task_id:
+        return None
     managed_task = managed_ledger.read_task(task_id)
     historical = managed_ledger.latest_authenticated_fix_ready_result_for_task(
         task_id, issue_url=str(candidate["issueUrl"])
@@ -15113,7 +15154,12 @@ def _validation_result_omitted_task_id(
         or managed_task.get("opportunity_key") != candidate["key"]
         or managed_task.get("thread_id") != binding["threadId"]
         or managed_task.get("worktree_path") != binding["worktreePath"]
-        or managed_task.get("state") != "IMPLEMENTATION_READY"
+        or managed_task.get("state")
+        not in (
+            {"IMPLEMENTATION_READY", "PORTFOLIO_READY"}
+            if expired_publication
+            else {"IMPLEMENTATION_READY"}
+        )
         or historical is None
     ):
         return None
@@ -15138,6 +15184,22 @@ def _validation_result_omitted_task_id(
     )
     if sent is None or sent[1].get("resultDigest") != historical["result_digest"]:
         return None
+    if expired_publication is not None:
+        if historical["result_digest"] != expired_publication["resultDigest"]:
+            return None
+        with store.connect() as connection:
+            deferred = connection.execute(
+                """SELECT id,payload_json FROM events WHERE opportunity_key=?
+                   AND event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                   AND json_extract(payload_json,'$.expiredPublication.requestId')=?
+                   ORDER BY id DESC LIMIT 1""",
+                (candidate["key"], expired_publication["requestId"]),
+            ).fetchone()
+        if deferred is None or sent[0]["id"] <= deferred["id"]:
+            return None
+        payload = json.loads(deferred["payload_json"])
+        if any(payload.get(k) != v for k, v in binding.items()):
+            return None
     reserved = next(
         (
             item
@@ -15177,12 +15239,20 @@ def _validation_result_omitted_task_id(
     if (
         snapshot != projected
         or source.get("taskId") != task_id
-        or source.get("contextDigest") != context.get("contextDigest")
+        or (
+            source.get("contextDigest") != context.get("contextDigest")
+            and expired_publication is None
+        )
         or source.get("commitSha") != historical["head_sha"]
         or source.get("headSha") != historical["head_sha"]
         or any(
             source.get(k) != value.get(k) for k in ("key", "issueUrl", "threadId", "worktreePath")
         )
+    ):
+        return None
+    if expired_publication is not None and (
+        hashlib.sha256(snapshot).hexdigest() != expired_publication["evidenceDigest"]
+        or snapshot != base64.b64decode(expired_publication["evidenceRawBase64"], validate=True)
     ):
         return None
     receipt_key = _task_turn_delivery_file_key(
@@ -15222,6 +15292,138 @@ def _validation_result_omitted_task_id(
     if verified != context or not _private_context_matches_current_ledger(store, context):
         return None
     return task_id
+
+
+def _defer_expired_publication_result(
+    store: RadarLedger,
+    managed_ledger: ManagedLedger,
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    raw: bytes,
+    context_raw: bytes,
+    result_access: _ValidationWorktreeDirectory,
+) -> tuple[dict[str, Any], bool, bool]:
+    """Retain an expired publication input until a real native validation completes."""
+    provider = getattr(store, "expired_publication_validation_source", None)
+    source = provider(candidate) if provider is not None else None
+    if source is None or value.get("stage") != "FIX_READY":
+        return value, False, False
+    source_raw = base64.b64decode(source["evidenceRawBase64"], validate=True)
+    source_value = json.loads(source_raw)
+    if (
+        _task_result_digest(source_value, source_raw) != source["resultDigest"]
+        or not assess_submit_ready(source_value.get("quality"), task_result=source_value).ready
+        or source_value.get("quality") != source.get("quality")
+    ):
+        raise TaskResultEvidenceBlocked("EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID")
+    binding = _ledger_binding_kwargs(candidate)
+    with opportunity_action_guard(ledger_action_guard_root(store.path), str(candidate["key"])):
+        if provider(candidate) != source or _active_task_turn_for_result(candidate) is not None:
+            raise TaskResultEvidenceBlocked("EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID")
+        context_stat = os.stat(
+            "task-context.json", dir_fd=result_access.private_fd, follow_symlinks=False
+        )
+        verified, _ = _verified_private_context_with_singleton_guard(
+            store, result_access.worktree, context_raw, context_stat
+        )
+        if (
+            verified != context
+            or not _task_context_has_exact_ledger_binding(store, context)
+            or context.get("selectedBaseSha") != source["selectedBaseSha"]
+            or context.get("taskStage") != "IMPLEMENTATION_READY"
+            or not _expired_publication_context_is_unpublished(context, source)
+            or context.get("prFollowup") is not None
+        ):
+            raise TaskResultEvidenceBlocked("EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID")
+        if hashlib.sha256(raw).hexdigest() == source["evidenceDigest"]:
+            managed_task = managed_ledger.read_task(str(candidate["intentId"]))
+            historical = managed_ledger.latest_authenticated_fix_ready_result_for_task(
+                str(candidate["intentId"]), issue_url=str(candidate["issueUrl"])
+            )
+            if (
+                not isinstance(managed_task, dict)
+                or managed_task.get("readSource") != "managed"
+                or managed_task.get("opportunity_key") != candidate["key"]
+                or managed_task.get("thread_id") != candidate["threadId"]
+                or managed_task.get("worktree_path") != candidate["worktreePath"]
+                or managed_task.get("state") != "PORTFOLIO_READY"
+                or historical is None
+                or historical.get("result_digest") != source["resultDigest"]
+                or historical.get("head_sha") != source["commitSha"]
+                or command(["git", "rev-parse", "HEAD"], cwd=result_access.worktree)
+                != source["commitSha"]
+                or command(["git", "branch", "--show-current"], cwd=result_access.worktree)
+                != source["branch"]
+                or command(["git", "status", "--porcelain"], cwd=result_access.worktree)
+            ):
+                raise TaskResultEvidenceBlocked("EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID")
+            store.record_validation_deferred(
+                candidate["key"],
+                thread_id=candidate["threadId"],
+                result_digest=source["resultDigest"],
+                missing=["fresh_state_verified"],
+                expired_publication=source,
+                **binding,
+            )
+            store.record_stage(
+                candidate["key"],
+                "VALIDATION_PENDING",
+                reason="PUBLICATION_REPRODUCTION_RECEIPT_EXPIRED",
+                evidence={
+                    "sourceRequestId": source["requestId"],
+                    "resultDigest": source["resultDigest"],
+                },
+                dedupe_key="publication-expiry:" + source["requestId"],
+                **binding,
+            )
+            return value, True, False
+        with store.connect() as connection:
+            deferred = connection.execute(
+                """SELECT id FROM events WHERE opportunity_key=? AND event_type='TASK_RESULT_VALIDATION_DEFERRED'
+                   AND json_extract(payload_json,'$.expiredPublication.requestId')=? ORDER BY id DESC LIMIT 1""",
+                (candidate["key"], source["requestId"]),
+            ).fetchone()
+            already_ingested = connection.execute(
+                """SELECT 1 FROM events WHERE opportunity_key=? AND event_type='TASK_RESULT_INGESTED'
+                   AND json_extract(payload_json,'$.taskId')=? AND json_extract(payload_json,'$.threadId')=?
+                   AND dedupe_key=? AND id>? LIMIT 1""",
+                (
+                    candidate["key"],
+                    candidate["intentId"],
+                    candidate["threadId"],
+                    _task_result_digest(value, raw),
+                    deferred["id"] if deferred is not None else 9223372036854775807,
+                ),
+            ).fetchone()
+        if already_ingested is not None:
+            return value, False, False
+        task_id = _completed_validation_input_task_id(
+            store,
+            managed_ledger,
+            candidate=candidate,
+            context=context,
+            value=value,
+            result_access=result_access,
+            context_raw=context_raw,
+            expired_publication=source,
+        )
+        if (
+            task_id is None
+            or value.get("reproductionReceipt") is not None
+            or value.get("probeReceipt") is not None
+            or value.get("commitSha") != source["commitSha"]
+            or value.get("headSha") != source["headSha"]
+            or command(["git", "rev-parse", "HEAD"], cwd=result_access.worktree)
+            != source["commitSha"]
+            or value.get("branch") != source["branch"]
+            or command(["git", "branch", "--show-current"], cwd=result_access.worktree)
+            != source["branch"]
+            or command(["git", "status", "--porcelain"], cwd=result_access.worktree)
+        ):
+            raise TaskResultEvidenceBlocked("EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID")
+        return dict(value, taskId=task_id), False, True
 
 
 def _non_pr_validation_parent(
@@ -19066,6 +19268,15 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         else "请重新确认已准备的依赖环境并补齐证据。"
     )
     worktree_input_path = str(candidate.get("worktreeInputPath") or "")
+    expiry = candidate.get("expiredPublication")
+    expiry_note = (
+        f"本轮是发布请求 {expiry['requestId']} 的复现凭证已到期后的真实续验。"
+        f"保留当前提交 {expiry['commitSha']} 和分支，不改源码、不重新实现或提交。"
+        "即使旧输入的全部检查已通过，也必须在当前环境重新执行真实基线复现和核心回归，"
+        "记录本轮实际命令、退出码和结果。旧签名凭证和旧测试不能算作本轮成功。\n\n"
+        if isinstance(expiry, dict)
+        else ""
+    )
     input_note = (
         f"本轮输入只能只读工作区相对路径 `{worktree_input_path}`。"
         "不要读取当前 `.oss-pr-radar/result.json` 作为本轮输入；"
@@ -19097,6 +19308,7 @@ def _validation_followup_prompt(candidate: dict[str, Any]) -> str:
         "系统续跑：继续验证同一个修复，你无需操作。不要创建新任务或重新实现。"
         "读取当前任务文件，并只在已绑定的工作区继续。\n\n"
         + input_note
+        + expiry_note
         + f"本轮需要解决：{missing_summary}。{dependency_note}\n\n"
         + "先检查绑定工作区已准备的 `.venv/bin/python`；存在时必须进入该工作区后明确使用这个解释器。"
         "登录 shell 可能重置 PATH，不要依赖裸 `python3` 或沿用旧的依赖不可用判断。"
@@ -21165,6 +21377,32 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
             if binding_gate is None or not binding_gate(candidate, value):
                 raise RuntimeError("task result identity binding mismatch")
             try:
+                value, expiry_waiting, expiry_revalidated = _defer_expired_publication_result(
+                    store,
+                    managed_ledger,
+                    candidate=candidate,
+                    context=context,
+                    value=value,
+                    raw=raw,
+                    context_raw=context_raw,
+                    result_access=result_access,
+                )
+            except (OSError, ValueError, RuntimeError) as exc:
+                if isinstance(exc, TaskResultEvidenceBlocked):
+                    raise
+                raise TaskResultEvidenceBlocked(
+                    "EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID"
+                ) from exc
+            if expiry_waiting:
+                validation_deferred.append(
+                    {
+                        "key": candidate["key"],
+                        "reason": "PUBLICATION_REPRODUCTION_RECEIPT_EXPIRED",
+                        "missing": ["fresh_state_verified"],
+                    }
+                )
+                continue
+            try:
                 omitted_validation_task_id = _validation_result_omitted_task_id(
                     store,
                     managed_ledger,
@@ -21255,6 +21493,13 @@ def ingest_task_results(args: argparse.Namespace) -> dict[str, Any]:
                         "reason"
                     )
                     == VALIDATION_PARENT_BINDING_INVALID
+                )
+                and not (
+                    expiry_revalidated
+                    and json.loads(previous_evidence_block.get("payload_json") or "{}").get(
+                        "reason"
+                    )
+                    == "EXPIRED_PUBLICATION_VALIDATION_BINDING_INVALID"
                 )
             ):
                 previous_payload = json.loads(previous_evidence_block.get("payload_json") or "{}")
