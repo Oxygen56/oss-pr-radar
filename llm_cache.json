@@ -4219,6 +4219,40 @@
     ],
     "why": "Issue reports a reproducible degenerate output (identical token and logprob at every decode position) on DeepSeek-V4-Flash with SM120, isolated across TP and DP+EP, and confirmed independent of environment via clean-venv reproduction. The evidence includes concrete code paths (attention.py, cache_utils.py, flashinfer_sparse.py) and a clear numerical signature, supporting a reference-vs-implementation test. The track is llm_algorithm with mechanisms like model_architecture, numerics_quantization, and kernel_algorithm, and the issue is actionable for root-cause investigation."
   },
+  "09b1183f338193d6abf266936fc23c8899c54cb1609b4dedc3150a279a4c41e5": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "internal/reranking/passage.go: gate EnrichedPassage question enrichment on current question-generation config (and optionally IsQuestionCurrent)",
+      "internal/application/service/knowledge_process.go: stop/cleanup question embedding rows when question generation is disabled",
+      "internal/application/repository/retriever/doris/query.go: ensure disabled question rows are excluded from retrieval",
+      "chunk metadata generated_questions invalidation or rerank-side skip"
+    ],
+    "risks": [
+      "Cleanup semantics (disable vs delete) not yet decided by maintainer; irreversible delete could force expensive LLM re-generation",
+      "Transition-only cleanup misses existing KBs already at enabled=false with stale rows",
+      "source_id length heuristic for identifying question rows is fragile; LIKE chunk_id || '-%' is safer",
+      "Scope creep into #2652 generation-quality and evaluation-methodology topics"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Regression test: enable question generation, ingest multi-chunk doc, disable config without reparse, assert question embedding rows are not retrieved",
+      "Regression test: after reparse with question rows zeroed, assert EnrichedPassage does not include stale generated_questions",
+      "Targeted unit tests for EnrichedPassage with config on/off and for cleanup path on true->false transition"
+    ],
+    "unknowns": [
+      "Maintainer preference on disable vs delete and on whether revision (IsQuestionCurrent) should also gate passage enrichment"
+    ],
+    "why": "Issue provides concrete code anchors (EnrichedPassage in internal/reranking/passage.go:148 unconditionally joining GetQuestionStrings; knowledge_process.go writing IsEnabled:true; doris/query.go is_enabled filter) and a claimant already verified them on main bccb4b15. Two independent, reproducible defects: stale question vectors remain enabled after config off, and stale metadata questions still enter rerank passage. Production read-only stats and an ordered repro give a concrete validation path."
+  },
   "09d7e9faec622ed6aadf000e15c1e5c48be703f79c3b808d4142c074b7af1b3d": {
     "confidence": 0.6,
     "contradictions": [
@@ -81109,6 +81143,42 @@
     ],
     "why": "Issue identifies a concrete algorithmic defect in MoE global_aux_loss: accumulated expert counts are normalized by ga_steps * current_num_tokens instead of the cumulative valid-token count, producing a measurable router-gradient discrepancy (relative L2 0.25 vs 2.25e-7 after repair, 1.33e-15 FP64 reference). Root cause, code anchor (router.py _apply_global_aux_loss), proposed fix, and a reference-vs-implementation numerical regression path are all supplied."
   },
+  "aec8b216713ebed3b3a5db9d85bf841d5593e1ed2ff0d2769992d62f64caf217": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue claims all five assertions fail on clean v1.100.0, while PR #43935 is described as technically complete with tests, suggesting the fix may already exist"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "OpenAIGPT5Config.is_model_gpt_5_model family detection for gpt-6.1-sol",
+      "Chat Completions reasoning_effort drop/reject for none/minimal",
+      "Responses reasoning.effort drop/reject for none/minimal"
+    ],
+    "risks": [
+      "Duplicating PR #43935's implementation",
+      "Expanding API behavior beyond the reported contract",
+      "Model cost map lag may require a model-specific guard rather than generic logic"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's test_gpt61sol.py against current main to confirm failures",
+      "Add regression tests for drop_params=True and drop_params=False (400) on both Chat Completions and Responses",
+      "Compare against PR #43935's test coverage to identify any uncovered path"
+    ],
+    "unknowns": [
+      "Whether PR #43935 fully covers the root cause and both surfaces",
+      "Whether maintainers consider the issue already addressed by the open PR",
+      "Whether the cost-map-based approach in the PR matches the intended contract"
+    ],
+    "why": "Issue describes a concrete user-visible bug with a reproduction test, but the supplied evidence shows an open PR #43935 that already references the issue and implements the same fix (drop/reject none/minimal for gpt-6.1-sol on Chat Completions and Responses). The duplicate/coverage status is 'weak_pr_competition_possible' with rootCauseCoverage=false, and the only stated competition gap is '缺少根因覆盖证据'. Whether the existing PR already covers the actionable code work is unresolved, which materially determines whether independent code work is warranted."
+  },
   "aec8e8275ae264821204d0cb976635cd662ef17257656851fc667ee7abbfd1ca": {
     "confidence": 0.9,
     "contradictions": [
@@ -90815,6 +90885,39 @@
       "Exact code location for the serialization bug is not pinpointed; maintainer design preference unknown."
     ],
     "why": "Issue provides production evidence of a cache-bust bug with deterministic correlation to tool-calls, a clear root cause referencing existing issue #24841, and reproducible SQL queries from the local database. The candidate is actionable for a code fix in the session/prompt-loop path, with a concrete validation path via regression tests."
+  },
+  "c3b68cfc004ab335dbac854a09a58b04125bb9a73378b4bb0e1a7b1c1915d7ef": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.actionability_evidence",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Skill discovery/loading path that parses SKILL.md frontmatter",
+      "Warning/error surfacing at session startup and `goose skills list`",
+      "Plugin install/update frontmatter rewrite behavior"
+    ],
+    "risks": [
+      "Repository requires assignment before contribution, so code work may not be actionable yet",
+      "Fix could expand API/behavior surface if placeholder skills are surfaced to the agent",
+      "Root cause may span multiple modules (discovery, plugin install, logging), increasing scope"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create a SKILL.md with invalid YAML frontmatter (unquoted colon+space) and assert `goose skills list` emits a warning naming the file and YAML error",
+      "Regression test that a valid skill is still discovered and listed",
+      "Test that plugin install/update does not silently drop fields when frontmatter is invalid"
+    ],
+    "unknowns": [
+      "Exact module/function where frontmatter parse failure is swallowed",
+      "Whether maintainers want a warning-only fix or a placeholder-skill behavior change",
+      "Whether assignment will be granted for this issue"
+    ],
+    "why": "Issue describes a real silent-failure bug with a concrete reproduction (invalid YAML frontmatter in SKILL.md drops the skill with no warning), but the supplied actionability evidence shows no public reproduction signal, no root-cause code anchor beyond surface strings, and the repository policy requires assignment before work. The exact code path that swallows the yaml.safe_load error is not established, so the fix location is uncertain."
   },
   "c3b6ae8e1ac189a7ffd4504aef23a93de3815a18b4ebfbcb705ee150ebead6e6": {
     "confidence": 0.85,
