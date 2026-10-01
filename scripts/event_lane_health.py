@@ -561,10 +561,18 @@ def _read_only_database(path: Path, *, namespace: str, now: float) -> dict[str, 
         (max(0, int(now - float(row["created_at"] or now))) for row in active_events),
         default=0,
     )
+    # Pending work can age while its poller is stopped.  Keep that backlog
+    # visible without preventing the worker that must consume it from starting.
+    stale_pending_events = [
+        row
+        for row in active_events
+        if str(row["status"]) == "pending"
+        and float(row["created_at"] or 0) <= now - TURN_STALE_SECONDS
+    ]
     stale_active_events = [
         row
         for row in active_events
-        if str(row["status"]) in {"pending", "leased"}
+        if str(row["status"]) == "leased"
         and float(row["created_at"] or 0) <= now - TURN_STALE_SECONDS
     ]
     expected_repo = str(LANES[namespace]["repo"])
@@ -587,6 +595,7 @@ def _read_only_database(path: Path, *, namespace: str, now: float) -> dict[str, 
             "needsReconcileThreads": len(needs_reconcile_threads),
             "staleTurnCount": len(stale_turns),
             "staleActiveEventCount": len(stale_active_events),
+            "stalePendingEventCount": len(stale_pending_events),
             "oldestPendingAgeSeconds": oldest_pending_age,
             "activeRecursiveRecoveryCount": active_recursive,
             "exhaustedRecoveryCount": exhausted_recovery,

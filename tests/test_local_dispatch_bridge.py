@@ -9600,6 +9600,42 @@ def test_interrupted_recovery_turn_is_rearmed_once(monkeypatch, tmp_path):
     ]
 
 
+def test_interrupted_recovery_keeps_active_worker_despite_previous_abort(monkeypatch, tmp_path):
+    thread_db = tmp_path / "threads.sqlite3"
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)")
+        connection.execute("INSERT INTO threads VALUES (?,?)", ("thread-1", "rollout.jsonl"))
+
+    class Store:
+        def sent_recoveries_without_result(self):
+            return [
+                {
+                    "key": "a/b#1",
+                    "threadId": "thread-1",
+                    "reservation": {"recoveryNonce": "nonce-new"},
+                    "retryCount": 1,
+                }
+            ]
+
+        def exhaust_recovery(self, **_kwargs):
+            raise AssertionError("a previous abort must not exhaust an active recovery")
+
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _thread_id: {"pid": 123})
+    monkeypatch.setattr(
+        MODULE,
+        "latest_thread_turn_state",
+        lambda _path: {"status": "interrupted", "turnId": "turn-old"},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "live_thread_turn_states",
+        lambda ids: {} if not ids else pytest.fail("active recovery must not be cold-read"),
+    )
+
+    assert MODULE._rearm_interrupted_recovery_turns(Store()) == ([], [])
+
+
 def test_interrupted_recovery_turn_stops_after_one_rearm(monkeypatch, tmp_path):
     thread_db = tmp_path / "threads.sqlite3"
     with sqlite3.connect(thread_db) as connection:
@@ -10051,7 +10087,11 @@ def test_active_turn_defers_all_terminal_recoveries(monkeypatch, tmp_path):
     assert [item["threadId"] for item in result["queuedDeferred"]] == ["thread-failed"]
 
 
-def test_latest_terminal_error_ignores_a_failure_before_a_new_turn(tmp_path):
+@pytest.mark.parametrize("new_turn_marker", ["turn_context", "task_started"])
+@pytest.mark.parametrize("old_terminal_marker", ["task_complete", "turn_aborted"])
+def test_latest_terminal_error_ignores_a_failure_before_a_new_turn(
+    tmp_path, new_turn_marker, old_terminal_marker
+):
     rollout = tmp_path / "rollout.jsonl"
     rollout.write_text(
         "\n".join(
@@ -10060,12 +10100,19 @@ def test_latest_terminal_error_ignores_a_failure_before_a_new_turn(tmp_path):
                     {
                         "type": "event_msg",
                         "payload": {
-                            "type": "task_complete",
+                            "type": old_terminal_marker,
                             "error": {"codex_error_info": "internal_error"},
                         },
                     }
                 ),
-                json.dumps({"type": "turn_context", "payload": {"turn_id": "turn-2"}}),
+                json.dumps(
+                    {
+                        "type": "event_msg"
+                        if new_turn_marker == "task_started"
+                        else "turn_context",
+                        "payload": {"type": new_turn_marker, "turn_id": "turn-2"},
+                    }
+                ),
             ]
         )
         + "\n",
@@ -20321,6 +20368,39 @@ def test_implementation_followup_without_result_uses_bounded_recovery(tmp_path):
         item["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
         for item in store.recovery_candidates(min_age_minutes=0)
     )
+
+    store.acknowledge_exhausted_recovery(
+        thread_id="thread-1",
+        nonce=retry["recoveryNonce"],
+        reason="OWNER_WATCHDOG_FALSE_INTERRUPTION_FIXED",
+    )
+    store.rearm_acknowledged_recovery(
+        thread_id="thread-1",
+        nonce=retry["recoveryNonce"],
+        reason="OWNER_WATCHDOG_FALSE_INTERRUPTION_FIXED",
+    )
+    resumed = store.recovery_candidates(min_age_minutes=0)[0]
+    assert resumed["rearmedFromExhausted"]["exhaustedNonce"] == retry["recoveryNonce"]
+    store.reserve_recovery(thread_id="thread-1", nonce=resumed["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=resumed["recoveryNonce"])
+    pending = store.sent_recoveries_without_result()[0]
+    assert pending["retryCount"] == 0
+    assert pending["reservation"]["recoveryChainDigest"] == resumed["recoveryChainDigest"]
+    assert len(resumed["recoveryChainDigest"]) == 64
+
+    store.abandon_recovery_delivery(
+        thread_id="thread-1",
+        nonce=resumed["recoveryNonce"],
+        reason="TERMINAL_RECOVERY_TURN_INTERRUPTED",
+        min_age_minutes=0,
+    )
+    resumed_retry = store.recovery_candidates(min_age_minutes=0)[0]
+    assert resumed_retry["recoveryChainDigest"] == resumed["recoveryChainDigest"]
+    store.reserve_recovery(thread_id="thread-1", nonce=resumed_retry["recoveryNonce"])
+    store.commit_recovery(thread_id="thread-1", nonce=resumed_retry["recoveryNonce"])
+    assert store.sent_recoveries_without_result()[0]["retryCount"] == 1
+    store.exhaust_recovery(thread_id="thread-1", nonce=resumed_retry["recoveryNonce"])
+    assert store.recovery_candidates(min_age_minutes=0) == []
 
 
 def test_new_task_result_cancels_implementation_followup_recovery(tmp_path):

@@ -552,6 +552,26 @@ def test_reconcile_bootstraps_unloaded_lane_and_requires_fresh_poll(monkeypatch,
 
 
 def test_reconcile_preserves_run_at_load_workers_until_fresh_poll(monkeypatch, tmp_path):
+    backlogs = {"agentscope": 174, "nanobot": 22}
+    for namespace, count in backlogs.items():
+        with event_database(tmp_path / f"{namespace}-events.sqlite3") as connection:
+            connection.executemany(
+                """INSERT INTO event_lane_events
+                   (event_id,payload_json,status,attempts,created_at)
+                   VALUES (?,?,?,?,?)""",
+                [
+                    (
+                        f"github:{namespace}:{number}",
+                        json.dumps(
+                            {"repo": MODULE.LANES[namespace]["repo"], "kind": "issue_update"}
+                        ),
+                        "pending",
+                        0,
+                        1000.0,
+                    )
+                    for number in range(count)
+                ],
+            )
     unloaded = {
         "launch": {"available": False, "lastExitCode": None},
         "launchConfigOk": False,
@@ -568,12 +588,21 @@ def test_reconcile_preserves_run_at_load_workers_until_fresh_poll(monkeypatch, t
     )
 
     def audit(*_args, **_kwargs):
+        databases = {
+            namespace: MODULE._read_only_database(
+                tmp_path / f"{namespace}-events.sqlite3", namespace=namespace, now=3000.0
+            )
+            for namespace in backlogs
+        }
         snapshot = _reconcile_snapshot(
             tmp_path,
             agentscope=unloaded,
             nanobot=unloaded,
-            healthy=poll_complete and len(bootstrapped) == 2,
+            healthy=poll_complete
+            and len(bootstrapped) == 2
+            and all(database["healthy"] for database in databases.values()),
         )
+        snapshot["databases"] = databases
         for namespace in bootstrapped:
             snapshot["plists"][namespace].update(
                 {
@@ -585,7 +614,7 @@ def test_reconcile_preserves_run_at_load_workers_until_fresh_poll(monkeypatch, t
                 }
             )
             if poll_complete:
-                snapshot["pollStates"][namespace]["lastAttemptAt"] = "1970-01-01T00:16:40Z"
+                snapshot["pollStates"][namespace]["lastAttemptAt"] = "1970-01-01T00:50:00Z"
         return snapshot
 
     def launchctl(*args, **_kwargs):
@@ -603,7 +632,7 @@ def test_reconcile_preserves_run_at_load_workers_until_fresh_poll(monkeypatch, t
 
     result = MODULE.reconcile(
         tmp_path,
-        now=1000.0,
+        now=3000.0,
         audit_reader=audit,
         launchctl_runner=launchctl,
         sleeper=finish_poll,
@@ -616,6 +645,73 @@ def test_reconcile_preserves_run_at_load_workers_until_fresh_poll(monkeypatch, t
     assert bootstrapped == {"agentscope", "nanobot"}
     assert [args[0] for args in observed] == ["bootstrap", "bootstrap"]
     assert delays == [MODULE.EVENT_RECONCILE_POLL_INTERVAL_SECONDS]
+    for namespace, count in backlogs.items():
+        database = result["after"]["databases"][namespace]
+        assert database["activeEventCount"] == count
+        assert database["stalePendingEventCount"] == count
+        assert database["staleActiveEventCount"] == 0
+        assert database["oldestPendingAgeSeconds"] == 2000
+
+
+def test_reconcile_refuses_stale_leased_event(tmp_path):
+    path = tmp_path / "agentscope-events.sqlite3"
+    with event_database(path) as connection:
+        connection.execute(
+            """INSERT INTO event_lane_events
+               (event_id,payload_json,status,attempts,created_at,lease_until)
+               VALUES (?,?,?,?,?,?)""",
+            (
+                "github:leased",
+                json.dumps({"repo": "agentscope-ai/agentscope", "kind": "issue_update"}),
+                "leased",
+                1,
+                1000.0,
+                1120.0,
+            ),
+        )
+    snapshot = _reconcile_snapshot(tmp_path)
+    database = MODULE._read_only_database(path, namespace="agentscope", now=3000.0)
+    snapshot["databases"]["agentscope"] = database
+    observed = []
+
+    result = MODULE.reconcile(
+        tmp_path,
+        audit_reader=lambda *_args, **_kwargs: snapshot,
+        launchctl_runner=lambda *args, **_kwargs: observed.append(args),
+    )
+
+    assert database["healthy"] is False
+    assert database["staleActiveEventCount"] == 1
+    assert result["action"] == "blocked"
+    assert result["errors"] == ["AGENTSCOPE_DATABASE_UNHEALTHY"]
+    assert observed == []
+
+
+def test_reconcile_refuses_malformed_event_database(tmp_path):
+    path = tmp_path / "agentscope-events.sqlite3"
+    with event_database(path) as connection:
+        connection.execute(
+            """INSERT INTO event_lane_events
+               (event_id,payload_json,status,attempts,created_at)
+               VALUES (?,?,?,?,?)""",
+            ("github:malformed", "{", "pending", 0, 1000.0),
+        )
+    snapshot = _reconcile_snapshot(tmp_path)
+    database = MODULE._read_only_database(path, namespace="agentscope", now=3000.0)
+    snapshot["databases"]["agentscope"] = database
+    observed = []
+
+    result = MODULE.reconcile(
+        tmp_path,
+        audit_reader=lambda *_args, **_kwargs: snapshot,
+        launchctl_runner=lambda *args, **_kwargs: observed.append(args),
+    )
+
+    assert database["healthy"] is False
+    assert database["malformedPayloadCount"] == 1
+    assert result["action"] == "blocked"
+    assert result["errors"] == ["AGENTSCOPE_DATABASE_UNHEALTHY"]
+    assert observed == []
 
 
 def test_run_at_load_bootstrap_does_not_accept_old_poll(monkeypatch, tmp_path):

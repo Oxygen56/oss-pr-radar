@@ -5900,6 +5900,19 @@ class RadarLedger:
                 )
                 if marker is not None:
                     candidate["rearmedFromExhausted"] = marker
+                    candidate["recoveryChainDigest"] = sha256_json(
+                        {
+                            "key": candidate["key"],
+                            "intentId": candidate["intentId"],
+                            "threadId": thread_id,
+                            "worktreePath": candidate["worktreePath"],
+                            "dispatchedAt": candidate["dispatchedAt"],
+                            "recoveryKind": recovery_kind,
+                            "followupDigest": followup_digest,
+                            "rearmedFromExhausted": marker,
+                            "chainVersion": "implementation-recovery-chain-v1",
+                        }
+                    )
             candidate_identity = (
                 str(row["intent_id"]),
                 thread_id,

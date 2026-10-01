@@ -623,7 +623,8 @@ def latest_thread_turn_state(rollout_path: str | None) -> dict[str, Any] | None:
         return None
     for raw_line in reversed(data.splitlines()):
         if not any(
-            marker in raw_line for marker in ('"task_complete"', '"turn_aborted"', '"turn_context"')
+            marker in raw_line
+            for marker in ('"task_complete"', '"turn_aborted"', '"turn_context"', '"task_started"')
         ):
             continue
         try:
@@ -635,6 +636,8 @@ def latest_thread_turn_state(rollout_path: str | None) -> dict[str, Any] | None:
         payload = record.get("payload") or {}
         if record.get("type") != "event_msg":
             continue
+        if payload.get("type") == "task_started":
+            return None
         if payload.get("type") == "turn_aborted":
             return {
                 "status": "interrupted",
@@ -11765,6 +11768,8 @@ def _rearm_interrupted_recovery_turns(
     rearmed: list[dict[str, Any]] = []
     exhausted: list[dict[str, Any]] = []
     for item in pending:
+        if active_task_turn_worker(item["threadId"]) is not None:
+            continue
         row = rows.get(item["threadId"])
         state = (
             latest_thread_turn_state(row["rollout_path"]) if row is not None else None
