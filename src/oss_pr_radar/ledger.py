@@ -6181,6 +6181,7 @@ class RadarLedger:
         nonce: str,
         recovery_prompt_version: str | None = None,
         recovery_prompt_digest: str | None = None,
+        scope_correction: dict[str, Any] | None = None,
         intent_id: str | None = None,
         worktree_path: str | None = None,
     ) -> dict[str, Any]:
@@ -6218,6 +6219,16 @@ class RadarLedger:
         if len(candidates) != 1:
             raise LedgerError("recovery authorization is stale or invalid")
         candidate = candidates[0]
+        if scope_correction is not None:
+            if (
+                candidate["recoveryKind"] != "IMPLEMENTATION_FOLLOWUP_RESULT"
+                or scope_correction.get("intentId") != candidate["intentId"]
+                or scope_correction.get("threadId") != thread_id
+                or scope_correction.get("worktreePath") != candidate["worktreePath"]
+                or scope_correction.get("deliveryAttemptDigest") != candidate.get("followupDigest")
+            ):
+                raise LedgerError("scope correction recovery identity is invalid")
+            candidate = candidate | {"scopeCorrection": dict(scope_correction)}
         now = iso_z(datetime.now(UTC))
         with self.transaction() as connection:
             require_quarantine_clear(
@@ -6457,6 +6468,11 @@ class RadarLedger:
                     "recoveryPromptDigest": candidate.get("recoveryPromptDigest"),
                     "recoveryChainDigest": candidate.get("recoveryChainDigest"),
                     "rearmedFromExhausted": candidate.get("rearmedFromExhausted"),
+                    **(
+                        {"scopeCorrection": candidate["scopeCorrection"]}
+                        if candidate.get("scopeCorrection") is not None
+                        else {}
+                    ),
                     **(
                         {"credentialRefresh": credential_refresh}
                         if credential_refresh is not None

@@ -21726,6 +21726,238 @@ def _completed_raw_implementation_result(monkeypatch, tmp_path):
     return store, worktree, result_path, old_context, refresh
 
 
+def _scope_blocked_completed_implementation_result(monkeypatch, tmp_path):
+    store, worktree, result_path, context, _refresh = _completed_raw_implementation_result(
+        monkeypatch, tmp_path
+    )
+    value = json.loads(result_path.read_text(encoding="utf-8"))
+    value["codePaths"] = context["codePaths"]
+    value.pop("taskId", None)
+    value["tests"] = [
+        {
+            "command": "npm test -- tests/test_runtime.py",
+            "exitCode": 127,
+            "result": "Focused test not executed: no local vitest binary.",
+        }
+    ]
+    result_path.write_text(json.dumps(value), encoding="utf-8")
+    blocked = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert blocked["errors"] == [], blocked
+    assert blocked["workBlocked"][0]["reason"] == "CONTROLLER_CHANGED_FILES_OUTSIDE_REPORTED_SCOPE"
+    finalized = json.loads(result_path.read_text(encoding="utf-8"))
+    assert finalized["handoffMode"] == "controller_commit_complete"
+    assert run_git(worktree, "rev-parse", "HEAD") == finalized["commitSha"]
+    candidate = next(
+        item
+        for item in store.recovery_candidates(min_age_minutes=0)
+        if item["key"] == "a/b#1" and item["recoveryKind"] == "IMPLEMENTATION_FOLLOWUP_RESULT"
+    )
+    return store, worktree, result_path, candidate
+
+
+def test_scope_blocked_native_recovery_corrects_metadata_and_preserves_failed_test(
+    monkeypatch, tmp_path
+):
+    store, worktree, result_path, candidate = _scope_blocked_completed_implementation_result(
+        monkeypatch, tmp_path
+    )
+    original = json.loads(result_path.read_text(encoding="utf-8"))
+    original_head = run_git(worktree, "rev-parse", "HEAD")
+    proof = MODULE._completed_scope_correction_evidence(store, candidate)
+    assert proof is not None
+    assert proof["requiredCodePaths"] == ["runtime.py", "tests/test_runtime.py"]
+    thread_db = tmp_path / "correction-threads.sqlite3"
+    rollout = tmp_path / "correction-rollout.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "timestamp": iso_z(datetime.now(UTC) - timedelta(hours=2)),
+                "type": "event_msg",
+                "payload": {"type": "task_complete", "turn_id": "turn-implementation-1"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with sqlite3.connect(thread_db) as connection:
+        connection.execute(
+            "CREATE TABLE threads (id TEXT,cwd TEXT,archived INTEGER,first_user_message TEXT,"
+            "rollout_path TEXT,git_origin_url TEXT,updated_at INTEGER,title TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "thread-1",
+                str(worktree),
+                0,
+                MODULE.issue_prompt(candidate["issueUrl"]),
+                str(rollout),
+                "https://github.com/a/b.git",
+                int((datetime.now(UTC) - timedelta(hours=2)).timestamp()),
+                "a/b#1",
+            ),
+        )
+    monkeypatch.setattr(MODULE, "THREAD_DB", thread_db)
+    monkeypatch.setattr(MODULE, "live_thread_turn_states", lambda _ids: {})
+    monkeypatch.setattr(MODULE, "active_task_turn_worker", lambda _id: None)
+    monkeypatch.setattr(MODULE, "active_task_turn_workers", lambda _id: [])
+    listed = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))
+    correction = next(item for item in listed["recoverable"] if item["key"] == "a/b#1")
+    assert correction["scopeCorrection"] == proof
+    receipt_path = next(MODULE.STATE.glob("task_turn_receipts/*.json"))
+    receipt_raw = receipt_path.read_bytes()
+    receipt_path.unlink()
+    unavailable = MODULE.recovery_list(SimpleNamespace(ledger=store.path, min_age_minutes=0))
+    assert unavailable["recoverable"] == []
+    assert unavailable["queuedDeferred"][0]["reason"] == "SCOPE_CORRECTION_PROOF_UNAVAILABLE"
+    assert store.unresolved_recoveries() == []
+    receipt_path.write_bytes(receipt_raw)
+    receipt_path.chmod(0o600)
+    reserved = MODULE.recovery_reserve(
+        SimpleNamespace(
+            ledger=store.path,
+            thread_id="thread-1",
+            recovery_nonce=correction["recoveryNonce"],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+        )
+    )
+    bound = store.unresolved_recoveries()[0]
+    assert bound["reservation"]["scopeCorrection"] == proof
+    prompt = MODULE._task_turn_prompt("recovery", bound)
+    assert prompt == reserved["prompt"]
+    assert "只补正工作区结果文件的身份和范围" in prompt
+    assert '"tests/test_runtime.py"' in prompt
+    process = _FakeTaskTurnProcess()
+    original_popen = subprocess.Popen
+
+    @contextmanager
+    def action_session(*_args, **_kwargs):
+        yield process
+
+    def read_response(_process, _selector, buffer, *, response_id, **_kwargs):
+        if response_id == 1:
+            return buffer, {"result": {"thread": {"id": "thread-1"}}}
+        return buffer, {"result": {"turn": {"id": "scope-correction-turn"}}}
+
+    def launch_worker(argv, **kwargs):
+        if "task-turn-worker" not in argv:
+            return original_popen(argv, **kwargs)
+        args = SimpleNamespace(
+            ledger=store.path,
+            delivery_kind="recovery",
+            thread_id="thread-1",
+            delivery_token=reserved["recoveryNonce"],
+            receipt=argv[argv.index("--receipt") + 1],
+            intent_id="intent-1",
+            worktree_path=str(worktree),
+            delivery_attempt_digest=None,
+        )
+        # This worker is active; verification still binds the prior completed owner.
+        with monkeypatch.context() as active:
+            active.setattr(
+                MODULE, "_active_task_turn_for_result", lambda _candidate: {"status": "running"}
+            )
+            finished = MODULE.task_turn_worker_entry(args)
+        assert finished["turnStatus"] == "completed"
+        return SimpleNamespace(pid=os.getpid())
+
+    with monkeypatch.context() as delivery:
+        delivery.setattr(MODULE, "_app_server_action_session", action_session)
+        delivery.setattr(MODULE.selectors, "DefaultSelector", _FakeTaskTurnSelector)
+        delivery.setattr(MODULE, "_read_app_server_response", read_response)
+        delivery.setattr(
+            MODULE,
+            "_wait_for_app_server_terminal_turn",
+            lambda *_args, **_kwargs: {"turnId": "scope-correction-turn", "status": "completed"},
+        )
+        delivery.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/codex")
+        delivery.setattr(MODULE.subprocess, "Popen", launch_worker)
+        completed = MODULE.recovery_deliver(
+            SimpleNamespace(
+                ledger=store.path,
+                thread_id="thread-1",
+                recovery_nonce=reserved["recoveryNonce"],
+                intent_id="intent-1",
+                worktree_path=str(worktree),
+            )
+        )
+    assert completed["ok"] is True
+    turns = [item for item in _task_turn_messages(process) if item.get("method") == "turn/start"]
+    assert len(turns) == 1 and turns[0]["params"]["input"][0]["text"] == prompt
+    assert json.loads(result_path.read_text(encoding="utf-8")) == original
+    corrected = dict(original)
+    corrected["taskId"] = proof["intentId"]
+    corrected["codePaths"] = proof["requiredCodePaths"]
+    for field in ("reproductionReceipt", "probeReceipt", "resultDigest"):
+        corrected.pop(field, None)
+    result_path.write_text(json.dumps(corrected), encoding="utf-8")
+    ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert ingested["errors"] == [], ingested
+    assert ingested.get("workBlocked", []) == []
+    assert ingested["publicationRequests"] == []
+    assert ingested["validationDeferred"][0]["missing"] == [
+        "relevant_tests_green",
+        "independent_review_passed",
+    ]
+    after = json.loads(result_path.read_text(encoding="utf-8"))
+    assert after["tests"] == original["tests"]
+    assert after["quality"]["relevant_tests_green"] is False
+    assert after["controllerCodePathScope"]["reported"] == proof["requiredCodePaths"]
+    assert run_git(worktree, "rev-parse", "HEAD") == original_head
+    assert MODULE._local_changed_files(worktree) == []
+    assert ManagedLedger(store.path).read_task("intent-1")["state"] == "IMPLEMENTATION_READY"
+
+
+@pytest.mark.parametrize("tamper", ["raw", "context", "head", "receipt", "foreign_scope"])
+def test_reserved_scope_correction_rejects_changed_or_foreign_input(monkeypatch, tmp_path, tamper):
+    store, worktree, result_path, candidate = _scope_blocked_completed_implementation_result(
+        monkeypatch, tmp_path
+    )
+    proof = MODULE._completed_scope_correction_evidence(store, candidate)
+    assert proof is not None
+    store.reserve_recovery(
+        thread_id="thread-1",
+        nonce=candidate["recoveryNonce"],
+        intent_id="intent-1",
+        worktree_path=str(worktree),
+        scope_correction=proof,
+    )
+    bound = store.unresolved_recoveries()[0]
+    if tamper == "raw":
+        result_path.write_bytes(result_path.read_bytes() + b"\n")
+    elif tamper == "context":
+        context_path = result_path.parent / "task-context.json"
+        context_path.write_bytes(context_path.read_bytes() + b"\n")
+    elif tamper == "head":
+        run_git(worktree, "reset", "--hard", "HEAD^")
+    elif tamper == "receipt":
+        for receipt in MODULE.STATE.glob("task_turn_receipts/*.json"):
+            receipt.unlink()
+    else:
+        bound["reservation"]["scopeCorrection"]["requiredCodePaths"].append("foreign.py")
+    with pytest.raises((OSError, RuntimeError), match="scope correction|receipt"):
+        MODULE._verify_scope_correction_input(store, bound)
+    before = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+    assert before["publicationRequests"] == []
+
+
+def test_scope_correction_requires_the_exact_completed_owner_and_block(monkeypatch, tmp_path):
+    store, _worktree, result_path, candidate = _scope_blocked_completed_implementation_result(
+        monkeypatch, tmp_path
+    )
+    assert MODULE._completed_scope_correction_evidence(store, candidate) is not None
+    assert (
+        MODULE._completed_scope_correction_evidence(
+            store, candidate | {"intentId": "foreign-intent"}
+        )
+        is None
+    )
+    # A different raw input has no exact append-only block proof.
+    result_path.write_bytes(result_path.read_bytes() + b"\n")
+    assert MODULE._completed_scope_correction_evidence(store, candidate) is None
+
+
 def test_context_sync_preserves_completed_raw_implementation_pending_ingestion(
     monkeypatch, tmp_path
 ):

@@ -552,6 +552,28 @@ def _recovery_turn_prompt(candidate: dict[str, Any], terminal_error: dict[str, A
         raise RuntimeError("task recovery has an invalid issue URL")
     if recovery_kind == "PR_FOLLOWUP_RESULT":
         return _pr_followup_prompt({"issueUrl": issue_url})
+    correction = (candidate.get("reservation") or {}).get("scopeCorrection") or candidate.get(
+        "scopeCorrection"
+    )
+    if recovery_kind == "IMPLEMENTATION_FOLLOWUP_RESULT" and isinstance(correction, dict):
+        return (
+            issue_prompt(issue_url)
+            + "\n\n系统续跑：已有修复提交已完成，但结果声明的范围遗漏了实际改动文件。"
+            "本轮只补正工作区结果文件的身份和范围，不重新实现、不改源码或测试文件，"
+            "不改 HEAD、分支或已有提交。读取当前任务上下文和当前结果，"
+            "把 taskId 写为上下文 intentId，并保留当前 contextDigest。"
+            f"保留 controller_commit_complete 和提交 {correction['headSha']}。"
+            f"changedFiles 保持 {json.dumps(correction['changedFiles'], ensure_ascii=False)}；"
+            "codePaths 若填写，必须完整声明原授权复现范围与全部已验证提交改动的并集，"
+            f"包括测试文件：{json.dumps(correction['requiredCodePaths'], ensure_ascii=False)}。"
+            "不要直接复制上下文的生产文件列表当作完整实施范围。"
+            "保留原 tests 的实际命令、退出码和失败事实；未运行或失败的检查仍是缺口，"
+            "不能改为通过，也不要补写自动复核结论。不要复制旧 reproductionReceipt、"
+            "probeReceipt、resultDigest；系统会依据完整声明重新签发。"
+            "完成结果后结束本轮，系统将按正常流程补验。"
+            + END_RESULT_TURN_PROMPT
+            + PLAIN_LANGUAGE_STATUS_PROMPT
+        )
     if terminal_error and terminal_error.get("code") == "cyber_policy":
         return benign_policy_recovery_prompt(issue_url)
     return issue_prompt(issue_url)
@@ -10374,13 +10396,16 @@ def _task_turn_reservation(
         )
         return candidate | {"statusOnly": True} if candidate else None
     if delivery_kind == "recovery":
-        return unique(
+        candidate = unique(
             [
                 item
                 for item in store.unresolved_recoveries()
                 if (item.get("reservation") or {}).get("recoveryNonce") == delivery_token
             ]
         )
+        if candidate is not None and (candidate.get("reservation") or {}).get("scopeCorrection"):
+            _verify_scope_correction_input(store, candidate)
+        return candidate
     raise RuntimeError("unsupported task-turn delivery kind")
 
 
@@ -10507,6 +10532,10 @@ def _task_turn_start_unlocked(
     if process.stdin is None:
         raise RuntimeError("app server input is unavailable")
     _require_task_action_clear(store, opportunity_key)
+    if delivery_kind == "recovery" and (binding_candidate or {}).get("reservation", {}).get(
+        "scopeCorrection"
+    ):
+        _verify_scope_correction_input(store, binding_candidate)
     store.authorize_task_turn_delivery(
         delivery_kind=delivery_kind,
         thread_id=thread_id,
@@ -10645,6 +10674,9 @@ def _task_turn_prompt(delivery_kind: str, candidate: dict[str, Any]) -> str:
             "保留现有工作树和复现证据，直接完成最小根因修复、回归测试、独立复核和"
             " Workspace Result Protocol 结构化交接；不要重新创建任务，不要把成功复现"
             "写成无价值结论，也不要执行 GitHub 公开操作。"
+            "结果的 codePaths 是可选项；若填写，必须包含授权复现范围与全部实际改动的并集，"
+            "包括新增或修改的测试文件。changedFiles 必须完整列出本次实际改动，"
+            "不要直接复制上下文生产文件范围作为完整实施范围。"
             + END_RESULT_TURN_PROMPT
             + PLAIN_LANGUAGE_STATUS_PROMPT
         )
@@ -16512,9 +16544,134 @@ def _completed_controller_handoff_evidence(
             "deliveryToken": delivery_token,
             "deliveryAttemptDigest": delivery_attempt_digest,
             "turnId": turn_receipt["turnId"],
+            "turnReceiptRawDigest": hashlib.sha256(turn_receipt_raw).hexdigest(),
         }
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
         return None
+
+
+def _completed_scope_correction_evidence(
+    store: RadarLedger, candidate: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Bind the observed scope omission to its completed native handoff."""
+
+    if candidate.get("recoveryKind") != "IMPLEMENTATION_FOLLOWUP_RESULT":
+        return None
+    matches = [
+        task
+        for task in store.task_context_candidates()
+        if task.get("key") == candidate.get("key")
+        and task.get("threadId") == candidate.get("threadId")
+        and _ledger_binding_kwargs(task) == _ledger_binding_kwargs(candidate)
+    ]
+    if len(matches) != 1:
+        return None
+    task = matches[0]
+    worktree = Path(str(task["worktreePath"]))
+    try:
+        with _task_worktree_private_descriptor(task) as opened:
+            raw = _read_task_result_bytes_from_private(opened)
+            context_raw = _read_task_context_bytes_from_private(opened)
+        value = json.loads(raw)
+        context = json.loads(context_raw)
+        block_key = _task_result_evidence_block_key(task, raw, context_raw)
+        block = ManagedLedger(store.path, ensure_schema=False).event_by_idempotency_key(block_key)
+        if (
+            block is None
+            or block.get("event_type") != "TASK_RESULT_EVIDENCE_BLOCKED"
+            or block.get("task_id") != task["intentId"]
+            or block.get("opportunity_key") != candidate["key"]
+            or json.loads(block.get("payload_json") or "{}").get("reason")
+            != "CONTROLLER_CHANGED_FILES_OUTSIDE_REPORTED_SCOPE"
+        ):
+            return None
+        proof = _completed_controller_handoff_evidence(store, task, worktree=worktree)
+        if (
+            proof is None
+            or proof.get("handoffMode") != "controller_commit_complete"
+            or hashlib.sha256(raw).hexdigest() != proof["sourceRawDigest"]
+            or candidate.get("followupDigest") != proof["deliveryAttemptDigest"]
+            or context.get("contextDigest") != proof["contextDigest"]
+        ):
+            raise TaskResultEvidenceBlocked("SCOPE_CORRECTION_PROOF_UNAVAILABLE")
+        authorized = set(_validated_changed_files(context.get("codePaths")))
+        reported = set(_validated_changed_files(value.get("codePaths")))
+        changed = set(proof["changedFiles"])
+        if not authorized.issubset(reported) or not reported - authorized <= changed:
+            raise TaskResultEvidenceBlocked("SCOPE_CORRECTION_PROOF_UNAVAILABLE")
+        if not changed - reported:
+            raise TaskResultEvidenceBlocked("SCOPE_CORRECTION_PROOF_UNAVAILABLE")
+        return proof | {
+            "contextRawDigest": hashlib.sha256(context_raw).hexdigest(),
+            "blockedEventId": block["event_id"],
+            "requiredCodePaths": sorted(authorized | changed),
+        }
+    except TaskResultEvidenceBlocked:
+        raise
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _verify_scope_correction_input(store: RadarLedger, candidate: dict[str, Any]) -> None:
+    """Check the reserved input without mistaking this recovery worker for its owner."""
+
+    reservation = candidate.get("reservation") or {}
+    correction = reservation.get("scopeCorrection")
+    if not isinstance(correction, dict) or (
+        reservation.get("recoveryKind") != "IMPLEMENTATION_FOLLOWUP_RESULT"
+        or correction.get("intentId") != candidate.get("intentId")
+        or correction.get("threadId") != candidate.get("threadId")
+        or correction.get("worktreePath") != candidate.get("worktreePath")
+        or correction.get("deliveryAttemptDigest") != reservation.get("followupDigest")
+    ):
+        raise RuntimeError("scope correction identity is invalid")
+    with _task_worktree_private_descriptor(candidate) as opened:
+        raw = _read_task_result_bytes_from_private(opened)
+        context_raw = _read_task_context_bytes_from_private(opened)
+    context = json.loads(context_raw)
+    worktree = Path(str(candidate["worktreePath"]))
+    receipt_key = _task_turn_delivery_file_key(
+        delivery_kind="implementation-followup",
+        thread_id=str(candidate["threadId"]),
+        delivery_token=str(correction.get("deliveryToken") or ""),
+        delivery_attempt_digest=str(correction.get("deliveryAttemptDigest") or ""),
+    )
+    receipt_raw = _read_owned_regular_file(
+        STATE / "task_turn_receipts" / f"{receipt_key}.json",
+        label="completed implementation task-turn receipt",
+        reject_dangerous_writes=True,
+    )
+    if (
+        hashlib.sha256(raw).hexdigest() != correction.get("sourceRawDigest")
+        or hashlib.sha256(context_raw).hexdigest() != correction.get("contextRawDigest")
+        or hashlib.sha256(receipt_raw).hexdigest() != correction.get("turnReceiptRawDigest")
+        or command(["git", "rev-parse", "HEAD"], cwd=worktree) != correction.get("headSha")
+        or _local_changed_files(worktree)
+        or correction.get("requiredCodePaths")
+        != sorted(set(context.get("codePaths") or []) | set(correction.get("changedFiles") or []))
+        or sorted(
+            line
+            for line in command(
+                ["git", "show", "--pretty=format:", "--name-only", "HEAD"], cwd=worktree
+            ).splitlines()
+            if line
+        )
+        != correction.get("changedFiles")
+    ):
+        raise RuntimeError("scope correction input changed")
+    task = {"key": candidate["key"], "threadId": candidate["threadId"]}
+    block = ManagedLedger(store.path, ensure_schema=False).event_by_idempotency_key(
+        _task_result_evidence_block_key(task, raw, context_raw)
+    )
+    if (
+        block is None
+        or block.get("event_id") != correction.get("blockedEventId")
+        or block.get("task_id") != correction.get("intentId")
+        or block.get("opportunity_key") != candidate["key"]
+        or json.loads(block.get("payload_json") or "{}").get("reason")
+        != "CONTROLLER_CHANGED_FILES_OUTSIDE_REPORTED_SCOPE"
+    ):
+        raise RuntimeError("scope correction proof is unavailable")
 
 
 def _controller_commit_result_pending_ingestion(
@@ -24850,6 +25007,13 @@ def recovery_list(args: argparse.Namespace) -> dict[str, Any]:
                 if bound_candidate is None:
                     continue
                 candidate = bound_candidate
+            try:
+                correction = _completed_scope_correction_evidence(store, candidate)
+            except TaskResultEvidenceBlocked as exc:
+                queued_deferred.append(candidate | {"reason": exc.reason})
+                continue
+            if correction is not None:
+                candidate = candidate | {"scopeCorrection": correction}
             completed_validation_without_result = False
             if (
                 candidate.get("recoveryKind") == "VALIDATION_FOLLOWUP_RESULT"
@@ -25019,6 +25183,12 @@ def recovery_reserve(args: argparse.Namespace) -> dict[str, Any]:
         "thread_id": args.thread_id,
         "nonce": args.recovery_nonce,
     }
+    if authorized.get("scopeCorrection") is not None:
+        # Recheck before persisting the exact correction input in the existing reservation.
+        correction = _completed_scope_correction_evidence(ledger(args.ledger), authorized)
+        if correction != authorized["scopeCorrection"]:
+            raise RuntimeError("scope correction authorization changed")
+        reserve_kwargs["scope_correction"] = correction
     candidate_binding = _ledger_binding_kwargs(authorized)
     # Preserve legacy fake/old rows when no identity was requested, but carry
     # an explicitly supplied worktree even if an old projection lacks intentId.
