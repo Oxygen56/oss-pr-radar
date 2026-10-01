@@ -16797,7 +16797,7 @@ def _controller_commit_result(
 
 @pytest.mark.parametrize("upstream_fixed", [True, False, None])
 def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
-    monkeypatch, tmp_path, upstream_fixed
+    monkeypatch, tmp_path, upstream_fixed, *, expired_history=False, foreign_branch=False
 ):
     from oss_pr_radar import publication
     from oss_pr_radar.evidence import EvidenceBundle
@@ -17230,6 +17230,50 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
         assert run_git(worktree, "rev-parse", "HEAD") == live_base
         assert run_git(worktree, "rev-parse", old_branch) == old_head
         assert store.publication_request(request_id)["status"] == "BLOCKED"
+        (worktree / "runtime.py").write_text("value = 2\nassert value == 2\n")
+        fixed = subprocess.run(
+            [sys.executable, "-B", "-c", "from runtime import value; assert value == 2"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+        )
+        assert fixed.returncode == 0, fixed.stderr
+        current_context = json.loads((result_path.parent / "task-context.json").read_text())
+        result_branch = old_branch
+        if foreign_branch:
+            result_branch = "fix/foreign-runtime-boundary"
+            run_git(worktree, "branch", result_branch, old_head)
+        implementation_result = {
+            "schemaVersion": "radar-task-result-v1",
+            "key": "a/b#1",
+            "taskId": "intent-1",
+            "threadId": "thread-1",
+            "worktreePath": str(worktree),
+            "issueUrl": fresh["issueUrl"],
+            "contextDigest": current_context["contextDigest"],
+            "selectedBaseSha": live_base,
+            "targetBase": current_context["targetBase"],
+            "codePaths": ["runtime.py"],
+            "stage": "FIX_READY",
+            "handoffMode": "controller_commit_required",
+            "commitSha": None,
+            "branch": result_branch,
+            "commitMessage": "fix: preserve runtime boundary",
+            "changedFiles": ["runtime.py"],
+            "tests": [
+                {
+                    "command": "python -B -c 'from runtime import value; assert value == 1'",
+                    "exitCode": actual.returncode,
+                },
+                {
+                    "command": "python -B -c 'from runtime import value; assert value == 2'",
+                    "exitCode": fixed.returncode,
+                },
+            ],
+            "quality": dict.fromkeys(QUALITY_FIELDS, True) | {"independent_review_passed": False},
+            "publication": request["publication"],
+        }
+        result_path.write_text(json.dumps(implementation_result))
         with rollout.open("a") as journal:
             journal.write(
                 json.dumps(
@@ -17282,6 +17326,73 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
         )
         assert delivered["ok"] and delivered["turnStatus"] == "completed", delivered
     assert len(actual_checks) == 1
+    from oss_pr_radar import repo_probe
+
+    historical_receipt = json.loads((result_path.parent / "task-context.json").read_text())[
+        "reproductionReceipt"
+    ]
+    historical_receipt_raw = json.dumps(historical_receipt, sort_keys=True)
+    continuation_time = parse_time(historical_receipt["expiresAt"]) + timedelta(hours=2)
+
+    class ContinuationClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return (
+                continuation_time.astimezone(tz) if tz else continuation_time.replace(tzinfo=None)
+            )
+
+    with monkeypatch.context() as continuation:
+        if expired_history:
+            continuation.setattr(repo_probe, "datetime", ContinuationClock)
+            assert not repo_probe.verify_probe_receipt(
+                historical_receipt,
+                repo="a/b",
+                base_sha=live_base,
+                code_paths=["runtime.py"],
+                required_level=repo_probe.REPRODUCED_VALIDATED,
+            )
+        implementation_ingested = MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))
+        if implementation_ingested["ok"]:
+            finalized = json.loads(result_path.read_text())
+            assert repo_probe.verify_probe_receipt(
+                finalized["reproductionReceipt"],
+                repo="a/b",
+                base_sha=live_base,
+                code_paths=["runtime.py"],
+                required_level=repo_probe.REPRODUCED_VALIDATED,
+            )
+            assert MODULE.ingest_task_results(SimpleNamespace(ledger=store.path))["ok"]
+    assert json.dumps(historical_receipt, sort_keys=True) == historical_receipt_raw
+    if foreign_branch:
+        assert not implementation_ingested["ok"]
+        assert implementation_ingested["errors"] == [
+            {"key": "a/b#1", "error": "controller branch already exists at another commit"}
+        ]
+        assert run_git(worktree, "rev-parse", "HEAD") == live_base
+        assert run_git(worktree, "rev-parse", "fix/foreign-runtime-boundary") == old_head
+        assert run_git(worktree, "rev-parse", old_branch) == old_head
+        assert store.publication_request(request_id)["status"] == "BLOCKED"
+        assert store.publication_request(other_blocked["request_id"]) == other_blocked
+        with store.connect() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM publication_effects").fetchone()[0] == 0
+        return
+    assert implementation_ingested["ok"], implementation_ingested["errors"]
+    assert implementation_ingested["ingested"] == [
+        {
+            "key": "a/b#1",
+            "stage": "VALIDATION_PENDING",
+            "reason": "SUBMIT_READY_EVIDENCE_INCOMPLETE",
+        }
+    ]
+    finalized = json.loads(result_path.read_text())
+    assert finalized["handoffMode"] == "controller_commit_complete"
+    assert finalized["branch"] != old_branch
+    assert finalized["commitSha"] == run_git(worktree, "rev-parse", "HEAD")
+    assert run_git(worktree, "rev-parse", "HEAD^") == live_base
+    assert run_git(worktree, "rev-parse", old_branch) == old_head
+    assert run_git(worktree, "status", "--porcelain") == ""
+    assert finalized["quality"]["independent_review_passed"] is False
+    assert implementation_ingested["publicationRequests"] == []
     assert store.publication_request(request_id)["status"] == "BLOCKED"
     assert store.publication_request(other_blocked["request_id"]) == other_blocked
     with store.connect() as connection:
@@ -17297,6 +17408,22 @@ def test_latest_target_refresh_runs_native_validation_and_implementation_chain(
         for row in events
     )
     assert any(row["event_type"] == "IMPLEMENTATION_FOLLOWUP_SENT" for row in events)
+
+
+def test_latest_target_expired_history_continues_commit_without_renewing_source(
+    monkeypatch, tmp_path
+):
+    test_latest_target_refresh_runs_native_validation_and_implementation_chain(
+        monkeypatch, tmp_path, False, expired_history=True
+    )
+
+
+def test_latest_target_implementation_keeps_foreign_branch_collision_fail_closed(
+    monkeypatch, tmp_path
+):
+    test_latest_target_refresh_runs_native_validation_and_implementation_chain(
+        monkeypatch, tmp_path, False, foreign_branch=True
+    )
 
 
 def _bind_published_pr_authority_fixture(

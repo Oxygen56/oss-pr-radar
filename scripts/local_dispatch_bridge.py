@@ -15315,6 +15315,94 @@ def _switch_controller_branch(worktree: Path, branch: str) -> None:
     command(["git", "switch", branch], cwd=worktree)
 
 
+def _latest_target_controller_commit_branch(
+    *,
+    candidate: dict[str, Any],
+    context: dict[str, Any],
+    value: dict[str, Any],
+    worktree: Path,
+    branch: str,
+    managed_ledger: ManagedLedger | None,
+) -> str:
+    """Keep an unpublished retired branch intact when implementing its new base."""
+
+    head = command(["git", "rev-parse", "HEAD"], cwd=worktree)
+    existing = _optional_command(
+        ["git", "rev-parse", "--verify", f"refs/heads/{branch}"], cwd=worktree
+    )
+    if existing is None or existing == head or managed_ledger is None:
+        return branch
+    if (
+        context.get("stage") != "DISPATCHED"
+        or context.get("intentStatus") != "DISPATCHED"
+        or context.get("taskStage") != "IMPLEMENTATION_READY"
+        or context.get("childMayEditFiles") is not True
+        or context.get("publicationReceipt") is not None
+        or context.get("prFollowup") is not None
+        or value.get("stage") != "FIX_READY"
+        or value.get("handoffMode") != "controller_commit_required"
+        or value.get("taskId") != context.get("intentId")
+        or candidate.get("intentId") != context.get("intentId")
+        or value.get("contextDigest") != context.get("contextDigest")
+        or any(
+            value.get(name) != context.get(name) or candidate.get(name) != context.get(name)
+            for name in ("key", "issueUrl", "threadId", "worktreePath")
+        )
+        or _active_task_turn_for_result(context) is not None
+    ):
+        return branch
+    store = RadarLedger(managed_ledger.path, read_only=True)
+    if not _private_context_matches_current_ledger(store, context):
+        return branch
+    refresh = store.publication_target_base_refresh(candidate)
+    if (
+        refresh is None
+        or refresh.get("previousBranch") != branch
+        or refresh.get("previousCommitSha") != existing
+        or refresh["targetBase"]["sha"] != context.get("selectedBaseSha")
+        or context.get("headSha") != context.get("selectedBaseSha")
+        or context.get("commitSha") != context.get("selectedBaseSha")
+        or value.get("selectedBaseSha") != context.get("selectedBaseSha")
+    ):
+        return branch
+    source = store.publication_request(refresh["requestId"])
+    if source is None:
+        return branch
+    historical = dict(context) | {
+        "publicationReceipt": {
+            "status": source["status"],
+            "prUrl": None,
+            "commitSha": source["commit_sha"],
+            "branch": source["branch"],
+            "requestedAt": source["created_at"],
+        }
+    }
+    # This authenticates the existing historical transition; normal result
+    # intake still signs fresh implementation evidence and enforces its TTL.
+    if store.retired_latest_target_receipt(historical) != refresh:
+        return branch
+    task = managed_ledger.read_task(str(context["intentId"]))
+    if (
+        task is None
+        or task.get("state") != "IMPLEMENTATION_READY"
+        or task.get("opportunity_key") != context["key"]
+        or task.get("thread_id") != context["threadId"]
+        or str(Path(str(task.get("worktree_path") or "")).resolve()) != str(worktree)
+        or managed_ledger.current_published_result_for_task(str(context["intentId"])) is not None
+    ):
+        return branch
+    base_sha = str(refresh["targetBase"]["sha"])
+    suffix = f"-base-{base_sha[:12]}"
+    refreshed_branch = branch[: 120 - len(suffix)].rstrip("./-") + suffix
+    if head != base_sha and (
+        _optional_command(["git", "symbolic-ref", "--short", "HEAD"], cwd=worktree)
+        != refreshed_branch
+        or _merge_parents(worktree) != [base_sha]
+    ):
+        return branch
+    return refreshed_branch
+
+
 def _commit_args(
     *, context: dict[str, Any], value: dict[str, Any], commit_message: str
 ) -> list[str]:
@@ -16595,6 +16683,14 @@ def _finalize_controller_commit(
                     f"expected={changed_files!r} actual={prospective!r}"
                 )
             commit_changed_files = actual
+        branch = _latest_target_controller_commit_branch(
+            candidate=candidate,
+            context=context,
+            value=value,
+            worktree=worktree,
+            branch=branch,
+            managed_ledger=managed_ledger,
+        )
         _switch_controller_branch(worktree, branch)
         if (
             expected_parent
@@ -16610,6 +16706,14 @@ def _finalize_controller_commit(
         commit_changed_files = changed_files
         # Recover idempotently if the process stopped after the commit but before
         # rewriting result.json.
+        branch = _latest_target_controller_commit_branch(
+            candidate=candidate,
+            context=context,
+            value=value,
+            worktree=worktree,
+            branch=branch,
+            managed_ledger=managed_ledger,
+        )
         _switch_controller_branch(worktree, branch)
         if expected_parent and _merge_parents(worktree) != [expected_parent]:
             raise RuntimeError("controller commit recovery parent does not match the PR follow-up")
