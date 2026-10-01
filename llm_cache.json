@@ -57132,6 +57132,45 @@
     ],
     "why": "Issue reports a concrete bug with a clear repro and plausible root cause (Gemini 3.5 API change). Existing PR #36292 overlaps semantically but is not linked to the issue and may not fully address the root cause. A new PR that directly fixes the mapping and adds a regression test could be materially better."
   },
+  "79b90688470676eef7388ae5bbadf26cbf5465a964662aada4299d7b1df541c3": {
+    "confidence": 0.7,
+    "contradictions": [
+      "Issue states root cause not established while candidate claims root_cause_signal true",
+      "Candidate gate says duplicate_changed/no_code_surface but duplicate assessment reports status none"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.actionability_evidence",
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "Muon/distributed-Muon optimizer update path or BF16 cast/rounding boundary",
+      "gradient-zero counting/filtering logic",
+      "functional test golden references or tolerances in tests/test_utils/recipes/gb200/moe.yaml"
+    ],
+    "risks": [
+      "Mismatch may be a legitimate golden-reference update rather than a code bug",
+      "Floating-point/rounding-boundary noise could be mistaken for a semantic error",
+      "Requires GB200/H100 multi-node hardware not generally available"
+    ],
+    "root_cause_clarity": "low",
+    "score": 5,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce the two GB200 Muon resume cases at commit 2f16cb164 with fixed seed and compare per-step loss/zero-count against stored references",
+      "Add a focused comparison around the first divergent step (step 4/5 GB200, step 9/44 H100) including the preceding optimizer update and BF16 cast to localize the discrepancy",
+      "Run the same case on NGC 26.08 control to isolate product-stack vs code change"
+    ],
+    "unknowns": [
+      "Whether the drift is caused by a code defect or a stale golden reference",
+      "Which gradient coordinates/tensors diverge",
+      "Whether the change is attributable to NGC 26.09 stack vs Megatron-LM source"
+    ],
+    "why": "The issue documents a reproducible, well-quantified numerical mismatch (loss/zero-count drift on GB200 and H100 Muon resume tests) but explicitly states the root cause is not established and no affected gradient coordinates are identified. The candidate's own evidence shows no code path anchors, no public reproduction, and no maintainer investigation, so it is unclear whether actionable code work exists versus a golden-reference update or environment/dependency effect."
+  },
   "79ebdf7c2c0bc1d08d756d75854490aad8a3be8663fa4510de0838b99ef4b282": {
     "confidence": 0.85,
     "contradictions": [
@@ -96603,6 +96642,41 @@
     ],
     "why": "Issue reports a concrete, reproducible greedy-equivalence failure in DFlash2 speculative decoding (divergence at token 30, K=1, enforce-eager, prefix-cache off), with expected/actual pairs, executable repro, and logprobs. However, supplied evidence contains materially conflicting root-cause attributions: commenters point to BF16 numerical path differences, GDN gate row misalignment (#51812), and multiple unrelated kernel defects (#54945/#54948, #54076/#53798, #55122), and one commenter reports the symptom is fixed on v0.28.0. The duplicate assessment flags PR #52487 (spec-draft weight reload after sleep/wake) as semantic overlap requiring review, and related issues #56583/#56605 share only generic stack signatures. The repository also has an unresolved ai_disclosure_conflict policy status. These unresolved coverage/root-cause and disclosure facts determine whether code work is actionable."
   },
+  "cf69fcac5af4ca309de2aaa51e1c3da09f87eb064d3e84c8dde0210e6ef32e3e": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue proposes eviction in closeSessionAdmission, but triage and verification show that path is provider-route-only and raw path never signals release to the executor"
+    ],
+    "evidence_ids": [
+      "candidate.actionability_evidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.preTaskEvidence",
+      "candidate.open_pr_assessment"
+    ],
+    "expected_changes": [
+      "packages/cli/src/serve/managed-runtime-tool-executor.ts: add eviction of settled JournalEntry (or drop input/inputJson post-settle) and/or bounded retention for released Sessions",
+      "Ensure hasActiveSession/claimProviderSession no longer scan unbounded entries"
+    ],
+    "risks": [
+      "Eviction point must be chosen carefully: closeSessionAdmission is provider-route-only, so raw path needs its own release signal or post-settle deletion",
+      "Deleting entries too early could break late status/cancel/acknowledgeV3 lookups",
+      "Behavior change to session-management semantics may need maintainer design input"
+    ],
+    "root_cause_clarity": "high",
+    "score": 8,
+    "semanticSignal": "NO_OBJECTION",
+    "test_plan": [
+      "Add a unit test that executes N raw-path calls across released Sessions and asserts entries size stays bounded",
+      "Regression test that status/cancel still resolve for recently released Sessions within the retention window",
+      "Run targeted package unit tests and static checks for packages/cli/src/serve"
+    ],
+    "unknowns": [
+      "Exact retention window or bound maintainers prefer for released Sessions",
+      "Whether late status/cancel lookups after release must still be answered"
+    ],
+    "why": "Issue documents an unbounded, payload-proportional retention in ManagedToolExecutor.entries on the raw path, with code anchors (managed-runtime-tool-executor.ts L168, L213, L314, L416) and independent static confirmation from two collaborators. Root cause is clear: entries Map is append-only, no delete/clear, and JournalEntry holds input, inputJson, and result. Measured RSS growth (~325 KiB per released 200 KiB Session) and provider-route flatness support the claim. Triage notes the proposed eviction point (closeSessionAdmission) is provider-route-only, but this is a design choice between two reasonable fixes, not a blocking unknown."
+  },
   "cf8c7949590b93ed75b39dc05e868101aedec6681403f9d0d6e4ea7b827c1eb3": {
     "confidence": 0.8,
     "contradictions": [],
@@ -105815,6 +105889,42 @@
     "wait_reason": "DUPLICATE_REVIEW",
     "why": "The issue describes a reproducible degenerate output on DeepSeek-V4-Flash with SM120, but the root cause is not identified. Existing PR #49636 and #50455 overlap semantically with the issue's code paths and may already address the bug, requiring manual comparison before creating a new task."
   },
+  "e1641464b989e32f0b53f7c220a042806eb9622b7f7c852d72b8dfb1bb01c03d": {
+    "confidence": 0.6,
+    "contradictions": [
+      "Open PR #43935 is described as technically complete and covering both surfaces, yet rootCauseCoverage is false and competition is still considered possible"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "OpenAI GPT-5/6 family detection in OpenAIGPT5Config.is_model_gpt_5_model",
+      "Chat Completions reasoning_effort mapping/drop logic",
+      "Responses API reasoning.effort mapping/drop logic"
+    ],
+    "risks": [
+      "Duplicating or conflicting with open PR #43935",
+      "Model cost map lag may make a model-specific guard brittle",
+      "Changing drop_params behavior could affect other OpenAI reasoning models"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's test_gpt61sol.py against current main to confirm the five failing assertions",
+      "Add regression tests for drop_params=True removing none/minimal and for local 400 rejection when dropping is disabled",
+      "Verify empty reasoning object is removed on the Responses path"
+    ],
+    "unknowns": [
+      "Whether PR #43935 already fully resolves the issue or has unresolved gaps",
+      "Whether maintainers consider the issue covered by existing PRs #40279/#40472",
+      "Whether the cost-map-based guard in the PR is the accepted design"
+    ],
+    "why": "Issue describes a plausible provider-parameter translation bug with a concrete reproduction, but the supplied evidence shows an open PR #43935 that already references the issue and claims to fix both Chat Completions and Responses paths. The duplicate/coverage status is 'weak_pr_competition_possible' with rootCauseCoverage=false and no material competition gaps identified, so it is unresolved whether independent code work is still actionable or would duplicate the existing PR."
+  },
   "e1660050f64bdef777763db320381e2be3c0dd74a5c6900b703ed27077015aa3": {
     "confidence": 0.55,
     "contradictions": [
@@ -105851,6 +105961,36 @@
       "How the ai_disclosure_conflict policy is to be satisfied for this contribution"
     ],
     "why": "The issue presents a concrete, independently reproduced FA3 Hopper FP8 decode/prefill tiling divergence (kBlockN 96 vs 192, boundary at seqlen_k=97) with a kernel-level reproducer and a BF16 control, which is a genuine numerical/kernel-algorithm contribution. However, the proposed fix belongs in the separate vllm-project/flash-attention fork (hopper/tile_size.h), and an open fork PR #184 already targets exactly that root cause with overlapping path hopper/tile_size.h and matching title. The supplied duplicate assessment is 'semantic_overlap_requires_review' with root_cause_coverage=false and technical_complete=false, so it is unresolved whether the candidate work is already covered. Additionally, the repository policy status is ai_disclosure_conflict, a materially blocking disclosure requirement for any public action."
+  },
+  "e17d70d651699cf07da68f636808088082f1596fda9a8415fe8b35b92d73897b": {
+    "confidence": 0.8,
+    "contradictions": [],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "candidate.preTaskEvidence",
+      "candidate.actionability_evidence"
+    ],
+    "expected_changes": [
+      "skill discovery/frontmatter parsing warning path",
+      "plugin install/update frontmatter rewrite behavior"
+    ],
+    "risks": [
+      "Fix may require maintainer design decision on warning vs placeholder skill behavior",
+      "Assignment requirement blocks contribution without maintainer approval"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 6,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Create a SKILL.md with invalid YAML frontmatter and assert a warning is emitted at session startup and in `goose skills list`",
+      "Regression test that plugin install/update does not silently drop frontmatter fields when parsing fails"
+    ],
+    "unknowns": [
+      "Exact code path for skill discovery and frontmatter parsing",
+      "Whether maintainers require assignment before work",
+      "Whether a related fix already exists"
+    ],
+    "why": "Issue describes a plausible silent-drop bug with a concrete repro, but the pre-task evidence shows no code surface plan, no reproduction path plan, and an assignment requirement, so the actionable code location and validation path are not established."
   },
   "e18b59e7b07891626fb1872274cd8ebe16467a233733d34a4258d0151ef0a9f3": {
     "confidence": 0.55,
