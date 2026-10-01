@@ -93964,6 +93964,52 @@
     "unknowns": [],
     "why": "The issue is a dependency compatibility bug: xxhash 4.0 requires encoded bytes, while lighteval passes a string. This is a straightforward API usage fix, not an LLM algorithm contribution. The track requires concrete algorithmic mechanisms and validation paths, which are absent."
   },
+  "ca19547941329ce97703a7fba0a4e8d0a891b98f41435a9be601a4970afcc558": {
+    "confidence": 0.8,
+    "contradictions": [
+      "algorithm_evidence.qualified=true and score=9 despite mechanisms being CLI option-wiring, not algorithmic",
+      "open_pr_assessment status semantic_overlap_requires_review while contributor comments claim the same slices"
+    ],
+    "evidence_ids": [
+      "candidate.algorithm_evidence",
+      "candidate.open_pr_assessment",
+      "candidate.related_issue_assessment",
+      "candidate.preTaskEvidence",
+      "issue_data.issue_body",
+      "issue_data.recent_comments"
+    ],
+    "expected_changes": [
+      "src/soup_cli/commands/data_score.py",
+      "src/soup_cli/commands/local_rl.py + utils/local_rl_scheduler.py",
+      "src/soup_cli/commands/serve.py streaming branch",
+      "src/soup_cli/utils/save_formats.py 4bit_forced",
+      "src/soup_cli/commands/advise.py ROI gating",
+      "src/soup_cli/commands/export.py deploy/registry branches",
+      "src/soup_cli/commands/generate.py preference dedup",
+      "src/soup_cli/commands/train.py + utils/profiling.py profiler.step"
+    ],
+    "risks": [
+      "Issue is a multi-item grab bag; a single PR cannot cleanly cover all eight sites",
+      "Three open PRs and three contributor claims already cover data_score, local-rl, and advise slices",
+      "Potential duplicate issue #1465 shares the data_score.py failure signature",
+      "No algorithm-level mechanism; work is CLI/plumbing and out of scope for llm_algorithm track"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Reproduce each site with the issue's no-model/no-network snippets and assert the option reaches its consumer",
+      "For serve streaming, assert logits_processor and reasoning parser are applied on stream=True as on stream=False",
+      "For 4bit_forced, assert llm_int8_skip_modules=[] and config differs from 4bit",
+      "For train --profile, assert a trace file is written when profiler.step() is driven per training step"
+    ],
+    "unknowns": [
+      "Which of the eight sites remain unclaimed after PRs #1517/#1518/#1521 and the three contributor comments",
+      "Whether issue #1465 is a true duplicate of the data_score slice",
+      "Whether maintainers want one bundled fix or per-site PRs"
+    ],
+    "why": "The issue bundles eight independent CLI/plumbing defects (option accepted then ignored) across data_score, local_rl scheduler, serve streaming, save_formats, advise, export, generate, and profiling. The supplied evidence shows no algorithm-level mechanism: matched terms like lora/dpo/awq/gptq are incidental to option-wiring bugs, not a training objective, kernel, quantization method, or evaluation methodology. For track=llm_algorithm this is ordinary CLI/API plumbing and should be filtered, but the supplied evidence also shows three open PRs (#1517, #1518, #1521) and three contributor comments already claiming the data_score, local-rl, and advise slices, plus a potential duplicate issue #1465 sharing the data_score.py failure signature. That unresolved coverage/duplication makes the remaining actionable scope uncertain."
+  },
   "ca20320b56d851c25cee0a074ce52ecf0e1769ed0f60a13eabf2cd14162d200d": {
     "confidence": 0.8,
     "contradictions": [
@@ -118615,6 +118661,42 @@
       "Exact maintainer preference for fix approach (set cadence vs reject config) is not confirmed, but the issue suggests options and a collaborator asked for a PR, indicating openness."
     ],
     "why": "Issue identifies a precise root cause: next_decode_eligible_step is never set in the base scheduler, breaking the pp_size cadence guard under --no-async-scheduling, leading to out-of-bounds accesses and wrong output. The fix is a small, well-scoped change in the scheduler or config validation, with clear reproduction steps and controls."
+  },
+  "fb4ea4a810d16bd36022ff41684d0f28a08b02522f6083d19438c51508890608": {
+    "confidence": 0.8,
+    "contradictions": [
+      "Issue claims all five assertions fail on v1.100.0, but open PR #43935 is described as already fixing both surfaces with regression coverage"
+    ],
+    "evidence_ids": [
+      "issue_data.issue_body",
+      "issue_data.recent_comments",
+      "candidate.open_pr_assessment",
+      "candidate.preTaskEvidence"
+    ],
+    "expected_changes": [
+      "OpenAI GPT-5 family detection to include gpt-6.1-sol",
+      "Chat Completions reasoning_effort mapping to drop/reject none and minimal",
+      "Responses API reasoning.effort mapping to drop/reject none and minimal"
+    ],
+    "risks": [
+      "Duplicating open PR #43935",
+      "Expanding API behavior beyond the reported model",
+      "Unclear whether maintainers prefer model-specific guard vs generic supports_none_reasoning_effort gate"
+    ],
+    "root_cause_clarity": "medium",
+    "score": 4,
+    "semanticSignal": "RETRY",
+    "test_plan": [
+      "Run the issue's test_gpt61sol.py against current main to confirm failures",
+      "Add regression tests for both Chat Completions and Responses paths",
+      "Verify drop_params=True removes unsupported effort and empty reasoning object"
+    ],
+    "unknowns": [
+      "Whether PR #43935 is technically complete or has unresolved gaps",
+      "Whether the issue is already effectively covered by #40279/#40472 fixes",
+      "Maintainer preference between model-specific guard and generic reasoning-effort gate"
+    ],
+    "why": "Issue provides a concrete reproduction and root-cause hypothesis, but an open PR (#43935) already directly covers the same fix with tests, and the supplied evidence does not establish whether that PR is incomplete or whether the issue is already resolved. The candidate's own open_pr_assessment marks root_cause_coverage=false and lists missing root-cause coverage as a gap, so the actionable delta is unclear."
   },
   "fb6be3f732650bc5e9f3ed8cbb1310f67fabf1d535f5dca1aec32330579ac952": {
     "confidence": 0.7,
