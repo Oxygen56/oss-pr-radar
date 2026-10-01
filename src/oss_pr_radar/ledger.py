@@ -5103,6 +5103,23 @@ class RadarLedger:
                          SELECT 1 FROM task_quarantines quarantine
                          WHERE quarantine.opportunity_key=r.opportunity_key
                            AND quarantine.status='ACTIVE'
+                           -- Mirrored quarantine generations retain their original
+                           -- observation time even when imported after delivery.
+                           -- A newer exact sent round still owns its WIP slot.
+                           AND NOT EXISTS (
+                             SELECT 1 FROM events sent
+                             WHERE sent.opportunity_key=r.opportunity_key
+                               AND sent.event_type='PR_FOLLOWUP_SENT'
+                               AND sent.dedupe_key=r.dedupe_key
+                               AND {_intent_event_binding_clause("i", "sent")}
+                               AND json_extract(sent.payload_json,'$.intentId')=i.intent_id
+                               AND json_extract(sent.payload_json,'$.threadId')=i.thread_id
+                               AND json_extract(sent.payload_json,'$.worktreePath')=
+                                   i.worktree_path
+                               AND sent.id>r.id
+                               AND julianday(r.created_at)>julianday(quarantine.created_at)
+                               AND julianday(sent.created_at)>=julianday(r.created_at)
+                           )
                        )
                        AND EXISTS (
                          SELECT 1 FROM events completed

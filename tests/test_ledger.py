@@ -1423,6 +1423,117 @@ def test_completed_historical_followups_release_capacity_for_native_reservation(
     assert not store.published_task_result_is_terminal("a/b#1", thread_id="thread-recovered")
 
 
+@pytest.mark.parametrize(
+    "delivery", ["same_binding", "unsent", "foreign_thread", "different_round", "fresh_quarantine"]
+)
+def test_new_sent_pr_followup_keeps_capacity_after_old_quarantine_is_reobserved(tmp_path, delivery):
+    """An old shared-mirror generation must not hide a new native delivery."""
+
+    store = RadarLedger(tmp_path / "ledger.sqlite3")
+    store.restore_task_context(published_task_context())
+    old_observed_at = iso_z(datetime.now(UTC) - timedelta(days=30))
+    quarantine = {
+        "key": "a/b#1",
+        "reason": "SHARED_CONTEXT_INVALID",
+        "dedupe_key": "old-shared-mirror",
+        "payload": {"error": "shared and worktree task context mirrors disagree"},
+        "created_at": old_observed_at,
+    }
+    store.record_shared_context_quarantine(**quarantine)
+    store.clear_task_quarantine(
+        "a/b#1", reason="SHARED_CONTEXT_INVALID", evidence={"revalidated": True}
+    )
+    store.import_pr_followups(
+        {
+            "version": "pr_followup_v3",
+            "generatedAt": iso_z(datetime.now(UTC)),
+            "items": [
+                {
+                    "url": "https://github.com/a/b/pull/9",
+                    "headSha": "a" * 40,
+                    "actionDigest": "action",
+                    "taskActionDigest": "task-action",
+                    "checkedAt": iso_z(datetime.now(UTC)),
+                    "taskActions": ["current branch check failed"],
+                    "taskFollowupRequired": True,
+                    "evidence": {"baseIntegrationRequired": True},
+                }
+            ],
+        }
+    )
+    candidate = store.pr_followup_candidates()[0]
+    wake = candidate["wakeDigest"]
+    store.reserve_pr_followup(
+        thread_id="thread-recovered", wake_digest=wake, prepared_head_sha="a" * 40
+    )
+    store.complete_pr_followup_reservation(thread_id="thread-recovered", wake_digest=wake)
+    if delivery != "unsent":
+        store.commit_pr_followup(thread_id="thread-recovered", wake_digest=wake)
+    assert store.active_task_count() == 1
+    if delivery == "foreign_thread":
+        with store.connect() as connection:
+            connection.execute(
+                """UPDATE events SET payload_json=json_set(payload_json,'$.threadId','foreign-thread')
+                   WHERE event_type='PR_FOLLOWUP_SENT' AND dedupe_key=?""",
+                (wake,),
+            )
+    elif delivery == "different_round":
+        with store.connect() as connection:
+            connection.execute(
+                """UPDATE events SET dedupe_key='different-round'
+                   WHERE event_type='PR_FOLLOWUP_SENT' AND dedupe_key=?""",
+                (wake,),
+            )
+    elif delivery == "fresh_quarantine":
+        quarantine["created_at"] = iso_z(datetime.now(UTC) + timedelta(seconds=1))
+
+    reobserved = store.record_shared_context_quarantine(**quarantine)
+    assert reobserved["dedupeKey"] == "old-shared-mirror|generation=2"
+    with store.connect() as connection:
+        rows = connection.execute(
+            """SELECT id,event_type,created_at FROM events
+               WHERE event_type IN ('PR_FOLLOWUP_SENT','SHARED_TASK_CONTEXT_QUARANTINED')
+               ORDER BY id DESC LIMIT 2"""
+        ).fetchall()
+    assert rows[0]["event_type"] == "SHARED_TASK_CONTEXT_QUARANTINED"
+    assert rows[0]["created_at"] == quarantine["created_at"]
+    if delivery != "unsent":
+        assert rows[1]["event_type"] == "PR_FOLLOWUP_SENT"
+    if delivery != "same_binding":
+        assert store.active_task_count() == 0
+        return
+    assert store.active_task_count() == 1
+
+    store.enqueue(intent(intentId="next-intent", key="a/b#2", issueNumber=2))
+    assert store.claim("next-intent", "worker", max_active=1) is None
+    store.record_followup_result(
+        "a/b#1",
+        wake_digest="different-round",
+        result_digest="different-round-result",
+        stage="PR_OPEN",
+        intent_id="recovered-intent",
+        thread_id="thread-recovered",
+        worktree_path="/tmp/recovered-worktree",
+    )
+    assert store.active_task_count() == 1
+    with pytest.raises(LedgerError, match="binding is invalid"):
+        store.record_followup_result(
+            "a/b#1",
+            wake_digest=wake,
+            result_digest="foreign-result",
+            stage="PR_OPEN",
+            intent_id="recovered-intent",
+            thread_id="foreign-thread",
+            worktree_path="/tmp/recovered-worktree",
+        )
+    assert store.active_task_count() == 1
+    store.record_followup_result(
+        "a/b#1", wake_digest=wake, result_digest="current-round-result", stage="PR_OPEN"
+    )
+    assert store.active_task_count() == 0
+    assert store.claim("next-intent", "worker", max_active=1)
+
+
 def test_published_terminal_missing_worktree_gate_allows_no_progress_validation_result(
     tmp_path,
 ):
