@@ -372,7 +372,9 @@ def test_canary_wip_limit_is_transactional_and_released_by_outcome(tmp_path):
     assert store.claim("intent-2", "worker-b", max_active=1)
 
 
-@pytest.mark.parametrize("stage", ["PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "CLOSED", "MERGED"])
+@pytest.mark.parametrize(
+    "stage", ["PR_OPEN", "CI_GREEN", "MAINTAINER_ACCEPTED", "CLOSED", "MERGED"]
+)
 def test_pr_followup_capacity_releases_only_after_terminal_outcome(tmp_path, stage):
     store = RadarLedger(tmp_path / "ledger.sqlite3")
     key = _make_pr_followup_candidate(store)
@@ -382,9 +384,7 @@ def test_pr_followup_capacity_releases_only_after_terminal_outcome(tmp_path, sta
         wake_digest=followup["wakeDigest"],
         prepared_head_sha="d" * 40,
     )
-    store.complete_pr_followup_reservation(
-        thread_id="thread-1", wake_digest=followup["wakeDigest"]
-    )
+    store.complete_pr_followup_reservation(thread_id="thread-1", wake_digest=followup["wakeDigest"])
     store.enqueue(
         intent(
             intentId="intent-2",
